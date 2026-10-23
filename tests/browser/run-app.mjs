@@ -1166,6 +1166,7 @@ const layoutAtSize = async (width, height) => {
     const body = document.querySelector(".lyrics-body").getBoundingClientRect();
     const header = document.querySelector(".lyrics-header").getBoundingClientRect();
     const activeLine = document.querySelector(".blyrics--active")?.getBoundingClientRect() ?? null;
+    const lyricsClipped = getComputedStyle(document.querySelector(".lyrics-body")).clipPath.startsWith("inset(");
     return {
       present: true,
       artVisible,
@@ -1179,6 +1180,8 @@ const layoutAtSize = async (width, height) => {
       bodyLeft: body.left,
       headerBottom: header.bottom,
       activeLeft: activeLine ? activeLine.left : null,
+      lyricsClipped,
+      viewport: window.innerHeight,
       footerTop: Math.min(
         document.querySelector('[data-testid="fullscreen-controls"]')?.getBoundingClientRect().top ?? Infinity,
         document.querySelector('[data-testid="lyrics-dock"]')?.getBoundingClientRect().top ?? Infinity
@@ -1195,7 +1198,8 @@ const layoutAtSize = async (width, height) => {
         art.headingTop >= art.artBottom &&
         art.sideTop >= art.headerBottom - 1 &&
         art.sideBottom <= art.footerTop &&
-        Math.abs((art.sideTop + art.sideBottom) / 2 - (art.headerBottom + art.footerTop) / 2) < 2;
+        Math.abs((art.sideTop + art.sideBottom) / 2 - art.viewport / 2) < 2 &&
+        art.lyricsClipped;
   check(`fullscreen-artwork-${width}x${height}`, artOk, JSON.stringify(art));
 };
 await layoutAtSize(1280, 720);

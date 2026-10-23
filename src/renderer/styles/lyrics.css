@@ -51,7 +51,10 @@
   /* Artwork in the left column, lyrics in the right. The artwork's size follows the window height and
      its top sits at the header's bottom edge, so no offsets are hardcoded. The body runs to the bottom
      edge of the viewport in the right column; the footer overlays it as before. */
-  --fs-art-size: min(36vh, 360px);
+  /* The artwork grows with the window, but stays clear of the controls at short heights. */
+  --fs-art-size: clamp(160px, min(36vh, 360px, calc(100vh - 2 * var(--fs-footer-height, 0px) - 100px)), 360px);
+  /* The lyrics end this far above the bottom edge, matching the space above the first line. */
+  --fs-edge: 14vh;
   /* The lyrics move right of their centred position by a fifth of the artwork-column's offset, so the
      distance from the window's left edge grows by about a fifth. */
   --fs-lyrics-shift: calc(var(--fs-art-size) * 0.2);
@@ -69,14 +72,14 @@
   grid-column: 2;
   grid-row: 2;
   padding-left: calc(40px + var(--fs-lyrics-shift));
+  clip-path: inset(0 0 var(--fs-edge) 0);
 }
 
-/* The artwork and its title form one block in the left column, centred between the header's bottom edge
-   and the footer's top edge. The bottom margin is the footer's height, so the block stays centred when the
-   controls fade. Showing or hiding them does not move it. */
+/* The artwork and its title form one block in the left column, centred in the window. It spans both rows,
+   so its centre is the window's centre. Showing or hiding the controls does not move it. */
 .fs-side {
   grid-column: 1;
-  grid-row: 2;
+  grid-row: 1 / -1;
   align-self: center;
   justify-self: start;
   position: relative;
@@ -85,7 +88,6 @@
   flex-direction: column;
   width: var(--fs-art-size);
   margin-left: 40px;
-  margin-bottom: var(--fs-footer-height, 0px);
 }
 
 .fs-artwork .artwork-hero {
