@@ -110,6 +110,15 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
 
   if (!settings) return <div className="view-loading">Loading…</div>;
 
+  // The title block: in fullscreen it sits under the artwork in the left column; on the normal page it
+  // is the header's heading.
+  const heading = (
+    <div className="lyrics-heading">
+      <h1>{track?.title ?? "Nothing playing"}</h1>
+      <p>{track ? [track.artist, track.album].filter(Boolean).join(" · ") : "Pick a song from your library"}</p>
+    </div>
+  );
+
   return (
     <div ref={viewRef} className={`lyrics-view ${fullscreen ? "is-fullscreen" : ""}`} data-testid="lyrics-view">
       <KawarpBackground
@@ -120,16 +129,16 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
       />
 
       {fullscreen ? (
-        <div className="fs-artwork">
-          <Artwork src={track?.artworkUrl} alt={track?.album ?? "Artwork"} size="hero" />
+        <div className="fs-side">
+          <div className="fs-artwork">
+            <Artwork src={track?.artworkUrl} alt={track?.album ?? "Artwork"} size="hero" />
+          </div>
+          {heading}
         </div>
       ) : null}
 
       <div className="lyrics-header">
-        <div className="lyrics-heading">
-          <h1>{track?.title ?? "Nothing playing"}</h1>
-          <p>{track ? [track.artist, track.album].filter(Boolean).join(" · ") : "Pick a song from your library"}</p>
-        </div>
+        {fullscreen ? null : heading}
         {fullscreen ? (
           <button
             type="button"

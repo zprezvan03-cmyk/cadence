@@ -51,7 +51,10 @@
   /* Artwork in the left column, lyrics in the right. The artwork's size follows the window height and
      its top sits at the header's bottom edge, so no offsets are hardcoded. The body runs to the bottom
      edge of the viewport in the right column; the footer overlays it as before. */
-  --fs-art-size: min(30vh, 320px);
+  --fs-art-size: min(36vh, 360px);
+  /* The lyrics move right of their centred position by a fifth of the artwork-column's offset, so the
+     distance from the window's left edge grows by about a fifth. */
+  --fs-lyrics-shift: calc(var(--fs-art-size) * 0.2);
   display: grid;
   grid-template-columns: calc(var(--fs-art-size) + 80px) minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
@@ -65,16 +68,24 @@
 .lyrics-view.is-fullscreen .lyrics-body {
   grid-column: 2;
   grid-row: 2;
+  padding-left: calc(40px + var(--fs-lyrics-shift));
 }
 
-.fs-artwork {
+/* The artwork and its title form one block in the left column, centred between the header's bottom edge
+   and the footer's top edge. The bottom margin is the footer's height, so the block stays centred when the
+   controls fade. Showing or hiding them does not move it. */
+.fs-side {
   grid-column: 1;
   grid-row: 2;
-  align-self: start;
+  align-self: center;
   justify-self: start;
   position: relative;
   z-index: 2;
+  display: flex;
+  flex-direction: column;
+  width: var(--fs-art-size);
   margin-left: 40px;
+  margin-bottom: var(--fs-footer-height, 0px);
 }
 
 .fs-artwork .artwork-hero {
@@ -83,21 +94,49 @@
   box-shadow: 0 40px 90px rgba(0, 0, 0, 0.65);
 }
 
-.fs-exit {
-  flex-shrink: 0;
+.fs-side .lyrics-heading {
+  margin-top: 22px;
 }
 
-/* Narrow windows: the lyrics take the full width and the artwork is left out. */
+/* The exit button sits in the header's top-right corner and takes no space in the header's flow. */
+.lyrics-view.is-fullscreen .fs-exit {
+  position: absolute;
+  top: 26px;
+  right: 40px;
+  z-index: 3;
+}
+
+/* Narrow windows: the lyrics take the full width and the artwork is left out, but the title stays at the
+   top. The heading block takes the first row, so it does not overlap the lyrics. */
 @media (max-width: 900px) {
   .lyrics-view.is-fullscreen {
     grid-template-columns: minmax(0, 1fr);
+    --fs-lyrics-shift: 0px;
   }
   .lyrics-view.is-fullscreen .lyrics-header,
   .lyrics-view.is-fullscreen .lyrics-body {
     grid-column: 1;
   }
+  .lyrics-view.is-fullscreen .lyrics-body {
+    padding-left: 20px;
+  }
+  .fs-side {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: start;
+    width: auto;
+    margin: 0;
+    padding: 18px 64px 4px 20px;
+  }
+  .fs-side .lyrics-heading {
+    margin-top: 0;
+  }
   .fs-artwork {
     display: none;
+  }
+  .lyrics-view.is-fullscreen .fs-exit {
+    top: 18px;
+    right: 20px;
   }
 }
 

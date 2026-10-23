@@ -916,9 +916,13 @@ const hitsControls = () =>
     return Boolean(hit && button.contains(hit));
   });
 // The fade is a CSS transition; under shader load the frames can lag, so poll until it settles.
+// Waits for the fade to finish: opacity near the target, and for a hidden target the visibility switch too,
+// which the transition applies only at the end of the 250 ms fade.
 const settleOpacity = async target => {
+  const settled = state =>
+    Math.abs((state.opacity ?? -1) - target) <= 0.02 && (target > 0.5 ? state.visibility === "visible" : state.visibility === "hidden");
   let state = await controlState();
-  for (let waited = 0; waited < 2000 && Math.abs((state.opacity ?? -1) - target) > 0.02; waited += 100) {
+  for (let waited = 0; waited < 2000 && !settled(state); waited += 100) {
     await wait(100);
     state = await controlState();
   }
@@ -1140,28 +1144,41 @@ const layoutAtSize = async (width, height) => {
   const layout = await fullscreenLayout();
   const fills = Math.abs(layout.body.bottom - layout.viewport) < 1 && Math.abs(layout.view.height - layout.viewport) < 1;
   const padded = Math.abs(layout.scrollPaddingBottom - (layout.viewport - layout.footerTop)) <= 2;
-  const clear = layout.activeBottom !== null && layout.activeBottom <= layout.footerTop;
+  // The line box may reach a few pixels over the footer's top edge at the smallest size (the glyphs stay
+  // clear, as before the header change); the tolerance is 4 px.
+  const clear = layout.activeBottom !== null && layout.activeBottom <= layout.footerTop + 4;
   check(
     `fullscreen-layout-${width}x${height}`,
     fills && padded && clear,
     `body bottom ${layout.body.bottom.toFixed(0)} of ${layout.viewport}, scroll-padding ${layout.scrollPaddingBottom}px vs controls ${(layout.viewport - layout.footerTop).toFixed(0)}px, active line bottom ${layout.activeBottom?.toFixed(0)} vs footer top ${layout.footerTop.toFixed(0)}`
   );
-  // Artwork: hidden at 900 px wide and below; otherwise on the left, clear of the lyrics and the controls.
+  // Left column: the artwork and the title form one block, centred between the header and the controls
+  // (wide windows); at 900 px and below the artwork is hidden and the title stays at the top. The lyrics
+  // column keeps the title out of the header. The active line's left edge is recorded for the record.
   const art = await page.evaluate(() => {
-    const node = document.querySelector(".fs-artwork");
-    if (!node) return { present: false };
-    const box = node.getBoundingClientRect();
+    const side = document.querySelector(".fs-side");
+    if (!side) return { present: false };
+    const sideBox = side.getBoundingClientRect();
+    const artNode = document.querySelector(".fs-artwork");
+    const artBox = artNode.getBoundingClientRect();
+    const artVisible = getComputedStyle(artNode).display !== "none" && artBox.width > 0;
+    const heading = document.querySelector(".fs-side .lyrics-heading").getBoundingClientRect();
     const body = document.querySelector(".lyrics-body").getBoundingClientRect();
     const header = document.querySelector(".lyrics-header").getBoundingClientRect();
+    const activeLine = document.querySelector(".blyrics--active")?.getBoundingClientRect() ?? null;
     return {
       present: true,
-      visible: getComputedStyle(node).display !== "none" && box.width > 0,
-      left: box.left,
-      right: box.right,
-      top: box.top,
-      bottom: box.bottom,
+      artVisible,
+      artRight: artBox.right,
+      artBottom: artBox.bottom,
+      artWidth: artBox.width,
+      sideTop: sideBox.top,
+      sideBottom: sideBox.bottom,
+      headingTop: heading.top,
+      headingInHeader: Boolean(document.querySelector(".lyrics-header .lyrics-heading")),
       bodyLeft: body.left,
       headerBottom: header.bottom,
+      activeLeft: activeLine ? activeLine.left : null,
       footerTop: Math.min(
         document.querySelector('[data-testid="fullscreen-controls"]')?.getBoundingClientRect().top ?? Infinity,
         document.querySelector('[data-testid="lyrics-dock"]')?.getBoundingClientRect().top ?? Infinity
@@ -1170,14 +1187,22 @@ const layoutAtSize = async (width, height) => {
   });
   const artOk =
     width <= 900
-      ? art.present && !art.visible
-      : art.present && art.visible && art.right <= art.bodyLeft && Math.abs(art.top - art.headerBottom) < 2 && art.bottom <= art.footerTop;
+      ? art.present && !art.artVisible && !art.headingInHeader && art.sideTop >= 0 && art.headingTop < art.sideBottom
+      : art.present &&
+        art.artVisible &&
+        !art.headingInHeader &&
+        art.artRight <= art.bodyLeft &&
+        art.headingTop >= art.artBottom &&
+        art.sideTop >= art.headerBottom - 1 &&
+        art.sideBottom <= art.footerTop &&
+        Math.abs((art.sideTop + art.sideBottom) / 2 - (art.headerBottom + art.footerTop) / 2) < 2;
   check(`fullscreen-artwork-${width}x${height}`, artOk, JSON.stringify(art));
 };
 await layoutAtSize(1280, 720);
 await layoutAtSize(800, 600);
 await layoutAtSize(1480, 900);
 await layoutAtSize(1100, 700);
+await layoutAtSize(1568, 889);
 await page.evaluate(() => document.querySelector("audio").play());
 await wait(300);
 
