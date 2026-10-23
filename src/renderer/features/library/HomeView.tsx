@@ -126,7 +126,7 @@ export function HomeView() {
             <Mic2 size={20} />
           </span>
           <span>
-            <strong>Lyrics</strong>
+            <strong>Now Playing</strong>
             <em>Better Lyrics + Shaders</em>
           </span>
         </button>

@@ -45,6 +45,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     hideInstrumentalOnly: false,
     passiveScroll: true,
     fullscreenOnOpen: false,
+    showLyricsInFullscreen: true,
   },
   shaders: {
     ...DEFAULT_GRADIENT_SETTINGS,

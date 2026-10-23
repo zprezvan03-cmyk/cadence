@@ -1,17 +1,15 @@
 /**
  * The lyrics dock: provider choice, offset, translation, romanization, typography, theme and
- * fullscreen. Mirrors the controls Better Lyrics exposes in its lyrics dock, rebuilt as Cadence
+ * Mirrors the controls Better Lyrics exposes in its lyrics dock, rebuilt as Cadence
  * React components. Written for Cadence.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ChevronDown,
   Download,
   FolderOpen,
   Languages,
-  Maximize2,
-  Minimize2,
   Minus,
   Plus,
   RefreshCw,
@@ -33,9 +31,11 @@ interface LyricsDockProps {
   onSaveSidecar: () => void;
   onChooseFile: () => void;
   syncLabel: string;
-  fullscreen: boolean;
-  onToggleFullscreen: () => void;
   busy: boolean;
+  /** Hover visibility: faded out and non-interactive while true. */
+  concealed?: boolean;
+  /** Reports whether a popover is open, so the controls stay visible while it is in use. */
+  onPopoverChange?: (open: boolean) => void;
 }
 
 export function LyricsDock({
@@ -49,15 +49,19 @@ export function LyricsDock({
   onSaveSidecar,
   onChooseFile,
   syncLabel,
-  fullscreen,
-  onToggleFullscreen,
   busy,
+  concealed = false,
+  onPopoverChange,
 }: LyricsDockProps) {
   const [panel, setPanel] = useState<"none" | "sources" | "appearance">("none");
   const [languageOpen, setLanguageOpen] = useState(false);
 
+  useEffect(() => {
+    onPopoverChange?.(panel !== "none" || languageOpen);
+  }, [panel, languageOpen, onPopoverChange]);
+
   return (
-    <div className="lyrics-dock" data-testid="lyrics-dock">
+    <div className={`lyrics-dock ${concealed ? "is-concealed" : ""}`} data-testid="lyrics-dock">
       <div className="dock-group dock-status" title={syncLabel} data-testid="sync-label">
         <span className={`sync-dot sync-${syncLabel.toLowerCase().replace(/\s+/g, "-")}`} />
         {syncLabel}
@@ -120,14 +124,6 @@ export function LyricsDock({
         </button>
         <button type="button" className="dock-icon" onClick={onSaveSidecar} title="Save lyrics next to the track">
           <Download size={16} />
-        </button>
-        <button
-          type="button"
-          className="dock-icon"
-          onClick={onToggleFullscreen}
-          title={fullscreen ? "Exit fullscreen lyrics (Esc)" : "Fullscreen lyrics"}
-        >
-          {fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
         </button>
       </div>
 

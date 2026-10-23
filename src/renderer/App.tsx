@@ -11,7 +11,6 @@ import { AlbumView, ArtistView, PlaylistView, SearchView } from "./features/libr
 import { HomeView } from "./features/library/HomeView";
 import { LibraryView } from "./features/library/LibraryView";
 import { LyricsView } from "./features/lyrics/LyricsView";
-import { NowPlaying } from "./features/player/NowPlaying";
 import { PlayerBar } from "./features/player/PlayerBar";
 import { QueuePanel } from "./features/player/QueuePanel";
 import { SettingsView } from "./features/settings/SettingsView";
@@ -83,7 +82,6 @@ export function App() {
         {!immersive ? <PlayerBar /> : null}
       </main>
       <QueuePanel />
-      <NowPlaying />
       <PlaylistPicker />
     </div>
   );

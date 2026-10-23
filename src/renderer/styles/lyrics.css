@@ -48,6 +48,274 @@
   inset: 0;
   height: 100vh;
   z-index: 55;
+  /* Artwork in the left column, lyrics in the right. The artwork's size follows the window height and
+     its top sits at the header's bottom edge, so no offsets are hardcoded. The body runs to the bottom
+     edge of the viewport in the right column; the footer overlays it as before. */
+  /* The artwork grows with the window, but stays clear of the controls at short heights. */
+  --fs-art-size: clamp(160px, min(36vh, 360px, calc(100vh - 2 * var(--fs-footer-height, 0px) - 100px)), 360px);
+  /* The artwork column and the lyrics column form one group, centred horizontally in the window. The
+     lyrics column is at most 860 px wide and keeps 48 px clear of each window edge. */
+  --fs-side-col: calc(var(--fs-art-size) + 48px);
+  --fs-lyrics-width: min(860px, calc(100vw - var(--fs-side-col) - 96px));
+  /* The bottom fade ends this far above the bottom edge. */
+  --fs-edge: 7vh;
+  display: grid;
+  grid-template-columns: var(--fs-side-col) var(--fs-lyrics-width);
+  grid-template-rows: auto minmax(0, 1fr);
+  justify-content: center;
+}
+
+.lyrics-view.is-fullscreen .lyrics-header {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+
+.lyrics-view.is-fullscreen .lyrics-body {
+  grid-column: 2;
+  grid-row: 2;
+  padding-left: 40px;
+  /* No right inset: the active line (at full scale) ends on the body's right edge, the same distance from
+     the window's right edge as the artwork's left margin. */
+  padding-right: 0;
+  /* Bottom fade: the lyrics fade out over 14vh, and the fade ends at the bottom margin (--fs-edge), so
+     the margin below the lyrics is empty. The top fade is the body's own. */
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    #000 14%,
+    #000 calc(100% - var(--fs-edge) - 14vh),
+    transparent calc(100% - var(--fs-edge))
+  );
+}
+
+/* The artwork and its title form one block in the left column, centred in the window. It spans both rows,
+   so its centre is the window's centre. Showing or hiding the controls does not move it. */
+.fs-side {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  align-self: center;
+  justify-self: start;
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  width: var(--fs-art-size);
+  margin-left: 0;
+}
+
+.fs-artwork .artwork-hero {
+  width: var(--fs-art-size);
+  height: var(--fs-art-size);
+  box-shadow: 0 40px 90px rgba(0, 0, 0, 0.65);
+}
+
+.fs-side .lyrics-heading {
+  margin-top: 22px;
+}
+
+/* The exit button sits in the header's top-right corner and takes no space in the header's flow. */
+.lyrics-view.is-fullscreen .fs-exit {
+  /* Fixed to the window, not to the header: the header only spans the centred group in wide layouts. */
+  position: fixed;
+  top: 26px;
+  right: 40px;
+  z-index: 3;
+  pointer-events: auto;
+}
+
+/* The header only holds the exit button and the label. It stacks above the body and the lyrics-off panel, so
+   the exit button is not covered by them, and it takes no pointer input itself. */
+.lyrics-view.is-fullscreen .lyrics-header {
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* Narrow windows: the lyrics take the full width and the artwork is left out, but the title stays at the
+   top. The heading block takes the first row, so it does not overlap the lyrics. */
+@media (max-width: 900px) {
+  .lyrics-view.is-fullscreen {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .lyrics-view.is-fullscreen .lyrics-header,
+  .lyrics-view.is-fullscreen .lyrics-body {
+    grid-column: 1;
+  }
+  .lyrics-view.is-fullscreen .lyrics-body {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+  .fs-side {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: start;
+    width: auto;
+    margin: 0;
+    padding: 18px 64px 4px 20px;
+  }
+  .fs-side .lyrics-heading {
+    margin-top: 0;
+  }
+  .fs-artwork {
+    display: none;
+  }
+  .lyrics-view.is-fullscreen .fs-exit {
+    top: 18px;
+    right: 20px;
+  }
+}
+
+/* Lyrics off in fullscreen: the artwork beside the track's title and controls. There is no lyrics footer
+   or dock. The hidden lyrics body stays mounted, so its clock and scroll position are kept, and it takes
+   no space in this layout. */
+.lyrics-view.is-fullscreen.is-lyrics-off {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.lyrics-view.is-fullscreen.is-lyrics-off .lyrics-header {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 22px 28px 6px;
+}
+
+.lyrics-view.is-fullscreen.is-lyrics-off .lyrics-body {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.fs-eyebrow {
+  margin: 0;
+}
+
+.fs-panel-layout {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  position: relative;
+  z-index: 2;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 5vw;
+  padding: 0 6vw 6vh;
+}
+
+.fs-panel-art {
+  justify-self: center;
+}
+
+.fs-panel-art .artwork-hero {
+  width: min(44vh, 420px);
+  height: min(44vh, 420px);
+  box-shadow: 0 40px 90px rgba(0, 0, 0, 0.65);
+}
+
+.fs-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  width: 100%;
+  max-width: 560px;
+  min-width: 0;
+}
+
+.fs-panel .lyrics-heading h1 {
+  font-size: clamp(26px, 3.2vw, 44px);
+}
+
+.fs-panel .lyrics-heading p {
+  font-size: 16px;
+}
+
+.fs-controls.is-panel {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  gap: 18px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+
+.fs-controls.is-panel .play-button {
+  width: 64px;
+  height: 64px;
+}
+
+.fs-panel-transport {
+  display: flex;
+  align-items: center;
+}
+
+.fs-panel-secondary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.fs-controls.is-panel .volume-group {
+  width: 200px;
+}
+
+.fs-controls.is-panel .volume-group input[type="range"].volume {
+  width: 150px;
+}
+
+@media (max-width: 900px) {
+  .lyrics-view.is-fullscreen.is-lyrics-off {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .lyrics-view.is-fullscreen.is-lyrics-off .lyrics-header,
+  .lyrics-view.is-fullscreen.is-lyrics-off .lyrics-body {
+    grid-column: 1;
+  }
+  .fs-panel-layout {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 0 20px 6vh;
+  }
+  .fs-panel-art {
+    display: none;
+  }
+}
+
+/* Footer: the fullscreen controls and the lyrics dock. On the normal page it is a plain column below the
+   lyrics body. In fullscreen it is pinned over the bottom of the body: the body runs to the bottom edge
+   of the viewport and the controls overlay it. The footer takes no pointer input of its own, so the
+   lyrics under the gaps stay clickable. Its children opt back in, and a hidden child (is-concealed) still
+   takes no input, because the is-concealed rules are more specific than this one. */
+.lyrics-footer {
+  display: flex;
+  flex-direction: column;
+}
+
+.lyrics-view.is-fullscreen .lyrics-footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.lyrics-footer > * {
+  pointer-events: auto;
+}
+
+/* The lyrics engine keeps the active line out of scroll-padding (the band it cannot read), so the band
+   is set to the controls' measured height and the line stays above them. */
+.lyrics-view.is-fullscreen .lyrics-body {
+  scroll-padding-bottom: var(--fs-footer-height, 0px);
+}
+
+/* Feedback toasts sit just above the fullscreen control stack instead of on top of it. */
+.lyrics-view.is-fullscreen .toast {
+  bottom: calc(var(--fs-footer-height, 0px) + 16px);
 }
 
 .app-shell.is-immersive .content-scroll {
@@ -75,7 +343,6 @@
   font-size: 13.5px;
 }
 
-.sync-pill,
 .dock-status {
   display: inline-flex;
   align-items: center;
@@ -84,11 +351,6 @@
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.7);
-  background: rgba(10, 10, 16, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  padding: 6px 11px;
-  border-radius: 999px;
-  backdrop-filter: blur(12px);
 }
 
 .sync-dot {
@@ -96,22 +358,6 @@
   height: 7px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.4);
-}
-
-.sync-word-synced + .sync-dot,
-.sync-pill.sync-word-synced,
-.sync-pill.sync-line-synced {
-  color: #eaf9f1;
-}
-
-.sync-pill.sync-word-synced {
-  border-color: rgba(53, 208, 127, 0.4);
-  background: rgba(53, 208, 127, 0.13);
-}
-
-.sync-pill.sync-line-synced {
-  border-color: rgba(120, 170, 255, 0.35);
-  background: rgba(120, 170, 255, 0.12);
 }
 
 .lyrics-body {
@@ -131,6 +377,15 @@
 
 .lyrics-body::-webkit-scrollbar {
   display: none;
+}
+
+/* Lyrics switched off in fullscreen. The renderer stays mounted and keeps its clock, scroll position
+   and sync; only its paint is hidden, so toggling back on resumes exactly where playback is. */
+.lyrics-body.is-hidden {
+  /* Opacity as well as visibility: the opacity guarantees nothing under the container is painted. */
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 braccato-lyrics {
@@ -171,10 +426,12 @@ braccato-lyrics {
   max-width: 560px;
   margin: 20px auto 40px;
   padding: 22px 24px;
-  background: rgba(12, 12, 18, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  /* Shader-backed: a light tint over the live Kawarp canvas, not an opaque black card. */
+  background: rgba(14, 14, 22, 0.26);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 16px;
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(22px) saturate(1.35);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -232,10 +489,118 @@ braccato-lyrics {
   width: fit-content;
   max-width: calc(100% - 40px);
   border-radius: 999px;
-  background: rgba(10, 10, 16, 0.62);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(20px);
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+  /* Shader-backed: the dock shows the live Kawarp background through its blur, not a black fill. */
+  background: rgba(14, 14, 22, 0.26);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(22px) saturate(1.35);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* Fullscreen audio controls, stacked above the lyrics dock. Same shader-backed glass as the dock. */
+.fs-controls {
+  position: relative;
+  z-index: 3;
+  width: min(940px, calc(100% - 40px));
+  margin: 0 auto 12px;
+  padding: 10px 22px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-radius: 22px;
+  background: rgba(14, 14, 22, 0.26);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(22px) saturate(1.35);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.fs-controls .seek-row {
+  gap: 10px;
+}
+
+.fs-controls .time {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.fs-controls-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.fs-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fs-group-end {
+  justify-content: flex-end;
+}
+
+.fs-controls .icon-button {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.fs-controls .icon-button:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #fff;
+}
+
+.fs-controls .icon-button.active,
+.fs-controls .icon-button.heart.active {
+  color: var(--accent-strong);
+}
+
+.fs-controls .volume-group {
+  width: 120px;
+}
+
+.fs-controls .volume-group input[type="range"].volume {
+  width: 80px;
+}
+
+/* Fullscreen hover visibility: opacity only. The hidden state also removes the controls from hit-testing and
+   the focus order; layout and position never change. Reduced motion is handled by the global rule. */
+.fs-controls,
+.lyrics-dock {
+  transition: opacity 250ms ease, visibility 250ms ease;
+}
+
+.fs-controls.is-concealed,
+.lyrics-dock.is-concealed {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.fs-lyrics-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 550;
+  color: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.fs-lyrics-toggle:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #fff;
+}
+
+.fs-lyrics-toggle.active {
+  background: var(--accent-soft);
+  border-color: rgba(255, 61, 113, 0.35);
+  color: #fff;
+}
+
+.fs-lyrics-toggle span {
+  min-width: 18px;
+  text-align: left;
 }
 
 .dock-group {
@@ -307,10 +672,11 @@ braccato-lyrics {
   overflow-y: auto;
   padding: 12px;
   border-radius: 16px;
-  background: rgba(16, 16, 23, 0.97);
-  border: 1px solid var(--border-strong);
-  box-shadow: var(--shadow-lg);
-  backdrop-filter: blur(24px);
+  /* Shader-backed like the dock; the text rows carry their own contrast. */
+  background: rgba(14, 14, 22, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(26px) saturate(1.35);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -475,5 +841,16 @@ braccato-lyrics {
   }
   .dock-button span {
     display: none;
+  }
+  .fs-controls {
+    padding: 8px 14px 6px;
+  }
+  .fs-controls-row {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+  }
+  .fs-group,
+  .fs-group-end {
+    justify-content: center;
   }
 }
