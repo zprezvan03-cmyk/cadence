@@ -1,17 +1,19 @@
 /**
  * The Now Playing page (route `lyrics`): the upstream Braccato renderer over the upstream Kawarp
  * shader background, with Cadence's dock, provider picker and translation controls. In fullscreen
- * it also carries the audio controls and the lyrics on/off toggle. Written for Cadence.
+ * it is the single Now Playing view: artwork on the left, lyrics on the right, and the audio controls
+ * and lyrics on/off toggle along the bottom. Written for Cadence.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Music4, RefreshCw, Search } from "lucide-react";
+import { Minimize2, Music4, RefreshCw, Search } from "lucide-react";
 import type { AppSettings, Track } from "../../../shared/types";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
 import { BraccatoLyrics } from "./BraccatoLyrics";
 import { LyricsDock } from "./LyricsDock";
 import { FullscreenControls } from "./FullscreenControls";
+import { Artwork } from "../../components/Artwork";
 import { useControlsHover } from "./useControlsHover";
 import { KawarpBackground } from "../shaders/KawarpBackground";
 import { useLyrics } from "./useLyrics";
@@ -117,11 +119,28 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
         playing={playing}
       />
 
+      {fullscreen ? (
+        <div className="fs-artwork">
+          <Artwork src={track?.artworkUrl} alt={track?.album ?? "Artwork"} size="hero" />
+        </div>
+      ) : null}
+
       <div className="lyrics-header">
         <div className="lyrics-heading">
           <h1>{track?.title ?? "Nothing playing"}</h1>
           <p>{track ? [track.artist, track.album].filter(Boolean).join(" · ") : "Pick a song from your library"}</p>
         </div>
+        {fullscreen ? (
+          <button
+            type="button"
+            className="icon-button fs-exit"
+            onClick={onToggleFullscreen}
+            aria-label="Exit fullscreen lyrics"
+            title="Exit fullscreen lyrics (Esc)"
+          >
+            <Minimize2 size={18} />
+          </button>
+        ) : null}
       </div>
 
       <div className={`lyrics-body ${lyricsVisible ? "" : "is-hidden"}`}>
@@ -202,8 +221,6 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
             onSaveSidecar={() => void handleSave()}
             onChooseFile={() => void lyrics.chooseFile()}
             syncLabel={syncLabel}
-            fullscreen={fullscreen}
-            onToggleFullscreen={onToggleFullscreen}
             busy={lyrics.status === "loading" || lyrics.translating || lyrics.romanizing}
             concealed={!controlsVisible}
             onPopoverChange={setDockPopoverOpen}

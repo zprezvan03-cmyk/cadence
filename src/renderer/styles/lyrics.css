@@ -48,6 +48,57 @@
   inset: 0;
   height: 100vh;
   z-index: 55;
+  /* Artwork in the left column, lyrics in the right. The artwork's size follows the window height and
+     its top sits at the header's bottom edge, so no offsets are hardcoded. The body runs to the bottom
+     edge of the viewport in the right column; the footer overlays it as before. */
+  --fs-art-size: min(30vh, 320px);
+  display: grid;
+  grid-template-columns: calc(var(--fs-art-size) + 80px) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.lyrics-view.is-fullscreen .lyrics-header {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.lyrics-view.is-fullscreen .lyrics-body {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.fs-artwork {
+  grid-column: 1;
+  grid-row: 2;
+  align-self: start;
+  justify-self: start;
+  position: relative;
+  z-index: 2;
+  margin-left: 40px;
+}
+
+.fs-artwork .artwork-hero {
+  width: var(--fs-art-size);
+  height: var(--fs-art-size);
+  box-shadow: 0 40px 90px rgba(0, 0, 0, 0.65);
+}
+
+.fs-exit {
+  flex-shrink: 0;
+}
+
+/* Narrow windows: the lyrics take the full width and the artwork is left out. */
+@media (max-width: 900px) {
+  .lyrics-view.is-fullscreen {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .lyrics-view.is-fullscreen .lyrics-header,
+  .lyrics-view.is-fullscreen .lyrics-body {
+    grid-column: 1;
+  }
+  .fs-artwork {
+    display: none;
+  }
 }
 
 /* Footer: the fullscreen controls and the lyrics dock. On the normal page it is a plain column below the

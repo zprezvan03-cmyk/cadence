@@ -572,17 +572,17 @@ const dock = await page.evaluate(() => {
 });
 check("lyrics-dock-visible", dock.present && dock.visible, JSON.stringify(dock));
 
-// Fullscreen buttons on the page: the top-of-page pill is gone and the source popover has none, so the
-// bottom dock button is the only one left.
+// Fullscreen buttons on the page: the top-of-page pill and the dock button are gone, so the player-bar
+// button is the only entry point. In fullscreen the player bar is hidden and only the exit button remains.
 const fullscreenButtonsOn = () =>
   page.evaluate(() =>
-    [...document.querySelectorAll(".lyrics-view button")]
+    [...document.querySelectorAll("button")]
       .filter(node => /fullscreen/i.test(`${node.title} ${node.getAttribute("aria-label") ?? ""} ${node.textContent}`))
       .map(node => node.title || node.textContent.trim())
   );
 const normalFullscreen = await fullscreenButtonsOn();
 check("top-fullscreen-removed", !(await page.$(".sync-pill")) && normalFullscreen.length === 1, JSON.stringify(normalFullscreen));
-check("bottom-fullscreen-only", normalFullscreen[0] === "Fullscreen lyrics", JSON.stringify(normalFullscreen));
+check("bottom-fullscreen-only", normalFullscreen.length === 1 && normalFullscreen[0].startsWith("Fullscreen lyrics"), JSON.stringify(normalFullscreen));
 
 await page.click('button[title="Lyrics source"]');
 await wait(300);
@@ -678,7 +678,7 @@ const wakeClick = async selector => {
   await page.click(selector);
 };
 
-await wakeClick('button[title="Fullscreen lyrics"]');
+await wakeClick('button[aria-label="Fullscreen lyrics"]');
 await wait(700);
 check("fullscreen-lyrics", Boolean(await page.$(".lyrics-view.is-fullscreen")), "immersive mode");
 
@@ -1077,7 +1077,7 @@ check(
 );
 
 // Re-enter fullscreen for the checks below.
-await wakeClick('button[title="Fullscreen lyrics"]');
+await wakeClick('button[aria-label="Fullscreen lyrics"]');
 await wait(700);
 check("fullscreen-reentry", Boolean(await page.$(".lyrics-view.is-fullscreen")), "fullscreen again");
 
@@ -1146,10 +1146,38 @@ const layoutAtSize = async (width, height) => {
     fills && padded && clear,
     `body bottom ${layout.body.bottom.toFixed(0)} of ${layout.viewport}, scroll-padding ${layout.scrollPaddingBottom}px vs controls ${(layout.viewport - layout.footerTop).toFixed(0)}px, active line bottom ${layout.activeBottom?.toFixed(0)} vs footer top ${layout.footerTop.toFixed(0)}`
   );
+  // Artwork: hidden at 900 px wide and below; otherwise on the left, clear of the lyrics and the controls.
+  const art = await page.evaluate(() => {
+    const node = document.querySelector(".fs-artwork");
+    if (!node) return { present: false };
+    const box = node.getBoundingClientRect();
+    const body = document.querySelector(".lyrics-body").getBoundingClientRect();
+    const header = document.querySelector(".lyrics-header").getBoundingClientRect();
+    return {
+      present: true,
+      visible: getComputedStyle(node).display !== "none" && box.width > 0,
+      left: box.left,
+      right: box.right,
+      top: box.top,
+      bottom: box.bottom,
+      bodyLeft: body.left,
+      headerBottom: header.bottom,
+      footerTop: Math.min(
+        document.querySelector('[data-testid="fullscreen-controls"]')?.getBoundingClientRect().top ?? Infinity,
+        document.querySelector('[data-testid="lyrics-dock"]')?.getBoundingClientRect().top ?? Infinity
+      ),
+    };
+  });
+  const artOk =
+    width <= 900
+      ? art.present && !art.visible
+      : art.present && art.visible && art.right <= art.bodyLeft && Math.abs(art.top - art.headerBottom) < 2 && art.bottom <= art.footerTop;
+  check(`fullscreen-artwork-${width}x${height}`, artOk, JSON.stringify(art));
 };
 await layoutAtSize(1280, 720);
 await layoutAtSize(800, 600);
 await layoutAtSize(1480, 900);
+await layoutAtSize(1100, 700);
 await page.evaluate(() => document.querySelector("audio").play());
 await wait(300);
 
@@ -1185,7 +1213,7 @@ check(
 );
 
 // Restore the defaults (lyrics on, repeat off) for the rest of the run.
-await wakeClick('button[title="Fullscreen lyrics"]');
+await wakeClick('button[aria-label="Fullscreen lyrics"]');
 await wait(500);
 await wakeClick('[data-testid="fullscreen-lyrics-toggle"]');
 await wait(300);
@@ -1194,17 +1222,37 @@ await wait(200);
 await page.keyboard.press("Escape");
 await wait(400);
 
-/* ----------------------------------------------------------- now playing */
+/* ------------------------------------------- one fullscreen entry point */
 
-await page.click('button[aria-label="Now playing"]').catch(async () => {
-  const buttons = await page.$$(".player-right .icon-button");
-  await buttons[buttons.length - 1].click();
-});
+// From another page, the player bar's fullscreen button opens the Now Playing view in fullscreen.
+await page.click('aside.sidebar button[title="Settings"]');
+await page.waitForSelector('[data-testid="settings-view"]');
+await wait(300);
+await page.click('button[aria-label="Fullscreen lyrics"]');
+await page.waitForSelector(".lyrics-view.is-fullscreen", { timeout: 5000 }).catch(() => null);
 await wait(900);
-check("now-playing-view", Boolean(await page.$(".now-playing")), await page.$eval(".now-playing .np-text h1", n => n.textContent.trim()));
-await page.screenshot({ path: join(shotDir, "06-now-playing.png") });
+const fromSettings = await page.evaluate(() => ({
+  hash: location.hash,
+  fullscreen: Boolean(document.querySelector(".lyrics-view.is-fullscreen")),
+  playerBar: Boolean(document.querySelector('[data-testid="player-bar"]')),
+  overlay: Boolean(document.querySelector('[data-testid="now-playing"]')),
+}));
+check(
+  "player-button-enters-fullscreen",
+  fromSettings.hash === "#/lyrics" && fromSettings.fullscreen && !fromSettings.playerBar && !fromSettings.overlay,
+  JSON.stringify(fromSettings)
+);
+await page.screenshot({ path: join(shotDir, "06-fullscreen-from-player.png") });
+
+// The N key is the same single toggle: it leaves fullscreen and enters it again.
 await page.keyboard.press("Escape");
 await wait(400);
+await page.keyboard.press("n");
+await wait(400);
+check("n-key-toggles-fullscreen", Boolean(await page.$(".lyrics-view.is-fullscreen")), "N entered fullscreen");
+await page.keyboard.press("Escape");
+await wait(400);
+check("fullscreen-exit-after-n", !(await page.$(".lyrics-view.is-fullscreen")), "Escape left fullscreen");
 
 /* -------------------------------------------------------------- settings */
 

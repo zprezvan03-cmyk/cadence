@@ -212,11 +212,9 @@ export function useBootstrap(): void {
           break;
         case "n":
         case "N":
-          ui.toggleNowPlaying();
-          break;
         case "f":
         case "F":
-          ui.setFullscreenLyrics(!ui.fullscreenLyrics);
+          ui.toggleFullscreenLyrics();
           break;
         case "s":
         case "S":
@@ -228,7 +226,6 @@ export function useBootstrap(): void {
           break;
         case "Escape":
           if (ui.fullscreenLyrics) ui.setFullscreenLyrics(false);
-          if (ui.nowPlayingOpen) ui.toggleNowPlaying(false);
           break;
         default:
           break;

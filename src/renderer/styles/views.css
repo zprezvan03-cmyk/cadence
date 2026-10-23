@@ -798,13 +798,4 @@
   .col-album {
     display: none;
   }
-  .now-playing-body {
-    grid-template-columns: 1fr;
-    gap: 24px;
-    padding: 12px 8vw 40px;
-  }
-  .now-playing-art .artwork-hero {
-    width: min(34vh, 300px);
-    height: min(34vh, 300px);
-  }
 }

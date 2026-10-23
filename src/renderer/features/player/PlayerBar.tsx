@@ -15,7 +15,7 @@ export function PlayerBar() {
   const queueOpen = useUi(state => state.queueOpen);
   const navigate = useUi(state => state.navigate);
   const setFavorite = useLibrary(state => state.setFavorite);
-  const toggleNowPlaying = useUi(state => state.toggleNowPlaying);
+  const toggleFullscreenLyrics = useUi(state => state.toggleFullscreenLyrics);
 
   return (
     <footer className={`player-bar ${track ? "" : "is-empty"}`} data-testid="player-bar">
@@ -69,9 +69,9 @@ export function PlayerBar() {
         <button
           type="button"
           className="icon-button"
-          aria-label="Now playing"
-          title="Now playing (N)"
-          onClick={() => toggleNowPlaying()}
+          aria-label="Fullscreen lyrics"
+          title="Fullscreen lyrics (F)"
+          onClick={() => toggleFullscreenLyrics()}
         >
           <Maximize2 size={17} />
         </button>

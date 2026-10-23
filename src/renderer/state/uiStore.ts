@@ -15,7 +15,6 @@ export type Route =
 interface UiState {
   route: Route;
   queueOpen: boolean;
-  nowPlayingOpen: boolean;
   fullscreenLyrics: boolean;
   searchFocused: boolean;
   playlistPicker: { trackIds: number[] } | null;
@@ -24,7 +23,7 @@ interface UiState {
   goBack: () => void;
   goForward: () => void;
   toggleQueue: (open?: boolean) => void;
-  toggleNowPlaying: (open?: boolean) => void;
+  toggleFullscreenLyrics: () => void;
   setFullscreenLyrics: (value: boolean) => void;
   setSearchFocused: (value: boolean) => void;
   openPlaylistPicker: (trackIds: number[]) => void;
@@ -89,7 +88,6 @@ export function hashToRoute(hash: string): Route {
 export const useUi = create<UiState>()((set, get) => ({
   route: typeof location !== "undefined" ? hashToRoute(location.hash) : { name: "home" },
   queueOpen: false,
-  nowPlayingOpen: false,
   fullscreenLyrics: false,
   searchFocused: false,
   playlistPicker: null,
@@ -102,7 +100,17 @@ export const useUi = create<UiState>()((set, get) => ({
   goBack: () => history.back(),
   goForward: () => history.forward(),
   toggleQueue: open => set(state => ({ queueOpen: open ?? !state.queueOpen })),
-  toggleNowPlaying: open => set(state => ({ nowPlayingOpen: open ?? !state.nowPlayingOpen })),
+  // The single fullscreen entry point: fullscreen lives on the Now Playing (lyrics) route, so it
+  // navigates there first when entered from another page.
+  toggleFullscreenLyrics: () => {
+    const state = get();
+    if (state.fullscreenLyrics) {
+      set({ fullscreenLyrics: false });
+      return;
+    }
+    if (state.route.name !== "lyrics") state.navigate({ name: "lyrics" });
+    set({ fullscreenLyrics: true });
+  },
   setFullscreenLyrics: value => set({ fullscreenLyrics: value }),
   setSearchFocused: value => set({ searchFocused: value }),
   openPlaylistPicker: trackIds => set({ playlistPicker: { trackIds } }),
