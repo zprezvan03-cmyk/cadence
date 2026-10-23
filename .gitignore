@@ -1,0 +1,12 @@
+node_modules/
+out/
+dist/
+release/
+.vite/
+*.log
+.DS_Store
+coverage/
+test-results/
+.e2e-artifacts/
+*.tsbuildinfo
+.artifacts/
