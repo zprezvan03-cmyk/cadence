@@ -17,11 +17,14 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:ui": "npm run build && npx vite-node tests/browser/build-library.ts && node tests/browser/run-app.mjs",
+    "test:renderer": "npm run build && node tests/browser/run-harness.mjs",
+    "test:fixtures": "python3 tests/fixtures/generate-audio.py",
     "smoke": "node scripts/smoke.mjs",
     "package:dir": "npm run build && electron-builder --dir",
     "package:linux": "npm run build && electron-builder --linux AppImage",
     "package:win": "npm run build && electron-builder --win --x64",
-    "package:win:portable": "npm run build && node scripts/make-windows-portable.mjs"
+    "package:win:portable": "node scripts/make-windows-portable.mjs"
   },
   "dependencies": {
     "@braccato/core": "1.16.11",
