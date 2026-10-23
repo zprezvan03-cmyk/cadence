@@ -77,6 +77,18 @@ export async function serveFile(path: string, request: Request): Promise<Respons
 
   const contentType = contentTypeFor(path);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
+  if (request.method === "HEAD") {
+    return new Response(null, {
+      status: 200,
+      headers: {
+        ...CORS_HEADERS,
+        "Content-Type": contentType,
+        "Content-Length": String(stat.size),
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "no-store",
+      },
+    });
+  }
 
   const range = parseRange(request.headers.get("Range"), stat.size);
   if (range) {

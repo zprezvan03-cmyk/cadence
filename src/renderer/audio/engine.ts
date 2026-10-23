@@ -16,7 +16,13 @@ import type { DynamicMultipliers } from "../../shared/upstream/shaders/gradientS
 export interface AudioEngineEvents {
   time: { position: number; duration: number; buffered: number };
   state: { playing: boolean; buffering: boolean; ended: boolean };
-  error: { code: number | null; message: string; fatal: boolean };
+  error: {
+    code: number | null;
+    message: string;
+    mediaMessage?: string | null;
+    src?: string;
+    fatal: boolean;
+  };
   metadata: { duration: number };
   volume: { volume: number; muted: boolean };
   rate: { rate: number };
@@ -95,8 +101,10 @@ export class AudioEngine {
     });
     element.addEventListener("error", () => {
       const code = element.error?.code ?? null;
+      const mediaMessage = element.error?.message || null;
+      const src = element.currentSrc || element.getAttribute("src") || "";
       const message = code ? ERROR_MESSAGES[code] ?? "Unknown playback error" : "Playback failed";
-      this.emit("error", { code, message, fatal: true });
+      this.emit("error", { code, message, mediaMessage, src, fatal: true });
       this.emit("state", { playing: false, buffering: false, ended: false });
       this.stopFrameLoop();
     });
@@ -246,9 +254,13 @@ export class AudioEngine {
       // A rejected play() carries the element's own media error code when the source is at fault
       // (NotSupportedError for an undecodable file); keep it so callers can explain the failure.
       const mediaCode = this.element.error?.code ?? null;
+      const mediaMessage = this.element.error?.message || null;
+      const src = this.element.currentSrc || this.element.getAttribute("src") || "";
       this.emit("error", {
         code: mediaCode,
         message: (error as Error).message || "Playback was blocked",
+        mediaMessage,
+        src,
         fatal: mediaCode !== null && mediaCode >= 3,
       });
     }

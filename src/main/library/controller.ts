@@ -11,6 +11,7 @@ import type {
   Track,
 } from "../../shared/types";
 import type { MediaAllowlist } from "../protocol";
+import { isPathInside } from "../media/allowlist";
 import { scanLibrary } from "./scanner";
 import { LibraryStore } from "./store";
 
@@ -57,7 +58,7 @@ export class LibraryController extends EventEmitter {
   }
 
   private syncAllowlist(): void {
-    for (const folder of this.store.getFolders()) this.allowlist.addRoot(folder);
+    this.allowlist.setRoots([this.artworkDirectory, ...this.store.getFolders()]);
   }
 
   getProgress(): ScanProgress {
@@ -94,11 +95,12 @@ export class LibraryController extends EventEmitter {
 
   async removeFolder(folder: string): Promise<void> {
     this.store.removeFolder(folder);
+    this.syncAllowlist();
     const remaining = this.store.getFolders();
     const stale = new Set(
       this.store
         .getTracks()
-        .filter(track => track.path.startsWith(folder + "/") || track.path.startsWith(folder + "\\"))
+        .filter(track => isPathInside(folder, track.path) && track.path !== folder)
         .map(track => track.path)
     );
     if (remaining.length === 0) {
