@@ -96,10 +96,86 @@ export function applyTranslations(
 
 export function applyRomanization(lyrics: readonly Lyric[], romanizations: readonly (string | null)[]): Lyric[] {
   return lyrics.map((line, index) => {
+    // Romanization the line already carries came from the lyrics file itself (e.g. a TTML
+    // transliteration) and always wins: generated text only fills lines that have none, and an
+    // empty generated result never erases a supplied one. Upstream resolves it the same way —
+    // `item.romanization` first, batch generation only for lines without one.
+    if (line.romanization?.trim()) return line;
     const romanized = romanizations[index];
     if (!romanized || romanized.trim().length === 0) return line;
     return { ...line, romanization: romanized };
   });
+}
+
+/**
+ * Indexes of lines that still need generated romanization: sung lines whose lyrics file supplied
+ * none. Lines are identified by their position in the parsed array — the same association the
+ * parser itself used when it attached file transliterations by line key at parse time.
+ */
+export function romanizationGaps(lyrics: readonly Lyric[]): number[] {
+  const gaps: number[] = [];
+  lyrics.forEach((line, index) => {
+    if (line.isInstrumental || !line.words?.trim()) return;
+    if (!line.romanization?.trim()) gaps.push(index);
+  });
+  return gaps;
+}
+
+/** Scatters generated results (aligned to `indexes`, e.g. from {@link romanizationGaps}) back into a full-length per-line array. */
+export function scatterRomanizations(
+  lineCount: number,
+  indexes: readonly number[],
+  generated: readonly (string | null)[]
+): (string | null)[] {
+  const scattered: (string | null)[] = Array.from({ length: lineCount }, () => null);
+  indexes.forEach((lineIndex, resultIndex) => {
+    if (lineIndex >= 0 && lineIndex < lineCount) scattered[lineIndex] = generated[resultIndex] ?? null;
+  });
+  return scattered;
+}
+
+/**
+ * Removes only the translation decoration, leaving romanization, words and timings untouched.
+ * Returns the input array itself when no line carries a translation, so callers can bail out on
+ * identity instead of rebuilding the rendered lines for nothing.
+ */
+export function stripTranslations(lyrics: readonly Lyric[]): Lyric[] {
+  if (!lyrics.some(line => line.translation || line.translations)) return lyrics as Lyric[];
+  return lyrics.map(line => {
+    if (!line.translation && !line.translations) return line;
+    const { translation: _translation, translations: _translations, ...rest } = line;
+    return rest as Lyric;
+  });
+}
+
+/** Removes only the romanization decoration. Same identity contract as {@link stripTranslations}. */
+export function stripRomanization(lyrics: readonly Lyric[]): Lyric[] {
+  if (!lyrics.some(line => line.romanization)) return lyrics as Lyric[];
+  return lyrics.map(line => {
+    if (!line.romanization) return line;
+    const { romanization: _romanization, ...rest } = line;
+    return rest as Lyric;
+  });
+}
+
+/**
+ * Removes generated romanization while restoring the romanization each line's own lyrics file
+ * supplied (`local`, the parsed lines `lyrics` was decorated from). The auto-romanize toggle gates
+ * generation only; file-supplied romanization is not the toggle's to remove. Lines are matched by
+ * position, the association every decoration pass in this module already uses. Returns the input
+ * array itself when every line already matches its local state.
+ */
+export function stripGeneratedRomanization(lyrics: readonly Lyric[], local: readonly Lyric[]): Lyric[] {
+  let changed = false;
+  const result = lyrics.map((line, index) => {
+    const localRomanization = local[index]?.romanization?.trim() ? local[index].romanization : undefined;
+    if ((line.romanization ?? undefined) === localRomanization) return line;
+    changed = true;
+    if (localRomanization) return { ...line, romanization: localRomanization };
+    const { romanization: _romanization, ...rest } = line;
+    return rest as Lyric;
+  });
+  return changed ? result : (lyrics as Lyric[]);
 }
 
 export function lyricsToPlainText(lyrics: readonly Lyric[]): string {

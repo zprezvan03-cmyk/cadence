@@ -178,6 +178,8 @@ await page.evaluateOnNewDocument(
         themeId: "default",
         customThemeCss: "",
         fontSizeRem: 1.6,
+        translationFontSizePx: 32,
+        romanizationFontSizePx: 26,
         fontWeight: 700,
         lineHeight: 1.45,
         activeOpacity: 1,
@@ -364,7 +366,7 @@ await page.evaluateOnNewDocument(
           targetLanguage: request.targetLanguage,
           provider: "harness",
         }),
-        romanize: async request => ({ romanizations: request.lines.map(() => null) }),
+        romanize: async request => ({ romanizations: request.lines.map(line => `[romanized] ${line}`) }),
         saveSidecar: async () => "/harness/lyrics.lrc",
       },
       player: {
@@ -663,6 +665,229 @@ const pausedSeek = (await audioState()).paused;
 console.log("DEBUG paused-seek", pausedSeek, JSON.stringify({ atOne, atFive }));
 check("lyrics-follow-seek", (atOne.active ?? "").includes("Word") && (atFive.active ?? "").includes("Last"), `1.0s → ${JSON.stringify(atOne.active)}, 4.9s → ${JSON.stringify(atFive.active)}`);
 await page.evaluate(() => document.querySelector("audio").pause());
+
+/* ------------------------------------------- inline translation / romanization */
+
+// Translation is enabled in the harness settings and the stub translator prefixes each line, so
+// every line must carry its translation as a secondary line inside the line itself (Better Lyrics
+// style) — never as extra lyric entries after the list.
+const readDecorations = () =>
+  page.evaluate(() => {
+    const host = document.querySelector("braccato-lyrics");
+    const lines = [...(host?.querySelectorAll(".blyrics--line") ?? [])];
+    return {
+      lineCount: lines.length,
+      perLine: lines.map(line => ({
+        childClasses: [...line.children].map(node =>
+          node.classList.contains("blyrics--romanized")
+            ? "romanized"
+            : node.classList.contains("blyrics--translated")
+              ? "translated"
+              : node.classList.contains("blyrics-line-main")
+                ? "main"
+                : node.className
+        ),
+        romanized: line.querySelector(":scope > .blyrics--romanized")?.textContent?.trim() ?? null,
+        translated: line.querySelector(":scope > .blyrics--translated")?.textContent?.trim() ?? null,
+      })),
+      stray: [...(host?.querySelectorAll(".blyrics--translated, .blyrics--romanized") ?? [])].filter(
+        node => !node.closest(".blyrics--line")
+      ).length,
+    };
+  });
+await page.waitForFunction(
+  () => document.querySelectorAll("braccato-lyrics .blyrics--translated").length >= 4,
+  { timeout: 10_000 }
+).catch(() => {});
+const translatedState = await readDecorations();
+check(
+  "translation-inline-under-line",
+  translatedState.lineCount === 4 &&
+    translatedState.perLine.every((line, index) => line.translated === `[translated] ${["Word level timings arrive", "Every single word lights", "Karaoke follows the clock", "Last line of the song"][index]}`) &&
+    translatedState.perLine.every(line => line.childClasses[0] === "main" && line.childClasses.at(-1) === "translated") &&
+    translatedState.stray === 0,
+  JSON.stringify(translatedState)
+);
+
+// Toggling romanization on adds a romanized line above the translation in the same line group;
+// toggling it back off removes only the romanization.
+await page.click('[data-testid="lyrics-dock"] button[title="Romanize lyrics"]');
+await page.waitForFunction(
+  () => document.querySelectorAll("braccato-lyrics .blyrics--romanized").length >= 4,
+  { timeout: 10_000 }
+).catch(() => {});
+const romanizedState = await readDecorations();
+check(
+  "romanization-inline-above-translation",
+  romanizedState.lineCount === 4 &&
+    romanizedState.perLine.every(line => (line.romanized ?? "").startsWith("[romanized] ")) &&
+    romanizedState.perLine.every(
+      line =>
+        line.childClasses.indexOf("romanized") > 0 &&
+        line.childClasses.indexOf("romanized") < line.childClasses.indexOf("translated")
+    ) &&
+    romanizedState.stray === 0,
+  JSON.stringify(romanizedState)
+);
+await page.click('[data-testid="lyrics-dock"] button[title="Romanize lyrics"]');
+await page.waitForFunction(
+  () => document.querySelectorAll("braccato-lyrics .blyrics--romanized").length === 0,
+  { timeout: 10_000 }
+).catch(() => {});
+const romanizationOffState = await readDecorations();
+check(
+  "romanization-toggle-off-keeps-translation",
+  romanizationOffState.perLine.every(line => line.romanized === null && (line.translated ?? "").startsWith("[translated] ")),
+  JSON.stringify(romanizationOffState)
+);
+
+/* --------------------------- translation / romanization font sizes */
+
+// One pair of settings behind both the Styles (dock) sliders and the Settings sliders. The
+// renderer reads the sizes from the theme CSS, so they apply live, independently, and the
+// original lines never move.
+const decoFontSizes = () =>
+  page.evaluate(() => {
+    const px = selector => {
+      const node = document.querySelector(selector);
+      return node ? parseFloat(getComputedStyle(node).fontSize) : null;
+    };
+    return {
+      main: px(".blyrics--line .blyrics-line-main"),
+      translated: px("braccato-lyrics .blyrics--translated"),
+      romanized: px("braccato-lyrics .blyrics--romanized"),
+    };
+  });
+const setRange = (selector, value) =>
+  page.$eval(
+    selector,
+    (input, v) => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(input, String(v));
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    },
+    value
+  );
+const readSettingsRange = label =>
+  page.evaluate(text => {
+    const row = [...document.querySelectorAll(".range-row")].find(
+      node => node.querySelector("strong")?.textContent === text
+    );
+    return {
+      value: row?.querySelector('input[type="range"]')?.value ?? null,
+      output: row?.querySelector("output")?.textContent ?? null,
+    };
+  }, label);
+const setSettingsRange = (label, value) =>
+  page.evaluate(
+    (text, v) => {
+      const row = [...document.querySelectorAll(".range-row")].find(
+        node => node.querySelector("strong")?.textContent === text
+      );
+      const input = row?.querySelector('input[type="range"]');
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(input, String(v));
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    },
+    label,
+    value
+  );
+
+await page.click('[data-testid="lyrics-dock"] button[title="Romanize lyrics"]');
+await page.waitForFunction(() => document.querySelectorAll("braccato-lyrics .blyrics--romanized").length >= 4, {
+  timeout: 10_000,
+}).catch(() => {});
+const defaultSizes = await decoFontSizes();
+check(
+  "secondary-font-size-defaults",
+  defaultSizes.translated === 32 && defaultSizes.romanized === 26,
+  JSON.stringify(defaultSizes)
+);
+
+await page.click('[data-testid="lyrics-dock"] button[title="Lyrics appearance"]');
+await page.waitForSelector('.dock-appearance input[aria-label="Translation Font Size"]');
+await setRange('.dock-appearance input[aria-label="Translation Font Size"]', 18);
+await wait(400);
+const translationSized = await decoFontSizes();
+check(
+  "translation-font-size-live-and-independent",
+  translationSized.translated === 18 &&
+    translationSized.romanized === defaultSizes.romanized &&
+    translationSized.main === defaultSizes.main,
+  `before=${JSON.stringify(defaultSizes)} after=${JSON.stringify(translationSized)}`
+);
+await setRange('.dock-appearance input[aria-label="Romanization Font Size"]', 14);
+await wait(400);
+const romanizationSized = await decoFontSizes();
+check(
+  "romanization-font-size-live-and-independent",
+  romanizationSized.romanized === 14 && romanizationSized.translated === 18 && romanizationSized.main === defaultSizes.main,
+  JSON.stringify(romanizationSized)
+);
+const persistedSizes = await page.evaluate(
+  () => JSON.parse(localStorage.getItem("cadence.harness.settings.v1") ?? "{}")?.lyrics ?? {}
+);
+check(
+  "secondary-font-sizes-persisted",
+  persistedSizes.translationFontSizePx === 18 && persistedSizes.romanizationFontSizePx === 14,
+  JSON.stringify(persistedSizes)
+);
+
+// Fullscreen renders through the same theme, so the configured sizes hold there too.
+await page.click('button[aria-label="Fullscreen lyrics"]');
+await page.waitForSelector(".lyrics-view.is-fullscreen", { timeout: 5000 }).catch(() => null);
+await wait(600);
+const fullscreenSizes = await decoFontSizes();
+check(
+  "secondary-font-sizes-in-fullscreen",
+  fullscreenSizes.translated === 18 && fullscreenSizes.romanized === 14,
+  JSON.stringify(fullscreenSizes)
+);
+await page.keyboard.press("Escape");
+await wait(500);
+
+// Settings shows the same values the Styles sliders set, and driving it from there lands back
+// on the lyrics.
+await page.click('aside.sidebar button[title="Settings"]');
+await page.waitForSelector('[data-testid="settings-view"]');
+await wait(400);
+const settingsTranslation = await readSettingsRange("Translation Font Size");
+const settingsRomanization = await readSettingsRange("Romanization Font Size");
+check(
+  "font-size-settings-mirror-styles",
+  settingsTranslation.value === "18" &&
+    settingsTranslation.output === "18 px" &&
+    settingsRomanization.value === "14" &&
+    settingsRomanization.output === "14 px",
+  `translation=${JSON.stringify(settingsTranslation)} romanization=${JSON.stringify(settingsRomanization)}`
+);
+await setSettingsRange("Translation Font Size", 22);
+await wait(300);
+await page.evaluate(() => {
+  const item = [...document.querySelectorAll("aside.sidebar .nav-item")].find(node =>
+    node.textContent.includes("Now Playing")
+  );
+  item?.click();
+});
+await page.waitForSelector(".lyrics-view", { timeout: 10_000 }).catch(() => null);
+await wait(600);
+const settingsDriven = await decoFontSizes();
+check(
+  "settings-font-size-drives-lyrics",
+  settingsDriven.translated === 22 && settingsDriven.romanized === 14,
+  JSON.stringify(settingsDriven)
+);
+
+// Restore the defaults and the pre-section dock state for the checks that follow.
+await page.click('[data-testid="lyrics-dock"] button[title="Lyrics appearance"]');
+await page.waitForSelector('.dock-appearance input[aria-label="Translation Font Size"]');
+await setRange('.dock-appearance input[aria-label="Translation Font Size"]', 32);
+await setRange('.dock-appearance input[aria-label="Romanization Font Size"]', 26);
+await page.click('[data-testid="lyrics-dock"] button[title="Lyrics appearance"]');
+await page.click('[data-testid="lyrics-dock"] button[title="Romanize lyrics"]');
+await page.waitForFunction(() => document.querySelectorAll("braccato-lyrics .blyrics--romanized").length === 0, {
+  timeout: 10_000,
+}).catch(() => {});
 
 /* ------------------------------------------------------- unified fullscreen */
 
@@ -1456,6 +1681,18 @@ const fontSize = await page.evaluate(() => {
   };
 });
 check("settings-survive-reload", fontSize.stored === 2.4 && fontSize.slider === "2.4", `stored=${fontSize.stored}, slider=${fontSize.slider}, shown=${fontSize.output}`);
+const reloadedSecondary = {
+  translation: await readSettingsRange("Translation Font Size"),
+  romanization: await readSettingsRange("Romanization Font Size"),
+};
+check(
+  "secondary-font-sizes-survive-reload",
+  reloadedSecondary.translation.value === "32" &&
+    reloadedSecondary.translation.output === "32 px" &&
+    reloadedSecondary.romanization.value === "26" &&
+    reloadedSecondary.romanization.output === "26 px",
+  `translation=${JSON.stringify(reloadedSecondary.translation)} romanization=${JSON.stringify(reloadedSecondary.romanization)}`
+);
 
 /* --------------------------------------------------------------- the end */
 

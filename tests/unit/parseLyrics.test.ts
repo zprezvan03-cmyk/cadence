@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { detectSyncType, parseLyricsText } from "../../src/renderer/features/lyrics/parseLyrics";
+import {
+  applyRomanization,
+  applyTranslations,
+  detectSyncType,
+  parseLyricsText,
+  romanizationGaps,
+  scatterRomanizations,
+  stripGeneratedRomanization,
+  stripRomanization,
+  stripTranslations,
+} from "../../src/renderer/features/lyrics/parseLyrics";
 
 const LINE_LRC = "[ti:Test]\n[00:01.00]First line\n[00:03.50]Second line\n[00:06.00]Third line";
 const RICH_LRC = "[00:01.00]<00:01.00>Word <00:01.30>level <00:01.70>sync\n[00:04.00]<00:04.00>Second <00:04.40>line";
@@ -57,5 +67,167 @@ describe("parseLyricsText", () => {
     const parsed = parseLyricsText("", 3_000);
     expect(parsed.lyrics).toEqual([]);
     expect(parsed.syncType).toBe("none");
+  });
+});
+
+describe("lyric decorations", () => {
+  const base = () => parseLyricsText(RICH_LRC, 8_000).lyrics;
+
+  it("attaches each translation to its own line without touching timing or parts", () => {
+    const lyrics = base();
+    const decorated = applyTranslations(lyrics, ["First in English", null], "en");
+    expect(decorated[0].translation).toEqual({ text: "First in English", lang: "en" });
+    expect(decorated[0].translations).toEqual({ en: "First in English" });
+    expect(decorated[0].startTimeMs).toBe(lyrics[0].startTimeMs);
+    expect(decorated[0].parts).toBe(lyrics[0].parts);
+    // A missing translation leaves the line itself untouched — no placeholder decoration.
+    expect(decorated[1]).toBe(lyrics[1]);
+  });
+
+  it("attaches each romanization to its own line and skips blank results", () => {
+    const lyrics = base();
+    const decorated = applyRomanization(lyrics, ["", "daini rain"]);
+    expect(decorated[0]).toBe(lyrics[0]);
+    expect(decorated[1].romanization).toBe("daini rain");
+    expect(decorated).toHaveLength(lyrics.length);
+  });
+
+  it("keeps translation and romanization on the same line whichever pass runs second", () => {
+    const lyrics = base();
+    const translationFirst = applyRomanization(
+      applyTranslations(lyrics, ["First in English", "Second in English"], "en"),
+      ["fāsuto", "sekando"]
+    );
+    const romanizationFirst = applyTranslations(
+      applyRomanization(lyrics, ["fāsuto", "sekando"]),
+      ["First in English", "Second in English"],
+      "en"
+    );
+    for (const decorated of [translationFirst, romanizationFirst]) {
+      expect(decorated[0].translation?.text).toBe("First in English");
+      expect(decorated[0].romanization).toBe("fāsuto");
+      expect(decorated[1].translation?.text).toBe("Second in English");
+      expect(decorated[1].romanization).toBe("sekando");
+      // Decorations never become standalone lyric entries.
+      expect(decorated).toHaveLength(lyrics.length);
+    }
+  });
+
+  it("strip helpers remove only their own decoration", () => {
+    const decorated = applyRomanization(
+      applyTranslations(base(), ["First in English", "Second in English"], "en"),
+      ["fāsuto", "sekando"]
+    );
+    const noTranslation = stripTranslations(decorated);
+    expect(noTranslation[0].translation).toBeUndefined();
+    expect(noTranslation[0].translations).toBeUndefined();
+    expect(noTranslation[0].romanization).toBe("fāsuto");
+    expect(noTranslation[0].words).toBe(decorated[0].words);
+
+    const noRomanization = stripRomanization(decorated);
+    expect(noRomanization[0].romanization).toBeUndefined();
+    expect(noRomanization[0].translation?.text).toBe("First in English");
+
+    const bare = stripTranslations(noRomanization);
+    expect(bare[0].translation).toBeUndefined();
+    expect(bare[0].romanization).toBeUndefined();
+    expect(bare[0].startTimeMs).toBe(decorated[0].startTimeMs);
+  });
+
+  it("strip helpers return the same array when there is nothing to strip", () => {
+    const lyrics = base();
+    expect(stripTranslations(lyrics)).toBe(lyrics);
+    expect(stripRomanization(lyrics)).toBe(lyrics);
+  });
+});
+
+describe("local file romanization priority", () => {
+  // A TTML sidecar whose transliterations cover only the first two lines.
+  const TTML = `<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" xml:lang="ja">
+  <head>
+    <metadata>
+      <ttm:agent type="person" xml:id="v1"/>
+      <itunes:metadata>
+        <transliterations>
+          <transliteration xml:lang="ja-Latn">
+            <text for="L1">sakura no hana ga saku</text>
+            <text for="L2">sora wa aoi</text>
+          </transliteration>
+        </transliterations>
+      </itunes:metadata>
+    </metadata>
+  </head>
+  <body dur="00:10.000">
+    <div>
+      <p begin="00:00.500" end="00:02.500" itunes:key="L1" ttm:agent="v1">桜の花が咲く</p>
+      <p begin="00:03.000" end="00:05.000" itunes:key="L2" ttm:agent="v1">空は青い</p>
+      <p begin="00:05.500" end="00:07.500" itunes:key="L3" ttm:agent="v1">風が吹く</p>
+    </div>
+  </body>
+</tt>`;
+  const local = () => parseLyricsText(TTML, 10_000).lyrics;
+
+  it("parses file-supplied romanization onto the lines it belongs to", () => {
+    const lyrics = local();
+    expect(lyrics).toHaveLength(3);
+    expect(lyrics[0].romanization).toBe("sakura no hana ga saku");
+    expect(lyrics[1].romanization).toBe("sora wa aoi");
+    expect(lyrics[2].romanization).toBeUndefined();
+  });
+
+  it("never overwrites local romanization with generated text, and fills only the gaps", () => {
+    const lyrics = local();
+    const generated = ["AUTO one", "AUTO two", "AUTO three"];
+    const merged = applyRomanization(lyrics, generated);
+    expect(merged[0]).toBe(lyrics[0]);
+    expect(merged[1]).toBe(lyrics[1]);
+    expect(merged[0].romanization).toBe("sakura no hana ga saku");
+    expect(merged[2].romanization).toBe("AUTO three");
+    // Reprocessing with a different generated batch changes nothing.
+    const reprocessed = applyRomanization(merged, ["OTHER one", "OTHER two", "OTHER three"]);
+    expect(reprocessed.map(line => line.romanization)).toEqual([
+      "sakura no hana ga saku",
+      "sora wa aoi",
+      "AUTO three",
+    ]);
+  });
+
+  it("preserves local romanization exactly, including Unicode and formatting", () => {
+    const lyrics = local();
+    const unicode = applyRomanization(
+      [{ ...lyrics[2], romanization: "kaze ga fuku —  Kaze  " }],
+      ["AUTO"]
+    );
+    expect(unicode[0].romanization).toBe("kaze ga fuku —  Kaze  ");
+    // An empty generated result is not a reason to erase a supplied one.
+    const emptied = applyRomanization(lyrics, ["", null, null]);
+    expect(emptied[0].romanization).toBe("sakura no hana ga saku");
+    expect(emptied[1].romanization).toBe("sora wa aoi");
+  });
+
+  it("reports only the lines missing local romanization as generation gaps", () => {
+    expect(romanizationGaps(local())).toEqual([2]);
+    const filled = applyRomanization(local(), [null, null, "kaze ga fuku"]);
+    expect(romanizationGaps(filled)).toEqual([]);
+    expect(romanizationGaps(parseLyricsText(LINE_LRC, 11_000).lyrics)).toEqual([0, 1, 2]);
+  });
+
+  it("scatters generated results back onto the gap lines only", () => {
+    expect(scatterRomanizations(3, [2], ["kaze ga fuku"])).toEqual([null, null, "kaze ga fuku"]);
+    expect(scatterRomanizations(3, [], [])).toEqual([null, null, null]);
+  });
+
+  it("disabling generation restores local romanization and drops only generated text", () => {
+    const lyrics = local();
+    const withGenerated = applyRomanization(lyrics, [null, null, "AUTO three"]);
+    const restored = stripGeneratedRomanization(withGenerated, lyrics);
+    expect(restored[0].romanization).toBe("sakura no hana ga saku");
+    expect(restored[1].romanization).toBe("sora wa aoi");
+    expect(restored[2].romanization).toBeUndefined();
+    // Already matching the local state: no rebuild.
+    expect(stripGeneratedRomanization(lyrics, lyrics)).toBe(lyrics);
+    const stripped = stripGeneratedRomanization(restored, lyrics);
+    expect(stripped).toBe(restored);
   });
 });

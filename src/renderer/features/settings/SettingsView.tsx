@@ -286,6 +286,8 @@ export function SettingsView() {
             ) : null}
 
             <Range label="Font size" value={settings.lyrics.fontSizeRem} min={1.5} max={5.5} step={0.1} onChange={value => patchLyrics({ fontSizeRem: value })} format={value => `${value.toFixed(1)}rem`} />
+            <Range label="Translation Font Size" hint="Size of the translated line beneath each lyric." value={settings.lyrics.translationFontSizePx} min={10} max={48} step={1} onChange={value => patchLyrics({ translationFontSizePx: value })} format={value => `${value} px`} />
+            <Range label="Romanization Font Size" hint="Size of the romanized line beneath each lyric." value={settings.lyrics.romanizationFontSizePx} min={10} max={48} step={1} onChange={value => patchLyrics({ romanizationFontSizePx: value })} format={value => `${value} px`} />
             <Range label="Font weight" value={settings.lyrics.fontWeight} min={300} max={900} step={50} onChange={value => patchLyrics({ fontWeight: value })} format={value => String(value)} />
             <Range label="Line height" value={settings.lyrics.lineHeight} min={1} max={2} step={0.05} onChange={value => patchLyrics({ lineHeight: value })} />
             <Range label="Active line opacity" value={settings.lyrics.activeOpacity} min={0.4} max={1} step={0.02} onChange={value => patchLyrics({ activeOpacity: value })} format={value => `${Math.round(value * 100)}%`} />
