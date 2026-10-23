@@ -174,6 +174,32 @@ export function LyricsDock({
             <output>{settings.fontSizeRem.toFixed(1)}rem</output>
           </label>
           <label className="slider-row">
+            <span>Translation Font Size</span>
+            <input
+              type="range"
+              min={10}
+              max={48}
+              step={1}
+              value={settings.translationFontSizePx}
+              onChange={event => onPatch({ translationFontSizePx: Number(event.target.value) })}
+              aria-label="Translation Font Size"
+            />
+            <output>{settings.translationFontSizePx} px</output>
+          </label>
+          <label className="slider-row">
+            <span>Romanization Font Size</span>
+            <input
+              type="range"
+              min={10}
+              max={48}
+              step={1}
+              value={settings.romanizationFontSizePx}
+              onChange={event => onPatch({ romanizationFontSizePx: Number(event.target.value) })}
+              aria-label="Romanization Font Size"
+            />
+            <output>{settings.romanizationFontSizePx} px</output>
+          </label>
+          <label className="slider-row">
             <span>Weight</span>
             <input
               type="range"

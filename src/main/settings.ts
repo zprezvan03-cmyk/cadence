@@ -38,6 +38,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     fontSizeRem: 3,
     fontWeight: 700,
     lineHeight: 1.333,
+    translationFontSizePx: 32,
+    romanizationFontSizePx: 26,
     activeOpacity: 1,
     inactiveOpacity: 0.3,
     targetScrollRatio: 0.5,

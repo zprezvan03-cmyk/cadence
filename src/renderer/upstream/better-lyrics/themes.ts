@@ -76,6 +76,11 @@ export function getTheme(id: string): LyricsTheme {
   return THEMES.find(theme => theme.id === id) ?? THEMES[0];
 }
 
+/** Secondary-line sizes are pixel sliders; anything missing or out of range falls back to the renderer's own defaults. */
+function secondaryFontSizePx(value: number, fallback: number): number {
+  return Number.isFinite(value) ? Math.min(48, Math.max(10, Math.round(value))) : fallback;
+}
+
 /**
  * Composes the theme stylesheet with the user's typography controls. The controls are ordinary CSS
  * custom properties, so they compose with any theme rather than replacing its design.
@@ -88,6 +93,8 @@ export function buildThemeCss(settings: LyricsSettings): string {
   const fontSize = Math.min(6, Math.max(1.4, settings.fontSizeRem));
   const fontWeight = Math.min(900, Math.max(300, settings.fontWeight));
   const lineHeight = Math.min(2.2, Math.max(1, settings.lineHeight));
+  const translationFontSizePx = secondaryFontSizePx(settings.translationFontSizePx, 32);
+  const romanizationFontSizePx = secondaryFontSizePx(settings.romanizationFontSizePx, 26);
 
   return `
 ${base}
@@ -100,6 +107,10 @@ ${settings.showCredits ? "" : "/* blyrics-hide-credits = true; */"}
   --blyrics-line-height: ${lineHeight};
   --blyrics-active-opacity: ${activeOpacity};
   --blyrics-inactive-opacity: ${inactiveOpacity};
+  --blyrics-translated-font-size: ${translationFontSizePx}px;
+}
+.blyrics-container .blyrics--romanized {
+  font-size: ${romanizationFontSizePx}px;
 }
 `.trim();
 }

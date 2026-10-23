@@ -172,6 +172,10 @@ export interface LyricsSettings {
   fontSizeRem: number;
   fontWeight: number;
   lineHeight: number;
+  /** Font size in pixels of the translated line beneath each lyric. */
+  translationFontSizePx: number;
+  /** Font size in pixels of the romanized line beneath each lyric. */
+  romanizationFontSizePx: number;
   activeOpacity: number;
   inactiveOpacity: number;
   targetScrollRatio: number;
