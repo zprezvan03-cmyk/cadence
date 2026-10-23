@@ -73,7 +73,9 @@
 .lyrics-view.is-fullscreen .lyrics-body {
   grid-column: 2;
   grid-row: 2;
-  padding-left: 0;
+  padding-left: 40px;
+  /* No right inset: the active line (at full scale) ends on the body's right edge, the same distance from
+     the window's right edge as the artwork's left margin. */
   padding-right: 0;
   /* Bottom fade: the lyrics fade out over 14vh, and the fade ends at the bottom margin (--fs-edge), so
      the margin below the lyrics is empty. The top fade is the body's own. */
@@ -118,13 +120,14 @@
   top: 26px;
   right: 40px;
   z-index: 3;
+  pointer-events: auto;
 }
 
-/* The renderer scales each line by 0.95. Scaling from the right edge keeps a full-width line flush with the
-   body's right edge, which is the same distance from the window's right edge as the artwork's left margin.
-   Scaling from the left would pull the text about 40 px in from that edge. */
-.lyrics-view.is-fullscreen .blyrics-container > div {
-  transform-origin: right center;
+/* The header only holds the exit button and the label. It stacks above the body and the lyrics-off panel, so
+   the exit button is not covered by them, and it takes no pointer input itself. */
+.lyrics-view.is-fullscreen .lyrics-header {
+  z-index: 3;
+  pointer-events: none;
 }
 
 /* Narrow windows: the lyrics take the full width and the artwork is left out, but the title stays at the

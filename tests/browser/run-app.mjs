@@ -881,6 +881,24 @@ check(
   JSON.stringify(offPanel)
 );
 
+// The exit button is the top element at its centre, and a click leaves fullscreen. Fullscreen is entered
+// again afterwards, still with lyrics off, so the checks below run as before.
+const exitTarget = await page.evaluate(() => {
+  const node = document.querySelector(".lyrics-view .fs-exit");
+  const box = node.getBoundingClientRect();
+  const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+  return { x: box.left + box.width / 2, y: box.top + box.height / 2, hit: Boolean(hit && (hit === node || node.contains(hit))) };
+});
+await page.mouse.move(exitTarget.x, exitTarget.y);
+await wait(300);
+await page.mouse.click(exitTarget.x, exitTarget.y);
+await wait(700);
+const exitClosed = !(await page.$(".lyrics-view.is-fullscreen"));
+check("exit-closes-lyrics-off", exitTarget.hit && exitClosed, `hit ${exitTarget.hit}, fullscreen closed ${exitClosed}`);
+await wakeClick('button[aria-label="Fullscreen lyrics"]');
+await wait(700);
+check("fullscreen-reentered-lyrics-off", Boolean(await page.$(".lyrics-view.is-fullscreen.is-lyrics-off")), "lyrics off kept on re-entry");
+
 // Transport still works while lyrics are hidden.
 await page.evaluate(() => {
   document.querySelector("audio").currentTime = 0.5;
@@ -1210,7 +1228,15 @@ const layoutAtSize = async (width, height) => {
     const body = document.querySelector(".lyrics-body").getBoundingClientRect();
     const header = document.querySelector(".lyrics-header").getBoundingClientRect();
     const activeLine = document.querySelector(".blyrics--active")?.getBoundingClientRect() ?? null;
-    const exitBox = document.querySelector(".lyrics-view .fs-exit")?.getBoundingClientRect() ?? null;
+    const exitNode = document.querySelector(".lyrics-view .fs-exit");
+    const exitBox = exitNode?.getBoundingClientRect() ?? null;
+    const exitHit = exitBox
+      ? (() => {
+          const hit = document.elementFromPoint(exitBox.left + exitBox.width / 2, exitBox.top + exitBox.height / 2);
+          return Boolean(hit && (hit === exitNode || exitNode.contains(hit)));
+        })()
+      : false;
+    const inactiveLine = document.querySelector(".blyrics-container > div:not(.blyrics--active)")?.getBoundingClientRect() ?? null;
     const bodyStyle = getComputedStyle(document.querySelector(".lyrics-body"));
     const lyricsFaded = bodyStyle.maskImage.includes("calc") && bodyStyle.maskImage !== "none";
     return {
@@ -1235,6 +1261,10 @@ const layoutAtSize = async (width, height) => {
       activeRight: activeLine ? activeLine.right : null,
       exitRight: exitBox ? exitBox.right : null,
       exitTop: exitBox ? exitBox.top : null,
+      exitHit,
+      inactiveLeft: inactiveLine ? inactiveLine.left : null,
+      bodyPaddingRight: parseFloat(getComputedStyle(document.querySelector(".lyrics-body")).paddingRight),
+      activeLeft: activeLine ? activeLine.left : null,
       footerTop: Math.min(
         document.querySelector('[data-testid="fullscreen-controls"]')?.getBoundingClientRect().top ?? Infinity,
         document.querySelector('[data-testid="lyrics-dock"]')?.getBoundingClientRect().top ?? Infinity
@@ -1258,13 +1288,20 @@ const layoutAtSize = async (width, height) => {
   // The lyrics' right edge is the same distance from the window's right edge as the artwork's left edge, and the
   // active line reaches that edge (the renderer's line scale is anchored on the right). Wide layouts only.
   if (width > 900) {
+    // The renderer's box ends where the artwork's left margin ends. Its line scale (0.95) can pull the
+    // unscaled lines in by a few percent, so the check is on the box and on the active line not passing it.
     const edgeOk =
-      Math.abs(art.activeRight - art.bodyRight) < 2 &&
-      Math.abs(art.viewportWidth - art.bodyRight - art.artLeft) < 2;
-    check(`lyrics-right-edge-${width}x${height}`, edgeOk, `active right ${art.activeRight?.toFixed(1)}, body right ${art.bodyRight?.toFixed(1)}, art left ${art.artLeft?.toFixed(1)}, window ${art.viewportWidth}`);
+      art.bodyPaddingRight === 0 &&
+      Math.abs(art.viewportWidth - art.bodyRight - art.artLeft) < 2 &&
+      art.activeRight !== null &&
+      art.activeRight <= art.bodyRight + 1;
+    check(`lyrics-right-edge-${width}x${height}`, edgeOk, `body right ${art.bodyRight?.toFixed(1)}, art left ${art.artLeft?.toFixed(1)}, window ${art.viewportWidth}, active right ${art.activeRight?.toFixed(1)}, body padding-right ${art.bodyPaddingRight}`);
+    // The active line keeps the same left edge as the other lines: it grows to the right, not outwards.
+    const alignedOk = art.activeLeft !== null && art.inactiveLeft !== null && Math.abs(art.activeLeft - art.inactiveLeft) < 2;
+    check(`lyrics-active-not-offset-${width}x${height}`, alignedOk, `active left ${art.activeLeft?.toFixed(1)}, other lines left ${art.inactiveLeft?.toFixed(1)}`);
   }
   // The exit button is in the top-right corner of the window, with lyrics on or off.
-  const exitOk = art.exitRight !== null && art.viewportWidth - art.exitRight <= 60 && art.exitTop < 40;
+  const exitOk = art.exitRight !== null && art.viewportWidth - art.exitRight <= 60 && art.exitTop < 40 && art.exitHit;
   check(`exit-top-right-${width}x${height}`, exitOk, `exit right ${art.exitRight?.toFixed(0)} of ${art.viewportWidth}, top ${art.exitTop?.toFixed(0)}`);
 };
 await layoutAtSize(1280, 720);
