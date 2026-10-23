@@ -1,6 +1,7 @@
 /**
- * The Lyrics tab: the upstream Braccato renderer over the upstream Kawarp shader background, with
- * Cadence's dock, provider picker and translation controls. Written for Cadence.
+ * The Now Playing page (route `lyrics`): the upstream Braccato renderer over the upstream Kawarp
+ * shader background, with Cadence's dock, provider picker and translation controls. In fullscreen
+ * it also carries the audio controls and the lyrics on/off toggle. Written for Cadence.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -9,6 +10,7 @@ import type { AppSettings, Track } from "../../../shared/types";
 import { useSettings } from "../../state/settingsStore";
 import { BraccatoLyrics } from "./BraccatoLyrics";
 import { LyricsDock } from "./LyricsDock";
+import { FullscreenControls } from "./FullscreenControls";
 import { KawarpBackground } from "../shaders/KawarpBackground";
 import { useLyrics } from "./useLyrics";
 import { buildThemeCss } from "../../upstream/better-lyrics/themes";
@@ -29,6 +31,9 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
 
   const lyricsSettings = settings?.lyrics;
   const shaderSettings = settings?.shaders;
+  const showLyrics = lyricsSettings?.showLyricsInFullscreen ?? true;
+  // The toggle only applies in fullscreen; the normal page always shows lyrics.
+  const lyricsVisible = !fullscreen || showLyrics;
 
   const lyrics = useLyrics(track ?? null, lyricsSettings ?? fallbackLyricsSettings);
 
@@ -65,6 +70,10 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
     }
   }, [lyrics, flash]);
 
+  const toggleLyricsVisible = useCallback(() => {
+    patchLyrics({ showLyricsInFullscreen: !showLyrics });
+  }, [patchLyrics, showLyrics]);
+
   const handleError = useCallback((message: string) => {
     console.error("[Cadence] Lyrics renderer error:", message);
     flash(message);
@@ -86,21 +95,9 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
           <h1>{track?.title ?? "Nothing playing"}</h1>
           <p>{track ? [track.artist, track.album].filter(Boolean).join(" · ") : "Pick a song from your library"}</p>
         </div>
-        {track ? (
-          <div className="lyrics-header-actions">
-            <button
-              type="button"
-              className="sync-pill"
-              onClick={() => onToggleFullscreen()}
-              title={fullscreen ? "Exit fullscreen lyrics (Esc)" : "Fullscreen lyrics (F)"}
-            >
-              {fullscreen ? "Exit fullscreen" : "Fullscreen"}
-            </button>
-          </div>
-        ) : null}
       </div>
 
-      <div className="lyrics-body">
+      <div className={`lyrics-body ${lyricsVisible ? "" : "is-hidden"}`}>
         {track ? (
           <BraccatoLyrics
             lyrics={lyrics.lyrics}
@@ -156,6 +153,10 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
         ) : null}
       </div>
 
+      {fullscreen ? (
+        <FullscreenControls track={track} showLyrics={showLyrics} onToggleLyrics={toggleLyricsVisible} />
+      ) : null}
+
       {track ? (
         <LyricsDock
           settings={lyricsSettings ?? fallbackLyricsSettings}
@@ -201,4 +202,5 @@ const fallbackLyricsSettings: AppSettings["lyrics"] = {
   hideInstrumentalOnly: false,
   passiveScroll: true,
   fullscreenOnOpen: false,
+  showLyricsInFullscreen: true,
 };

@@ -54,7 +54,7 @@ function Hero({
             </button>
           ) : null}
           <button type="button" onClick={() => navigate({ name: "lyrics" })}>
-            <Mic2 size={16} /> Lyrics
+            <Mic2 size={16} /> Now Playing
           </button>
           {children}
         </div>

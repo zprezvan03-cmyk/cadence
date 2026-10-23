@@ -80,7 +80,7 @@ export function NowPlaying() {
           <ChevronDown size={22} />
         </button>
         <span className="eyebrow">Now playing</span>
-        <button type="button" className="icon-button" onClick={() => navigate({ name: "lyrics" })} aria-label="Lyrics">
+        <button type="button" className="icon-button" onClick={() => navigate({ name: "lyrics" })} aria-label="Now Playing">
           <Mic2 size={18} />
         </button>
       </header>

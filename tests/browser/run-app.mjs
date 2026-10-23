@@ -187,6 +187,7 @@ await page.evaluateOnNewDocument(
         hideInstrumentalOnly: false,
         passiveScroll: true,
         fullscreenOnOpen: false,
+        showLyricsInFullscreen: true,
       },
       shaders: {
         enabled: true,
@@ -529,9 +530,16 @@ await page.click('aside.sidebar button[title="Songs"]');
 await page.waitForSelector('[data-testid="track-row"]');
 await clickTrack("Fixture FLAC");
 await wait(900);
-await page.click('button[aria-label="Lyrics"]');
+await page.click('button[aria-label="Now Playing"]');
 await page.waitForSelector(".lyrics-view", { timeout: 15_000 });
 await wait(1800);
+
+const navLabels = await page.$$eval("aside.sidebar .nav-item", nodes => nodes.map(node => node.textContent.trim()));
+check(
+  "page-renamed-now-playing",
+  navLabels.includes("Now Playing") && !navLabels.includes("Lyrics") && Boolean(await page.$('.player-right button[aria-label="Now Playing"]')),
+  JSON.stringify(navLabels)
+);
 
 const lyricState = await page.evaluate(() => {
   const host = document.querySelector("braccato-lyrics");
@@ -563,6 +571,28 @@ const dock = await page.evaluate(() => {
   };
 });
 check("lyrics-dock-visible", dock.present && dock.visible, JSON.stringify(dock));
+
+// Fullscreen buttons on the page: the top-of-page pill is gone and the source popover has none, so the
+// bottom dock button is the only one left.
+const fullscreenButtonsOn = () =>
+  page.evaluate(() =>
+    [...document.querySelectorAll(".lyrics-view button")]
+      .filter(node => /fullscreen/i.test(`${node.title} ${node.getAttribute("aria-label") ?? ""} ${node.textContent}`))
+      .map(node => node.title || node.textContent.trim())
+  );
+const normalFullscreen = await fullscreenButtonsOn();
+check("top-fullscreen-removed", !(await page.$(".sync-pill")) && normalFullscreen.length === 1, JSON.stringify(normalFullscreen));
+check("bottom-fullscreen-only", normalFullscreen[0] === "Fullscreen lyrics", JSON.stringify(normalFullscreen));
+
+await page.click('button[title="Lyrics source"]');
+await wait(300);
+const popoverFullscreen = await page.evaluate(() =>
+  [...document.querySelectorAll(".dock-sources button")].filter(node => /fullscreen/i.test(node.textContent + node.title)).length
+);
+const popoverRows = await page.$$eval(".dock-sources .source-row", nodes => nodes.length);
+check("no-fullscreen-in-source-popover", popoverFullscreen === 0 && popoverRows > 0, `${popoverRows} source rows, ${popoverFullscreen} fullscreen buttons`);
+await page.click('button[title="Lyrics source"]');
+await wait(200);
 
 // Pause so the 6-second fixture cannot run past the end while the shader checks run.
 await page.evaluate(() => document.querySelector("audio").pause());
@@ -634,13 +664,255 @@ console.log("DEBUG paused-seek", pausedSeek, JSON.stringify({ atOne, atFive }));
 check("lyrics-follow-seek", (atOne.active ?? "").includes("Word") && (atFive.active ?? "").includes("Last"), `1.0s → ${JSON.stringify(atOne.active)}, 4.9s → ${JSON.stringify(atFive.active)}`);
 await page.evaluate(() => document.querySelector("audio").pause());
 
+/* ------------------------------------------------------- unified fullscreen */
+
 await page.click('button[title="Fullscreen lyrics"]');
 await wait(700);
 check("fullscreen-lyrics", Boolean(await page.$(".lyrics-view.is-fullscreen")), "immersive mode");
+
+// Repeat-one keeps this 6-second fixture on the same track, so auto-advance cannot swap in a track
+// without lyrics while the checks below run. It is switched back off before the run continues.
+await page.click('[data-testid="fullscreen-controls"] button[aria-label="Repeat: off"]');
+await wait(150);
+await page.click('[data-testid="fullscreen-controls"] button[aria-label="Repeat: all"]');
+await wait(150);
+check("fullscreen-repeat-control", Boolean(await page.$('[data-testid="fullscreen-controls"] button[aria-label="Repeat: one"]')), "cycled off → all → one");
+
+const fsButtons = await fullscreenButtonsOn();
+check("single-fullscreen-button-in-fullscreen", fsButtons.length === 1, JSON.stringify(fsButtons));
+
+const fsParts = await page.evaluate(() => {
+  const root = document.querySelector('[data-testid="fullscreen-controls"]');
+  const has = selector => Boolean(root?.querySelector(selector));
+  return {
+    present: Boolean(root),
+    transport: has(".transport .play-button") && has('.transport button[aria-label="Next track"]'),
+    seek: has(".seek-row input.seek"),
+    volume: has(".volume-group input.volume"),
+    favourite: has('button[aria-label="Add to favourites"], button[aria-label="Remove from favourites"]'),
+    lyricsToggle: has('[data-testid="fullscreen-lyrics-toggle"]'),
+    queue: has('button[aria-label="Queue"]'),
+    lyricsDock: Boolean(document.querySelector('[data-testid="lyrics-dock"]')),
+    playerBarHidden: !document.querySelector('[data-testid="player-bar"]'),
+  };
+});
+check(
+  "fullscreen-audio-and-lyrics-controls",
+  fsParts.present && fsParts.transport && fsParts.seek && fsParts.volume && fsParts.lyricsToggle && fsParts.queue && fsParts.lyricsDock && fsParts.playerBarHidden,
+  JSON.stringify(fsParts)
+);
 await page.screenshot({ path: join(shotDir, "05-lyrics-fullscreen.png") });
+
+// Start playback from the fullscreen transport, so the controls and shader checks run while audio plays.
+await page.evaluate(() => {
+  document.querySelector("audio").currentTime = 0.5;
+});
+await page.click('[data-testid="fullscreen-controls"] .play-button');
+await wait(900);
+const fsPlaying = await audioState();
+check("fullscreen-play-button", !fsPlaying.paused && fsPlaying.currentTime > 0.5, `${fsPlaying.currentTime.toFixed(2)}s`);
+
+// The control backdrop must show the shader: not an opaque black fill, and changing frame to frame.
+const glassStyle = await page.evaluate(() => {
+  const node = document.querySelector('[data-testid="fullscreen-controls"]');
+  const style = getComputedStyle(node);
+  const match = /rgba?\(([^)]+)\)/.exec(style.backgroundColor);
+  const alpha = match ? Number((match[1].split(",")[3] ?? "1").trim()) : 1;
+  return { background: style.backgroundColor, alpha, backdrop: style.backdropFilter };
+});
+check("controls-not-black-fill", glassStyle.alpha <= 0.35 && /blur/.test(glassStyle.backdrop), JSON.stringify(glassStyle));
+
+const regionSamples = async selector => {
+  const box = await page.$eval(selector, node => {
+    const rect = node.getBoundingClientRect();
+    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+  });
+  const first = PNG.sync.read(await page.screenshot({ clip: box }));
+  await wait(800);
+  const second = PNG.sync.read(await page.screenshot({ clip: box }));
+  let sum = 0;
+  let changed = 0;
+  for (let i = 0; i < first.data.length; i += 4) {
+    const a = first.data[i] + first.data[i + 1] + first.data[i + 2];
+    const b = second.data[i] + second.data[i + 1] + second.data[i + 2];
+    sum += a;
+    if (Math.abs(a - b) > 12) changed += 1;
+  }
+  return { mean: sum / (first.width * first.height), changedRatio: changed / (first.width * first.height) };
+};
+// Animation through the backdrop: the glass must carry the moving shader, and an opaque black fill
+// (the old treatment) must not. Both are measured on the same region, frame to frame.
+const motionOf = async box => {
+  const first = PNG.sync.read(await page.screenshot({ clip: box }));
+  await wait(800);
+  const second = PNG.sync.read(await page.screenshot({ clip: box }));
+  let sum = 0;
+  let diffSum = 0;
+  let moved = 0;
+  const pixels = first.width * first.height;
+  for (let i = 0; i < first.data.length; i += 4) {
+    const a = first.data[i] + first.data[i + 1] + first.data[i + 2];
+    const b = second.data[i] + second.data[i + 1] + second.data[i + 2];
+    sum += a;
+    diffSum += Math.abs(a - b);
+    if (Math.abs(a - b) > 3) moved += 1;
+  }
+  return { mean: sum / pixels / 3, avgDiff: diffSum / pixels, movedRatio: moved / pixels };
+};
+const fsBox = await page.$eval('[data-testid="fullscreen-controls"]', node => {
+  const rect = node.getBoundingClientRect();
+  return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+});
+// Only the backdrop is measured: the controls' own children (seek time, progress) move with playback.
+const hideContents = hidden => page.evaluate(value => {
+  const node = document.querySelector('[data-testid="fullscreen-controls"]');
+  for (const child of node.children) child.style.visibility = value ? "hidden" : "";
+}, hidden);
+await hideContents(true);
+const glassMotion = await motionOf(fsBox);
+await page.evaluate(() => {
+  const node = document.querySelector('[data-testid="fullscreen-controls"]');
+  node.style.background = "#000";
+  node.style.backdropFilter = "none";
+});
+const blackMotion = await motionOf(fsBox);
+await page.evaluate(() => {
+  const node = document.querySelector('[data-testid="fullscreen-controls"]');
+  node.style.background = "";
+  node.style.backdropFilter = "";
+});
+await hideContents(false);
+check(
+  "controls-show-shader-through-glass",
+  glassMotion.mean > 20 && glassMotion.avgDiff > 2 && glassMotion.avgDiff > blackMotion.avgDiff * 4,
+  `glass: mean ${glassMotion.mean.toFixed(1)}/255, avg frame change ${glassMotion.avgDiff.toFixed(2)}, ${(100 * glassMotion.movedRatio).toFixed(1)}% pixels moved; black fill baseline: avg change ${blackMotion.avgDiff.toFixed(2)}`
+);
+
+// Lyrics on/off: hiding must not stop playback, reset the position, or break sync.
+const lyricsVisibility = () =>
+  page.evaluate(() => ({
+    bodyHidden: document.querySelector(".lyrics-body")?.classList.contains("is-hidden") ?? null,
+    visibility: document.querySelector("braccato-lyrics") ? getComputedStyle(document.querySelector("braccato-lyrics")).visibility : null,
+    opacity: getComputedStyle(document.querySelector(".lyrics-body")).opacity,
+    pressed: document.querySelector('[data-testid="fullscreen-lyrics-toggle"]')?.getAttribute("aria-pressed") ?? null,
+    stored: JSON.parse(localStorage.getItem("cadence.harness.settings.v1") ?? "{}")?.lyrics?.showLyricsInFullscreen ?? null,
+  }));
+
+await page.evaluate(() => {
+  document.querySelector("audio").currentTime = 0.5;
+});
+await wait(300);
+const beforeHide = await audioState();
+await page.click('[data-testid="fullscreen-lyrics-toggle"]');
+await wait(900);
+const hiddenState = await lyricsVisibility();
+const afterHide = await audioState();
+check(
+  "lyrics-toggle-hides",
+  hiddenState.bodyHidden === true && hiddenState.visibility === "hidden" && hiddenState.opacity === "0" && hiddenState.pressed === "false" && hiddenState.stored === false,
+  JSON.stringify(hiddenState)
+);
+check(
+  "lyrics-hide-keeps-playback",
+  !afterHide.paused && afterHide.currentTime > beforeHide.currentTime && afterHide.currentTime - beforeHide.currentTime < 2.5,
+  `${beforeHide.currentTime.toFixed(2)}s → ${afterHide.currentTime.toFixed(2)}s, paused=${afterHide.paused}`
+);
+await page.screenshot({ path: join(shotDir, "05b-fullscreen-lyrics-off.png") });
+
+// Transport still works while lyrics are hidden.
+await page.evaluate(() => {
+  document.querySelector("audio").currentTime = 0.5;
+});
+await wait(200);
+await page.click('[data-testid="fullscreen-controls"] .play-button');
+await wait(300);
+const pausedWhileHidden = await audioState();
+await page.click('[data-testid="fullscreen-controls"] .play-button');
+await wait(500);
+const resumedWhileHidden = await audioState();
+check(
+  "transport-works-with-lyrics-hidden",
+  pausedWhileHidden.paused && !resumedWhileHidden.paused && resumedWhileHidden.currentTime > pausedWhileHidden.currentTime,
+  `paused ${pausedWhileHidden.paused}, resumed ${resumedWhileHidden.paused} at ${resumedWhileHidden.currentTime.toFixed(2)}s`
+);
+
+await page.click('[data-testid="fullscreen-lyrics-toggle"]');
+await wait(700);
+const shownState = await lyricsVisibility();
+check(
+  "lyrics-toggle-shows",
+  shownState.bodyHidden === false && shownState.visibility === "visible" && shownState.pressed === "true" && shownState.stored === true,
+  JSON.stringify(shownState)
+);
+
+// Sync after showing again: pause, seek, and read the highlighted line; then resume on the same clock.
+await page.evaluate(() => document.querySelector("audio").pause());
+await wait(250);
+// The highlight may take a few frames to settle after a jump, so poll for the expected line (up to 3 s).
+const settleActive = async (seconds, expected) => {
+  await page.evaluate(value => {
+    document.querySelector("audio").currentTime = value;
+  }, seconds);
+  let active = null;
+  for (let waited = 0; waited < 3000; waited += 150) {
+    await wait(150);
+    active = await page.evaluate(() => document.querySelector(".blyrics--active")?.textContent?.trim() ?? null);
+    if (active && active.includes(expected)) break;
+  }
+  return active;
+};
+const activeAt49 = await settleActive(4.9, "Last");
+const activeAt10 = await settleActive(1.0, "Word");
+check(
+  "lyrics-sync-after-toggle",
+  (activeAt49 ?? "").includes("Last") && (activeAt10 ?? "").includes("Word"),
+  `1.0s → ${JSON.stringify(activeAt10)}, 4.9s → ${JSON.stringify(activeAt49)}; header ${await page.$eval(".lyrics-heading h1", n => n.textContent)}, ${await page.$$eval("braccato-lyrics .blyrics--line", n => n.length)} lines`
+);
+await page.click('[data-testid="fullscreen-controls"] .play-button');
+await wait(900);
+const clockAfterResume = await audioState();
+check("clock-continues-after-toggle", !clockAfterResume.paused && clockAfterResume.currentTime > 1.0, `${clockAfterResume.currentTime.toFixed(2)}s`);
+
+// The queue opens from fullscreen and must sit above the fullscreen view.
+await page.click('[data-testid="fullscreen-controls"] button[aria-label="Queue"]');
+await wait(400);
+const queueLayer = await page.evaluate(() => {
+  const panel = document.querySelector(".queue-panel");
+  if (!panel) return null;
+  const rect = panel.getBoundingClientRect();
+  const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+  return { topmost: panel.contains(hit), bottomGap: Math.round(window.innerHeight - rect.bottom) };
+});
+check("queue-opens-over-fullscreen", queueLayer?.topmost === true && queueLayer.bottomGap === 0, JSON.stringify(queueLayer));
+await page.click('.queue-panel button[aria-label="Close queue"]');
+await wait(200);
+
+// Lyrics stay hidden only in fullscreen: switch them off, leave fullscreen, and the normal page still shows them.
+await page.click('[data-testid="fullscreen-lyrics-toggle"]');
+await wait(300);
 await page.keyboard.press("Escape");
 await wait(500);
-check("fullscreen-exit", !(await page.$(".lyrics-view.is-fullscreen")), "escaped");
+const normalAfterFullscreen = await lyricsVisibility();
+check(
+  "fullscreen-exit",
+  !(await page.$(".lyrics-view.is-fullscreen")) && !(await page.$('[data-testid="fullscreen-controls"]')),
+  "escaped"
+);
+check(
+  "normal-page-ignores-lyrics-toggle",
+  normalAfterFullscreen.bodyHidden === false && normalAfterFullscreen.visibility === "visible" && normalAfterFullscreen.stored === false,
+  JSON.stringify(normalAfterFullscreen)
+);
+
+// Restore the defaults (lyrics on, repeat off) for the rest of the run.
+await page.click('button[title="Fullscreen lyrics"]');
+await wait(500);
+await page.click('[data-testid="fullscreen-lyrics-toggle"]');
+await wait(300);
+await page.click('[data-testid="fullscreen-controls"] button[aria-label="Repeat: one"]');
+await wait(200);
+await page.keyboard.press("Escape");
+await wait(400);
 
 /* ----------------------------------------------------------- now playing */
 

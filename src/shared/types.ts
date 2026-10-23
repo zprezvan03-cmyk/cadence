@@ -179,6 +179,8 @@ export interface LyricsSettings {
   hideInstrumentalOnly: boolean;
   passiveScroll: boolean;
   fullscreenOnOpen: boolean;
+  /** Whether the lyrics text is shown in fullscreen Now Playing; playback is unaffected either way. */
+  showLyricsInFullscreen: boolean;
 }
 
 export interface PlaybackSettings {

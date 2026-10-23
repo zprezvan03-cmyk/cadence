@@ -55,12 +55,15 @@ npm start          # run the built bundles
 2. **Play** — click a row. <kbd>Space</kbd> toggles, <kbd>←</kbd>/<kbd>→</kbd> seek 5 s
    (<kbd>Shift</kbd> = previous/next), <kbd>↑</kbd>/<kbd>↓</kbd> volume, <kbd>M</kbd> mute,
    <kbd>S</kbd> shuffle, <kbd>R</kbd> repeat, <kbd>Q</kbd> queue, <kbd>N</kbd> Now Playing,
-   <kbd>L</kbd> lyrics, <kbd>F</kbd> fullscreen lyrics, <kbd>Ctrl/Cmd</kbd>+<kbd>K</kbd> search.
+   <kbd>L</kbd> Now Playing, <kbd>F</kbd> fullscreen Now Playing, <kbd>Ctrl/Cmd</kbd>+<kbd>K</kbd> search.
    OS media keys work through the Media Session API.
-3. **Lyrics** — open the Lyrics tab. Providers run in order: local `.lrc`/`.ttml`/`.qrc` next to the
-   file → embedded tag (USLT/SYLT/`©lyr`/Vorbis `LYRICS`) → LRCLIB synced → LRCLIB plain. Use the
-   dock to change source, typography, offset (±0.05 s steps), translation, romanization, reload, load
-   a file, or save what is on screen as a sidecar `.lrc`.
+3. **Now Playing** — open the Now Playing tab (sidebar, or the mic button in the player bar). Providers
+   run in order: local `.lrc`/`.ttml`/`.qrc` next to the file → embedded tag (USLT/SYLT/`©lyr`/Vorbis
+   `LYRICS`) → LRCLIB synced → LRCLIB plain. Use the dock to change source, typography, offset
+   (±0.05 s steps), translation, romanization, reload, load a file, or save what is on screen as a
+   sidecar `.lrc`. The bottom-right fullscreen button (or <kbd>F</kbd>) opens a fullscreen view with
+   the playback controls, queue and a lyrics on/off switch; hiding lyrics there keeps playback and sync
+   running, and the choice is saved in settings.
 4. **Shaders** — Settings → Shaders. Opacity, warp, blur passes, animation speed, transition
    duration, saturation, dithering, auto-dim of bright artwork, audio reactivity (beat threshold,
    speed multiplier, scale boost), pause when idle, and a performance mode
@@ -101,7 +104,7 @@ src/main/media      path allowlist for the cadence-media: protocol
 src/preload         contextBridge → window.cadence (the only renderer capability surface)
 src/renderer        React shell: routes, library views, player bar, queue, Now Playing, settings
 src/renderer/audio  the <audio> clock authority + WebAudio analyser
-src/renderer/features/lyrics   lyrics tab and dock (Braccato renderer)
+src/renderer/features/lyrics   Now Playing page, dock and fullscreen controls (Braccato renderer)
 src/renderer/features/shaders  Kawarp background component
 src/renderer/upstream           ported upstream modules (headers say where from)
 src/shared          cross-process contract and ported upstream data
@@ -116,7 +119,7 @@ seek, pause, rate changes and track switches move the highlight with no second c
 npm run typecheck    # tsc --noEmit for main and renderer
 npm test             # 47 vitest assertions (library, queue, lyrics, LRC parsing)
 npm run smoke        # tests + build + bundle sanity checks
-npm run test:ui      # production renderer in headless Chromium: 38 interactive checks
+npm run test:ui      # production renderer in headless Chromium: 58 interactive checks
 ```
 
 `npm run test:ui` needs `python3` with `av`, `soundfile`, `numpy`, `mutagen` for the first fixture

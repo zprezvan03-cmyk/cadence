@@ -24,7 +24,7 @@ const NAV: { label: string; icon: React.ReactNode; route: Parameters<ReturnType<
   { label: "Artists", icon: <Users size={18} />, route: { name: "library", tab: "artists" } },
   { label: "Playlists", icon: <ListMusic size={18} />, route: { name: "library", tab: "playlists" } },
   { label: "Liked songs", icon: <Heart size={18} />, route: { name: "library", tab: "favorites" } },
-  { label: "Lyrics", icon: <Mic2 size={18} />, route: { name: "lyrics" } },
+  { label: "Now Playing", icon: <Mic2 size={18} />, route: { name: "lyrics" } },
 ];
 
 export function Sidebar() {
