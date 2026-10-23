@@ -6,6 +6,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AppSettings, DeepPartial } from "../shared/types";
+import { DEFAULT_FONT_ID } from "../shared/fonts";
 import { DEFAULT_PROVIDER_ORDER } from "../shared/upstream/better-lyrics/constants";
 import { DEFAULT_GRADIENT_SETTINGS } from "../shared/upstream/shaders/gradientSettings";
 
@@ -24,6 +25,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     reduceMotion: false,
     compactSidebar: false,
     blurArtwork: true,
+    fontFamily: DEFAULT_FONT_ID,
   },
   lyrics: {
     providerOrder: [...DEFAULT_PROVIDER_ORDER],

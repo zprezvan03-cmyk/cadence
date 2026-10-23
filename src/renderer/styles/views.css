@@ -615,6 +615,19 @@
   min-width: 190px;
 }
 
+/* Live sample under the font picker; sized like a lyric line so the choice is judged in context. */
+.font-preview {
+  margin: 2px 0 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 17px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .range-row .range-control {
   display: flex;
   align-items: center;

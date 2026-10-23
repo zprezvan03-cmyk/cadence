@@ -5,7 +5,9 @@
  */
 
 import { useEffect } from "react";
+import type { AppSettings } from "../../shared/types";
 import { audioEngine } from "../audio/engine";
+import { applyFontFamily } from "./fonts";
 import { useLibrary } from "../state/libraryStore";
 import { readSession, usePlayer, currentTrackId } from "../state/playerStore";
 import { useSettings } from "../state/settingsStore";
@@ -247,15 +249,18 @@ export function useBootstrap(): void {
 
   // Visual settings that live on the document root.
   useEffect(() => {
-    return useSettings.subscribe(state => {
-      const settings = state.settings;
+    const apply = (settings: AppSettings | null) => {
       if (!settings) return;
       const root = document.documentElement;
       root.style.setProperty("--accent", settings.appearance.accent);
       root.dataset.reduceMotion = settings.appearance.reduceMotion ? "true" : "false";
       root.dataset.compactSidebar = settings.appearance.compactSidebar ? "true" : "false";
       root.dataset.blurArtwork = settings.appearance.blurArtwork ? "true" : "false";
-    });
+      applyFontFamily(settings.appearance.fontFamily, root);
+    };
+    // Settings that loaded before this effect ran (a remount, StrictMode) still reach the root.
+    apply(useSettings.getState().settings);
+    return useSettings.subscribe(state => apply(state.settings));
   }, []);
 
   // Shader audio analysis settings + start/stop with playback.

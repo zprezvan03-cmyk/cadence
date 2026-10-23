@@ -21,6 +21,8 @@ export interface BraccatoLyricsProps {
   themeCss: string;
   offsetMs: number;
   passiveScroll: boolean;
+  /** The chosen font, so a change can re-measure line positions taken with the old metrics. */
+  fontFamily?: string;
   layout?: "scroll" | "stage";
   songwriters?: readonly string[];
   language?: string | null;
@@ -51,6 +53,7 @@ export function BraccatoLyrics({
   themeCss,
   offsetMs,
   passiveScroll,
+  fontFamily,
   layout = "scroll",
   songwriters,
   language,
@@ -62,6 +65,7 @@ export function BraccatoLyrics({
   onScrollState,
 }: BraccatoLyricsProps) {
   const ref = useRef<BraccatoElement | null>(null);
+  const measuredFont = useRef(fontFamily);
   const callbacks = useRef({ onLoaded, onError, onScrollState });
   callbacks.current = { onLoaded, onError, onScrollState };
 
@@ -125,6 +129,15 @@ export function BraccatoLyrics({
     if (!element) return;
     if (element.layout !== layout) element.layout = layout;
   }, [layout]);
+
+  // Line positions, and every scroll target derived from them, were measured with the previous
+  // font's metrics. The renderer re-measures by itself only when the container changes size, which
+  // a font whose lines swap height without changing the total does not do, so ask it directly.
+  useEffect(() => {
+    if (measuredFont.current === fontFamily) return;
+    measuredFont.current = fontFamily;
+    ref.current?.renderer?.relayout();
+  }, [fontFamily]);
 
   useEffect(() => {
     const element = ref.current;

@@ -6,6 +6,8 @@
 import { useEffect, useState } from "react";
 import { ChevronDown, ChevronUp, FolderMinus, FolderPlus, RotateCcw, Trash2 } from "lucide-react";
 import type { AppInfo, AppSettings, ShaderSettings } from "../../../shared/types";
+import { FONT_KINDS, FONT_OPTIONS, resolveFontOption } from "../../../shared/fonts";
+import { detectUnavailableFonts } from "../../app/fonts";
 import { useLibrary } from "../../state/libraryStore";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
@@ -92,11 +94,21 @@ export function SettingsView() {
   const scanning = useLibrary(state => state.scanning);
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [section, setSection] = useState<"library" | "playback" | "lyrics" | "shaders" | "about">("lyrics");
+  const [unavailableFonts, setUnavailableFonts] = useState<ReadonlySet<string>>(() => new Set());
   const showToast = useUi(state => state.showToast);
 
   useEffect(() => {
     void window.cadence.info().then(setInfo).catch(() => undefined);
   }, []);
+
+  // Probe once the document's faces are settled, so the picker can mark fonts this machine lacks.
+  useEffect(() => {
+    const probe = () => setUnavailableFonts(detectUnavailableFonts());
+    probe();
+    void document.fonts?.ready.then(probe).catch(() => undefined);
+  }, []);
+
+  const fontOption = resolveFontOption(settings?.appearance.fontFamily);
 
   if (!settings) return <div className="view-loading">Loading settings…</div>;
 
@@ -385,6 +397,34 @@ export function SettingsView() {
               onChange={event => void patchSettings({ appearance: { accent: event.target.value } })}
             />
           </div>
+          <div className="setting-row">
+            <span>
+              <strong>Font</strong>
+              <em>
+                Used by the app and the lyrics view. Every choice falls back to a similar system font when it
+                is not installed.
+              </em>
+            </span>
+            <select
+              value={fontOption.id}
+              data-testid="font-select"
+              onChange={event => void patchSettings({ appearance: { fontFamily: event.target.value } })}
+            >
+              {FONT_KINDS.map(kind => (
+                <optgroup key={kind} label={kind}>
+                  {FONT_OPTIONS.filter(option => option.kind === kind).map(option => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                      {option.probe && unavailableFonts.has(option.probe) ? " (not installed)" : ""}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+          <p className="font-preview" style={{ fontFamily: fontOption.stack }} data-testid="font-preview">
+            The quick brown fox jumps over the lazy dog · 1, 2, 3
+          </p>
           <Toggle label="Reduce motion" checked={settings.appearance.reduceMotion} onChange={value => void patchSettings({ appearance: { reduceMotion: value } })} />
           <Toggle label="Compact sidebar" checked={settings.appearance.compactSidebar} onChange={value => void patchSettings({ appearance: { compactSidebar: value } })} />
           <Toggle label="Blur artwork behind the player" checked={settings.appearance.blurArtwork} onChange={value => void patchSettings({ appearance: { blurArtwork: value } })} />

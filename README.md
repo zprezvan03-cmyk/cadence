@@ -65,7 +65,11 @@ npm start          # run the built bundles
    duration, saturation, dithering, auto-dim of bright artwork, audio reactivity (beat threshold,
    speed multiplier, scale boost), pause when idle, and a performance mode
    (`high`/`balanced`/`low`/`off`). `off` swaps in the artwork-blur fallback.
-5. **Settings → Library** shows folders, rescan, the SQLite engine in use and scan errors;
+5. **Settings → Playback → Appearance** picks the **font** used by the app and the lyrics view from
+   system families (sans, serif and monospace stacks). Choices apply immediately, persist across
+   restarts, and each stack falls back to a similar system font when the named one is not installed;
+   the picker marks the ones this machine lacks.
+6. **Settings → Library** shows folders, rescan, the SQLite engine in use and scan errors;
    **About** lists versions and paths.
 
 ## What it supports
