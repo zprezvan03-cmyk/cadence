@@ -83,6 +83,7 @@ export function KawarpBackground({
     failed: false,
   });
   const [ready, setReady] = useState(false);
+  const [artworkFailed, setArtworkFailed] = useState(false);
   const multipliersRef = useRef<DynamicMultipliers>({ isBeat: false, speedMultiplier: 1, scaleMultiplier: 1 });
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -245,8 +246,13 @@ export function KawarpBackground({
         const [, luminance] = await Promise.all([instance.loadImage(url), measureArtworkHighlight(url)]);
         state.highlightLuminance = luminance;
         state.currentImageUrl = url;
+        state.failed = false;
+        setArtworkFailed(false);
         applyArtworkBrightness(undefined, state.videoMode);
       } catch (error) {
+        // A missing or undecodable cover must not leave an empty black stage behind the lyrics.
+        state.failed = true;
+        setArtworkFailed(true);
         console.warn("[Cadence] Could not load artwork into the shader:", error);
       }
       state.transitionTimeout = window.setTimeout(() => {
@@ -377,7 +383,7 @@ export function KawarpBackground({
       ) : (
         <>
           <canvas ref={canvasRef} className="kawarp-canvas" data-testid="kawarp-canvas" />
-          {!ready && artworkUrl ? (
+          {(!ready || artworkFailed) && artworkUrl ? (
             <div className="kawarp-fallback" style={{ backgroundImage: `url("${artworkUrl}")` }} />
           ) : null}
         </>

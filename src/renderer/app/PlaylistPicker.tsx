@@ -4,13 +4,13 @@
 
 import { useState } from "react";
 import { Plus, X } from "lucide-react";
-import { useLibrary } from "../state/libraryStore";
+import { EMPTY_PLAYLISTS, useLibrary } from "../state/libraryStore";
 import { useUi } from "../state/uiStore";
 
 export function PlaylistPicker() {
   const picker = useUi(state => state.playlistPicker);
   const close = useUi(state => state.closePlaylistPicker);
-  const playlists = useLibrary(state => state.snapshot?.playlists ?? []);
+  const playlists = useLibrary(state => state.snapshot?.playlists ?? EMPTY_PLAYLISTS);
   const createPlaylist = useLibrary(state => state.createPlaylist);
   const addToPlaylist = useLibrary(state => state.addToPlaylist);
   const showToast = useUi(state => state.showToast);

@@ -65,7 +65,10 @@ interface DatabaseShape {
   nextPlaylistId: number;
 }
 
-const EMPTY_DB: DatabaseShape = { tracks: [], lyrics: {}, playlists: [], folders: [], nextPlaylistId: 1 };
+/** A fresh document. Never share one between stores: the arrays inside are mutated in place. */
+function emptyDatabase(): DatabaseShape {
+  return { tracks: [], lyrics: {}, playlists: [], folders: [], nextPlaylistId: 1 };
+}
 
 type SqliteDatabase = {
   exec(sql: string): void;
@@ -83,7 +86,7 @@ function normalizeText(value: string): string {
 
 export class LibraryStore {
   readonly engine: "sqlite" | "json";
-  private data: DatabaseShape = { ...EMPTY_DB };
+  private data: DatabaseShape = emptyDatabase();
   private sqlite: SqliteDatabase | null = null;
   private readonly jsonPath: string;
   private flushTimer: NodeJS.Timeout | null = null;
@@ -92,14 +95,15 @@ export class LibraryStore {
   constructor(
     private readonly dbPath: string,
     readonly artworkDirectory: string,
-    private readonly mediaUrl: (path: string, isArtwork?: boolean) => string
+    private readonly mediaUrl: (path: string, isArtwork?: boolean) => string,
+    options: { disableSqlite?: boolean } = {}
   ) {
     mkdirSync(artworkDirectory, { recursive: true });
     mkdirSync(dirname(dbPath), { recursive: true });
     this.jsonPath = join(dirname(dbPath), "library.json");
 
     let sqlite: SqliteDatabase | null = null;
-    try {
+    if (!options.disableSqlite) try {
       // `node:sqlite` is built into Node 22.5+ (experimental at first). Electron may or may not
       // expose it, so this is a capability probe rather than an assumption.
       const sqliteModule = process.getBuiltinModule?.("node:sqlite") as
@@ -153,7 +157,7 @@ export class LibraryStore {
         const folderRows = this.sqlite.prepare("SELECT path FROM folders").all() as { path: string }[];
         const metaRows = this.sqlite.prepare("SELECT key, value FROM meta").all() as { key: string; value: string }[];
 
-        const data: DatabaseShape = { ...EMPTY_DB, tracks: [], lyrics: {}, playlists: [], folders: [] };
+        const data: DatabaseShape = emptyDatabase();
         for (const row of trackRows) {
           try {
             data.tracks.push(JSON.parse(row.payload) as StoredTrack);
@@ -182,7 +186,7 @@ export class LibraryStore {
         return;
       } catch (error) {
         console.error("[Cadence] Failed to read SQLite library, starting empty:", error);
-        this.data = { ...EMPTY_DB };
+        this.data = emptyDatabase();
         return;
       }
     }
@@ -199,7 +203,7 @@ export class LibraryStore {
         };
       } catch (error) {
         console.error("[Cadence] Failed to read JSON library, starting empty:", error);
-        this.data = { ...EMPTY_DB };
+        this.data = emptyDatabase();
       }
     }
   }

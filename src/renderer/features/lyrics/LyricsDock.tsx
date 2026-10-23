@@ -58,7 +58,7 @@ export function LyricsDock({
 
   return (
     <div className="lyrics-dock" data-testid="lyrics-dock">
-      <div className="dock-group dock-status" title={syncLabel}>
+      <div className="dock-group dock-status" title={syncLabel} data-testid="sync-label">
         <span className={`sync-dot sync-${syncLabel.toLowerCase().replace(/\s+/g, "-")}`} />
         {syncLabel}
       </div>

@@ -145,11 +145,14 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     playQueue: async (trackIds, startIndex = 0) => {
       if (trackIds.length === 0) return;
       const shuffle = get().shuffle;
-      const order = buildOrder(trackIds.length, shuffle, startIndex);
+      const start = Math.max(0, Math.min(startIndex, trackIds.length - 1));
+      // buildOrder puts the requested track first when shuffling; otherwise the order is identity
+      // and the requested track is addressed by its own position.
+      const order = buildOrder(trackIds.length, shuffle, start);
       set({
         queue: [...trackIds],
         order,
-        orderPosition: 0,
+        orderPosition: shuffle ? 0 : start,
         position: 0,
         duration: 0,
         error: null,
@@ -176,7 +179,15 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       }
       const queue = [...state.queue, trackId];
       const order = buildOrder(queue.length, state.shuffle, queue.length - 1);
-      set({ queue, order, orderPosition: 0, position: 0, duration: 0, error: null, ended: false });
+      set({
+        queue,
+        order,
+        orderPosition: state.shuffle ? 0 : queue.length - 1,
+        position: 0,
+        duration: 0,
+        error: null,
+        ended: false,
+      });
       await loadCurrent(true);
       after();
     },

@@ -47,10 +47,10 @@ export function TopBar() {
           placeholder="Search songs, artists and albums"
           value={query}
           onChange={event => {
-            setQuery(event.target.value);
-            if (route.name === "search") {
-              navigate({ name: "search", query: event.target.value });
-            }
+            const value = event.target.value;
+            setQuery(value);
+            // Typing searches immediately; SearchView debounces the IPC call itself.
+            navigate(value.trim() ? { name: "search", query: value } : { name: "home" });
           }}
         />
         {query ? (

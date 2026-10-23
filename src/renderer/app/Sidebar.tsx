@@ -14,7 +14,7 @@ import {
   Settings,
   Users,
 } from "lucide-react";
-import { useLibrary } from "../state/libraryStore";
+import { EMPTY_PLAYLISTS, useLibrary } from "../state/libraryStore";
 import { useUi, type LibraryTab } from "../state/uiStore";
 
 const NAV: { label: string; icon: React.ReactNode; route: Parameters<ReturnType<typeof useUi.getState>["navigate"]>[0] }[] = [
@@ -30,7 +30,7 @@ const NAV: { label: string; icon: React.ReactNode; route: Parameters<ReturnType<
 export function Sidebar() {
   const route = useUi(state => state.route);
   const navigate = useUi(state => state.navigate);
-  const playlists = useLibrary(state => state.snapshot?.playlists ?? []);
+  const playlists = useLibrary(state => state.snapshot?.playlists ?? EMPTY_PLAYLISTS);
   const counts = useLibrary(state => state.snapshot?.counts);
 
   const isActive = (candidate: (typeof NAV)[number]["route"]) => {
@@ -99,6 +99,7 @@ export function Sidebar() {
           type="button"
           className={`nav-item ${route.name === "settings" ? "active" : ""}`}
           onClick={() => navigate({ name: "settings" })}
+          title="Settings"
         >
           <Settings size={18} />
           <span>Settings</span>

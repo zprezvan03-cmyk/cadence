@@ -30,6 +30,9 @@ function indexTracks(snapshot: LibrarySnapshot): Map<number, Track> {
   return map;
 }
 
+/** Stable empty value: selectors must not allocate a new array on every snapshot read. */
+export const EMPTY_PLAYLISTS: readonly Playlist[] = [];
+
 export const useLibrary = create<LibraryState>()((set, get) => ({
   snapshot: null,
   tracksById: new Map(),

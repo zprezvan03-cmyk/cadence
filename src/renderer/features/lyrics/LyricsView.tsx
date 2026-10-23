@@ -88,9 +88,14 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
         </div>
         {track ? (
           <div className="lyrics-header-actions">
-            <span className={`sync-pill sync-${syncLabel.toLowerCase().replace(/\s+/g, "-")}`} data-testid="sync-label">
-              {syncLabel}
-            </span>
+            <button
+              type="button"
+              className="sync-pill"
+              onClick={() => onToggleFullscreen()}
+              title={fullscreen ? "Exit fullscreen lyrics (Esc)" : "Fullscreen lyrics (F)"}
+            >
+              {fullscreen ? "Exit fullscreen" : "Fullscreen"}
+            </button>
           </div>
         ) : null}
       </div>
