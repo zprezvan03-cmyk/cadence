@@ -107,6 +107,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
             themeCss={themeCss}
             offsetMs={lyricsSettings?.offsetMs ?? 0}
             passiveScroll={lyricsSettings?.passiveScroll ?? true}
+            fontFamily={settings.appearance.fontFamily}
             songwriters={lyrics.parsed?.songwriters ?? []}
             language={lyrics.parsed?.language ?? null}
             noLyrics={lyrics.status === "empty"}

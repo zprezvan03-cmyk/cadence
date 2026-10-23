@@ -195,6 +195,8 @@ export interface AppearanceSettings {
   reduceMotion: boolean;
   compactSidebar: boolean;
   blurArtwork: boolean;
+  /** Font id from the shared font list; applied to the whole UI and the lyrics view. */
+  fontFamily: string;
 }
 
 export interface ShaderSettings extends GradientSettings {
