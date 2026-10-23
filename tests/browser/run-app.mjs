@@ -402,13 +402,58 @@ await page.click('aside.sidebar button[title="Songs"]');
 await page.waitForSelector('[data-testid="track-row"]');
 check("songs-list", (await page.$$('[data-testid="track-row"]')).length === 8, "8 rows from the real scan");
 
-const clickTrack = async title => {
+const clickTrackQuiet = async title => {
   await page.evaluate(t => {
     const row = [...document.querySelectorAll('[data-testid="track-row"]')].find(node => node.textContent.includes(t));
     if (!row) throw new Error(`row not found: ${t}`);
     row.click();
   }, title);
 };
+const clickTrack = clickTrackQuiet;
+
+/* ------------------------------------------------- per-format playback probe */
+
+// Claiming "format support" requires decoding each file through the app's own player, not the
+// browser's capability strings. broken.flac is the negative control.
+const formatCases = [
+  { title: "Fixture FLAC", format: "FLAC", expect: true },
+  { title: "Fixture Ogg Vorbis", format: "Ogg Vorbis", expect: true },
+  { title: "Fixture Opus", format: "Opus", expect: true },
+  { title: "fixture", format: "WAV (PCM)", expect: true },
+  { title: "Fixture MP3", format: "MP3", expect: true },
+  { title: "Fixture AAC", format: "AAC (M4A)", expect: true },
+  { title: "Fixture ALAC", format: "ALAC (M4A)", expect: false, actionable: /ALAC.*FLAC/s },
+  { title: "broken", format: "corrupt FLAC", expect: false, actionable: /corrupt/i },
+];
+let previousError = null;
+for (const testCase of formatCases) {
+  await page.evaluate(() => window.__harnessErrors?.length);
+  await clickTrackQuiet(testCase.title);
+  await wait(1400);
+  const state = await audioState();
+  const banner = await page.$eval(".error-banner", node => node.textContent.trim()).catch(() => null);
+  if (banner) previousError = banner;
+  const played = !state.paused && state.currentTime > 0.35;
+  const actionable = testCase.expect ? true : testCase.actionable.test(banner ?? "");
+  check(
+    `format-${testCase.format.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`,
+    testCase.expect ? played : !played && Boolean(banner) && actionable,
+    testCase.expect
+      ? `${state.currentTime.toFixed(2)}s, readyState ${state.readyState}, error ${state.error ?? "none"}`
+      : `decoder rejected it: ${JSON.stringify(state.error)}, banner ${JSON.stringify(banner)}`
+  );
+  if (banner) {
+    await page.evaluate(() => document.querySelector(".error-banner button")?.click());
+    await wait(150);
+  }
+}
+
+// A file the decoder cannot handle must be labelled in the library, not silently listed as normal.
+const alacBadge = await page.evaluate(() => {
+  const row = [...document.querySelectorAll('[data-testid="track-row"]')].find(node => node.textContent.includes("Fixture ALAC"));
+  return row?.querySelector(".badge.warn")?.textContent?.trim() ?? null;
+});
+check("alac-labelled-in-library", alacBadge === "no decoder", JSON.stringify(alacBadge));
 
 await clickTrack("Fixture FLAC");
 await wait(1500);

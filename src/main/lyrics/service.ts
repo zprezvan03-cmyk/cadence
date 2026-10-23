@@ -42,9 +42,11 @@ export class LyricsService {
     const track = this.store.getTrack(request.trackId);
     const trackPath = track?.path ?? null;
 
-    const pushLocal = (candidate: LyricsCandidate | null, provider: string, label: string) => {
+    const pushLocal = (candidate: LyricsCandidate | null, provider: string, label: string, unavailable?: string) => {
       if (!candidate) {
-        providerStatus.push({ provider, status: "miss" });
+        // A local provider with no track path was never consulted; say so rather than "miss".
+        if (unavailable) providerStatus.push({ provider, status: "skipped", detail: unavailable });
+        else providerStatus.push({ provider, status: "miss" });
         return;
       }
       candidates.push(candidate);
@@ -69,8 +71,11 @@ export class LyricsService {
             }
           : null,
         "local-sidecar",
-        sidecar?.path ?? ""
+        sidecar?.path ?? "",
+        trackPath ? undefined : "Track is not in the library"
       );
+    } else if (order.includes("local-sidecar")) {
+      providerStatus.push({ provider: "local-sidecar", status: "skipped", detail: "Provider disabled" });
     }
 
     if (order.includes("embedded-tag")) {
@@ -89,8 +94,11 @@ export class LyricsService {
             }
           : null,
         "embedded-tag",
-        "USLT/SYLT tag"
+        "USLT/SYLT tag",
+        trackPath ? undefined : "Track is not in the library"
       );
+    } else if (order.includes("embedded-tag")) {
+      providerStatus.push({ provider: "embedded-tag", status: "skipped", detail: "Provider disabled" });
     }
 
     const networkProviders = order.includes("lrclib-synced") || order.includes("lrclib-plain");

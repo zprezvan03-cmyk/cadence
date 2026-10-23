@@ -11,6 +11,7 @@ import { readSession, usePlayer, currentTrackId } from "../state/playerStore";
 import { useSettings } from "../state/settingsStore";
 import { useUi } from "../state/uiStore";
 import { formatTime } from "../player/queue";
+import { explainPlaybackFailure } from "../audio/codecs";
 
 const SEEK_STEP = 5;
 
@@ -62,10 +63,15 @@ export function useBootstrap(): void {
       audioEngine.on("metadata", ({ duration }) => {
         if (duration > 0) usePlayer.setState({ duration });
       }),
-      audioEngine.on("error", ({ message }) => {
-        usePlayer.getState().setError(message);
-        useUi.getState().showToast(message);
-        console.error("[Cadence] Playback error:", message);
+      audioEngine.on("error", ({ message, code }) => {
+        // Turn a bare media error code into something the listener can act on.
+        const trackId = currentTrackId(usePlayer.getState());
+        const track = trackId === null ? null : useLibrary.getState().tracksById.get(trackId) ?? null;
+        const explanation = explainPlaybackFailure(code, track);
+        const text = code ? explanation : message;
+        usePlayer.getState().setError(text);
+        useUi.getState().showToast(text);
+        console.error("[Cadence] Playback error:", message, "code:", code, "track:", track?.title);
       }),
       audioEngine.on("volume", ({ volume, muted }) => {
         usePlayer.setState({ volume, muted });

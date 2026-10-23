@@ -31,6 +31,10 @@ export function detectSyncType(lyrics: readonly Lyric[]): LyricsSyncType {
 }
 
 export function parseLyricsText(text: string, durationMs: number): ParsedLyrics {
+  // An empty provider payload must read as "no lyrics", not as a single blank line.
+  if (!text || text.trim().length === 0) {
+    return { lyrics: [], syncType: "none", songwriters: [], format: "plain", language: null, instrumentalOnly: false };
+  }
   const format = detectFormat(text);
   const parser = detectParser(text);
   let lyrics = parser.parse(text, Math.max(0, durationMs));

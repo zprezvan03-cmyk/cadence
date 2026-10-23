@@ -243,10 +243,13 @@ export class AudioEngine {
     } catch (error) {
       const name = (error as Error).name;
       if (name === "AbortError") return; // superseded by a newer play() call
+      // A rejected play() carries the element's own media error code when the source is at fault
+      // (NotSupportedError for an undecodable file); keep it so callers can explain the failure.
+      const mediaCode = this.element.error?.code ?? null;
       this.emit("error", {
-        code: null,
+        code: mediaCode,
         message: (error as Error).message || "Playback was blocked",
-        fatal: false,
+        fatal: mediaCode !== null && mediaCode >= 3,
       });
     }
   }

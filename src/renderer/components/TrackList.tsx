@@ -18,6 +18,7 @@ import { formatTime } from "../player/queue";
 import { useLibrary } from "../state/libraryStore";
 import { usePlayer } from "../state/playerStore";
 import { useUi } from "../state/uiStore";
+import { codecSupport } from "../audio/codecs";
 import { currentTrackId } from "../state/playerStore";
 import { Artwork } from "./Artwork";
 
@@ -123,9 +124,12 @@ export function TrackList({
                 <span className="title-text">{track.title}</span>
                 <span className="subtitle-text">{track.artist}</span>
               </span>
-              {!track.playable ? (
-                <span className="badge warn" title="This codec is not decodable by the built-in player">
-                  unsupported
+              {!track.playable || codecSupport(track) === "unsupported" ? (
+                <span
+                  className="badge warn"
+                  title={`${track.codec} is not decodable by Chromium's built-in media stack — convert to FLAC to play it`}
+                >
+                  no decoder
                 </span>
               ) : null}
               {track.hasSidecarLyrics ? (
