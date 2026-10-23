@@ -13,7 +13,9 @@ import {
   applyTranslations,
   lyricLines,
   parseLyricsText,
-  stripRomanization,
+  romanizationGaps,
+  scatterRomanizations,
+  stripGeneratedRomanization,
   stripTranslations,
   type ParsedLyrics,
 } from "./parseLyrics";
@@ -203,18 +205,25 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     };
   }, [state.parsed, state.status, settings.translationLanguage]);
 
-  // Romanization pass.
+  // Romanization pass. Romanization the lyrics file itself supplied (parsed lines) always wins:
+  // generation is requested only for lines that have none, and switching the toggle off removes
+  // only generated text, never the file's own.
   useEffect(() => {
     const parsed = state.parsed;
     if (!parsed || state.status !== "ready") return;
     if (!settings.romanization) {
-      // Switching romanization off removes only the romanization decoration; translations stay.
       setState(previous => {
-        const stripped = previous.lyrics ? stripRomanization(previous.lyrics) : previous.lyrics;
+        const stripped = previous.lyrics ? stripGeneratedRomanization(previous.lyrics, parsed.lyrics) : previous.lyrics;
         return stripped === previous.lyrics && !previous.romanizing
           ? previous
           : { ...previous, lyrics: stripped, romanizing: false };
       });
+      return;
+    }
+    const gaps = romanizationGaps(parsed.lyrics);
+    if (gaps.length === 0) {
+      // Every sung line already carries the file's romanization; nothing to generate.
+      setState(previous => (previous.romanizing ? { ...previous, romanizing: false } : previous));
       return;
     }
     let cancelled = false;
@@ -223,17 +232,18 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
       try {
         const lines = lyricLines(parsed.lyrics);
         const result = await bridge.lyrics.romanize({
-          lines,
+          lines: gaps.map(index => lines[index]),
           targetLanguage: "en",
           sourceLanguage: parsed.language,
         });
         if (cancelled) return;
-        const count = result.romanizations.filter(Boolean).length;
+        const romanizations = scatterRomanizations(parsed.lyrics.length, gaps, result.romanizations);
+        const count = romanizations.filter(Boolean).length;
         setState(previous => ({
           ...previous,
           romanizing: false,
           detectedLanguage: result.detectedLanguage || parsed.language,
-          lyrics: count > 0 ? applyRomanization(previous.lyrics ?? parsed.lyrics, result.romanizations) : previous.lyrics,
+          lyrics: count > 0 ? applyRomanization(previous.lyrics ?? parsed.lyrics, romanizations) : previous.lyrics,
         }));
       } catch {
         if (!cancelled) setState(previous => ({ ...previous, romanizing: false }));

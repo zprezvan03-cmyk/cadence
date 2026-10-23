@@ -4,6 +4,9 @@ import {
   applyTranslations,
   detectSyncType,
   parseLyricsText,
+  romanizationGaps,
+  scatterRomanizations,
+  stripGeneratedRomanization,
   stripRomanization,
   stripTranslations,
 } from "../../src/renderer/features/lyrics/parseLyrics";
@@ -135,5 +138,96 @@ describe("lyric decorations", () => {
     const lyrics = base();
     expect(stripTranslations(lyrics)).toBe(lyrics);
     expect(stripRomanization(lyrics)).toBe(lyrics);
+  });
+});
+
+describe("local file romanization priority", () => {
+  // A TTML sidecar whose transliterations cover only the first two lines.
+  const TTML = `<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" xml:lang="ja">
+  <head>
+    <metadata>
+      <ttm:agent type="person" xml:id="v1"/>
+      <itunes:metadata>
+        <transliterations>
+          <transliteration xml:lang="ja-Latn">
+            <text for="L1">sakura no hana ga saku</text>
+            <text for="L2">sora wa aoi</text>
+          </transliteration>
+        </transliterations>
+      </itunes:metadata>
+    </metadata>
+  </head>
+  <body dur="00:10.000">
+    <div>
+      <p begin="00:00.500" end="00:02.500" itunes:key="L1" ttm:agent="v1">桜の花が咲く</p>
+      <p begin="00:03.000" end="00:05.000" itunes:key="L2" ttm:agent="v1">空は青い</p>
+      <p begin="00:05.500" end="00:07.500" itunes:key="L3" ttm:agent="v1">風が吹く</p>
+    </div>
+  </body>
+</tt>`;
+  const local = () => parseLyricsText(TTML, 10_000).lyrics;
+
+  it("parses file-supplied romanization onto the lines it belongs to", () => {
+    const lyrics = local();
+    expect(lyrics).toHaveLength(3);
+    expect(lyrics[0].romanization).toBe("sakura no hana ga saku");
+    expect(lyrics[1].romanization).toBe("sora wa aoi");
+    expect(lyrics[2].romanization).toBeUndefined();
+  });
+
+  it("never overwrites local romanization with generated text, and fills only the gaps", () => {
+    const lyrics = local();
+    const generated = ["AUTO one", "AUTO two", "AUTO three"];
+    const merged = applyRomanization(lyrics, generated);
+    expect(merged[0]).toBe(lyrics[0]);
+    expect(merged[1]).toBe(lyrics[1]);
+    expect(merged[0].romanization).toBe("sakura no hana ga saku");
+    expect(merged[2].romanization).toBe("AUTO three");
+    // Reprocessing with a different generated batch changes nothing.
+    const reprocessed = applyRomanization(merged, ["OTHER one", "OTHER two", "OTHER three"]);
+    expect(reprocessed.map(line => line.romanization)).toEqual([
+      "sakura no hana ga saku",
+      "sora wa aoi",
+      "AUTO three",
+    ]);
+  });
+
+  it("preserves local romanization exactly, including Unicode and formatting", () => {
+    const lyrics = local();
+    const unicode = applyRomanization(
+      [{ ...lyrics[2], romanization: "kaze ga fuku —  Kaze  " }],
+      ["AUTO"]
+    );
+    expect(unicode[0].romanization).toBe("kaze ga fuku —  Kaze  ");
+    // An empty generated result is not a reason to erase a supplied one.
+    const emptied = applyRomanization(lyrics, ["", null, null]);
+    expect(emptied[0].romanization).toBe("sakura no hana ga saku");
+    expect(emptied[1].romanization).toBe("sora wa aoi");
+  });
+
+  it("reports only the lines missing local romanization as generation gaps", () => {
+    expect(romanizationGaps(local())).toEqual([2]);
+    const filled = applyRomanization(local(), [null, null, "kaze ga fuku"]);
+    expect(romanizationGaps(filled)).toEqual([]);
+    expect(romanizationGaps(parseLyricsText(LINE_LRC, 11_000).lyrics)).toEqual([0, 1, 2]);
+  });
+
+  it("scatters generated results back onto the gap lines only", () => {
+    expect(scatterRomanizations(3, [2], ["kaze ga fuku"])).toEqual([null, null, "kaze ga fuku"]);
+    expect(scatterRomanizations(3, [], [])).toEqual([null, null, null]);
+  });
+
+  it("disabling generation restores local romanization and drops only generated text", () => {
+    const lyrics = local();
+    const withGenerated = applyRomanization(lyrics, [null, null, "AUTO three"]);
+    const restored = stripGeneratedRomanization(withGenerated, lyrics);
+    expect(restored[0].romanization).toBe("sakura no hana ga saku");
+    expect(restored[1].romanization).toBe("sora wa aoi");
+    expect(restored[2].romanization).toBeUndefined();
+    // Already matching the local state: no rebuild.
+    expect(stripGeneratedRomanization(lyrics, lyrics)).toBe(lyrics);
+    const stripped = stripGeneratedRomanization(restored, lyrics);
+    expect(stripped).toBe(restored);
   });
 });

@@ -467,6 +467,72 @@ if (api.hasHarness) {
     `word spans=${decoFirst?.wordSpans}, active=${JSON.stringify(decorated.activeText)}`
   );
 
+  /* 2e — romanization the lyrics file itself supplies (TTML transliterations) beats generated
+     romanization; generation only fills lines the file left bare, and with generation off the
+     file's romanization still shows. */
+  const TTML_LOCAL = `<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" xml:lang="ja">
+  <head>
+    <metadata>
+      <ttm:agent type="person" xml:id="v1"/>
+      <itunes:metadata>
+        <transliterations>
+          <transliteration xml:lang="ja-Latn">
+            <text for="L1">sakura no hana ga saku</text>
+            <text for="L2">sora wa aoi</text>
+          </transliteration>
+        </transliterations>
+      </itunes:metadata>
+    </metadata>
+  </head>
+  <body dur="00:10.000">
+    <div>
+      <p begin="00:00.500" end="00:02.500" itunes:key="L1" ttm:agent="v1">桜の花が咲く</p>
+      <p begin="00:03.000" end="00:05.000" itunes:key="L2" ttm:agent="v1">空は青い</p>
+      <p begin="00:05.500" end="00:07.500" itunes:key="L3" ttm:agent="v1">風が吹く</p>
+    </div>
+  </body>
+</tt>`;
+  const readRomanized = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll("braccato-lyrics .blyrics--line")].map(
+        line => line.querySelector(":scope > .blyrics--romanized")?.textContent?.trim() ?? null
+      )
+    );
+  const localOn = await page.evaluate(
+    async ({ ttml, generated }) => {
+      const h = window.__cadenceHarness;
+      const mounted = h.mountLocalRomanizedLyrics(ttml, generated, true);
+      await new Promise(r => setTimeout(r, 900));
+      return mounted;
+    },
+    { ttml: TTML_LOCAL, generated: ["AUTO one", "AUTO two", "AUTO three"] }
+  );
+  const localOnLines = await readRomanized();
+  check(
+    "local-romanization-beats-generated",
+    localOn.gaps.join(",") === "2" &&
+      localOnLines[0] === "sakura no hana ga saku" &&
+      localOnLines[1] === "sora wa aoi" &&
+      localOnLines[2] === "AUTO three",
+    `gaps=${JSON.stringify(localOn.gaps)} lines=${JSON.stringify(localOnLines)}`
+  );
+  await page.evaluate(
+    async ({ ttml, generated }) => {
+      window.__cadenceHarness.mountLocalRomanizedLyrics(ttml, generated, false);
+      await new Promise(r => setTimeout(r, 900));
+    },
+    { ttml: TTML_LOCAL, generated: ["AUTO one", "AUTO two", "AUTO three"] }
+  );
+  const localOffLines = await readRomanized();
+  check(
+    "local-romanization-survives-generation-off",
+    localOffLines[0] === "sakura no hana ga saku" &&
+      localOffLines[1] === "sora wa aoi" &&
+      localOffLines[2] === null,
+    JSON.stringify(localOffLines)
+  );
+
   /* 3 — Kawarp shader canvas produces non-black pixels behind the lyrics. */
   const shader = await page.evaluate(async () => {
     const h = window.__cadenceHarness;

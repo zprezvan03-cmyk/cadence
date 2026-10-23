@@ -11,7 +11,14 @@ import { createRoot } from "react-dom/client";
 import { createElement } from "react";
 import { audioEngine } from "../audio/engine";
 import { usePlayer } from "../state/playerStore";
-import { applyRomanization, applyTranslations, parseLyricsText } from "../features/lyrics/parseLyrics";
+import {
+  applyRomanization,
+  applyTranslations,
+  parseLyricsText,
+  romanizationGaps,
+  scatterRomanizations,
+  stripGeneratedRomanization,
+} from "../features/lyrics/parseLyrics";
 import { BraccatoLyrics } from "../features/lyrics/BraccatoLyrics";
 import { KawarpBackground } from "../features/shaders/KawarpBackground";
 import type { ShaderSettings } from "../../shared/types";
@@ -127,6 +134,35 @@ const harness = {
       })
     );
     return { syncType: parsed.syncType, lines: parsed.lyrics.length };
+  },
+
+  /**
+   * Mounts a TTML file carrying its own transliterations, resolved against a generated batch the
+   * way useLyrics resolves it: generation fills only the lines the file left bare, and with
+   * generation off the file's romanization still stands.
+   */
+  mountLocalRomanizedLyrics(ttml: string, generated: (string | null)[], autoEnabled: boolean) {
+    const durationMs = Math.max(1, audioEngine.duration) * 1000 || 12_000;
+    const parsed = parseLyricsText(ttml, durationMs);
+    const gaps = romanizationGaps(parsed.lyrics);
+    const withGenerated = applyRomanization(
+      parsed.lyrics,
+      scatterRomanizations(parsed.lyrics.length, gaps, gaps.map(index => generated[index] ?? null))
+    );
+    const lyrics = autoEnabled ? withGenerated : stripGeneratedRomanization(withGenerated, parsed.lyrics);
+    const node = container("harness-lyrics", "");
+    if (!lyricsRoot) lyricsRoot = createRoot(node);
+    lyricsRoot.render(
+      createElement(BraccatoLyrics, {
+        lyrics,
+        themeCss: ":host { --blyrics-font-size: 26px; --blyrics-translated-font-size: 17px; }",
+        offsetMs: 0,
+        passiveScroll: false,
+        songwriters: parsed.songwriters,
+        language: parsed.language,
+      })
+    );
+    return { syncType: parsed.syncType, lines: parsed.lyrics.length, gaps };
   },
 
   async mountShaders() {

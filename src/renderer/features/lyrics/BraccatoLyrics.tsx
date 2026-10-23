@@ -60,7 +60,9 @@ function applyLineDecorations(
     const line = lines[index];
     if (!line) return;
     if (lyric.romanization) {
-      injectRomanization(doc, line.lyricElement, line, lyric.romanization);
+      // Timed romanization comes from the lyrics file alongside the plain text; hand it over so the
+      // file's word timing survives instead of being flattened (upstream passes it the same way).
+      injectRomanization(doc, line.lyricElement, line, lyric.romanization, lyric.timedRomanization ?? null);
       decorated = true;
     }
     const translation = lyric.translation?.text
