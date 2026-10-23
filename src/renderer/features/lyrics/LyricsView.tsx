@@ -8,9 +8,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Music4, RefreshCw, Search } from "lucide-react";
 import type { AppSettings, Track } from "../../../shared/types";
 import { useSettings } from "../../state/settingsStore";
+import { useUi } from "../../state/uiStore";
 import { BraccatoLyrics } from "./BraccatoLyrics";
 import { LyricsDock } from "./LyricsDock";
 import { FullscreenControls } from "./FullscreenControls";
+import { useAutoHideControls } from "./useAutoHideControls";
 import { KawarpBackground } from "../shaders/KawarpBackground";
 import { useLyrics } from "./useLyrics";
 import { buildThemeCss } from "../../upstream/better-lyrics/themes";
@@ -28,6 +30,10 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   const patchSettings = useSettings(state => state.patch);
   const [toast, setToast] = useState<string | null>(null);
   const [syncLabel, setSyncLabel] = useState("No lyrics");
+  const [dockPopoverOpen, setDockPopoverOpen] = useState(false);
+  const queueOpen = useUi(state => state.queueOpen);
+  // Fullscreen only: the controls fade after 3 s without activity, unless a popover or the queue is open.
+  const controlsVisible = useAutoHideControls(fullscreen, dockPopoverOpen || queueOpen);
 
   const lyricsSettings = settings?.lyrics;
   const shaderSettings = settings?.shaders;
@@ -154,7 +160,12 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
       </div>
 
       {fullscreen ? (
-        <FullscreenControls track={track} showLyrics={showLyrics} onToggleLyrics={toggleLyricsVisible} />
+        <FullscreenControls
+          track={track}
+          showLyrics={showLyrics}
+          onToggleLyrics={toggleLyricsVisible}
+          idle={!controlsVisible}
+        />
       ) : null}
 
       {track ? (
@@ -172,6 +183,8 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
           fullscreen={fullscreen}
           onToggleFullscreen={onToggleFullscreen}
           busy={lyrics.status === "loading" || lyrics.translating || lyrics.romanizing}
+          idle={!controlsVisible}
+          onPopoverChange={setDockPopoverOpen}
         />
       ) : null}
 

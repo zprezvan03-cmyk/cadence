@@ -4,7 +4,7 @@
  * React components. Written for Cadence.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ChevronDown,
   Download,
@@ -36,6 +36,10 @@ interface LyricsDockProps {
   fullscreen: boolean;
   onToggleFullscreen: () => void;
   busy: boolean;
+  /** Fullscreen auto-hide: faded out and non-interactive while true. */
+  idle?: boolean;
+  /** Reports whether a popover is open, so auto-hide can keep the dock visible while it is in use. */
+  onPopoverChange?: (open: boolean) => void;
 }
 
 export function LyricsDock({
@@ -52,12 +56,18 @@ export function LyricsDock({
   fullscreen,
   onToggleFullscreen,
   busy,
+  idle = false,
+  onPopoverChange,
 }: LyricsDockProps) {
   const [panel, setPanel] = useState<"none" | "sources" | "appearance">("none");
   const [languageOpen, setLanguageOpen] = useState(false);
 
+  useEffect(() => {
+    onPopoverChange?.(panel !== "none" || languageOpen);
+  }, [panel, languageOpen, onPopoverChange]);
+
   return (
-    <div className="lyrics-dock" data-testid="lyrics-dock">
+    <div className={`lyrics-dock ${idle ? "is-idle" : ""}`} data-testid="lyrics-dock">
       <div className="dock-group dock-status" title={syncLabel} data-testid="sync-label">
         <span className={`sync-dot sync-${syncLabel.toLowerCase().replace(/\s+/g, "-")}`} />
         {syncLabel}

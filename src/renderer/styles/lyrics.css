@@ -298,6 +298,20 @@ braccato-lyrics {
   width: 80px;
 }
 
+/* Fullscreen auto-hide: opacity only. The hidden state also removes the controls from hit-testing and
+   the focus order; layout and position never change. Reduced motion is handled by the global rule. */
+.fs-controls,
+.lyrics-dock {
+  transition: opacity 250ms ease, visibility 250ms ease;
+}
+
+.fs-controls.is-idle,
+.lyrics-dock.is-idle {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .fs-lyrics-toggle {
   display: inline-flex;
   align-items: center;

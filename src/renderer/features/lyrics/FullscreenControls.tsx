@@ -13,15 +13,17 @@ export interface FullscreenControlsProps {
   track: Track | null;
   showLyrics: boolean;
   onToggleLyrics: () => void;
+  /** Fullscreen auto-hide: faded out and non-interactive while true. */
+  idle?: boolean;
 }
 
-export function FullscreenControls({ track, showLyrics, onToggleLyrics }: FullscreenControlsProps) {
+export function FullscreenControls({ track, showLyrics, onToggleLyrics, idle = false }: FullscreenControlsProps) {
   const setFavorite = useLibrary(state => state.setFavorite);
   const queueOpen = useUi(state => state.queueOpen);
   const toggleQueue = useUi(state => state.toggleQueue);
 
   return (
-    <div className="fs-controls" data-testid="fullscreen-controls">
+    <div className={`fs-controls ${idle ? "is-idle" : ""}`} data-testid="fullscreen-controls">
       <SeekRow />
       <div className="fs-controls-row">
         <div className="fs-group">
