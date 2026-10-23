@@ -1166,7 +1166,8 @@ const layoutAtSize = async (width, height) => {
     const body = document.querySelector(".lyrics-body").getBoundingClientRect();
     const header = document.querySelector(".lyrics-header").getBoundingClientRect();
     const activeLine = document.querySelector(".blyrics--active")?.getBoundingClientRect() ?? null;
-    const lyricsClipped = getComputedStyle(document.querySelector(".lyrics-body")).clipPath.startsWith("inset(");
+    const bodyStyle = getComputedStyle(document.querySelector(".lyrics-body"));
+    const lyricsFaded = bodyStyle.maskImage.includes("calc") && bodyStyle.maskImage !== "none";
     return {
       present: true,
       artVisible,
@@ -1180,8 +1181,11 @@ const layoutAtSize = async (width, height) => {
       bodyLeft: body.left,
       headerBottom: header.bottom,
       activeLeft: activeLine ? activeLine.left : null,
-      lyricsClipped,
+      lyricsFaded,
+      maskImage: bodyStyle.maskImage.slice(0, 220),
       viewport: window.innerHeight,
+      viewportWidth: window.innerWidth,
+      bodyRight: body.right,
       footerTop: Math.min(
         document.querySelector('[data-testid="fullscreen-controls"]')?.getBoundingClientRect().top ?? Infinity,
         document.querySelector('[data-testid="lyrics-dock"]')?.getBoundingClientRect().top ?? Infinity
@@ -1199,7 +1203,8 @@ const layoutAtSize = async (width, height) => {
         art.sideTop >= art.headerBottom - 1 &&
         art.sideBottom <= art.footerTop &&
         Math.abs((art.sideTop + art.sideBottom) / 2 - art.viewport / 2) < 2 &&
-        art.lyricsClipped;
+        art.lyricsFaded &&
+        Math.abs(art.bodyLeft - (art.viewportWidth - art.bodyRight)) < 2;
   check(`fullscreen-artwork-${width}x${height}`, artOk, JSON.stringify(art));
 };
 await layoutAtSize(1280, 720);

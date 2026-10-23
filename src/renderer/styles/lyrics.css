@@ -53,13 +53,16 @@
      edge of the viewport in the right column; the footer overlays it as before. */
   /* The artwork grows with the window, but stays clear of the controls at short heights. */
   --fs-art-size: clamp(160px, min(36vh, 360px, calc(100vh - 2 * var(--fs-footer-height, 0px) - 100px)), 360px);
-  /* The lyrics end this far above the bottom edge, matching the space above the first line. */
-  --fs-edge: 14vh;
+  /* Column width taken by the artwork block, including its margins. The lyrics renderer keeps the same
+     margin on its right, so it sits centred between the two window edges. */
+  --fs-side-gap: calc(var(--fs-art-size) + 80px);
+  /* The bottom fade ends this far above the bottom edge. */
+  --fs-edge: 7vh;
   /* The lyrics move right of their centred position by a fifth of the artwork-column's offset, so the
      distance from the window's left edge grows by about a fifth. */
   --fs-lyrics-shift: calc(var(--fs-art-size) * 0.2);
   display: grid;
-  grid-template-columns: calc(var(--fs-art-size) + 80px) minmax(0, 1fr);
+  grid-template-columns: var(--fs-side-gap) minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
 }
 
@@ -72,7 +75,16 @@
   grid-column: 2;
   grid-row: 2;
   padding-left: calc(40px + var(--fs-lyrics-shift));
-  clip-path: inset(0 0 var(--fs-edge) 0);
+  margin-right: var(--fs-side-gap);
+  /* Bottom fade: the lyrics fade out over 14vh, and the fade ends at the bottom margin (--fs-edge), so
+     the margin below the lyrics is empty. The top fade is the body's own. */
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    #000 14%,
+    #000 calc(100% - var(--fs-edge) - 14vh),
+    transparent calc(100% - var(--fs-edge))
+  );
 }
 
 /* The artwork and its title form one block in the left column, centred in the window. It spans both rows,
@@ -121,6 +133,7 @@
   }
   .lyrics-view.is-fullscreen .lyrics-body {
     padding-left: 20px;
+    margin-right: 0;
   }
   .fs-side {
     grid-column: 1;
