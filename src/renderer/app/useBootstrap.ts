@@ -11,7 +11,12 @@ import { readSession, usePlayer, currentTrackId } from "../state/playerStore";
 import { useSettings } from "../state/settingsStore";
 import { useUi } from "../state/uiStore";
 import { formatTime } from "../player/queue";
-import { explainPlaybackFailure } from "../audio/codecs";
+import {
+  explainPlaybackFailure,
+  isDecoderOrDemuxerMessage,
+  probeMediaAccessStatus,
+  type MediaAccessStatus,
+} from "../audio/codecs";
 
 const SEEK_STEP = 5;
 
@@ -63,15 +68,38 @@ export function useBootstrap(): void {
       audioEngine.on("metadata", ({ duration }) => {
         if (duration > 0) usePlayer.setState({ duration });
       }),
-      audioEngine.on("error", ({ message, code }) => {
-        // Turn a bare media error code into something the listener can act on.
+      audioEngine.on("error", ({ message, code, mediaMessage, src }) => {
+        // Turn a bare media error code into something the listener can act on, while keeping
+        // file-access errors (403/404) separate from unsupported-codec and decode errors.
         const trackId = currentTrackId(usePlayer.getState());
         const track = trackId === null ? null : useLibrary.getState().tracksById.get(trackId) ?? null;
-        const explanation = explainPlaybackFailure(code, track);
-        const text = code ? explanation : message;
-        usePlayer.getState().setError(text);
-        useUi.getState().showToast(text);
-        console.error("[Cadence] Playback error:", message, "code:", code, "track:", track?.title);
+
+        const report = (httpStatus: MediaAccessStatus) => {
+          if (disposed || currentTrackId(usePlayer.getState()) !== trackId) return;
+          const explanation = explainPlaybackFailure(code, track, { httpStatus, mediaMessage });
+          const text = code ? explanation : message;
+          if (usePlayer.getState().error === text) return;
+          usePlayer.getState().setError(text);
+          useUi.getState().showToast(text);
+          console.error(
+            "[Cadence] Playback error:",
+            message,
+            "code:",
+            code,
+            "status:",
+            httpStatus,
+            "detail:",
+            mediaMessage,
+            "track:",
+            track?.title
+          );
+        };
+
+        if (code && src && !isDecoderOrDemuxerMessage(mediaMessage)) {
+          void probeMediaAccessStatus(src).then(report);
+        } else {
+          report(null);
+        }
       }),
       audioEngine.on("volume", ({ volume, muted }) => {
         usePlayer.setState({ volume, muted });

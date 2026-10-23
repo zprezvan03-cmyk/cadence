@@ -31,7 +31,7 @@ rmSync(artworkDir, { recursive: true, force: true });
 mkdirSync(artworkDir, { recursive: true });
 
 /** Media URLs point at the harness HTTP server, which serves the same files with Range support. */
-const mediaUrl = (path: string) => `/media/${encodeURIComponent(path.split("/").pop() ?? "file")}`;
+const mediaUrl = (path: string) => `/media/${encodeURIComponent(basename(path) || "file")}`;
 
 const store = new LibraryStore(dbPath, artworkDir, mediaUrl);
 const scan = await scanLibrary(store, { folders: [fixtures] });
@@ -40,7 +40,7 @@ const artworkFiles = new Set<string>();
 const snapshot = {
   tracks: store.getTracks().map(track => ({
     ...store.toTrack(track),
-    streamUrl: `/audio/${encodeURIComponent(track.path.split("/").pop() ?? "")}`,
+    streamUrl: `/audio/${encodeURIComponent(basename(track.path))}`,
     artworkUrl: track.artworkFile ? `/artwork/${encodeURIComponent(track.artworkFile)}` : null,
   })),
   albums: store.getAlbums(),
