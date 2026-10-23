@@ -4,7 +4,7 @@
  * it also carries the audio controls and the lyrics on/off toggle. Written for Cadence.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Music4, RefreshCw, Search } from "lucide-react";
 import type { AppSettings, Track } from "../../../shared/types";
 import { useSettings } from "../../state/settingsStore";
@@ -34,6 +34,26 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   const queueOpen = useUi(state => state.queueOpen);
   // Fullscreen only: the controls fade after 3 s without activity, unless a popover or the queue is open.
   const controlsVisible = useAutoHideControls(fullscreen, dockPopoverOpen || queueOpen);
+  const viewRef = useRef<HTMLDivElement | null>(null);
+  const footerRef = useRef<HTMLDivElement | null>(null);
+
+  // Fullscreen only: the controls overlay the bottom of the lyrics body instead of taking space from it.
+  // The footer's measured height is published to the view as --fs-footer-height, so the body keeps its
+  // lines above the controls and the toast clears them, at any window size and whatever the dock's wrap.
+  useLayoutEffect(() => {
+    const view = viewRef.current;
+    const footer = footerRef.current;
+    if (!fullscreen || !view || !footer) return;
+    const publish = () => view.style.setProperty("--fs-footer-height", `${footer.offsetHeight}px`);
+    publish();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(publish);
+    observer.observe(footer);
+    return () => {
+      observer.disconnect();
+      view.style.removeProperty("--fs-footer-height");
+    };
+  }, [fullscreen]);
 
   const lyricsSettings = settings?.lyrics;
   const shaderSettings = settings?.shaders;
@@ -88,7 +108,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   if (!settings) return <div className="view-loading">Loading…</div>;
 
   return (
-    <div className={`lyrics-view ${fullscreen ? "is-fullscreen" : ""}`} data-testid="lyrics-view">
+    <div ref={viewRef} className={`lyrics-view ${fullscreen ? "is-fullscreen" : ""}`} data-testid="lyrics-view">
       <KawarpBackground
         artworkUrl={track?.artworkUrl ?? null}
         animatedArtUrl={track?.animatedArtUrl ?? null}
@@ -159,34 +179,36 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
         ) : null}
       </div>
 
-      {fullscreen ? (
-        <FullscreenControls
-          track={track}
-          showLyrics={showLyrics}
-          onToggleLyrics={toggleLyricsVisible}
-          idle={!controlsVisible}
-        />
-      ) : null}
+      <div ref={footerRef} className="lyrics-footer">
+        {fullscreen ? (
+          <FullscreenControls
+            track={track}
+            showLyrics={showLyrics}
+            onToggleLyrics={toggleLyricsVisible}
+            idle={!controlsVisible}
+          />
+        ) : null}
 
-      {track ? (
-        <LyricsDock
-          settings={lyricsSettings ?? fallbackLyricsSettings}
-          onPatch={patchLyrics}
-          candidates={lyrics.candidates}
-          activeSource={lyrics.activeSource}
-          onSelectSource={lyrics.selectSource}
-          providerStatus={lyrics.providerStatus}
-          onReload={lyrics.reload}
-          onSaveSidecar={() => void handleSave()}
-          onChooseFile={() => void lyrics.chooseFile()}
-          syncLabel={syncLabel}
-          fullscreen={fullscreen}
-          onToggleFullscreen={onToggleFullscreen}
-          busy={lyrics.status === "loading" || lyrics.translating || lyrics.romanizing}
-          idle={!controlsVisible}
-          onPopoverChange={setDockPopoverOpen}
-        />
-      ) : null}
+        {track ? (
+          <LyricsDock
+            settings={lyricsSettings ?? fallbackLyricsSettings}
+            onPatch={patchLyrics}
+            candidates={lyrics.candidates}
+            activeSource={lyrics.activeSource}
+            onSelectSource={lyrics.selectSource}
+            providerStatus={lyrics.providerStatus}
+            onReload={lyrics.reload}
+            onSaveSidecar={() => void handleSave()}
+            onChooseFile={() => void lyrics.chooseFile()}
+            syncLabel={syncLabel}
+            fullscreen={fullscreen}
+            onToggleFullscreen={onToggleFullscreen}
+            busy={lyrics.status === "loading" || lyrics.translating || lyrics.romanizing}
+            idle={!controlsVisible}
+            onPopoverChange={setDockPopoverOpen}
+          />
+        ) : null}
+      </div>
 
       {toast ? (
         <div className="toast" role="status" data-testid="toast">

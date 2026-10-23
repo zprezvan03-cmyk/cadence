@@ -1047,6 +1047,77 @@ await wait(700);
 const reentered = await controlState();
 check("auto-hide-reentry-visible", reentered.idle === false && reentered.opacity === 1, JSON.stringify(reentered));
 
+/* ------------------------------------------------------- fullscreen layout */
+
+// The lyrics body runs to the bottom edge of the viewport, the controls overlay it, and showing or
+// hiding them moves nothing. Geometry is read after the 250 ms fade has settled.
+const fullscreenLayout = () =>
+  page.evaluate(() => {
+    const rect = selector => {
+      const node = document.querySelector(selector);
+      if (!node) return null;
+      const box = node.getBoundingClientRect();
+      return { top: box.top, bottom: box.bottom, height: box.height };
+    };
+    const controls = document.querySelector('[data-testid="fullscreen-controls"]');
+    const dock = document.querySelector('[data-testid="lyrics-dock"]');
+    const footerTop = Math.min(
+      controls?.getBoundingClientRect().top ?? Infinity,
+      dock?.getBoundingClientRect().top ?? Infinity
+    );
+    const active = document.querySelector(".blyrics--active")?.getBoundingClientRect() ?? null;
+    return {
+      viewport: window.innerHeight,
+      view: rect(".lyrics-view"),
+      body: rect(".lyrics-body"),
+      footerTop,
+      scrollPaddingBottom: parseFloat(getComputedStyle(document.querySelector(".lyrics-body")).scrollPaddingBottom),
+      activeBottom: active ? active.bottom : null,
+    };
+  });
+
+// Showing and hiding the controls: the body and the footer must not move.
+await wait(4000);
+const layoutHiddenState = await controlState();
+const layoutHidden = await fullscreenLayout();
+await page.mouse.move(640, 420);
+await wait(350);
+const layoutShown = await fullscreenLayout();
+check(
+  "controls-overlay-without-shift",
+  layoutHiddenState.idle === true && layoutShown.body.top === layoutHidden.body.top && layoutShown.body.bottom === layoutHidden.body.bottom && layoutShown.footerTop === layoutHidden.footerTop,
+  `hidden=${layoutHiddenState.idle}; body ${layoutShown.body.top}→${layoutShown.body.bottom} shown, ${layoutHidden.body.top}→${layoutHidden.body.bottom} hidden; footer top ${layoutShown.footerTop} / ${layoutHidden.footerTop}`
+);
+
+// At each size: the body fills the viewport, the scroll band matches the controls, and the active lyric line
+// sits above the controls. The position is seeked and paused, so the measurement is steady.
+const layoutAtSize = async (width, height) => {
+  await page.setViewport({ width, height });
+  await wait(500);
+  await page.evaluate(() => {
+    const audio = document.querySelector("audio");
+    audio.pause();
+    audio.currentTime = 2.5;
+  });
+  await wait(1200);
+  await page.mouse.move(640, 420);
+  await wait(350);
+  const layout = await fullscreenLayout();
+  const fills = Math.abs(layout.body.bottom - layout.viewport) < 1 && Math.abs(layout.view.height - layout.viewport) < 1;
+  const padded = Math.abs(layout.scrollPaddingBottom - (layout.viewport - layout.footerTop)) <= 2;
+  const clear = layout.activeBottom !== null && layout.activeBottom <= layout.footerTop;
+  check(
+    `fullscreen-layout-${width}x${height}`,
+    fills && padded && clear,
+    `body bottom ${layout.body.bottom.toFixed(0)} of ${layout.viewport}, scroll-padding ${layout.scrollPaddingBottom}px vs controls ${(layout.viewport - layout.footerTop).toFixed(0)}px, active line bottom ${layout.activeBottom?.toFixed(0)} vs footer top ${layout.footerTop.toFixed(0)}`
+  );
+};
+await layoutAtSize(1280, 720);
+await layoutAtSize(800, 600);
+await layoutAtSize(1480, 900);
+await page.evaluate(() => document.querySelector("audio").play());
+await wait(300);
+
 // The queue opens from fullscreen and must sit above the fullscreen view.
 await wakeClick('[data-testid="fullscreen-controls"] button[aria-label="Queue"]');
 await wait(400);

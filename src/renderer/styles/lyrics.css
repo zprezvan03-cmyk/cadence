@@ -50,9 +50,38 @@
   z-index: 55;
 }
 
-/* Keep feedback toasts above the fullscreen control stack instead of on top of it. */
+/* Footer: the fullscreen controls and the lyrics dock. On the normal page it is a plain column below the
+   lyrics body. In fullscreen it is pinned over the bottom of the body: the body runs to the bottom edge
+   of the viewport and the controls overlay it. The footer takes no pointer input of its own, so the
+   lyrics under the gaps stay clickable. Its children opt back in, and a hidden child (is-idle) still
+   takes no input, because the is-idle rules are more specific than this one. */
+.lyrics-footer {
+  display: flex;
+  flex-direction: column;
+}
+
+.lyrics-view.is-fullscreen .lyrics-footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.lyrics-footer > * {
+  pointer-events: auto;
+}
+
+/* The lyrics engine keeps the active line out of scroll-padding (the band it cannot read), so the band
+   is set to the controls' measured height and the line stays above them. */
+.lyrics-view.is-fullscreen .lyrics-body {
+  scroll-padding-bottom: var(--fs-footer-height, 0px);
+}
+
+/* Feedback toasts sit just above the fullscreen control stack instead of on top of it. */
 .lyrics-view.is-fullscreen .toast {
-  bottom: 214px;
+  bottom: calc(var(--fs-footer-height, 0px) + 16px);
 }
 
 .app-shell.is-immersive .content-scroll {
