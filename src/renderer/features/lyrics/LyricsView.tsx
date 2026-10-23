@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Minimize2, Music4, RefreshCw, Search } from "lucide-react";
+import { ChevronDown, Minimize2, Mic2, Music4, RefreshCw, Search } from "lucide-react";
 import type { AppSettings, Track } from "../../../shared/types";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
@@ -38,7 +38,12 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   const footerRef = useRef<HTMLDivElement | null>(null);
   // Fullscreen only: the controls show while the pointer is over them and fade out when it leaves,
   // unless a popover or the queue is open.
-  const controlsVisible = useControlsHover(fullscreen, dockPopoverOpen || queueOpen, footerRef);
+  // Fullscreen with lyrics on: the footer (controls and dock) is shown over the lyrics. Fullscreen with
+  // lyrics off: the artwork and the controls form a panel instead, with no footer.
+  const showLyricsSetting = settings?.lyrics?.showLyricsInFullscreen ?? true;
+  const footerPresent = fullscreen && showLyricsSetting;
+  const panelMode = fullscreen && !showLyricsSetting;
+  const controlsVisible = useControlsHover(footerPresent, dockPopoverOpen || queueOpen, footerRef);
 
   // Fullscreen only: the controls overlay the bottom of the lyrics body instead of taking space from it.
   // The footer's measured height is published to the view as --fs-footer-height, so the body keeps its
@@ -46,7 +51,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   useLayoutEffect(() => {
     const view = viewRef.current;
     const footer = footerRef.current;
-    if (!fullscreen || !view || !footer) return;
+    if (!footerPresent || !view || !footer) return;
     const publish = () => view.style.setProperty("--fs-footer-height", `${footer.offsetHeight}px`);
     publish();
     if (typeof ResizeObserver === "undefined") return;
@@ -56,7 +61,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
       observer.disconnect();
       view.style.removeProperty("--fs-footer-height");
     };
-  }, [fullscreen]);
+  }, [footerPresent]);
 
   const lyricsSettings = settings?.lyrics;
   const shaderSettings = settings?.shaders;
@@ -120,7 +125,11 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   );
 
   return (
-    <div ref={viewRef} className={`lyrics-view ${fullscreen ? "is-fullscreen" : ""}`} data-testid="lyrics-view">
+    <div
+      ref={viewRef}
+      className={`lyrics-view ${fullscreen ? "is-fullscreen" : ""} ${panelMode ? "is-lyrics-off" : ""}`}
+      data-testid="lyrics-view"
+    >
       <KawarpBackground
         artworkUrl={track?.artworkUrl ?? null}
         animatedArtUrl={track?.animatedArtUrl ?? null}
@@ -128,7 +137,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
         playing={playing}
       />
 
-      {fullscreen ? (
+      {fullscreen && showLyricsSetting ? (
         <div className="fs-side">
           <div className="fs-artwork">
             <Artwork src={track?.artworkUrl} alt={track?.album ?? "Artwork"} size="hero" />
@@ -139,7 +148,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
 
       <div className="lyrics-header">
         {fullscreen ? null : heading}
-        {fullscreen ? (
+        {footerPresent ? (
           <button
             type="button"
             className="icon-button fs-exit"
@@ -150,7 +159,49 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
             <Minimize2 size={18} />
           </button>
         ) : null}
+        {panelMode ? (
+          <>
+            <button
+              type="button"
+              className="icon-button fs-back"
+              onClick={onToggleFullscreen}
+              aria-label="Exit fullscreen"
+              title="Exit fullscreen (Esc)"
+            >
+              <ChevronDown size={22} />
+            </button>
+            <span className="eyebrow fs-eyebrow">Now playing</span>
+            <button
+              type="button"
+              className="icon-button fs-lyrics-off-toggle"
+              aria-label="Show lyrics"
+              aria-pressed={false}
+              title="Show lyrics"
+              data-testid="fullscreen-lyrics-toggle"
+              onClick={toggleLyricsVisible}
+            >
+              <Mic2 size={18} />
+            </button>
+          </>
+        ) : null}
       </div>
+
+      {panelMode ? (
+        <div className="fs-panel-layout">
+          <div className="fs-panel-art">
+            <Artwork src={track?.artworkUrl} alt={track?.album ?? "Artwork"} size="hero" />
+          </div>
+          <div className="fs-panel">
+            {heading}
+            <FullscreenControls
+              variant="panel"
+              track={track}
+              showLyrics={showLyrics}
+              onToggleLyrics={toggleLyricsVisible}
+            />
+          </div>
+        </div>
+      ) : null}
 
       <div className={`lyrics-body ${lyricsVisible ? "" : "is-hidden"}`}>
         {track ? (
@@ -208,6 +259,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
         ) : null}
       </div>
 
+      {panelMode ? null : (
       <div ref={footerRef} className="lyrics-footer">
         {fullscreen ? (
           <FullscreenControls
@@ -236,6 +288,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
           />
         ) : null}
       </div>
+      )}
 
       {toast ? (
         <div className="toast" role="status" data-testid="toast">

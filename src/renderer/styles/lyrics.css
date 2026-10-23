@@ -155,6 +155,132 @@
   }
 }
 
+/* Lyrics off in fullscreen: the artwork beside the track's title and controls. There is no lyrics footer
+   or dock. The hidden lyrics body stays mounted, so its clock and scroll position are kept, and it takes
+   no space in this layout. */
+.lyrics-view.is-fullscreen.is-lyrics-off {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.lyrics-view.is-fullscreen.is-lyrics-off .lyrics-header {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  align-items: center;
+  justify-content: space-between;
+  padding: 22px 28px 6px;
+}
+
+.lyrics-view.is-fullscreen.is-lyrics-off .lyrics-body {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.lyrics-view.is-fullscreen .fs-back,
+.lyrics-view.is-fullscreen .fs-lyrics-off-toggle {
+  position: relative;
+  z-index: 3;
+}
+
+.fs-eyebrow {
+  margin: 0;
+}
+
+.fs-panel-layout {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  position: relative;
+  z-index: 2;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 5vw;
+  padding: 0 6vw 6vh;
+}
+
+.fs-panel-art {
+  justify-self: center;
+}
+
+.fs-panel-art .artwork-hero {
+  width: min(44vh, 420px);
+  height: min(44vh, 420px);
+  box-shadow: 0 40px 90px rgba(0, 0, 0, 0.65);
+}
+
+.fs-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  width: 100%;
+  max-width: 560px;
+  min-width: 0;
+}
+
+.fs-panel .lyrics-heading h1 {
+  font-size: clamp(26px, 3.2vw, 44px);
+}
+
+.fs-panel .lyrics-heading p {
+  font-size: 16px;
+}
+
+.fs-controls.is-panel {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  gap: 18px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+
+.fs-controls.is-panel .play-button {
+  width: 64px;
+  height: 64px;
+}
+
+.fs-panel-transport {
+  display: flex;
+  align-items: center;
+}
+
+.fs-panel-secondary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.fs-controls.is-panel .volume-group {
+  width: 200px;
+}
+
+.fs-controls.is-panel .volume-group input[type="range"].volume {
+  width: 150px;
+}
+
+@media (max-width: 900px) {
+  .lyrics-view.is-fullscreen.is-lyrics-off {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .lyrics-view.is-fullscreen.is-lyrics-off .lyrics-header,
+  .lyrics-view.is-fullscreen.is-lyrics-off .lyrics-body {
+    grid-column: 1;
+  }
+  .fs-panel-layout {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 0 20px 6vh;
+  }
+  .fs-panel-art {
+    display: none;
+  }
+}
+
 /* Footer: the fullscreen controls and the lyrics dock. On the normal page it is a plain column below the
    lyrics body. In fullscreen it is pinned over the bottom of the body: the body runs to the bottom edge
    of the viewport and the controls overlay it. The footer takes no pointer input of its own, so the

@@ -837,6 +837,45 @@ check(
 );
 await page.screenshot({ path: join(shotDir, "05b-fullscreen-lyrics-off.png") });
 
+// Lyrics off: the artwork sits beside the title and the controls. No lyrics footer or dock is shown.
+const offPanel = await page.evaluate(() => {
+  const box = selector => {
+    const node = document.querySelector(selector);
+    if (!node) return null;
+    const rect = node.getBoundingClientRect();
+    return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width };
+  };
+  return {
+    lyricsOff: document.querySelector(".lyrics-view")?.classList.contains("is-lyrics-off") ?? false,
+    footer: Boolean(document.querySelector(".lyrics-footer")),
+    dock: Boolean(document.querySelector('[data-testid="lyrics-dock"]')),
+    art: box(".fs-panel-art .artwork-hero"),
+    panel: box(".fs-panel"),
+    controls: box('[data-testid="fullscreen-controls"]'),
+    back: Boolean(document.querySelector(".lyrics-view .fs-back")),
+    eyebrow: document.querySelector(".fs-eyebrow")?.textContent?.trim() ?? null,
+    toggle: Boolean(document.querySelector('.lyrics-header [data-testid="fullscreen-lyrics-toggle"]')),
+    innerWidth: window.innerWidth,
+    innerHeight: window.innerHeight,
+  };
+});
+check(
+  "lyrics-off-panel",
+  offPanel.lyricsOff &&
+    !offPanel.footer &&
+    !offPanel.dock &&
+    Boolean(offPanel.art) &&
+    Boolean(offPanel.panel) &&
+    Boolean(offPanel.controls) &&
+    offPanel.art.right <= offPanel.panel.left &&
+    offPanel.controls.bottom <= offPanel.innerHeight &&
+    offPanel.panel.right <= offPanel.innerWidth &&
+    offPanel.back &&
+    offPanel.toggle &&
+    offPanel.eyebrow === "Now playing",
+  JSON.stringify(offPanel)
+);
+
 // Transport still works while lyrics are hidden.
 await page.evaluate(() => {
   document.querySelector("audio").currentTime = 0.5;
