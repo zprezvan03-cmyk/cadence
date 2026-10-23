@@ -659,19 +659,31 @@ await wait(400);
 await page.click('aside.sidebar button[title="Settings"]');
 await page.waitForSelector('[data-testid="settings-view"]');
 await wait(500);
-const tabCount = (await page.$$(".settings-tabs button")).length;
-const shadersTab = await page.evaluateHandle(() =>
-  [...document.querySelectorAll(".settings-tabs button")].find(node => /shader/i.test(node.textContent ?? ""))
-);
-if (shadersTab.asElement()) await shadersTab.asElement().click();
-await wait(500);
+const settingsTabs = await page.$$eval(".settings-tabs button", buttons => buttons.map(button => button.textContent?.trim()));
 const shaderSection = await page.$('[data-testid="settings-shaders"]');
-check("settings-renders", Boolean(shaderSection) && tabCount === 5, `${tabCount} tabs, shader section ${Boolean(shaderSection)}`);
+const lyricsSection = await page.$('[data-testid="settings-lyrics"]');
+check(
+  "settings-tabs-consolidated",
+  settingsTabs.length === 4 && settingsTabs.includes("Appearance") && !settingsTabs.includes("Lyrics") && !settingsTabs.includes("Shaders"),
+  `${settingsTabs.join(", ")}`
+);
+check("settings-appearance-subsections", Boolean(shaderSection) && Boolean(lyricsSection), "lyrics and shader controls in Appearance");
 await page.screenshot({ path: join(shotDir, "07-settings.png") });
 
 await page.evaluate(() => {
-  const lyricsTab = [...document.querySelectorAll(".settings-tabs button")].find(node => /lyrics/i.test(node.textContent ?? ""));
-  lyricsTab?.click();
+  const playbackTab = [...document.querySelectorAll(".settings-tabs button")].find(node => /playback/i.test(node.textContent ?? ""));
+  playbackTab?.click();
+});
+await wait(300);
+const playbackAppearanceControls = await page.evaluate(() => ({
+  appearanceHeader: [...document.querySelectorAll("[data-testid=\"settings-playback\"] h2, [data-testid=\"settings-playback\"] h3")]
+    .some(node => /appearance/i.test(node.textContent ?? "")),
+  fontSelect: Boolean(document.querySelector('[data-testid="settings-playback"] [data-testid="font-select"]')),
+}));
+check("playback-appearance-removed", !playbackAppearanceControls.appearanceHeader && !playbackAppearanceControls.fontSelect, JSON.stringify(playbackAppearanceControls));
+await page.evaluate(() => {
+  const appearanceTab = [...document.querySelectorAll(".settings-tabs button")].find(node => /appearance/i.test(node.textContent ?? ""));
+  appearanceTab?.click();
 });
 await wait(400);
 const persisted = await page.evaluate(async () => {
