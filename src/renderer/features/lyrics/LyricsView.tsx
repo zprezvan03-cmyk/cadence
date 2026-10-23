@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Minimize2, Mic2, Music4, RefreshCw, Search } from "lucide-react";
+import { Minimize2, Music4, RefreshCw, Search } from "lucide-react";
 import type { AppSettings, Track } from "../../../shared/types";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
@@ -148,42 +148,19 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
 
       <div className="lyrics-header">
         {fullscreen ? null : heading}
-        {footerPresent ? (
+        {/* One exit button, top-right, in both fullscreen layouts. */}
+        {fullscreen ? (
           <button
             type="button"
             className="icon-button fs-exit"
             onClick={onToggleFullscreen}
-            aria-label="Exit fullscreen lyrics"
-            title="Exit fullscreen lyrics (Esc)"
+            aria-label={panelMode ? "Exit fullscreen" : "Exit fullscreen lyrics"}
+            title={panelMode ? "Exit fullscreen (Esc)" : "Exit fullscreen lyrics (Esc)"}
           >
             <Minimize2 size={18} />
           </button>
         ) : null}
-        {panelMode ? (
-          <>
-            <button
-              type="button"
-              className="icon-button fs-back"
-              onClick={onToggleFullscreen}
-              aria-label="Exit fullscreen"
-              title="Exit fullscreen (Esc)"
-            >
-              <ChevronDown size={22} />
-            </button>
-            <span className="eyebrow fs-eyebrow">Now playing</span>
-            <button
-              type="button"
-              className="icon-button fs-lyrics-off-toggle"
-              aria-label="Show lyrics"
-              aria-pressed={false}
-              title="Show lyrics"
-              data-testid="fullscreen-lyrics-toggle"
-              onClick={toggleLyricsVisible}
-            >
-              <Mic2 size={18} />
-            </button>
-          </>
-        ) : null}
+        {panelMode ? <span className="eyebrow fs-eyebrow">Now playing</span> : null}
       </div>
 
       {panelMode ? (

@@ -73,7 +73,8 @@
 .lyrics-view.is-fullscreen .lyrics-body {
   grid-column: 2;
   grid-row: 2;
-  padding-left: 40px;
+  padding-left: 0;
+  padding-right: 0;
   /* Bottom fade: the lyrics fade out over 14vh, and the fade ends at the bottom margin (--fs-edge), so
      the margin below the lyrics is empty. The top fade is the body's own. */
   mask-image: linear-gradient(
@@ -112,10 +113,18 @@
 
 /* The exit button sits in the header's top-right corner and takes no space in the header's flow. */
 .lyrics-view.is-fullscreen .fs-exit {
-  position: absolute;
+  /* Fixed to the window, not to the header: the header only spans the centred group in wide layouts. */
+  position: fixed;
   top: 26px;
   right: 40px;
   z-index: 3;
+}
+
+/* The renderer scales each line by 0.95. Scaling from the right edge keeps a full-width line flush with the
+   body's right edge, which is the same distance from the window's right edge as the artwork's left margin.
+   Scaling from the left would pull the text about 40 px in from that edge. */
+.lyrics-view.is-fullscreen .blyrics-container > div {
+  transform-origin: right center;
 }
 
 /* Narrow windows: the lyrics take the full width and the artwork is left out, but the title stays at the
@@ -130,6 +139,7 @@
   }
   .lyrics-view.is-fullscreen .lyrics-body {
     padding-left: 20px;
+    padding-right: 20px;
   }
   .fs-side {
     grid-column: 1;
@@ -163,19 +173,13 @@
   grid-column: 1 / -1;
   grid-row: 1;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   padding: 22px 28px 6px;
 }
 
 .lyrics-view.is-fullscreen.is-lyrics-off .lyrics-body {
   grid-column: 2;
   grid-row: 2;
-}
-
-.lyrics-view.is-fullscreen .fs-back,
-.lyrics-view.is-fullscreen .fs-lyrics-off-toggle {
-  position: relative;
-  z-index: 3;
 }
 
 .fs-eyebrow {

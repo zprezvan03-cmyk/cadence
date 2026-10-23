@@ -2,7 +2,7 @@
  * Audio controls for the fullscreen Now Playing view: the same transport, seek, volume, favourite
  * and queue controls as the player bar. In the bar variant (lyrics on) they sit along the bottom with
  * the lyrics on/off toggle; in the panel variant (lyrics off) they sit beside the artwork, and the
- * toggle is in the view's header. Written for Cadence.
+ * toggle is in the transport row. Written for Cadence.
  */
 
 import { Heart, ListMusic, Mic2 } from "lucide-react";
@@ -17,7 +17,7 @@ export interface FullscreenControlsProps {
   onToggleLyrics: () => void;
   /** Hover visibility: faded out and non-interactive while true. */
   concealed?: boolean;
-  /** "bar" along the bottom with the lyrics toggle (default); "panel" beside the artwork, no toggle. */
+  /** "bar" along the bottom with the lyrics toggle (default); "panel" beside the artwork, toggle in the transport row. */
   variant?: "bar" | "panel";
 }
 
@@ -56,11 +56,25 @@ export function FullscreenControls({
   );
 
   if (variant === "panel") {
+    // The lyrics toggle sits in the transport row, right after the repeat button.
+    const lyricsToggle = (
+      <button
+        type="button"
+        className="icon-button fs-lyrics-off-toggle"
+        aria-label={showLyrics ? "Hide lyrics" : "Show lyrics"}
+        aria-pressed={showLyrics}
+        title={showLyrics ? "Hide lyrics" : "Show lyrics"}
+        data-testid="fullscreen-lyrics-toggle"
+        onClick={onToggleLyrics}
+      >
+        <Mic2 size={17} />
+      </button>
+    );
     return (
       <div className="fs-controls is-panel" data-testid="fullscreen-controls">
         <SeekRow />
         <div className="fs-panel-transport">
-          <TransportButtons />
+          <TransportButtons trailing={lyricsToggle} />
         </div>
         <div className="fs-panel-secondary">
           <div className="fs-group">{favourite}</div>

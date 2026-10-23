@@ -852,9 +852,14 @@ const offPanel = await page.evaluate(() => {
     art: box(".fs-panel-art .artwork-hero"),
     panel: box(".fs-panel"),
     controls: box('[data-testid="fullscreen-controls"]'),
-    back: Boolean(document.querySelector(".lyrics-view .fs-back")),
+    exit: Boolean(document.querySelector(".lyrics-view .fs-exit")),
     eyebrow: document.querySelector(".fs-eyebrow")?.textContent?.trim() ?? null,
-    toggle: Boolean(document.querySelector('.lyrics-header [data-testid="fullscreen-lyrics-toggle"]')),
+    // The toggle sits in the transport row, directly after the repeat button.
+    toggle: (() => {
+      const toggleNode = document.querySelector('[data-testid="fullscreen-controls"] [data-testid="fullscreen-lyrics-toggle"]');
+      const repeatNode = document.querySelector('[data-testid="fullscreen-controls"] button[aria-label^="Repeat"]');
+      return Boolean(toggleNode && repeatNode && repeatNode.nextElementSibling === toggleNode && toggleNode.closest(".transport"));
+    })(),
     innerWidth: window.innerWidth,
     innerHeight: window.innerHeight,
   };
@@ -870,7 +875,7 @@ check(
     offPanel.art.right <= offPanel.panel.left &&
     offPanel.controls.bottom <= offPanel.innerHeight &&
     offPanel.panel.right <= offPanel.innerWidth &&
-    offPanel.back &&
+    offPanel.exit &&
     offPanel.toggle &&
     offPanel.eyebrow === "Now playing",
   JSON.stringify(offPanel)
@@ -1205,6 +1210,7 @@ const layoutAtSize = async (width, height) => {
     const body = document.querySelector(".lyrics-body").getBoundingClientRect();
     const header = document.querySelector(".lyrics-header").getBoundingClientRect();
     const activeLine = document.querySelector(".blyrics--active")?.getBoundingClientRect() ?? null;
+    const exitBox = document.querySelector(".lyrics-view .fs-exit")?.getBoundingClientRect() ?? null;
     const bodyStyle = getComputedStyle(document.querySelector(".lyrics-body"));
     const lyricsFaded = bodyStyle.maskImage.includes("calc") && bodyStyle.maskImage !== "none";
     return {
@@ -1226,6 +1232,9 @@ const layoutAtSize = async (width, height) => {
       viewport: window.innerHeight,
       viewportWidth: window.innerWidth,
       bodyRight: body.right,
+      activeRight: activeLine ? activeLine.right : null,
+      exitRight: exitBox ? exitBox.right : null,
+      exitTop: exitBox ? exitBox.top : null,
       footerTop: Math.min(
         document.querySelector('[data-testid="fullscreen-controls"]')?.getBoundingClientRect().top ?? Infinity,
         document.querySelector('[data-testid="lyrics-dock"]')?.getBoundingClientRect().top ?? Infinity
@@ -1246,6 +1255,17 @@ const layoutAtSize = async (width, height) => {
         art.lyricsFaded &&
         Math.abs((art.artLeft + art.bodyRight) / 2 - art.viewportWidth / 2) < 2;
   check(`fullscreen-artwork-${width}x${height}`, artOk, JSON.stringify(art));
+  // The lyrics' right edge is the same distance from the window's right edge as the artwork's left edge, and the
+  // active line reaches that edge (the renderer's line scale is anchored on the right). Wide layouts only.
+  if (width > 900) {
+    const edgeOk =
+      Math.abs(art.activeRight - art.bodyRight) < 2 &&
+      Math.abs(art.viewportWidth - art.bodyRight - art.artLeft) < 2;
+    check(`lyrics-right-edge-${width}x${height}`, edgeOk, `active right ${art.activeRight?.toFixed(1)}, body right ${art.bodyRight?.toFixed(1)}, art left ${art.artLeft?.toFixed(1)}, window ${art.viewportWidth}`);
+  }
+  // The exit button is in the top-right corner of the window, with lyrics on or off.
+  const exitOk = art.exitRight !== null && art.viewportWidth - art.exitRight <= 60 && art.exitTop < 40;
+  check(`exit-top-right-${width}x${height}`, exitOk, `exit right ${art.exitRight?.toFixed(0)} of ${art.viewportWidth}, top ${art.exitTop?.toFixed(0)}`);
 };
 await layoutAtSize(1280, 720);
 await layoutAtSize(800, 600);

@@ -4,11 +4,13 @@
  * Written for Cadence.
  */
 
+import type { ReactNode } from "react";
 import { Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from "lucide-react";
 import { formatTime } from "../../player/queue";
 import { usePlayer } from "../../state/playerStore";
 
-export function TransportButtons() {
+/** `trailing` is placed after the repeat button, in the same row (used by the fullscreen panel). */
+export function TransportButtons({ trailing }: { trailing?: ReactNode } = {}) {
   const { isPlaying, shuffle, repeat, toggle, next, previous, toggleShuffle, cycleRepeat } = usePlayer();
 
   return (
@@ -46,6 +48,7 @@ export function TransportButtons() {
       >
         {repeat === "one" ? <Repeat1 size={17} /> : <Repeat size={17} />}
       </button>
+      {trailing}
     </div>
   );
 }
