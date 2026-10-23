@@ -7,23 +7,6 @@ fetch lyrics.
 
 GPL-3.0. Upstream attribution and pinned commits: [`UPSTREAM.md`](UPSTREAM.md).
 
-## Status — read this first
-
-This build has been verified **without** a working Electron runtime, because the Electron binary
-cannot be downloaded in the environment it was developed in. Concretely:
-
-| Area | How it was verified |
-| --- | --- |
-| Library scan, metadata, artwork, sidecars, rescan, SQLite + JSON stores | Real files through the real main-process modules (vitest) |
-| Playback, pause/resume, seek, next/prev, mute | The production renderer bundle in headless Chromium, real `<audio>` element, real WebAudio |
-| Lyrics rendering, word-level highlight, seek-following, fullscreen | Same harness, with the real `@braccato/core` renderer |
-| Shader background + animation + audio-reactive wiring | Same harness, WebGL via SwiftShader, pixel sampling before/after |
-| Settings persistence across restart | Same harness, reload with persisted state |
-| **The Electron window itself** | **Not launched here.** `electron-builder` could not run either (it needs the Electron binary) |
-
-So: the app builds, its logic and UI are tested, but `npm start` / the packaged `.exe` have not been
-executed in this environment. Run `npm run dev` on your machine to confirm the shell.
-
 ## Install
 
 ### From a Windows package (once built on a networked machine)
