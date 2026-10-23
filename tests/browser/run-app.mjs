@@ -364,7 +364,7 @@ await page.evaluateOnNewDocument(
           targetLanguage: request.targetLanguage,
           provider: "harness",
         }),
-        romanize: async request => ({ romanizations: request.lines.map(() => null) }),
+        romanize: async request => ({ romanizations: request.lines.map(line => `[romanized] ${line}`) }),
         saveSidecar: async () => "/harness/lyrics.lrc",
       },
       player: {
@@ -663,6 +663,81 @@ const pausedSeek = (await audioState()).paused;
 console.log("DEBUG paused-seek", pausedSeek, JSON.stringify({ atOne, atFive }));
 check("lyrics-follow-seek", (atOne.active ?? "").includes("Word") && (atFive.active ?? "").includes("Last"), `1.0s → ${JSON.stringify(atOne.active)}, 4.9s → ${JSON.stringify(atFive.active)}`);
 await page.evaluate(() => document.querySelector("audio").pause());
+
+/* ------------------------------------------- inline translation / romanization */
+
+// Translation is enabled in the harness settings and the stub translator prefixes each line, so
+// every line must carry its translation as a secondary line inside the line itself (Better Lyrics
+// style) — never as extra lyric entries after the list.
+const readDecorations = () =>
+  page.evaluate(() => {
+    const host = document.querySelector("braccato-lyrics");
+    const lines = [...(host?.querySelectorAll(".blyrics--line") ?? [])];
+    return {
+      lineCount: lines.length,
+      perLine: lines.map(line => ({
+        childClasses: [...line.children].map(node =>
+          node.classList.contains("blyrics--romanized")
+            ? "romanized"
+            : node.classList.contains("blyrics--translated")
+              ? "translated"
+              : node.classList.contains("blyrics-line-main")
+                ? "main"
+                : node.className
+        ),
+        romanized: line.querySelector(":scope > .blyrics--romanized")?.textContent?.trim() ?? null,
+        translated: line.querySelector(":scope > .blyrics--translated")?.textContent?.trim() ?? null,
+      })),
+      stray: [...(host?.querySelectorAll(".blyrics--translated, .blyrics--romanized") ?? [])].filter(
+        node => !node.closest(".blyrics--line")
+      ).length,
+    };
+  });
+await page.waitForFunction(
+  () => document.querySelectorAll("braccato-lyrics .blyrics--translated").length >= 4,
+  { timeout: 10_000 }
+).catch(() => {});
+const translatedState = await readDecorations();
+check(
+  "translation-inline-under-line",
+  translatedState.lineCount === 4 &&
+    translatedState.perLine.every((line, index) => line.translated === `[translated] ${["Word level timings arrive", "Every single word lights", "Karaoke follows the clock", "Last line of the song"][index]}`) &&
+    translatedState.perLine.every(line => line.childClasses[0] === "main" && line.childClasses.at(-1) === "translated") &&
+    translatedState.stray === 0,
+  JSON.stringify(translatedState)
+);
+
+// Toggling romanization on adds a romanized line above the translation in the same line group;
+// toggling it back off removes only the romanization.
+await page.click('[data-testid="lyrics-dock"] button[title="Romanize lyrics"]');
+await page.waitForFunction(
+  () => document.querySelectorAll("braccato-lyrics .blyrics--romanized").length >= 4,
+  { timeout: 10_000 }
+).catch(() => {});
+const romanizedState = await readDecorations();
+check(
+  "romanization-inline-above-translation",
+  romanizedState.lineCount === 4 &&
+    romanizedState.perLine.every(line => (line.romanized ?? "").startsWith("[romanized] ")) &&
+    romanizedState.perLine.every(
+      line =>
+        line.childClasses.indexOf("romanized") > 0 &&
+        line.childClasses.indexOf("romanized") < line.childClasses.indexOf("translated")
+    ) &&
+    romanizedState.stray === 0,
+  JSON.stringify(romanizedState)
+);
+await page.click('[data-testid="lyrics-dock"] button[title="Romanize lyrics"]');
+await page.waitForFunction(
+  () => document.querySelectorAll("braccato-lyrics .blyrics--romanized").length === 0,
+  { timeout: 10_000 }
+).catch(() => {});
+const romanizationOffState = await readDecorations();
+check(
+  "romanization-toggle-off-keeps-translation",
+  romanizationOffState.perLine.every(line => line.romanized === null && (line.translated ?? "").startsWith("[translated] ")),
+  JSON.stringify(romanizationOffState)
+);
 
 /* ------------------------------------------------------- unified fullscreen */
 

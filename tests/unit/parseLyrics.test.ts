@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { detectSyncType, parseLyricsText } from "../../src/renderer/features/lyrics/parseLyrics";
+import {
+  applyRomanization,
+  applyTranslations,
+  detectSyncType,
+  parseLyricsText,
+  stripRomanization,
+  stripTranslations,
+} from "../../src/renderer/features/lyrics/parseLyrics";
 
 const LINE_LRC = "[ti:Test]\n[00:01.00]First line\n[00:03.50]Second line\n[00:06.00]Third line";
 const RICH_LRC = "[00:01.00]<00:01.00>Word <00:01.30>level <00:01.70>sync\n[00:04.00]<00:04.00>Second <00:04.40>line";
@@ -57,5 +64,76 @@ describe("parseLyricsText", () => {
     const parsed = parseLyricsText("", 3_000);
     expect(parsed.lyrics).toEqual([]);
     expect(parsed.syncType).toBe("none");
+  });
+});
+
+describe("lyric decorations", () => {
+  const base = () => parseLyricsText(RICH_LRC, 8_000).lyrics;
+
+  it("attaches each translation to its own line without touching timing or parts", () => {
+    const lyrics = base();
+    const decorated = applyTranslations(lyrics, ["First in English", null], "en");
+    expect(decorated[0].translation).toEqual({ text: "First in English", lang: "en" });
+    expect(decorated[0].translations).toEqual({ en: "First in English" });
+    expect(decorated[0].startTimeMs).toBe(lyrics[0].startTimeMs);
+    expect(decorated[0].parts).toBe(lyrics[0].parts);
+    // A missing translation leaves the line itself untouched — no placeholder decoration.
+    expect(decorated[1]).toBe(lyrics[1]);
+  });
+
+  it("attaches each romanization to its own line and skips blank results", () => {
+    const lyrics = base();
+    const decorated = applyRomanization(lyrics, ["", "daini rain"]);
+    expect(decorated[0]).toBe(lyrics[0]);
+    expect(decorated[1].romanization).toBe("daini rain");
+    expect(decorated).toHaveLength(lyrics.length);
+  });
+
+  it("keeps translation and romanization on the same line whichever pass runs second", () => {
+    const lyrics = base();
+    const translationFirst = applyRomanization(
+      applyTranslations(lyrics, ["First in English", "Second in English"], "en"),
+      ["fāsuto", "sekando"]
+    );
+    const romanizationFirst = applyTranslations(
+      applyRomanization(lyrics, ["fāsuto", "sekando"]),
+      ["First in English", "Second in English"],
+      "en"
+    );
+    for (const decorated of [translationFirst, romanizationFirst]) {
+      expect(decorated[0].translation?.text).toBe("First in English");
+      expect(decorated[0].romanization).toBe("fāsuto");
+      expect(decorated[1].translation?.text).toBe("Second in English");
+      expect(decorated[1].romanization).toBe("sekando");
+      // Decorations never become standalone lyric entries.
+      expect(decorated).toHaveLength(lyrics.length);
+    }
+  });
+
+  it("strip helpers remove only their own decoration", () => {
+    const decorated = applyRomanization(
+      applyTranslations(base(), ["First in English", "Second in English"], "en"),
+      ["fāsuto", "sekando"]
+    );
+    const noTranslation = stripTranslations(decorated);
+    expect(noTranslation[0].translation).toBeUndefined();
+    expect(noTranslation[0].translations).toBeUndefined();
+    expect(noTranslation[0].romanization).toBe("fāsuto");
+    expect(noTranslation[0].words).toBe(decorated[0].words);
+
+    const noRomanization = stripRomanization(decorated);
+    expect(noRomanization[0].romanization).toBeUndefined();
+    expect(noRomanization[0].translation?.text).toBe("First in English");
+
+    const bare = stripTranslations(noRomanization);
+    expect(bare[0].translation).toBeUndefined();
+    expect(bare[0].romanization).toBeUndefined();
+    expect(bare[0].startTimeMs).toBe(decorated[0].startTimeMs);
+  });
+
+  it("strip helpers return the same array when there is nothing to strip", () => {
+    const lyrics = base();
+    expect(stripTranslations(lyrics)).toBe(lyrics);
+    expect(stripRomanization(lyrics)).toBe(lyrics);
   });
 });

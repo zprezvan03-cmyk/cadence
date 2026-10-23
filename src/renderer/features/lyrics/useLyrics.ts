@@ -13,6 +13,8 @@ import {
   applyTranslations,
   lyricLines,
   parseLyricsText,
+  stripRomanization,
+  stripTranslations,
   type ParsedLyrics,
 } from "./parseLyrics";
 
@@ -147,11 +149,14 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     const parsed = state.parsed;
     if (!parsed || state.status !== "ready") return;
     if (!settings.translationLanguage) {
-      setState(previous =>
-        previous.lyrics === parsed.lyrics
+      // Switching translation off removes only the translation decoration; a romanization already
+      // hanging off the same lines stays.
+      setState(previous => {
+        const stripped = previous.lyrics ? stripTranslations(previous.lyrics) : previous.lyrics;
+        return stripped === previous.lyrics && !previous.translating && previous.translatedLanguage === null
           ? previous
-          : { ...previous, lyrics: parsed.lyrics, translating: false, translatedLanguage: null }
-      );
+          : { ...previous, lyrics: stripped, translating: false, translatedLanguage: null };
+      });
       return;
     }
 
@@ -167,16 +172,23 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
         });
         if (cancelled) return;
         const translatedCount = result.translations.filter(Boolean).length;
-        setState(previous => ({
-          ...previous,
-          translating: false,
-          translatedLanguage: translatedCount > 0 ? settings.translationLanguage : null,
-          detectedLanguage: result.detectedLanguage || parsed.language,
-          lyrics:
-            translatedCount > 0
-              ? applyTranslations(parsed.lyrics, result.translations, settings.translationLanguage)
-              : parsed.lyrics,
-        }));
+        setState(previous => {
+          // Decorate the lines as they currently stand (same parsed set) rather than rebuilding
+          // from `parsed.lyrics`, so a romanization that landed first survives this pass; the
+          // spread in applyTranslations keeps each line's romanization field.
+          const base =
+            previous.parsed === parsed ? previous.lyrics ?? parsed.lyrics : parsed.lyrics;
+          return {
+            ...previous,
+            translating: false,
+            translatedLanguage: translatedCount > 0 ? settings.translationLanguage : null,
+            detectedLanguage: result.detectedLanguage || parsed.language,
+            lyrics:
+              translatedCount > 0
+                ? applyTranslations(base, result.translations, settings.translationLanguage)
+                : stripTranslations(base),
+          };
+        });
       } catch (error) {
         if (cancelled) return;
         setState(previous => ({
@@ -194,7 +206,17 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
   // Romanization pass.
   useEffect(() => {
     const parsed = state.parsed;
-    if (!parsed || state.status !== "ready" || !settings.romanization) return;
+    if (!parsed || state.status !== "ready") return;
+    if (!settings.romanization) {
+      // Switching romanization off removes only the romanization decoration; translations stay.
+      setState(previous => {
+        const stripped = previous.lyrics ? stripRomanization(previous.lyrics) : previous.lyrics;
+        return stripped === previous.lyrics && !previous.romanizing
+          ? previous
+          : { ...previous, lyrics: stripped, romanizing: false };
+      });
+      return;
+    }
     let cancelled = false;
     setState(previous => ({ ...previous, romanizing: true }));
     void (async () => {

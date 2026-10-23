@@ -379,6 +379,94 @@ if (api.hasHarness) {
   );
   console.log("rich word states:", richsync.states.join(" | "));
 
+  /* 2d — translation and romanization render as secondary lines inside their own lyric line
+     (Better Lyrics style), never as standalone entries after the lyrics. Lines without a
+     decoration get none, and word timings survive decoration. */
+  const decorated = await page.evaluate(async () => {
+    const h = window.__cadenceHarness;
+    const text = `[ti:Decorated]
+[00:00.50]<00:00.50>桜の <00:00.90>花が <00:01.35>咲く
+[00:03.00]空は青い
+[00:05.00]風が吹く`;
+    h.mountDecoratedLyrics(text, {
+      translations: ["The cherry blossoms bloom", null, "The wind blows"],
+      romanizations: ["sakura no hana ga saku", "sora wa aoi", null],
+    });
+    await new Promise(r => setTimeout(r, 1200));
+    const host = document.querySelector("braccato-lyrics");
+    const lines = [...(host?.querySelectorAll(".blyrics--line") ?? [])];
+    const describe = line => {
+      const main = line?.querySelector(":scope > .blyrics-line-main");
+      const romanized = line?.querySelector(":scope > .blyrics--romanized");
+      const translated = line?.querySelector(":scope > .blyrics--translated");
+      return {
+        childClasses: [...(line?.children ?? [])].map(node =>
+          node.classList.contains("blyrics--romanized")
+            ? "romanized"
+            : node.classList.contains("blyrics--translated")
+              ? "translated"
+              : node.classList.contains("blyrics-line-main")
+                ? "main"
+                : node.className
+        ),
+        romanized: romanized?.textContent?.trim() ?? null,
+        translated: translated?.textContent?.trim() ?? null,
+        romanizedFontPx: romanized ? parseFloat(getComputedStyle(romanized).fontSize) : null,
+        translatedFontPx: translated ? parseFloat(getComputedStyle(translated).fontSize) : null,
+        mainFontPx: main ? parseFloat(getComputedStyle(main).fontSize) : null,
+        wordSpans: line?.querySelectorAll(".blyrics--word").length ?? 0,
+      };
+    };
+    h.audioEngine.seek(0.8);
+    await new Promise(r => setTimeout(r, 600));
+    return {
+      lineCount: lines.length,
+      perLine: lines.map(describe),
+      strayTranslated: [...(host?.querySelectorAll(".blyrics--translated") ?? [])].filter(
+        node => !node.closest(".blyrics--line")
+      ).length,
+      strayRomanized: [...(host?.querySelectorAll(".blyrics--romanized") ?? [])].filter(
+        node => !node.closest(".blyrics--line")
+      ).length,
+      activeText: host?.querySelector(".blyrics--active")?.textContent?.replace(/\s+/g, " ").trim() ?? null,
+    };
+  });
+  const [decoFirst, decoSecond, decoThird] = decorated.perLine;
+  check(
+    "decorations-grouped-per-line",
+    decorated.lineCount === 3 &&
+      decoFirst?.translated === "The cherry blossoms bloom" &&
+      decoFirst?.romanized === "sakura no hana ga saku" &&
+      decoSecond?.translated === null &&
+      decoSecond?.romanized === "sora wa aoi" &&
+      decoThird?.translated === "The wind blows" &&
+      decoThird?.romanized === null,
+    JSON.stringify(decorated.perLine)
+  );
+  check(
+    "decorations-order-romanization-above-translation",
+    (decoFirst?.childClasses.indexOf("romanized") ?? -1) >= 0 &&
+      decoFirst.childClasses.indexOf("romanized") < decoFirst.childClasses.indexOf("translated") &&
+      decoFirst.childClasses[0] === "main",
+    JSON.stringify(decoFirst?.childClasses)
+  );
+  check(
+    "decorations-not-standalone",
+    decorated.strayTranslated === 0 && decorated.strayRomanized === 0,
+    `stray translated=${decorated.strayTranslated} romanized=${decorated.strayRomanized}`
+  );
+  check(
+    "decorations-secondary-typography",
+    (decoFirst?.translatedFontPx ?? 99) < (decoFirst?.mainFontPx ?? 0) &&
+      (decoFirst?.romanizedFontPx ?? 99) < (decoFirst?.translatedFontPx ?? 0),
+    `main=${decoFirst?.mainFontPx}px translated=${decoFirst?.translatedFontPx}px romanized=${decoFirst?.romanizedFontPx}px`
+  );
+  check(
+    "decorations-keep-word-sync-and-active-line",
+    (decoFirst?.wordSpans ?? 0) >= 3 && (decorated.activeText ?? "").includes("桜の"),
+    `word spans=${decoFirst?.wordSpans}, active=${JSON.stringify(decorated.activeText)}`
+  );
+
   /* 3 — Kawarp shader canvas produces non-black pixels behind the lyrics. */
   const shader = await page.evaluate(async () => {
     const h = window.__cadenceHarness;

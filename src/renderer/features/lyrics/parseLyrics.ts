@@ -102,6 +102,30 @@ export function applyRomanization(lyrics: readonly Lyric[], romanizations: reado
   });
 }
 
+/**
+ * Removes only the translation decoration, leaving romanization, words and timings untouched.
+ * Returns the input array itself when no line carries a translation, so callers can bail out on
+ * identity instead of rebuilding the rendered lines for nothing.
+ */
+export function stripTranslations(lyrics: readonly Lyric[]): Lyric[] {
+  if (!lyrics.some(line => line.translation || line.translations)) return lyrics as Lyric[];
+  return lyrics.map(line => {
+    if (!line.translation && !line.translations) return line;
+    const { translation: _translation, translations: _translations, ...rest } = line;
+    return rest as Lyric;
+  });
+}
+
+/** Removes only the romanization decoration. Same identity contract as {@link stripTranslations}. */
+export function stripRomanization(lyrics: readonly Lyric[]): Lyric[] {
+  if (!lyrics.some(line => line.romanization)) return lyrics as Lyric[];
+  return lyrics.map(line => {
+    if (!line.romanization) return line;
+    const { romanization: _romanization, ...rest } = line;
+    return rest as Lyric;
+  });
+}
+
 export function lyricsToPlainText(lyrics: readonly Lyric[]): string {
   return lyrics
     .map(line => line.words)
