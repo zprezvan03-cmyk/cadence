@@ -1210,6 +1210,7 @@ const layoutAtSize = async (width, height) => {
     return {
       present: true,
       artVisible,
+      artLeft: artBox.left,
       artRight: artBox.right,
       artBottom: artBox.bottom,
       artWidth: artBox.width,
@@ -1243,7 +1244,7 @@ const layoutAtSize = async (width, height) => {
         art.sideBottom <= art.footerTop &&
         Math.abs((art.sideTop + art.sideBottom) / 2 - art.viewport / 2) < 2 &&
         art.lyricsFaded &&
-        Math.abs(art.bodyLeft - (art.viewportWidth - art.bodyRight)) < 2;
+        Math.abs((art.artLeft + art.bodyRight) / 2 - art.viewportWidth / 2) < 2;
   check(`fullscreen-artwork-${width}x${height}`, artOk, JSON.stringify(art));
 };
 await layoutAtSize(1280, 720);

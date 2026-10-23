@@ -53,29 +53,27 @@
      edge of the viewport in the right column; the footer overlays it as before. */
   /* The artwork grows with the window, but stays clear of the controls at short heights. */
   --fs-art-size: clamp(160px, min(36vh, 360px, calc(100vh - 2 * var(--fs-footer-height, 0px) - 100px)), 360px);
-  /* Column width taken by the artwork block, including its margins. The lyrics renderer keeps the same
-     margin on its right, so it sits centred between the two window edges. */
-  --fs-side-gap: calc(var(--fs-art-size) + 80px);
+  /* The artwork column and the lyrics column form one group, centred horizontally in the window. The
+     lyrics column is at most 860 px wide and keeps 48 px clear of each window edge. */
+  --fs-side-col: calc(var(--fs-art-size) + 48px);
+  --fs-lyrics-width: min(860px, calc(100vw - var(--fs-side-col) - 96px));
   /* The bottom fade ends this far above the bottom edge. */
   --fs-edge: 7vh;
-  /* The lyrics move right of their centred position by a fifth of the artwork-column's offset, so the
-     distance from the window's left edge grows by about a fifth. */
-  --fs-lyrics-shift: calc(var(--fs-art-size) * 0.2);
   display: grid;
-  grid-template-columns: var(--fs-side-gap) minmax(0, 1fr);
+  grid-template-columns: var(--fs-side-col) var(--fs-lyrics-width);
   grid-template-rows: auto minmax(0, 1fr);
+  justify-content: center;
 }
 
 .lyrics-view.is-fullscreen .lyrics-header {
-  grid-column: 2;
+  grid-column: 1 / -1;
   grid-row: 1;
 }
 
 .lyrics-view.is-fullscreen .lyrics-body {
   grid-column: 2;
   grid-row: 2;
-  padding-left: calc(40px + var(--fs-lyrics-shift));
-  margin-right: var(--fs-side-gap);
+  padding-left: 40px;
   /* Bottom fade: the lyrics fade out over 14vh, and the fade ends at the bottom margin (--fs-edge), so
      the margin below the lyrics is empty. The top fade is the body's own. */
   mask-image: linear-gradient(
@@ -99,7 +97,7 @@
   display: flex;
   flex-direction: column;
   width: var(--fs-art-size);
-  margin-left: 40px;
+  margin-left: 0;
 }
 
 .fs-artwork .artwork-hero {
@@ -125,7 +123,6 @@
 @media (max-width: 900px) {
   .lyrics-view.is-fullscreen {
     grid-template-columns: minmax(0, 1fr);
-    --fs-lyrics-shift: 0px;
   }
   .lyrics-view.is-fullscreen .lyrics-header,
   .lyrics-view.is-fullscreen .lyrics-body {
@@ -133,7 +130,6 @@
   }
   .lyrics-view.is-fullscreen .lyrics-body {
     padding-left: 20px;
-    margin-right: 0;
   }
   .fs-side {
     grid-column: 1;
