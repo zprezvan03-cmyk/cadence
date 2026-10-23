@@ -53,8 +53,8 @@
 /* Footer: the fullscreen controls and the lyrics dock. On the normal page it is a plain column below the
    lyrics body. In fullscreen it is pinned over the bottom of the body: the body runs to the bottom edge
    of the viewport and the controls overlay it. The footer takes no pointer input of its own, so the
-   lyrics under the gaps stay clickable. Its children opt back in, and a hidden child (is-idle) still
-   takes no input, because the is-idle rules are more specific than this one. */
+   lyrics under the gaps stay clickable. Its children opt back in, and a hidden child (is-concealed) still
+   takes no input, because the is-concealed rules are more specific than this one. */
 .lyrics-footer {
   display: flex;
   flex-direction: column;
@@ -327,15 +327,15 @@ braccato-lyrics {
   width: 80px;
 }
 
-/* Fullscreen auto-hide: opacity only. The hidden state also removes the controls from hit-testing and
+/* Fullscreen hover visibility: opacity only. The hidden state also removes the controls from hit-testing and
    the focus order; layout and position never change. Reduced motion is handled by the global rule. */
 .fs-controls,
 .lyrics-dock {
   transition: opacity 250ms ease, visibility 250ms ease;
 }
 
-.fs-controls.is-idle,
-.lyrics-dock.is-idle {
+.fs-controls.is-concealed,
+.lyrics-dock.is-concealed {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;

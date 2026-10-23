@@ -12,7 +12,7 @@ import { useUi } from "../../state/uiStore";
 import { BraccatoLyrics } from "./BraccatoLyrics";
 import { LyricsDock } from "./LyricsDock";
 import { FullscreenControls } from "./FullscreenControls";
-import { useAutoHideControls } from "./useAutoHideControls";
+import { useControlsHover } from "./useControlsHover";
 import { KawarpBackground } from "../shaders/KawarpBackground";
 import { useLyrics } from "./useLyrics";
 import { buildThemeCss } from "../../upstream/better-lyrics/themes";
@@ -32,10 +32,11 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   const [syncLabel, setSyncLabel] = useState("No lyrics");
   const [dockPopoverOpen, setDockPopoverOpen] = useState(false);
   const queueOpen = useUi(state => state.queueOpen);
-  // Fullscreen only: the controls fade after 3 s without activity, unless a popover or the queue is open.
-  const controlsVisible = useAutoHideControls(fullscreen, dockPopoverOpen || queueOpen);
   const viewRef = useRef<HTMLDivElement | null>(null);
   const footerRef = useRef<HTMLDivElement | null>(null);
+  // Fullscreen only: the controls show while the pointer is over them and fade out when it leaves,
+  // unless a popover or the queue is open.
+  const controlsVisible = useControlsHover(fullscreen, dockPopoverOpen || queueOpen, footerRef);
 
   // Fullscreen only: the controls overlay the bottom of the lyrics body instead of taking space from it.
   // The footer's measured height is published to the view as --fs-footer-height, so the body keeps its
@@ -185,7 +186,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
             track={track}
             showLyrics={showLyrics}
             onToggleLyrics={toggleLyricsVisible}
-            idle={!controlsVisible}
+            concealed={!controlsVisible}
           />
         ) : null}
 
@@ -204,7 +205,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
             fullscreen={fullscreen}
             onToggleFullscreen={onToggleFullscreen}
             busy={lyrics.status === "loading" || lyrics.translating || lyrics.romanizing}
-            idle={!controlsVisible}
+            concealed={!controlsVisible}
             onPopoverChange={setDockPopoverOpen}
           />
         ) : null}

@@ -666,10 +666,14 @@ await page.evaluate(() => document.querySelector("audio").pause());
 
 /* ------------------------------------------------------- unified fullscreen */
 
-// Fullscreen controls fade after 3 s without activity and then ignore the pointer, so a click first
-// moves the pointer (which reveals them) and waits out the fade-in before clicking.
+// The controls show only while the pointer is over them, so a click first moves the pointer onto its
+// target (which reveals the controls) and waits out the fade-in before clicking.
 const wakeClick = async selector => {
-  await page.mouse.move(640, 420);
+  const point = await page.$eval(selector, node => {
+    const rect = node.getBoundingClientRect();
+    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+  });
+  await page.mouse.move(point.x, point.y);
   await wait(350);
   await page.click(selector);
 };
@@ -709,6 +713,12 @@ check(
   fsParts.present && fsParts.transport && fsParts.seek && fsParts.volume && fsParts.lyricsToggle && fsParts.queue && fsParts.lyricsDock && fsParts.playerBarHidden,
   JSON.stringify(fsParts)
 );
+const playCentre = await page.$eval('[data-testid="fullscreen-controls"] .play-button', node => {
+  const rect = node.getBoundingClientRect();
+  return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+});
+await page.mouse.move(playCentre.x, playCentre.y);
+await wait(350);
 await page.screenshot({ path: join(shotDir, "05-lyrics-fullscreen.png") });
 
 // Start playback from the fullscreen transport, so the controls and shader checks run while audio plays.
@@ -881,19 +891,20 @@ await wait(900);
 const clockAfterResume = await audioState();
 check("clock-continues-after-toggle", !clockAfterResume.paused && clockAfterResume.currentTime > 1.0, `${clockAfterResume.currentTime.toFixed(2)}s`);
 
-/* ----------------------------------------------------- fullscreen auto-hide */
+/* ------------------------------------------------- fullscreen hover controls */
 
-// Computed state of the fullscreen controls. Read after the 250 ms fade, so the values are settled.
+// The controls show while the pointer is over the controls area and fade out when it leaves. Hidden
+// controls take no pointer input, so the lyrics under them stay clickable.
 const controlState = () =>
   page.evaluate(() => {
     const node = document.querySelector('[data-testid="fullscreen-controls"]');
     const style = node ? getComputedStyle(node) : null;
     return {
-      idle: node?.classList.contains("is-idle") ?? null,
+      concealed: node?.classList.contains("is-concealed") ?? null,
       opacity: style ? Number(style.opacity) : null,
       visibility: style?.visibility ?? null,
       pointerEvents: style?.pointerEvents ?? null,
-      dockIdle: document.querySelector('[data-testid="lyrics-dock"]')?.classList.contains("is-idle") ?? null,
+      dockConcealed: document.querySelector('[data-testid="lyrics-dock"]')?.classList.contains("is-concealed") ?? null,
     };
   });
 // True when the play button's centre is hit-tested onto the control bar (i.e. the controls take input).
@@ -904,10 +915,7 @@ const hitsControls = () =>
     const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
     return Boolean(hit && button.contains(hit));
   });
-const movePointer = async (x, y) => {
-  await page.mouse.move(x, y);
-};
-// The fade is a 250 ms CSS transition; under shader load the frames can lag, so poll until it settles.
+// The fade is a CSS transition; under shader load the frames can lag, so poll until it settles.
 const settleOpacity = async target => {
   let state = await controlState();
   for (let waited = 0; waited < 2000 && Math.abs((state.opacity ?? -1) - target) > 0.02; waited += 100) {
@@ -916,98 +924,125 @@ const settleOpacity = async target => {
   }
   return state;
 };
+const centreOf = selector =>
+  page.$eval(selector, node => {
+    const rect = node.getBoundingClientRect();
+    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+  });
+// A point over the lyrics, outside the controls area at every window size the harness uses.
+const pointerAway = async () => {
+  await page.mouse.move(100, 200);
+};
 
-// Visible while fullscreen is active and the pointer has just moved.
-await movePointer(640, 420);
-await wait(350);
-const shownNow = await controlState();
-const shownHit = await hitsControls();
+// Pointer over the lyrics only: the controls stay hidden and take no input.
+await pointerAway();
+const awayState = await settleOpacity(0);
+const awayHit = await hitsControls();
 check(
-  "auto-hide-visible-while-active",
-  shownNow.idle === false && shownNow.opacity === 1 && shownNow.visibility === "visible" && shownNow.pointerEvents !== "none" && shownHit,
-  JSON.stringify({ ...shownNow, hitsControls: shownHit })
+  "hover-lyrics-keeps-controls-hidden",
+  awayState.concealed === true && awayState.opacity < 0.02 && awayState.visibility === "hidden" && awayState.pointerEvents === "none" && !awayHit,
+  JSON.stringify({ ...awayState, hitsControls: awayHit })
 );
 
-// Hidden 3 s after the last activity: faded out, not hit-testable, dock too, and playback keeps running.
-const beforeFade = await audioState();
-await wait(4000);
-const hiddenNow = await controlState();
-const hiddenHit = await hitsControls();
-const afterFade = await audioState();
+// Playback continues while the controls are hidden.
+const hiddenStart = await audioState();
+await wait(2000);
+const hiddenEnd = await audioState();
+const hiddenDelta = hiddenEnd.currentTime - hiddenStart.currentTime;
+const hiddenAdvance = hiddenDelta < 0 ? hiddenDelta + hiddenEnd.duration : hiddenDelta; // repeat-one can wrap the 6 s fixture
 check(
-  "auto-hide-fades-after-3s",
-  hiddenNow.idle === true && hiddenNow.opacity === 0 && hiddenNow.visibility === "hidden" && hiddenNow.pointerEvents === "none" && hiddenNow.dockIdle === true && !hiddenHit,
-  JSON.stringify({ ...hiddenNow, hitsControls: hiddenHit })
+  "hover-hidden-playback-continues",
+  !hiddenEnd.paused && hiddenAdvance > 1.5 && hiddenAdvance < 2.5,
+  `advanced ${hiddenAdvance.toFixed(2)}s over 2 s, paused=${hiddenEnd.paused}`
 );
-const fadeDelta = afterFade.currentTime - beforeFade.currentTime;
-const fadeAdvance = fadeDelta < 0 ? fadeDelta + afterFade.duration : fadeDelta; // repeat-one can wrap the 6 s fixture
-check(
-  "auto-hide-playback-continues",
-  !afterFade.paused && fadeAdvance > 3.0 && fadeAdvance < 5.0,
-  `advanced ${fadeAdvance.toFixed(2)}s over the hidden interval, paused=${afterFade.paused}`
-);
-// The shader keeps moving behind the hidden controls: measure the bottom-left corner, which is clear of lyrics.
-const shaderStrip = { x: 0, y: 760, width: 260, height: 140 };
-const hiddenShader = await motionOf(shaderStrip);
-check("auto-hide-shader-keeps-rendering", hiddenShader.avgDiff > 0.5, `avg frame change ${hiddenShader.avgDiff.toFixed(2)} over the hidden control area`);
-await page.screenshot({ path: join(shotDir, "05c-fullscreen-auto-hidden.png") });
 
-// Reveal on pointer movement. The class flips at once; the opacity fade takes 250 ms.
-await page.mouse.move(300, 300);
-await wait(60);
-const revealImmediate = await controlState();
-const revealed = await settleOpacity(1);
+// Roaming over the lyrics, including the point just above the controls' top edge, does not reveal them.
+for (const [x, y] of [[300, 250], [640, 420], [900, 600], [640, 700]]) {
+  await page.mouse.move(x, y);
+  await wait(40);
+}
+const roamState = await controlState();
+check(
+  "hover-lyrics-roam-stays-hidden",
+  roamState.concealed === true && roamState.opacity < 0.02 && roamState.pointerEvents === "none",
+  JSON.stringify(roamState)
+);
+
+// The shader keeps moving behind the hidden controls: the bottom-left corner is clear of lyrics and controls.
+const hiddenShader = await motionOf({ x: 0, y: 760, width: 260, height: 140 });
+check("hover-hidden-shader-keeps-rendering", hiddenShader.avgDiff > 0.5, `avg frame change ${hiddenShader.avgDiff.toFixed(2)} over the hidden control area`);
+await page.screenshot({ path: join(shotDir, "05c-fullscreen-controls-hidden.png") });
+
+// Hovering the controls shows them; the fade completes within 250 ms.
+const playPoint = await centreOf('[data-testid="fullscreen-controls"] .play-button');
+await page.mouse.move(playPoint.x, playPoint.y);
+const revealedState = await settleOpacity(1);
 const revealedHit = await hitsControls();
 check(
-  "auto-hide-reveals-on-mouse",
-  revealImmediate.idle === false && revealed.idle === false && revealed.opacity > 0.95 && revealedHit,
-  `class at 60 ms: idle=${revealImmediate.idle}; settled opacity ${revealed.opacity}, hit=${revealedHit}`
+  "hover-reveals-controls",
+  revealedState.concealed === false && revealedState.opacity > 0.95 && revealedState.visibility === "visible" && revealedState.pointerEvents === "auto" && revealedHit,
+  JSON.stringify({ ...revealedState, hitsControls: revealedHit })
 );
 
-// Countdown restarts: a move 2 s after the reveal restarts the 3 s count, so the controls are still
-// shown 4 s after the reveal, and they hide 3 s after that last move.
-await wait(1700);
-await page.mouse.move(320, 320);
-await wait(2000);
-const restarted = await controlState();
-await wait(1600);
-const restartedLater = await controlState();
+// Moving across the control bar, the gap between it and the dock, and the dock keeps them shown.
+const seekPoint = await centreOf('[data-testid="fullscreen-controls"] .seek-row');
+const dockPoint = await centreOf('[data-testid="lyrics-dock"]');
+const controlsBottom = await page.$eval('[data-testid="fullscreen-controls"]', node => node.getBoundingClientRect().bottom);
+const dockTop = await page.$eval('[data-testid="lyrics-dock"]', node => node.getBoundingClientRect().top);
+const gapPoint = { x: dockPoint.x, y: (controlsBottom + dockTop) / 2 };
+const withinStates = [];
+for (const point of [seekPoint, gapPoint, dockPoint]) {
+  await page.mouse.move(point.x, point.y);
+  await wait(60);
+  withinStates.push(await controlState());
+}
 check(
-  "auto-hide-countdown-restarts",
-  restarted.idle === false && restarted.opacity === 1 && restartedLater.idle === true,
-  `2 s after the last move: idle=${restarted.idle}; 3.6 s after: idle=${restartedLater.idle}`
+  "hover-within-area-stays-visible",
+  withinStates.every(state => state.concealed === false && state.opacity > 0.95),
+  `opacity ${withinStates.map(state => state.opacity).join(", ")}`
 );
 
-// Keyboard input reveals the controls too.
-const beforeKey = await controlState();
-await page.keyboard.press("Shift");
-const keyRevealed = await settleOpacity(1);
+// Leaving the area fades the controls out again.
+await pointerAway();
+const leftState = await settleOpacity(0);
 check(
-  "auto-hide-reveals-on-keyboard",
-  beforeKey.idle === true && keyRevealed.idle === false && keyRevealed.opacity > 0.95,
-  `before key: idle=${beforeKey.idle}; after key: idle=${keyRevealed.idle}, opacity ${keyRevealed.opacity}`
+  "hover-leave-hides-controls",
+  leftState.concealed === true && leftState.opacity < 0.02 && leftState.visibility === "hidden" && leftState.dockConcealed === true,
+  JSON.stringify(leftState)
 );
 
-// A popover in the dock pins the controls open, even well past the 3 s countdown.
+// The fade is opacity and visibility only, 250 ms: no transform, scale or layout transition.
+const fade = await page.evaluate(() => {
+  const style = getComputedStyle(document.querySelector('[data-testid="fullscreen-controls"]'));
+  return { properties: style.transitionProperty, durations: style.transitionDuration };
+});
+check(
+  "hover-fade-is-opacity-only",
+  fade.properties === "opacity, visibility" && fade.durations === "0.25s, 0.25s",
+  JSON.stringify(fade)
+);
+
+// An open dock popover keeps the controls visible while the pointer is elsewhere; closing it lets them go.
 await wakeClick('button[title="Lyrics source"]');
-await wait(3800);
-const pinnedOpen = await controlState();
+await pointerAway();
+await wait(400);
+const pinnedState = await controlState();
 const sourcesOpen = Boolean(await page.$(".dock-sources"));
 check(
-  "auto-hide-pinned-by-popover",
-  sourcesOpen && pinnedOpen.idle === false && pinnedOpen.opacity === 1 && pinnedOpen.dockIdle === false,
-  `popover open=${sourcesOpen}; idle=${pinnedOpen.idle}, dock idle=${pinnedOpen.dockIdle}`
+  "hover-popover-pins-controls",
+  sourcesOpen && pinnedState.concealed === false && pinnedState.opacity > 0.95 && pinnedState.dockConcealed === false,
+  `popover open=${sourcesOpen}; concealed=${pinnedState.concealed}, dock concealed=${pinnedState.dockConcealed}`
 );
 await wakeClick('button[title="Lyrics source"]');
-await wait(3800);
-const popoverClosed = await controlState();
+await pointerAway();
+const closedState = await settleOpacity(0);
 check(
-  "auto-hide-resumes-after-popover",
-  !(await page.$(".dock-sources")) && popoverClosed.idle === true && popoverClosed.dockIdle === true,
-  `after close: idle=${popoverClosed.idle}`
+  "hover-popover-closed-hides-controls",
+  !(await page.$(".dock-sources")) && closedState.concealed === true,
+  `concealed=${closedState.concealed}, opacity ${closedState.opacity}`
 );
 
-// Exit fullscreen while the controls are hidden. The Escape keypress reveals them and then leaves.
+// Exit fullscreen with the controls hidden. The normal page keeps its dock visible, before and after 4 s.
 await page.keyboard.press("Escape");
 await wait(600);
 const exitState = () =>
@@ -1018,7 +1053,7 @@ const exitState = () =>
       fullscreen: Boolean(document.querySelector(".lyrics-view.is-fullscreen")),
       controls: Boolean(document.querySelector('[data-testid="fullscreen-controls"]')),
       dock: Boolean(dock),
-      dockIdle: dock?.classList.contains("is-idle") ?? null,
+      dockConcealed: dock?.classList.contains("is-concealed") ?? null,
       opacity: style ? Number(style.opacity) : null,
       visibility: style?.visibility ?? null,
     };
@@ -1036,16 +1071,15 @@ const normalNow = await settledExit();
 await wait(3800);
 const normalLater = await exitState();
 check(
-  "auto-hide-exit-leaves-page-visible",
-  !normalNow.fullscreen && !normalNow.controls && normalNow.dock && normalNow.dockIdle === false && normalNow.opacity === 1 && normalNow.visibility === "visible" && normalLater.dockIdle === false && normalLater.opacity === 1,
+  "fullscreen-exit-page-visible",
+  !normalNow.fullscreen && !normalNow.controls && normalNow.dock && normalNow.dockConcealed === false && normalNow.opacity > 0.95 && normalNow.visibility === "visible" && normalLater.dockConcealed === false && normalLater.opacity > 0.95,
   JSON.stringify({ now: normalNow, after4s: normalLater })
 );
 
-// Re-enter fullscreen for the checks below: the controls start visible again.
+// Re-enter fullscreen for the checks below.
 await wakeClick('button[title="Fullscreen lyrics"]');
 await wait(700);
-const reentered = await controlState();
-check("auto-hide-reentry-visible", reentered.idle === false && reentered.opacity === 1, JSON.stringify(reentered));
+check("fullscreen-reentry", Boolean(await page.$(".lyrics-view.is-fullscreen")), "fullscreen again");
 
 /* ------------------------------------------------------- fullscreen layout */
 
@@ -1077,16 +1111,17 @@ const fullscreenLayout = () =>
   });
 
 // Showing and hiding the controls: the body and the footer must not move.
-await wait(4000);
-const layoutHiddenState = await controlState();
-const layoutHidden = await fullscreenLayout();
-await page.mouse.move(640, 420);
-await wait(350);
+const shownPoint = await centreOf('[data-testid="fullscreen-controls"] .play-button');
+await page.mouse.move(shownPoint.x, shownPoint.y);
+const layoutShownState = await settleOpacity(1);
 const layoutShown = await fullscreenLayout();
+await pointerAway();
+const layoutHiddenState = await settleOpacity(0);
+const layoutHidden = await fullscreenLayout();
 check(
   "controls-overlay-without-shift",
-  layoutHiddenState.idle === true && layoutShown.body.top === layoutHidden.body.top && layoutShown.body.bottom === layoutHidden.body.bottom && layoutShown.footerTop === layoutHidden.footerTop,
-  `hidden=${layoutHiddenState.idle}; body ${layoutShown.body.top}→${layoutShown.body.bottom} shown, ${layoutHidden.body.top}→${layoutHidden.body.bottom} hidden; footer top ${layoutShown.footerTop} / ${layoutHidden.footerTop}`
+  layoutShownState.concealed === false && layoutHiddenState.concealed === true && layoutShown.body.top === layoutHidden.body.top && layoutShown.body.bottom === layoutHidden.body.bottom && layoutShown.footerTop === layoutHidden.footerTop,
+  `shown=${!layoutShownState.concealed}, hidden=${layoutHiddenState.concealed}; body ${layoutShown.body.top}→${layoutShown.body.bottom} shown, ${layoutHidden.body.top}→${layoutHidden.body.bottom} hidden; footer top ${layoutShown.footerTop} / ${layoutHidden.footerTop}`
 );
 
 // At each size: the body fills the viewport, the scroll band matches the controls, and the active lyric line
@@ -1100,7 +1135,7 @@ const layoutAtSize = async (width, height) => {
     audio.currentTime = 2.5;
   });
   await wait(1200);
-  await page.mouse.move(640, 420);
+  await pointerAway();
   await wait(350);
   const layout = await fullscreenLayout();
   const fills = Math.abs(layout.body.bottom - layout.viewport) < 1 && Math.abs(layout.view.height - layout.viewport) < 1;

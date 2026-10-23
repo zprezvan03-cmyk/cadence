@@ -36,9 +36,9 @@ interface LyricsDockProps {
   fullscreen: boolean;
   onToggleFullscreen: () => void;
   busy: boolean;
-  /** Fullscreen auto-hide: faded out and non-interactive while true. */
-  idle?: boolean;
-  /** Reports whether a popover is open, so auto-hide can keep the dock visible while it is in use. */
+  /** Hover visibility: faded out and non-interactive while true. */
+  concealed?: boolean;
+  /** Reports whether a popover is open, so the controls stay visible while it is in use. */
   onPopoverChange?: (open: boolean) => void;
 }
 
@@ -56,7 +56,7 @@ export function LyricsDock({
   fullscreen,
   onToggleFullscreen,
   busy,
-  idle = false,
+  concealed = false,
   onPopoverChange,
 }: LyricsDockProps) {
   const [panel, setPanel] = useState<"none" | "sources" | "appearance">("none");
@@ -67,7 +67,7 @@ export function LyricsDock({
   }, [panel, languageOpen, onPopoverChange]);
 
   return (
-    <div className={`lyrics-dock ${idle ? "is-idle" : ""}`} data-testid="lyrics-dock">
+    <div className={`lyrics-dock ${concealed ? "is-concealed" : ""}`} data-testid="lyrics-dock">
       <div className="dock-group dock-status" title={syncLabel} data-testid="sync-label">
         <span className={`sync-dot sync-${syncLabel.toLowerCase().replace(/\s+/g, "-")}`} />
         {syncLabel}
