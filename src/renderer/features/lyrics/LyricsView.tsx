@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Minimize2, Music4, RefreshCw, Search } from "lucide-react";
 import type { AppSettings, Track } from "../../../shared/types";
+import { DEFAULT_PROVIDER_ORDER } from "../../../shared/upstream/better-lyrics/constants";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
 import { BraccatoLyrics } from "./BraccatoLyrics";
@@ -277,7 +278,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
 }
 
 const fallbackLyricsSettings: AppSettings["lyrics"] = {
-  providerOrder: ["local-sidecar", "embedded-tag", "lrclib-synced", "lrclib-plain"],
+  providerOrder: [...DEFAULT_PROVIDER_ORDER],
   autoFetch: true,
   offsetMs: 0,
   translationLanguage: "",

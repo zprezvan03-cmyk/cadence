@@ -4,6 +4,12 @@
  * Provider ordering follows the upstream Better Lyrics model (local/Better Lyrics first, plain
  * text last) and reuses `mergePreferredProviders` from the extension so a persisted order that
  * predates a new provider still migrates the same way. Written for Cadence around ported pieces.
+ *
+ * Network providers (Better Lyrics API, Unison, LRCLIB) run in parallel, each against its own
+ * host; candidates are merged in provider order and cached together under the track's metadata
+ * key. Transient errors are never cached, a previous track's response can never replace the
+ * current one (caller abort + renderer generation tokens), and identical concurrent lookups share
+ * one in-flight request.
  */
 
 import type { LibraryStore } from "../library/store";
@@ -15,9 +21,65 @@ import {
 import { mergePreferredProviders } from "../../shared/upstream/better-lyrics/providerList";
 import { LyricsCache } from "./cache";
 import { fetchLrclib } from "./lrclib";
+import { fetchBetterLyrics } from "./betterLyrics";
+import { fetchUnison } from "./unison";
 import { readEmbeddedLyrics, readLyricsFile, readLyricsFolder, readSidecarLyrics } from "./localLyrics";
+import type { ProviderOutcome, ProviderQuery, ProviderStatus } from "./http";
+
+interface NetworkModule {
+  id: string;
+  keys: readonly string[];
+  run(query: ProviderQuery, enabledKeys: ReadonlySet<string>, signal?: AbortSignal): Promise<ProviderOutcome>;
+}
+
+/** LRCLIB keeps its existing client; this adapter only narrows candidates to the enabled keys. */
+async function runLrclib(query: ProviderQuery, enabledKeys: ReadonlySet<string>, signal?: AbortSignal): Promise<ProviderOutcome> {
+  const result = await fetchLrclib(query, signal);
+  return {
+    candidates: result.candidates.filter(candidate => enabledKeys.has(candidate.source)),
+    statuses: result.status,
+  };
+}
+
+const NETWORK_MODULES: readonly NetworkModule[] = [
+  {
+    id: "better-lyrics",
+    keys: ["blyrics-richsynced", "blyrics-wordsynced", "blyrics-synced"],
+    run: fetchBetterLyrics,
+  },
+  {
+    id: "unison",
+    keys: ["unison-richsynced", "unison-wordsynced", "unison-synced", "unison-plain"],
+    run: fetchUnison,
+  },
+  { id: "lrclib", keys: ["lrclib-synced", "lrclib-plain"], run: runLrclib },
+];
+
+interface NetworkResult {
+  candidates: LyricsCandidate[];
+  status: ProviderStatus[];
+  /** True when no provider reported a transient error, so the result may be cached. */
+  definitive: boolean;
+}
+
+function rejectWhenAborted(signal: AbortSignal): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    signal.addEventListener(
+      "abort",
+      () => reject(new DOMException("Aborted", "AbortError")),
+      { once: true }
+    );
+  });
+}
 
 export class LyricsService {
+  /** Metadata key → shared in-flight network lookup, so concurrent resolves fetch once. */
+  private readonly inFlight = new Map<string, Promise<NetworkResult>>();
+
   constructor(
     private readonly store: LibraryStore,
     private readonly cache: LyricsCache
@@ -101,54 +163,116 @@ export class LyricsService {
       providerStatus.push({ provider: "embedded-tag", status: "skipped", detail: "Provider disabled" });
     }
 
-    const networkProviders = order.includes("lrclib-synced") || order.includes("lrclib-plain");
-    const wantsNetwork = !request.localOnly && networkProviders;
+    const enabledKeys = new Set<string>(order);
     const cacheKey = LyricsCache.key(request.artist, request.title, request.album, request.duration);
-
-    if (wantsNetwork) {
-      const cached = this.cache.get(cacheKey);
-      if (cached !== null) {
-        if (cached.length > 0) {
-          for (const candidate of cached) {
-            if (order.includes(candidate.source as LyricSourceKey)) candidates.push(candidate);
-          }
-          providerStatus.push({ provider: "lrclib", status: "hit", detail: "Cached lyrics" });
-        } else {
-          providerStatus.push({ provider: "lrclib", status: "miss", detail: "Cached negative result" });
-        }
-      } else {
-        try {
-          const result = await fetchLrclib(
-            {
-              title: request.title,
-              artist: request.artist,
-              album: request.album,
-              duration: request.duration,
-            },
-            signal
-          );
-          const wanted = result.candidates.filter(candidate => order.includes(candidate.source as LyricSourceKey));
-          candidates.push(...wanted);
-          providerStatus.push(...result.status);
-          this.cache.set(cacheKey, wanted);
-        } catch (error) {
-          if ((error as Error).name === "AbortError") throw error;
-          providerStatus.push({ provider: "lrclib", status: "error", detail: (error as Error).message });
-        }
-      }
-    } else {
-      providerStatus.push({
-        provider: "lrclib",
-        status: "skipped",
-        detail: request.localOnly ? "Offline mode" : "Provider disabled",
-      });
-    }
+    const networkResult = await this.resolveNetwork(request, enabledKeys, cacheKey, signal);
+    candidates.push(...networkResult.candidates);
+    providerStatus.push(...networkResult.status);
 
     // Stable order: local sources before network ones, matching upstream priority.
     const orderIndex = (source: string): number => (DEFAULT_PROVIDER_ORDER as string[]).indexOf(source);
     candidates.sort((a, b) => orderIndex(a.source) - orderIndex(b.source));
 
     return { candidates, providerStatus };
+  }
+
+  private async resolveNetwork(
+    request: LyricsResolveRequest,
+    enabledKeys: ReadonlySet<string>,
+    cacheKey: string,
+    signal?: AbortSignal
+  ): Promise<NetworkResult> {
+    const query: ProviderQuery = {
+      title: request.title,
+      artist: request.artist,
+      album: request.album,
+      duration: request.duration,
+    };
+
+    const activeModules = NETWORK_MODULES.filter(module => module.keys.some(key => enabledKeys.has(key)));
+
+    if (request.localOnly || activeModules.length === 0) {
+      const detail = request.localOnly ? "Offline mode" : "Provider disabled";
+      return {
+        candidates: [],
+        definitive: true,
+        status: NETWORK_MODULES.map(module => ({ provider: module.id, status: "skipped" as const, detail })),
+      };
+    }
+
+    const cached = this.cache.get(cacheKey);
+    if (cached !== null) {
+      const wanted = cached.filter(candidate => enabledKeys.has(candidate.source));
+      return {
+        candidates: wanted,
+        definitive: true,
+        status: activeModules.map(module => this.cachedStatus(module, wanted)),
+      };
+    }
+
+    const lookup = this.sharedLookup(cacheKey, query, enabledKeys);
+    if (signal) {
+      // The shared lookup keeps running for other callers; an aborted caller just stops waiting.
+      return Promise.race([lookup, rejectWhenAborted(signal)]);
+    }
+    return lookup;
+  }
+
+  /** The in-flight signature includes the enabled set so a disabled provider is never queried. */
+  private inFlightKey(cacheKey: string, enabledKeys: ReadonlySet<string>): string {
+    return `${cacheKey}::${[...enabledKeys].sort().join(",")}`;
+  }
+
+  private cachedStatus(module: NetworkModule, cached: readonly LyricsCandidate[]): ProviderStatus {
+    const hit = cached.some(candidate => module.keys.includes(candidate.source));
+    return hit
+      ? { provider: module.id, status: "hit", detail: "Cached lyrics" }
+      : { provider: module.id, status: "miss", detail: "Cached negative result" };
+  }
+
+  private sharedLookup(cacheKey: string, query: ProviderQuery, enabledKeys: ReadonlySet<string>): Promise<NetworkResult> {
+    const flightKey = this.inFlightKey(cacheKey, enabledKeys);
+    const existing = this.inFlight.get(flightKey);
+    if (existing) return existing;
+
+    const promise = this.runNetworkModules(query, enabledKeys)
+      .then(result => {
+        // Only persist definitive outcomes: a rate limit, timeout or keyless 401 must not become
+        // a 12-hour negative cache entry that blocks a later, successful lookup.
+        if (result.definitive) this.cache.set(cacheKey, result.candidates);
+        return result;
+      })
+      .finally(() => {
+        this.inFlight.delete(flightKey);
+      });
+    this.inFlight.set(flightKey, promise);
+    return promise;
+  }
+
+  private async runNetworkModules(query: ProviderQuery, enabledKeys: ReadonlySet<string>): Promise<NetworkResult> {
+    const settled = await Promise.allSettled(
+      NETWORK_MODULES.map(module => module.run(query, enabledKeys))
+    );
+
+    const candidates: LyricsCandidate[] = [];
+    const status: ProviderStatus[] = [];
+    let definitive = true;
+
+    settled.forEach((outcome, index) => {
+      const module = NETWORK_MODULES[index];
+      if (outcome.status === "fulfilled") {
+        candidates.push(...outcome.value.candidates);
+        status.push(...outcome.value.statuses);
+        if (outcome.value.statuses.some(entry => entry.status === "error")) definitive = false;
+        return;
+      }
+      // Aborts propagate from the provider clients; everything else is a classified provider error.
+      if ((outcome.reason as Error)?.name === "AbortError") throw outcome.reason;
+      definitive = false;
+      status.push({ provider: module.id, status: "error", detail: (outcome.reason as Error)?.message ?? "Request failed" });
+    });
+
+    return { candidates, status, definitive };
   }
 
   async resolveUserFile(trackId: number, path: string): Promise<LyricsResolveResult> {

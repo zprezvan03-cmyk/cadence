@@ -42,11 +42,14 @@ npm start          # run the built bundles
    OS media keys work through the Media Session API.
 3. **Now Playing** — open the Now Playing tab (sidebar, or the mic button in the player bar). Providers
    run in order: local `.lrc`/`.ttml`/`.qrc` next to the file → embedded tag (USLT/SYLT/`©lyr`/Vorbis
-   `LYRICS`) → LRCLIB synced → LRCLIB plain. Use the dock to change source, typography, offset
-   (±0.05 s steps), translation, romanization, reload, load a file, or save what is on screen as a
-   sidecar `.lrc`. The bottom-right fullscreen button (or <kbd>F</kbd>) opens a fullscreen view with
-   the playback controls, queue and a lyrics on/off switch; hiding lyrics there keeps playback and sync
-   running, and the choice is saved in settings.
+   `LYRICS`) → Better Lyrics API (TTML syllable, QQ word QRC, Kugou line LRC) → Unison community lyrics
+   (TTML/LRC/plain, matched by song/artist/album/duration — no video ID) → LRCLIB synced → LRCLIB plain
+   / Unison plain. Use the dock to change source, typography, offset (±0.05 s steps), translation,
+   romanization, reload, load a file, or save what is on screen as a sidecar `.lrc`. The bottom-right
+   fullscreen button (or <kbd>F</kbd>) opens a fullscreen view with the playback controls, queue and a
+   lyrics on/off switch; hiding lyrics there keeps playback and sync running, and the choice is saved in
+   settings. The Better Lyrics API serves cached songs without a key; an uncached song answers `401`
+   (no third-party keys are issued), which is reported in the dock and falls through to the next provider.
 4. **Shaders** — Settings → Shaders. Opacity, warp, blur passes, animation speed, transition
    duration, saturation, dithering, auto-dim of bright artwork, audio reactivity (beat threshold,
    speed multiplier, scale boost), pause when idle, and a performance mode
@@ -82,7 +85,7 @@ flagged, so you can see and remove them instead of wondering where they went.
 ```
 src/main            Electron main: window, menu, IPC, media protocol, settings
 src/main/library    scanner, music-metadata extraction, artwork cache, SQLite/JSON store
-src/main/lyrics     provider orchestration, LRCLIB client, local files, cache
+src/main/lyrics     provider orchestration, Better Lyrics/Unison/LRCLIB clients, local files, cache
 src/main/media      path allowlist for the cadence-media: protocol
 src/preload         contextBridge → window.cadence (the only renderer capability surface)
 src/renderer        React shell: routes, library views, player bar, queue, Now Playing, settings
@@ -132,8 +135,10 @@ the system mixer and has no exclusive-mode output.
 lyrics dock: it lists each provider as `hit`, `miss`, `skipped` (with the reason) or `error` (with the
 message, e.g. offline). Placing a `.lrc` next to the file always wins.
 
-**Wrong lyrics match** — LRCLIB is matched on artist/title/album/duration with a Sørensen–Dice score;
-rename tags for a better match, or load a file manually from the dock.
+**Wrong lyrics match** — LRCLIB and Unison's fuzzy search fallback are matched on
+artist/title/album/duration with a Sørensen–Dice score (Unison also enforces its ±2 s duration
+window); rename tags for a better match, reorder providers in Settings, or load a file manually from
+the dock. Local sidecar and embedded lyrics always take precedence and are never overwritten.
 
 **Shaders stutter on an integrated GPU** — Settings → Shaders → Performance mode `low` (halves blur
 passes and render resolution); `off` disables WebGL entirely and keeps the blurred-artwork fallback.

@@ -9,12 +9,24 @@
  * endpoints (browse/next, captions, Cubey stream/Turnstile) are intentionally absent; LRCLIB is
  * called directly instead of through the authenticated Cubey stream, because a standalone app has
  * no YouTube page origin to satisfy that challenge from.
+ *
+ * Cadence additions (same GPL-3.0 terms, new code rather than ported lines): the Better Lyrics API
+ * and Unison source keys, base URLs and timeouts. Source-key names and relative priorities mirror
+ * the extension's current `PROVIDER_CONFIGS` (bLyrics/Unison first, LRCLIB last), with Cadence's
+ * two offline local sources kept ahead of every network source.
  */
 
 export type LyricSourceKey =
   | "local-sidecar"
   | "embedded-tag"
+  | "blyrics-richsynced"
+  | "unison-richsynced"
+  | "blyrics-wordsynced"
+  | "unison-wordsynced"
+  | "blyrics-synced"
+  | "unison-synced"
   | "lrclib-synced"
+  | "unison-plain"
   | "lrclib-plain"
   | "user-file";
 
@@ -31,7 +43,17 @@ export interface ProviderConfig {
 export const PROVIDER_CONFIGS: readonly ProviderConfig[] = [
   { key: "local-sidecar", displayName: "Local file", syncType: "syllable", priority: 0, offline: true },
   { key: "embedded-tag", displayName: "Embedded tag", syncType: "syllable", priority: 1, offline: true },
+  // Better Lyrics API (https://docs.betterlyrics.org): TTML syllable sync from /getLyrics,
+  // QQ word-timed QRC and Kugou line-synced LRC from the provider-specific endpoints.
+  { key: "blyrics-richsynced", displayName: "Better Lyrics", syncType: "syllable", priority: 2, offline: false },
+  // Unison (https://docs.betterlyrics.org/unison): community TTML/LRC/plain, no video ID required.
+  { key: "unison-richsynced", displayName: "Unison", syncType: "syllable", priority: 3, offline: false },
+  { key: "blyrics-wordsynced", displayName: "Better Lyrics (QQ)", syncType: "word", priority: 4, offline: false },
+  { key: "unison-wordsynced", displayName: "Unison", syncType: "word", priority: 5, offline: false },
+  { key: "blyrics-synced", displayName: "Better Lyrics (Kugou)", syncType: "line", priority: 6, offline: false },
+  { key: "unison-synced", displayName: "Unison", syncType: "line", priority: 7, offline: false },
   { key: "lrclib-synced", displayName: "LRCLIB (synced)", syncType: "line", priority: 10, offline: false },
+  { key: "unison-plain", displayName: "Unison", syncType: "unsynced", priority: 14, offline: false },
   { key: "lrclib-plain", displayName: "LRCLIB (plain)", syncType: "unsynced", priority: 15, offline: false },
 ] as const;
 
@@ -42,6 +64,24 @@ export const DEFAULT_PROVIDER_ORDER = [...PROVIDER_CONFIGS]
   .map(p => p.key);
 
 export const LRCLIB_BASE_URL = "https://lrclib.net/api" as const;
+
+/**
+ * Public Better Lyrics API (Go backend, better-lyrics/api). Documented at
+ * https://docs.betterlyrics.org. Keyless reads serve cached songs; an uncached miss answers 401
+ * because fresh-fetch API keys are not issued to third parties. Cadence never sends a key.
+ */
+export const BETTER_LYRICS_API_BASE_URL = "https://api.betterlyrics.org" as const;
+
+/**
+ * Unison crowdsourced lyrics API. The extension calls the same host (its `UNISON_API_URL`);
+ * https://docs.betterlyrics.org/unison also documents the unison.boidu.dev mirror. Reads need no
+ * key and no video ID — song/artist/album/duration metadata lookups are supported.
+ */
+export const UNISON_BASE_URL = "https://unison.betterlyrics.org" as const;
+
+/** Per-request network timeouts, matching the extension's 10 s Unison timeout. */
+export const UNISON_REQUEST_TIMEOUT_MS = 10_000;
+export const BETTER_LYRICS_REQUEST_TIMEOUT_MS = 12_000;
 
 /**
  * Upstream translate endpoints (src/core/constants.ts). Kept byte-for-byte so translation and

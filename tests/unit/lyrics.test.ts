@@ -161,28 +161,33 @@ describe("LyricsService", () => {
 
   it("caches a hit and serves it on the next resolve without touching the network", async () => {
     const { service, cache } = makeService();
-    const fetchMock = vi.fn(async () =>
-      response({
-        id: 11,
-        trackName: "Harness Song",
-        artistName: "Harness Artist",
-        albumName: "Test Bench",
-        duration: 180,
-        instrumental: false,
-        plainLyrics: null,
-        syncedLyrics: SYNCED,
-      })
-    );
+    const lrclibRecord = {
+      id: 11,
+      trackName: "Harness Song",
+      artistName: "Harness Artist",
+      albumName: "Test Bench",
+      duration: 180,
+      instrumental: false,
+      plainLyrics: null,
+      syncedLyrics: SYNCED,
+    };
+    // The service now fans out to Better Lyrics, Unison and LRCLIB in parallel; route each host.
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("lrclib.net")) return response(lrclibRecord);
+      if (url.includes("unison.betterlyrics.org")) return response({ success: false, error: "Not found", code: "NOT_FOUND" }, 404);
+      return response({ error: "Lyrics not available for this track" }, 404);
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const request = { trackId: 5, title: "Harness Song", artist: "Harness Artist", album: "Test Bench", duration: 180 } as never;
     const first = await service.resolve(request);
     expect(first.candidates).toHaveLength(1);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const callsAfterFirst = fetchMock.mock.calls.length;
+    expect(callsAfterFirst).toBeGreaterThan(0);
 
     const second = await service.resolve(request);
     expect(second.candidates[0].cached).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.length).toBe(callsAfterFirst);
     expect(cache.get(LyricsCache.key("Harness Artist", "Harness Song", "Test Bench", 180))).toHaveLength(1);
   });
 

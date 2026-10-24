@@ -9,6 +9,7 @@
 
 import { LRCLIB_BASE_URL } from "../../shared/upstream/better-lyrics/constants";
 import type { LyricsCandidate } from "../../shared/types";
+import { similarity } from "./matching";
 
 const CLIENT_NAME = "Cadence Player v0.1.0 (https://github.com/zprezvan03-cmyk/betterlyrics-standalone)";
 const REQUEST_TIMEOUT_MS = 12000;
@@ -34,37 +35,6 @@ interface LrclibRecord {
 export interface LrclibResult {
   candidates: LyricsCandidate[];
   status: { provider: string; status: "hit" | "miss" | "error" | "skipped"; detail?: string }[];
-}
-
-const normalize = (value: string): string =>
-  value
-    .toLocaleLowerCase()
-    .normalize("NFKD")
-    .replace(/\p{M}/gu, "")
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim();
-
-/** Sørensen–Dice bigram similarity, used only to rank LRCLIB search results. */
-function similarity(a: string, b: string): number {
-  const left = normalize(a).replace(/\s+/g, "");
-  const right = normalize(b).replace(/\s+/g, "");
-  if (!left || !right) return 0;
-  if (left === right) return 1;
-  const bigrams = new Map<string, number>();
-  for (let i = 0; i < left.length - 1; i++) {
-    const bigram = left.slice(i, i + 2);
-    bigrams.set(bigram, (bigrams.get(bigram) ?? 0) + 1);
-  }
-  let matches = 0;
-  for (let i = 0; i < right.length - 1; i++) {
-    const bigram = right.slice(i, i + 2);
-    const count = bigrams.get(bigram) ?? 0;
-    if (count > 0) {
-      bigrams.set(bigram, count - 1);
-      matches += 1;
-    }
-  }
-  return (2 * matches) / (left.length - 1 + right.length - 1);
 }
 
 async function request<T>(path: string, signal?: AbortSignal): Promise<{ ok: boolean; status: number; data: T | null }> {

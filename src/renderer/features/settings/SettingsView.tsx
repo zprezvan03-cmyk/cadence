@@ -17,7 +17,14 @@ import { TRANSLATION_LANGUAGES } from "../lyrics/translationLanguages";
 const PROVIDER_LABELS: Record<string, string> = {
   "local-sidecar": "Local .lrc / .ttml file",
   "embedded-tag": "Embedded lyrics tag",
+  "blyrics-richsynced": "Better Lyrics (TTML syllable)",
+  "unison-richsynced": "Unison (TTML syllable)",
+  "blyrics-wordsynced": "Better Lyrics · QQ (word QRC)",
+  "unison-wordsynced": "Unison (word synced)",
+  "blyrics-synced": "Better Lyrics · Kugou (line LRC)",
+  "unison-synced": "Unison (line synced)",
   "lrclib-synced": "LRCLIB (synced)",
+  "unison-plain": "Unison (plain)",
   "lrclib-plain": "LRCLIB (plain)",
 };
 
