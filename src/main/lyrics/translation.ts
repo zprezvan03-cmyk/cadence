@@ -23,6 +23,7 @@ import {
 } from "../../shared/upstream/better-lyrics/constants";
 import { createScriptClassifier, type ScriptClassifier } from "../../shared/upstream/better-lyrics/nonLatinScript";
 import { languageMatchesAny } from "../../shared/upstream/better-lyrics/utils";
+import { runtimeFetch } from "./http";
 
 export interface TranslationResult {
   originalLanguage: string;
@@ -82,7 +83,7 @@ export async function translateBatch(
   cache: TranslationCache = createTranslationCache()
 ): Promise<BatchTranslationResponse> {
   const { lines, targetLanguage, signal } = request;
-  const doFetch = request.fetchImpl ?? fetch;
+  const doFetch = request.fetchImpl ?? runtimeFetch;
   const scripts = classifierFor(lines);
 
   if (!targetLanguage || lines.length === 0) {
@@ -241,7 +242,7 @@ export async function romanizeBatch(
   cache: TranslationCache = createTranslationCache()
 ): Promise<BatchRomanizationResponse> {
   const { lines, sourceLanguage, signal } = request;
-  const doFetch = request.fetchImpl ?? fetch;
+  const doFetch = request.fetchImpl ?? runtimeFetch;
   const scripts = classifierFor(lines);
 
   if (lines.length === 0) {

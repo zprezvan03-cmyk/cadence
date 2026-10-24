@@ -1,11 +1,12 @@
 /**
  * Application bootstrap: loads settings and library, wires the audio engine to the player store,
- * restores the last session, and installs keyboard, media-key and OS media-session integration.
- * Written for Cadence.
+ * restores the last session, and installs keyboard, media-key and OS media-session (SMTC)
+ * integration. Written for Cadence.
  */
 
 import { useEffect } from "react";
-import type { AppSettings } from "../../shared/types";
+import type { AppSettings, MediaCommand } from "../../shared/types";
+import { inferArtworkMimeType } from "../../main/media/protocolHandler";
 import { audioEngine } from "../audio/engine";
 import { applyFontFamily } from "./fonts";
 import { useLibrary } from "../state/libraryStore";
@@ -21,6 +22,7 @@ import {
 } from "../audio/codecs";
 
 const SEEK_STEP = 5;
+const MEDIA_ACTION_DEDUP_MS = 100;
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -28,9 +30,12 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
 }
 
+export { inferArtworkMimeType };
+
 export function useBootstrap(): void {
   useEffect(() => {
     let disposed = false;
+    let lastHardwareCommandAt = 0;
 
     void (async () => {
       await useSettings.getState().load();
@@ -117,7 +122,16 @@ export function useBootstrap(): void {
     });
     unsubscribers.push(ending);
 
-    const commandListener = window.cadence?.player?.onCommand?.(command => {
+    const dispatchMediaCommand = (command: MediaCommand, fromGlobalShortcut = false) => {
+      const now = performance.now();
+      if (fromGlobalShortcut) {
+        lastHardwareCommandAt = now;
+      } else if (now - lastHardwareCommandAt < MEDIA_ACTION_DEDUP_MS) {
+        // Prevent duplicate toggles/skips on Windows when both `global-shortcut` and WebView2 SMTC
+        // emit the same hardware media key press within a single frame.
+        return;
+      }
+
       const player = usePlayer.getState();
       switch (command) {
         case "play-pause":
@@ -141,6 +155,10 @@ export function useBootstrap(): void {
         default:
           break;
       }
+    };
+
+    const commandListener = window.cadence?.player?.onCommand?.(command => {
+      dispatchMediaCommand(command, true);
     });
 
     const menuListener = (
@@ -148,6 +166,7 @@ export function useBootstrap(): void {
     )?.onMenuAction?.(action => {
       if (action === "add-folder") void useLibrary.getState().addFolder();
       if (action === "rescan") void useLibrary.getState().rescan();
+      if (action === "toggle-fullscreen-lyrics") useUi.getState().toggleFullscreenLyrics();
     });
 
     const unsubscribeProgress = window.cadence?.library?.onScanProgress?.(progress => {
@@ -163,17 +182,190 @@ export function useBootstrap(): void {
       void useLibrary.getState().refresh();
     });
 
+    // OS media session (Windows SMTC via WebView2 `navigator.mediaSession`)
+    let lastMetadataSignature = "";
+    let lastReportedKey = "";
+
+    const updateMediaSession = () => {
+      const state = usePlayer.getState();
+      const trackId = currentTrackId(state);
+      const track = trackId === null ? null : useLibrary.getState().tracksById.get(trackId) ?? null;
+
+      // Report discrete state transitions to the desktop bridge without spamming 10 Hz ticks.
+      const reportKey = `${trackId ?? "none"}|${state.isPlaying}|${state.repeat}|${state.shuffle}|${state.orderPosition}`;
+      if (reportKey !== lastReportedKey) {
+        lastReportedKey = reportKey;
+        void window.cadence?.player?.reportState?.({
+          trackId,
+          position: state.position,
+          duration: state.duration,
+          playing: state.isPlaying,
+          volume: state.volume,
+          muted: state.muted,
+          playbackRate: state.rate,
+          shuffle: state.shuffle,
+          repeat: state.repeat,
+          queue: state.queue,
+          queueIndex: state.orderPosition,
+        });
+      }
+
+      if (!("mediaSession" in navigator)) return;
+
+      if (!track) {
+        if (lastMetadataSignature !== "") {
+          lastMetadataSignature = "";
+          try {
+            navigator.mediaSession.metadata = null;
+            navigator.mediaSession.playbackState = "none";
+          } catch {
+            /* best-effort */
+          }
+        }
+        return;
+      }
+
+      try {
+        const signature = `${track.id}\u0000${track.title}\u0000${track.artist}\u0000${track.album}\u0000${track.artworkUrl ?? ""}`;
+        if (signature !== lastMetadataSignature && typeof MediaMetadata !== "undefined") {
+          lastMetadataSignature = signature;
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: track.title,
+            artist: track.artist,
+            album: track.album,
+            artwork: track.artworkUrl
+              ? [
+                  {
+                    src: track.artworkUrl,
+                    sizes: "512x512",
+                    type: inferArtworkMimeType(track.artworkUrl),
+                  },
+                ]
+              : [],
+          });
+        }
+        navigator.mediaSession.playbackState = state.isPlaying ? "playing" : "paused";
+        if (state.duration > 0) {
+          navigator.mediaSession.setPositionState({
+            duration: state.duration,
+            position: Math.min(Math.max(0, state.position), state.duration),
+            playbackRate: state.rate,
+          });
+        }
+      } catch {
+        /* media session is best-effort */
+      }
+    };
+
+    const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
+      [
+        "play",
+        () => {
+          if (performance.now() - lastHardwareCommandAt < MEDIA_ACTION_DEDUP_MS) return;
+          if (!usePlayer.getState().isPlaying) void usePlayer.getState().toggle();
+        },
+      ],
+      [
+        "pause",
+        () => {
+          if (performance.now() - lastHardwareCommandAt < MEDIA_ACTION_DEDUP_MS) return;
+          if (usePlayer.getState().isPlaying) void usePlayer.getState().toggle();
+        },
+      ],
+      [
+        "stop",
+        () => {
+          audioEngine.pause();
+        },
+      ],
+      ["previoustrack", () => dispatchMediaCommand("previous", false)],
+      ["nexttrack", () => dispatchMediaCommand("next", false)],
+      ["seekbackward", () => dispatchMediaCommand("seek-back", false)],
+      ["seekforward", () => dispatchMediaCommand("seek-forward", false)],
+      [
+        "seekto",
+        details => {
+          if (typeof details.seekTime === "number") usePlayer.getState().seek(details.seekTime);
+        },
+      ],
+    ];
+
+    if ("mediaSession" in navigator) {
+      for (const [action, handler] of handlers) {
+        try {
+          navigator.mediaSession.setActionHandler(action, handler);
+        } catch {
+          /* unsupported action */
+        }
+      }
+    }
+
+    const unsubscribeMediaPlayer = usePlayer.subscribe(updateMediaSession);
+    const unsubscribeMediaLibrary = useLibrary.subscribe(updateMediaSession);
+    updateMediaSession();
+
     const onKeyDown = (event: KeyboardEvent) => {
       if (isTypingTarget(event.target)) return;
       const player = usePlayer.getState();
       const ui = useUi.getState();
       const cmd = event.ctrlKey || event.metaKey;
+      const lower = event.key.toLowerCase();
 
-      if (cmd && event.key.toLowerCase() === "k") {
+      if (cmd && lower === "k") {
         event.preventDefault();
         document.getElementById("global-search")?.focus();
         return;
       }
+      if (cmd && !event.shiftKey && lower === "o") {
+        event.preventDefault();
+        void useLibrary.getState().addFolder();
+        return;
+      }
+      if (cmd && event.shiftKey && lower === "r") {
+        event.preventDefault();
+        void useLibrary.getState().rescan();
+        return;
+      }
+      if (cmd && !event.shiftKey && lower === "p") {
+        event.preventDefault();
+        void player.toggle();
+        return;
+      }
+      if (cmd && event.key === "ArrowRight") {
+        event.preventDefault();
+        void player.next(false);
+        return;
+      }
+      if (cmd && event.key === "ArrowLeft") {
+        event.preventDefault();
+        player.previous();
+        return;
+      }
+      if (cmd && event.key === "ArrowUp") {
+        event.preventDefault();
+        player.setVolume(player.volume + 0.05);
+        return;
+      }
+      if (cmd && event.key === "ArrowDown") {
+        event.preventDefault();
+        player.setVolume(player.volume - 0.05);
+        return;
+      }
+      if (event.key === "F11") {
+        event.preventDefault();
+        ui.toggleFullscreenLyrics();
+        void (async () => {
+          try {
+            const full = await window.cadence?.app?.isFullScreen?.();
+            await window.cadence?.app?.window?.(full ? "exitFullscreen" : "fullscreen");
+          } catch {
+            /* browser harness has no native window */
+          }
+        })();
+        return;
+      }
+
+      if (cmd) return;
 
       switch (event.key) {
         case " ":
@@ -225,7 +417,18 @@ export function useBootstrap(): void {
           player.cycleRepeat();
           break;
         case "Escape":
-          if (ui.fullscreenLyrics) ui.setFullscreenLyrics(false);
+          if (ui.fullscreenLyrics) {
+            ui.setFullscreenLyrics(false);
+            void (async () => {
+              try {
+                if (await window.cadence?.app?.isFullScreen?.()) {
+                  await window.cadence?.app?.window?.("exitFullscreen");
+                }
+              } catch {
+                /* ignore */
+              }
+            })();
+          }
           break;
         default:
           break;
@@ -240,6 +443,17 @@ export function useBootstrap(): void {
       menuListener?.();
       unsubscribeProgress?.();
       unsubscribeChanged?.();
+      unsubscribeMediaPlayer();
+      unsubscribeMediaLibrary();
+      if ("mediaSession" in navigator) {
+        for (const [action] of handlers) {
+          try {
+            navigator.mediaSession.setActionHandler(action, null);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
       window.removeEventListener("keydown", onKeyDown);
     };
   }, []);
@@ -282,75 +496,6 @@ export function useBootstrap(): void {
     return () => {
       unsubscribePlayer();
       unsubscribeSettings();
-    };
-  }, []);
-
-  // OS media session + document title.
-  useEffect(() => {
-    const updateMediaSession = () => {
-      if (!("mediaSession" in navigator)) return;
-      const trackId = currentTrackId(usePlayer.getState());
-      const track = trackId === null ? null : useLibrary.getState().tracksById.get(trackId);
-      if (!track) return;
-      try {
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: track.title,
-          artist: track.artist,
-          album: track.album,
-          artwork: track.artworkUrl ? [{ src: track.artworkUrl, sizes: "512x512", type: "image/jpeg" }] : [],
-        });
-        navigator.mediaSession.playbackState = usePlayer.getState().isPlaying ? "playing" : "paused";
-        const { position, duration, rate } = usePlayer.getState();
-        if (duration > 0) {
-          navigator.mediaSession.setPositionState({
-            duration,
-            position: Math.min(position, duration),
-            playbackRate: rate,
-          });
-        }
-      } catch {
-        /* media session is best-effort */
-      }
-    };
-
-    const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
-      ["play", () => void usePlayer.getState().toggle()],
-      ["pause", () => void usePlayer.getState().toggle()],
-      ["previoustrack", () => usePlayer.getState().previous()],
-      ["nexttrack", () => void usePlayer.getState().next(false)],
-      ["seekbackward", () => usePlayer.getState().seekBy(-SEEK_STEP)],
-      ["seekforward", () => usePlayer.getState().seekBy(SEEK_STEP)],
-      ["seekto", details => {
-        if (typeof details.seekTime === "number") usePlayer.getState().seek(details.seekTime);
-      }],
-    ];
-
-    if ("mediaSession" in navigator) {
-      for (const [action, handler] of handlers) {
-        try {
-          navigator.mediaSession.setActionHandler(action, handler);
-        } catch {
-          /* unsupported action */
-        }
-      }
-    }
-
-    const unsubscribePlayer = usePlayer.subscribe(updateMediaSession);
-    const unsubscribeLibrary = useLibrary.subscribe(updateMediaSession);
-    updateMediaSession();
-
-    return () => {
-      unsubscribePlayer();
-      unsubscribeLibrary();
-      if ("mediaSession" in navigator) {
-        for (const [action] of handlers) {
-          try {
-            navigator.mediaSession.setActionHandler(action, null);
-          } catch {
-            /* ignore */
-          }
-        }
-      }
     };
   }, []);
 

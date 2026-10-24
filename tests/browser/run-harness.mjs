@@ -17,7 +17,7 @@ import puppeteer from "puppeteer-core";
 import chromium from "@sparticuz/chromium";
 
 const root = resolve(import.meta.dirname, "../..");
-const outDir = join(root, "out/renderer");
+const outDir = join(root, "dist");
 const fixtureDir = join(root, ".artifacts/fixtures");
 const artifactDir = join(root, ".artifacts/harness");
 mkdirSync(fixtureDir, { recursive: true });

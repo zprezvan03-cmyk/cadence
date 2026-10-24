@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#14141c"/>
+      <stop offset="55%" stop-color="#0a0a0f"/>
+      <stop offset="100%" stop-color="#060609"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="68%" cy="28%" r="65%">
+      <stop offset="0%" stop-color="#ff3d71" stop-opacity="0.34"/>
+      <stop offset="55%" stop-color="#8b2cf5" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#08080b" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mark" x1="15%" y1="15%" x2="85%" y2="85%">
+      <stop offset="0%" stop-color="#ff6b93"/>
+      <stop offset="52%" stop-color="#ff3d71"/>
+      <stop offset="100%" stop-color="#b829e3"/>
+    </linearGradient>
+  </defs>
+  <rect x="48" y="48" width="928" height="928" rx="224" fill="url(#bg)"/>
+  <rect x="48" y="48" width="928" height="928" rx="224" fill="url(#glow)"/>
+  <rect x="52" y="52" width="920" height="920" rx="220" fill="none" stroke="#ffffff" stroke-opacity="0.09" stroke-width="8"/>
+  <!-- Stylized Cadence C-arc + synchronized lyric bars -->
+  <path d="M 656 320 A 224 224 0 1 0 656 704" fill="none" stroke="url(#mark)" stroke-width="84" stroke-linecap="round"/>
+  <rect x="470" y="408" width="220" height="44" rx="22" fill="#ffffff" fill-opacity="0.96"/>
+  <rect x="470" y="490" width="286" height="44" rx="22" fill="url(#mark)"/>
+  <rect x="470" y="572" width="168" height="44" rx="22" fill="#ffffff" fill-opacity="0.52"/>
+</svg>

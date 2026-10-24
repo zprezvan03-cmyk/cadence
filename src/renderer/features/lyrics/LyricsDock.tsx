@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import type { LyricsCandidate, LyricsSettings } from "../../../shared/types";
 import { formatDurationSeconds, resolveSearchFields, type ManualSearchInput } from "../../../shared/youtube";
-import type { SearchDraft } from "../../../state/lyricsStore";
+import type { SearchDraft } from "../../state/lyricsStore";
 import type { ManualSearchState, YouTubeResolveState } from "./useLyrics";
 import { TRANSLATION_LANGUAGES } from "./translationLanguages";
 

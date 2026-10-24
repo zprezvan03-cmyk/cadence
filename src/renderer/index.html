@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: cadence-media:; media-src 'self' blob: cadence-media:; font-src 'self' data:; connect-src 'self' cadence-media: ws://localhost:* http://localhost:*;"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: cadence-media: http://cadence-media.localhost https://cadence-media.localhost https://i.ytimg.com; media-src 'self' blob: cadence-media: http://cadence-media.localhost https://cadence-media.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost cadence-media: http://cadence-media.localhost https://cadence-media.localhost ws://localhost:* http://localhost:*; worker-src 'self' blob:;"
     />
     <title>Cadence</title>
   </head>

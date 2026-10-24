@@ -9,6 +9,7 @@
 
 import { LRCLIB_BASE_URL } from "../../shared/upstream/better-lyrics/constants";
 import type { LyricsCandidate } from "../../shared/types";
+import { runtimeFetch } from "./http";
 import { similarity } from "./matching";
 
 const CLIENT_NAME = "Cadence Player v0.1.0 (https://github.com/zprezvan03-cmyk/betterlyrics-standalone)";
@@ -40,7 +41,7 @@ export interface LrclibResult {
 async function request<T>(path: string, signal?: AbortSignal): Promise<{ ok: boolean; status: number; data: T | null }> {
   const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
-  const response = await fetch(`${LRCLIB_BASE_URL}${path}`, {
+  const response = await runtimeFetch(`${LRCLIB_BASE_URL}${path}`, {
     headers: { "Lrclib-Client": CLIENT_NAME, Accept: "application/json" },
     signal: combined,
   });
