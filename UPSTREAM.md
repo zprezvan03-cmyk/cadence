@@ -116,6 +116,25 @@ Verified behavior and limitations:
   same provider fallback, in-flight dedupe and `search:`-namespaced cache.
 - The extension's `unified.ts`/Cubey stream remains unusable standalone (Turnstile iframe challenge,
   JWT, cookie credentials, YouTube Music origin, mandatory `videoId`). See *Not ported* below.
+- **Provider registry and the recommended order.** `PROVIDER_CONFIGS` in `constants.ts` is the single
+  registry: 13 default slots in the exact recommended order (Local TTML/QRC → Better Lyrics → Unison →
+  BiniLyrics → QQ Word → Local LRC → Better Lyrics Line → Unison Line → Kugou Line → QQ Line → LRCLIB
+  Line → LRCLIB Unsynced → Embedded Tag), plus implemented extras (`unison-wordsynced`,
+  `binimum-synced`, `unison-plain`) users can add. The legacy combined `local-sidecar` key is not a
+  registry entry: `migrateProviderOrder` splits it into `local-rich` (TTML/QRC sidecars) and
+  `local-lrc` (LRC/SRT/TXT sidecars), preserving any `d_` disabled prefix, drops unknown keys and
+  merges newly introduced slots at their canonical positions, so custom orders survive updates
+  without duplicates. `blyrics-line` and `qq-line` are honest *unavailable* slots — no keyless
+  endpoint exists for them — shown with an explanation and skipped during resolution, never faked.
+  The persisted order is normalized once in `SettingsStore.load` and again defensively per
+  resolution; the renderer Settings page reorders, removes, adds back and restores the exact default.
+- **Session state outlives the Now Playing view.** The lyrics route unmounts on tab switches, so the
+  renderer keeps active lyrics, the selected provider and per-track manual-search sessions in the
+  application-level Zustand store `src/renderer/state/lyricsStore.ts` (same family as the player/ui
+  stores) rather than component state. `localStorage` additionally persists the search drafts,
+  resolved YouTube metadata and the per-track selected-source identity; full lyric text stays in the
+  main-process `LyricsCache` and in memory — there is no second lyric cache. In-flight requests
+  started before unmount resolve into the store under generation-token guards.
 - Raw provider text (TTML, QRC, enhanced/LRC, plain) is passed to the renderer untouched; the
   existing `@braccato/parsers` chain preserves syllable/word/line timing and instrumental markers.
 

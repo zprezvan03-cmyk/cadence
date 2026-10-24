@@ -156,7 +156,8 @@ describe("LyricsService", () => {
     const lrclib = result.providerStatus.find(entry => entry.provider === "lrclib");
     expect(lrclib).toMatchObject({ status: "skipped", detail: "Offline mode" });
     // Local providers are still reported, as skipped, so the UI can explain the situation.
-    expect(result.providerStatus.some(entry => entry.provider === "local-sidecar" && entry.status === "skipped")).toBe(true);
+    expect(result.providerStatus.some(entry => entry.provider === "local-rich" && entry.status === "skipped")).toBe(true);
+    expect(result.providerStatus.some(entry => entry.provider === "local-lrc" && entry.status === "skipped")).toBe(true);
   });
 
   it("caches a hit and serves it on the next resolve without touching the network", async () => {
@@ -197,7 +198,7 @@ describe("LyricsService", () => {
     vi.stubGlobal("fetch", fetchMock);
     const result = await service.resolve(
       { trackId: 9, title: "Harness Song", artist: "Harness Artist", album: "", duration: 100 } as never,
-      ["d_local-sidecar", "lrclib-synced"]
+      ["d_local-rich", "d_local-lrc", "lrclib-synced"]
     );
     // A disabled provider keeps its slot but must not run.
     expect(result.providerStatus.some(entry => entry.provider === "lrclib")).toBe(true);

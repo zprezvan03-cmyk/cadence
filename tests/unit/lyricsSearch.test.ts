@@ -15,6 +15,7 @@ import { parseLyricsText } from "../../src/renderer/features/lyrics/parseLyrics"
 import {
   BINIMUM_BASE_URL,
   DEFAULT_PROVIDER_ORDER,
+  LYRIC_SOURCE_KEYS,
 } from "../../src/shared/upstream/better-lyrics/constants";
 import type { LyricsSearchRequest } from "../../src/shared/types";
 
@@ -31,7 +32,7 @@ const TTML_LINE = `<?xml version="1.0" encoding="UTF-8"?>
 </div></body></tt>`;
 
 const QUERY = { title: "Harness Song", artist: "Harness Artist", album: "Test Bench", duration: 200 };
-const ALL_KEYS = new Set(DEFAULT_PROVIDER_ORDER);
+const ALL_KEYS = new Set(LYRIC_SOURCE_KEYS);
 const FILE_URL = "https://files.binimum.org/lyrics/r1.ttml";
 
 function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {

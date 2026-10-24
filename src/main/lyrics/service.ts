@@ -22,9 +22,11 @@ import type {
 } from "../../shared/types";
 import {
   DEFAULT_PROVIDER_ORDER,
-  type LyricSourceKey,
+  migrateProviderOrder,
+  providerConfig,
+  providerPriority,
+  untoggleProvider,
 } from "../../shared/upstream/better-lyrics/constants";
-import { mergePreferredProviders } from "../../shared/upstream/better-lyrics/providerList";
 import { LyricsCache } from "./cache";
 import { fetchLrclib, searchLrclib } from "./lrclib";
 import { fetchBetterLyrics, searchBetterLyrics } from "./betterLyrics";
@@ -117,12 +119,13 @@ export class LyricsService {
     private readonly cache: LyricsCache
   ) {}
 
-  private orderFor(providerOrder: string[] | undefined): LyricSourceKey[] {
-    const merged = mergePreferredProviders(providerOrder?.length ? providerOrder : DEFAULT_PROVIDER_ORDER, DEFAULT_PROVIDER_ORDER);
-    const valid = merged.filter((key): key is LyricSourceKey =>
-      (DEFAULT_PROVIDER_ORDER as string[]).includes(key)
-    );
-    return valid.length ? valid : (DEFAULT_PROVIDER_ORDER as LyricSourceKey[]);
+  /**
+   * Normalizes the persisted order (legacy `local-sidecar`, disabled `d_` slots, new providers)
+   * once per resolution, so the rest of the pipeline can treat the result as current.
+   */
+  private orderFor(providerOrder: string[] | undefined): string[] {
+    const migrated = migrateProviderOrder(providerOrder);
+    return migrated.length ? migrated : [...DEFAULT_PROVIDER_ORDER];
   }
 
   async resolve(
@@ -136,6 +139,10 @@ export class LyricsService {
     const track = this.store.getTrack(request.trackId);
     const trackPath = track?.path ?? null;
 
+    // Disabled slots carry a `d_` prefix; enabled keys are the bare registry names.
+    const enabledKeys = new Set<string>(order.filter(key => !key.startsWith("d_")));
+    const hasSlot = (key: string): boolean => order.some(entry => untoggleProvider(entry) === key);
+
     const pushLocal = (candidate: LyricsCandidate | null, provider: string, label: string, unavailable?: string) => {
       if (!candidate) {
         // A local provider with no track path was never consulted; say so rather than "miss".
@@ -147,63 +154,96 @@ export class LyricsService {
       providerStatus.push({ provider, status: "hit", detail: label });
     };
 
-    if (trackPath && order.includes("local-sidecar")) {
+    // The legacy single local source is now two ordered variants. The disk is still consulted at
+    // most once per resolution; the found file's format decides which variant it satisfies.
+    if (trackPath && (hasSlot("local-rich") || hasSlot("local-lrc"))) {
       const sidecar =
         (await readSidecarLyrics(trackPath)) ??
         (await readLyricsFolder(trackPath, track?.trackNo ?? null, track?.title ?? request.title));
-      pushLocal(
-        sidecar
-          ? {
-              source: "local-sidecar",
-              provider: "Local file",
-              text: sidecar.text,
-              syncHint: sidecar.format === "ttml" || sidecar.format === "qrc" ? "richsync" : "synced",
-              language: null,
-              songwriters: [],
-              sourceHref: sidecar.path,
-              cached: true,
-            }
-          : null,
-        "local-sidecar",
-        sidecar?.path ?? "",
-        trackPath ? undefined : "Track is not in the library"
-      );
-    } else if (order.includes("local-sidecar")) {
-      providerStatus.push({ provider: "local-sidecar", status: "skipped", detail: "Provider disabled" });
+      const richFormat = sidecar?.format === "ttml" || sidecar?.format === "qrc";
+      const presentKey = sidecar ? (richFormat ? "local-rich" : "local-lrc") : null;
+
+      for (const key of ["local-rich", "local-lrc"] as const) {
+        if (!hasSlot(key)) continue;
+        if (!enabledKeys.has(key)) {
+          providerStatus.push({ provider: key, status: "skipped", detail: "Provider disabled" });
+          continue;
+        }
+        if (!sidecar) {
+          providerStatus.push({ provider: key, status: "miss" });
+          continue;
+        }
+        if (presentKey !== key) {
+          // The single sidecar file belongs to the other local variant; this one found nothing.
+          providerStatus.push({ provider: key, status: "miss" });
+          continue;
+        }
+        pushLocal(
+          {
+            source: key,
+            provider: richFormat ? "Local TTML/QRC" : "Local LRC",
+            text: sidecar.text,
+            syncHint: richFormat ? "richsync" : "synced",
+            language: null,
+            songwriters: [],
+            sourceHref: sidecar.path,
+            cached: true,
+          },
+          key,
+          sidecar.path
+        );
+      }
+    } else {
+      for (const key of ["local-rich", "local-lrc"] as const) {
+        if (hasSlot(key)) providerStatus.push({ provider: key, status: "skipped", detail: "Provider disabled" });
+      }
     }
 
-    if (order.includes("embedded-tag")) {
-      const embedded = readEmbeddedLyrics(this.store, request.trackId);
-      pushLocal(
-        embedded
-          ? {
-              source: "embedded-tag",
-              provider: "Embedded tag",
-              text: embedded.text,
-              syncHint: embedded.kind === "lrc" ? "synced" : "none",
-              language: null,
-              songwriters: [],
-              sourceHref: trackPath,
-              cached: true,
-            }
-          : null,
-        "embedded-tag",
-        "USLT/SYLT tag",
-        trackPath ? undefined : "Track is not in the library"
-      );
-    } else if (order.includes("embedded-tag")) {
-      providerStatus.push({ provider: "embedded-tag", status: "skipped", detail: "Provider disabled" });
+    if (hasSlot("embedded-tag")) {
+      if (!enabledKeys.has("embedded-tag")) {
+        providerStatus.push({ provider: "embedded-tag", status: "skipped", detail: "Provider disabled" });
+      } else {
+        const embedded = readEmbeddedLyrics(this.store, request.trackId);
+        pushLocal(
+          embedded
+            ? {
+                source: "embedded-tag",
+                provider: "Embedded tag",
+                text: embedded.text,
+                syncHint: embedded.kind === "lrc" ? "synced" : "none",
+                language: null,
+                songwriters: [],
+                sourceHref: trackPath,
+                cached: true,
+              }
+            : null,
+          "embedded-tag",
+          "USLT/SYLT tag",
+          trackPath ? undefined : "Track is not in the library"
+        );
+      }
     }
 
-    const enabledKeys = new Set<string>(order);
     const cacheKey = LyricsCache.key(request.artist, request.title, request.album, request.duration);
     const networkResult = await this.resolveNetwork(request, enabledKeys, cacheKey, signal);
     candidates.push(...networkResult.candidates);
     providerStatus.push(...networkResult.status);
 
-    // Stable order: local sources before network ones, matching upstream priority.
-    const orderIndex = (source: string): number => (DEFAULT_PROVIDER_ORDER as string[]).indexOf(source);
-    candidates.sort((a, b) => orderIndex(a.source) - orderIndex(b.source));
+    // Registry slots without a keyless implementation are skipped honestly, never faked as hits.
+    for (const entry of order) {
+      const key = untoggleProvider(entry);
+      const config = providerConfig(key);
+      if (config && !config.available && !providerStatus.some(status => status.provider === key)) {
+        providerStatus.push({
+          provider: key,
+          status: "skipped",
+          detail: `Unavailable: ${config.unavailableReason ?? "no keyless endpoint"}`,
+        });
+      }
+    }
+
+    // Stable order from the registry priority; legacy/unknown sources can no longer sort to -1.
+    candidates.sort((a, b) => providerPriority(a.source) - providerPriority(b.source));
 
     return { candidates, providerStatus };
   }
@@ -267,7 +307,7 @@ export class LyricsService {
     signal?: AbortSignal
   ): Promise<LyricsSearchResponse> {
     const order = this.orderFor(providerOrder);
-    const enabledKeys = new Set<string>(order);
+    const enabledKeys = new Set<string>(order.filter(key => !key.startsWith("d_")));
     const title = request.title.trim();
     const artist = request.artist?.trim() ?? "";
     const album = request.album?.trim() ?? "";
@@ -344,7 +384,6 @@ export class LyricsService {
     // Same record can come back from several providers; keep one row per source + lyric text.
     const seen = new Set<string>();
     const results: LyricsCandidate[] = [];
-    const orderIndex = (source: string): number => (DEFAULT_PROVIDER_ORDER as string[]).indexOf(source);
     for (const candidate of gathered) {
       const dedupeKey = `${candidate.source}:${candidate.text}`;
       if (seen.has(dedupeKey)) continue;
@@ -352,7 +391,7 @@ export class LyricsService {
       results.push(candidate);
       if (results.length >= MAX_SEARCH_RESULTS) break;
     }
-    results.sort((a, b) => orderIndex(a.source) - orderIndex(b.source));
+    results.sort((a, b) => providerPriority(a.source) - providerPriority(b.source));
 
     // Only definitive, non-empty answers enter the cache: a 429/timeout/401 must not be remembered
     // as "nothing found", and empty searches stay retryable with corrected metadata.

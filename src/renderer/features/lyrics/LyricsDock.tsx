@@ -22,10 +22,12 @@ import {
   Settings2,
   Sparkles,
   Wand2,
+  XCircle,
   Youtube,
 } from "lucide-react";
 import type { LyricsCandidate, LyricsSettings } from "../../../shared/types";
 import { formatDurationSeconds, resolveSearchFields, type ManualSearchInput } from "../../../shared/youtube";
+import type { SearchDraft } from "../../../state/lyricsStore";
 import type { ManualSearchState, YouTubeResolveState } from "./useLyrics";
 import { TRANSLATION_LANGUAGES } from "./translationLanguages";
 
@@ -41,8 +43,13 @@ interface LyricsDockProps {
   onChooseFile: () => void;
   syncLabel: string;
   busy: boolean;
-  /** Prefill values for manual search, taken from the playing track's tags. */
-  searchDefaults: { title: string; artist: string; album: string; duration: number };
+  /** Playing track's duration, used for the effective-search preview and provider matching. */
+  trackDuration: number;
+  /** Persisted per-track form draft; survives panel close, tab switches and restarts. */
+  searchDraft: SearchDraft;
+  onDraftChange: (patch: Partial<SearchDraft>) => void;
+  /** Explicit reset of the search session back to the track's tag defaults. */
+  onClearSearch: () => void;
   manualSearchState: ManualSearchState;
   youtubeState: YouTubeResolveState;
   onManualSearch: (input: ManualSearchInput) => void;
@@ -66,7 +73,10 @@ export function LyricsDock({
   onChooseFile,
   syncLabel,
   busy,
-  searchDefaults,
+  trackDuration,
+  searchDraft,
+  onDraftChange,
+  onClearSearch,
   manualSearchState,
   youtubeState,
   onManualSearch,
@@ -77,25 +87,11 @@ export function LyricsDock({
 }: LyricsDockProps) {
   const [panel, setPanel] = useState<"none" | "sources" | "appearance" | "search">("none");
   const [languageOpen, setLanguageOpen] = useState(false);
-  const [searchTitle, setSearchTitle] = useState("");
-  const [searchArtist, setSearchArtist] = useState("");
-  const [searchAlbum, setSearchAlbum] = useState("");
-  const [youtubeUrl, setYoutubeUrl] = useState("");
+  const { title: searchTitle, artist: searchArtist, album: searchAlbum, youtubeUrl } = searchDraft;
 
   useEffect(() => {
     onPopoverChange?.(panel !== "none" || languageOpen);
   }, [panel, languageOpen, onPopoverChange]);
-
-  // Seed the form from the current track each time the search panel opens; typing afterwards is
-  // never overwritten because the effect only runs while the panel is closed.
-  useEffect(() => {
-    if (panel === "search") return;
-    setSearchTitle(searchDefaults.title);
-    setSearchArtist(searchDefaults.artist);
-    setSearchAlbum(searchDefaults.album);
-    // The hook drops resolved YouTube data on a track switch; clear the link field to match.
-    setYoutubeUrl("");
-  }, [panel, searchDefaults.title, searchDefaults.artist, searchDefaults.album]);
 
   // Debounce link pastes so typing a URL does not fire a lookup per keystroke. The lookup itself
   // is main-process and keyless; an empty field resets the resolved card immediately.
@@ -115,16 +111,16 @@ export function LyricsDock({
   const effective = useMemo(
     () =>
       resolveSearchFields(
-        { title: searchTitle, artist: searchArtist, album: searchAlbum, youtubeUrl },
+        searchDraft,
         youtubeState.status === "ready" ? youtubeState.metadata : null,
-        searchDefaults.duration
+        trackDuration
       ),
-    [searchTitle, searchArtist, searchAlbum, youtubeUrl, youtubeState, searchDefaults.duration]
+    [searchDraft, youtubeState, trackDuration]
   );
 
   const submitSearch = () => {
     if (!effective.title || manualSearchState.status === "loading") return;
-    onManualSearch({ title: searchTitle, artist: searchArtist, album: searchAlbum, youtubeUrl });
+    onManualSearch(searchDraft);
   };
 
   return (
@@ -243,6 +239,17 @@ export function LyricsDock({
               <ArrowLeft size={15} />
             </button>
             <div className="popover-title">Search lyrics</div>
+            <button
+              type="button"
+              className="dock-icon search-clear"
+              title="Clear query and results"
+              aria-label="Clear query and results"
+              onClick={() => {
+                onClearSearch();
+              }}
+            >
+              <XCircle size={15} />
+            </button>
           </div>
           <form
             className="search-form"
@@ -257,7 +264,7 @@ export function LyricsDock({
               placeholder="Song title (required)"
               aria-label="Song title"
               value={searchTitle}
-              onChange={event => setSearchTitle(event.target.value)}
+              onChange={event => onDraftChange({ title: event.target.value })}
               autoFocus
             />
             <input
@@ -266,7 +273,7 @@ export function LyricsDock({
               placeholder="Artist (optional)"
               aria-label="Artist (optional)"
               value={searchArtist}
-              onChange={event => setSearchArtist(event.target.value)}
+              onChange={event => onDraftChange({ artist: event.target.value })}
             />
             <div className="search-input-wrap">
               <Album size={14} className="search-input-icon" aria-hidden />
@@ -276,7 +283,7 @@ export function LyricsDock({
                 placeholder="Album (optional)"
                 aria-label="Album (optional)"
                 value={searchAlbum}
-                onChange={event => setSearchAlbum(event.target.value)}
+                onChange={event => onDraftChange({ album: event.target.value })}
               />
             </div>
             <div className="search-input-wrap">
@@ -288,7 +295,7 @@ export function LyricsDock({
                 placeholder="YouTube link (optional)"
                 aria-label="YouTube link (optional)"
                 value={youtubeUrl}
-                onChange={event => setYoutubeUrl(event.target.value)}
+                onChange={event => onDraftChange({ youtubeUrl: event.target.value })}
               />
             </div>
 

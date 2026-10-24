@@ -11,21 +11,22 @@ import { detectUnavailableFonts } from "../../app/fonts";
 import { useLibrary } from "../../state/libraryStore";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
+import {
+  DEFAULT_PROVIDER_ORDER,
+  PROVIDER_CONFIGS,
+  providerConfig,
+  untoggleProvider,
+} from "../../../shared/upstream/better-lyrics/constants";
 import { THEMES } from "../../upstream/better-lyrics/themes";
 import { TRANSLATION_LANGUAGES } from "../lyrics/translationLanguages";
 
-const PROVIDER_LABELS: Record<string, string> = {
-  "local-sidecar": "Local .lrc / .ttml file",
-  "embedded-tag": "Embedded lyrics tag",
-  "blyrics-richsynced": "Better Lyrics (TTML syllable)",
-  "unison-richsynced": "Unison (TTML syllable)",
-  "blyrics-wordsynced": "Better Lyrics · QQ (word QRC)",
-  "unison-wordsynced": "Unison (word synced)",
-  "blyrics-synced": "Better Lyrics · Kugou (line LRC)",
-  "unison-synced": "Unison (line synced)",
-  "lrclib-synced": "LRCLIB (synced)",
-  "unison-plain": "Unison (plain)",
-  "lrclib-plain": "LRCLIB (plain)",
+/** Human label for a sync-kind badge; keeps syllable/word/line/unsynced variants distinct. */
+const SYNC_BADGE: Record<string, string> = {
+  syllable: "Syllable",
+  word: "Word",
+  line: "Line",
+  unsynced: "Unsynced",
+  mixed: "Mixed",
 };
 
 function Toggle({
@@ -129,6 +130,16 @@ export function SettingsView() {
     [order[index], order[target]] = [order[target], order[index]];
     patchLyrics({ providerOrder: order });
   };
+  const removeProvider = (index: number) => {
+    patchLyrics({ providerOrder: settings.lyrics.providerOrder.filter((_, i) => i !== index) });
+  };
+  const addProvider = (key: string) => {
+    if (settings.lyrics.providerOrder.some(entry => untoggleProvider(entry) === key)) return;
+    patchLyrics({ providerOrder: [...settings.lyrics.providerOrder, key] });
+  };
+  const restoreProviderOrder = () => patchLyrics({ providerOrder: [...DEFAULT_PROVIDER_ORDER] });
+  const orderedProviderKeys = new Set(settings.lyrics.providerOrder.map(untoggleProvider));
+  const providerPool = PROVIDER_CONFIGS.filter(config => !orderedProviderKeys.has(config.key));
 
   return (
     <div className="view settings-view" data-testid="settings-view">
@@ -302,23 +313,70 @@ export function SettingsView() {
             <Range label="Scroll target" hint="Where the active line sits vertically." value={settings.lyrics.targetScrollRatio} min={0.15} max={0.85} step={0.01} onChange={value => patchLyrics({ targetScrollRatio: value })} format={value => `${Math.round(value * 100)}%`} />
             <Range label="Timing offset" hint="Positive values make lyrics appear later." value={settings.lyrics.offsetMs} min={-3000} max={3000} step={50} onChange={value => patchLyrics({ offsetMs: value })} format={value => `${(value / 1000).toFixed(2)}s`} />
 
-            <h3>Provider order</h3>
-            <p className="muted">Cadence uses the first provider that has lyrics. Local sources work offline.</p>
-            <ol className="provider-order">
-              {settings.lyrics.providerOrder.map((provider, index) => (
-                <li key={provider}>
-                  <span>{PROVIDER_LABELS[provider] ?? provider}</span>
-                  <span className="provider-buttons">
-                    <button type="button" className="icon-button" onClick={() => moveProvider(index, -1)} aria-label="Move up">
-                      <ChevronUp size={15} />
-                    </button>
-                    <button type="button" className="icon-button" onClick={() => moveProvider(index, 1)} aria-label="Move down">
-                      <ChevronDown size={15} />
-                    </button>
-                  </span>
-                </li>
-              ))}
+            <h3>Lyrics Provider Order</h3>
+            <p className="muted">
+              Cadence tries providers in this order and uses the first one with suitable lyrics; the order also
+              drives automatic fallback. Local sources work offline. Disabled or unavailable slots are skipped
+              without blocking the next provider.
+            </p>
+            <div className="provider-order-head">
+              <span className="muted">{settings.lyrics.providerOrder.length} active</span>
+              <button type="button" className="provider-restore" onClick={restoreProviderOrder}>
+                <RotateCcw size={14} /> Restore default order
+              </button>
+            </div>
+            <ol className="provider-order" data-testid="provider-order">
+              {settings.lyrics.providerOrder.map((provider, index) => {
+                const config = providerConfig(untoggleProvider(provider));
+                const disabled = provider.startsWith("d_");
+                return (
+                  <li
+                    key={provider}
+                    className={!config?.available || disabled ? "is-unavailable" : undefined}
+                    title={!config?.available ? config?.unavailableReason : undefined}
+                  >
+                    <span className="provider-index">{index + 1}</span>
+                    <span className="provider-name">
+                      {config?.displayName ?? untoggleProvider(provider)}
+                      <span className="provider-badges">
+                        <span className="provider-badge">{SYNC_BADGE[config?.syncType ?? "line"] ?? config?.syncType}</span>
+                        {config?.offline ? <span className="provider-badge offline">offline</span> : null}
+                        {disabled ? <span className="provider-badge disabled">disabled</span> : null}
+                        {!config?.available ? (
+                          <span className="provider-badge unavailable" title={config.unavailableReason}>
+                            unavailable
+                          </span>
+                        ) : null}
+                      </span>
+                    </span>
+                    <span className="provider-buttons">
+                      <button type="button" className="icon-button" onClick={() => moveProvider(index, -1)} aria-label="Move up">
+                        <ChevronUp size={15} />
+                      </button>
+                      <button type="button" className="icon-button" onClick={() => moveProvider(index, 1)} aria-label="Move down">
+                        <ChevronDown size={15} />
+                      </button>
+                      <button type="button" className="icon-button" onClick={() => removeProvider(index)} aria-label="Remove from order">
+                        <Trash2 size={14} />
+                      </button>
+                    </span>
+                  </li>
+                );
+              })}
             </ol>
+            {providerPool.length ? (
+              <div className="provider-pool" data-testid="provider-pool">
+                <span className="muted">Available providers not in the order — add to include them:</span>
+                <div className="provider-pool-row">
+                  {providerPool.map(config => (
+                    <button type="button" key={config.key} className="provider-pool-chip" onClick={() => addProvider(config.key)}>
+                      <FolderPlus size={13} /> {config.displayName}
+                      {!config.available ? <em className="chip-unavailable">unavailable</em> : null}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
           <div className="settings-subsection" data-testid="settings-shaders">
             <h3>Shader background</h3>

@@ -16,6 +16,7 @@ import { parseLyricsText } from "../../src/renderer/features/lyrics/parseLyrics"
 import {
   BETTER_LYRICS_API_BASE_URL,
   DEFAULT_PROVIDER_ORDER,
+  LYRIC_SOURCE_KEYS,
   UNISON_BASE_URL,
 } from "../../src/shared/upstream/better-lyrics/constants";
 import { DEFAULT_SETTINGS } from "../../src/main/settings";
@@ -40,7 +41,7 @@ const QRC = `<?xml version="1.0" encoding="utf-8"?><QrcInfos><LyricInfo LyricCon
 "/></QrcInfos>`;
 
 const QUERY = { title: "Harness Song", artist: "Harness Artist", album: "Test Bench", duration: 200 };
-const ALL_KEYS = new Set(DEFAULT_PROVIDER_ORDER);
+const ALL_KEYS = new Set(LYRIC_SOURCE_KEYS);
 
 function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -364,7 +365,7 @@ describe("LyricsService provider orchestration", () => {
       "lrclib-synced",
     ]);
     expect(result.providerStatus.map(s => s.provider)).toEqual(
-      expect.arrayContaining(["local-sidecar", "embedded-tag", "better-lyrics", "unison", "lrclib"])
+      expect.arrayContaining(["local-rich", "local-lrc", "embedded-tag", "better-lyrics", "unison", "lrclib"])
     );
   });
 
@@ -433,9 +434,9 @@ describe("LyricsService provider orchestration", () => {
   it("never lets network results demote or replace local lyrics", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cadence-local-"));
     const trackPath = join(dir, "Harness Song.flac");
-    const sidecarPath = join(dir, "Harness Song.lrc");
+    const sidecarPath = join(dir, "Harness Song.ttml");
     writeFileSync(trackPath, "fake audio");
-    writeFileSync(sidecarPath, LINE_LRC);
+    writeFileSync(sidecarPath, TTML_WORD);
     const fakeStore = {
       getTrack: () => ({ path: trackPath, title: "Harness Song", trackNo: 1 }),
       getLyrics: () => null,
@@ -454,11 +455,16 @@ describe("LyricsService provider orchestration", () => {
       })
     );
 
-    const result = await service.resolve(request());
-    expect(result.candidates[0].source).toBe("local-sidecar");
-    expect(result.candidates[0].text).toBe(LINE_LRC);
+    // Explicit order including the Unison unsynced extra, which is implemented but outside the
+    // recommended 13 defaults; the local TTML source must still sort ahead of every network one.
+    const result = await service.resolve(
+      request(),
+      ["local-rich", "blyrics-richsynced", "unison-plain", "lrclib-synced", "embedded-tag"]
+    );
+    expect(result.candidates[0].source).toBe("local-rich");
+    expect(result.candidates[0].text).toBe(TTML_WORD);
     expect(result.candidates.map(c => c.source)).toEqual([
-      "local-sidecar",
+      "local-rich",
       "blyrics-richsynced",
       "unison-plain",
     ]);
@@ -515,8 +521,22 @@ describe("LyricsService provider orchestration", () => {
   });
 
   it("keeps the historical local-first and LRCLIB-last default ordering and fullscreen settings", async () => {
-    expect(DEFAULT_PROVIDER_ORDER.slice(0, 2)).toEqual(["local-sidecar", "embedded-tag"]);
-    expect(DEFAULT_PROVIDER_ORDER[DEFAULT_PROVIDER_ORDER.length - 1]).toBe("lrclib-plain");
+    expect(DEFAULT_PROVIDER_ORDER).toEqual([
+      "local-rich",
+      "blyrics-richsynced",
+      "unison-richsynced",
+      "binimum-richsynced",
+      "blyrics-wordsynced",
+      "local-lrc",
+      "blyrics-line",
+      "unison-synced",
+      "blyrics-synced",
+      "qq-line",
+      "lrclib-synced",
+      "lrclib-plain",
+      "embedded-tag",
+    ]);
+    expect(new Set(DEFAULT_PROVIDER_ORDER).size).toBe(DEFAULT_PROVIDER_ORDER.length);
     expect(DEFAULT_PROVIDER_ORDER).toContain("blyrics-richsynced");
     expect(DEFAULT_PROVIDER_ORDER).toContain("unison-synced");
     // Lyrics UI settings owned by other features must remain untouched.

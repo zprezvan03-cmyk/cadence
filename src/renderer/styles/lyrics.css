@@ -861,6 +861,16 @@ braccato-lyrics {
 
 .search-panel-head .popover-title {
   padding: 4px 6px;
+  flex: 1;
+}
+
+.search-panel-head .search-clear {
+  margin-left: auto;
+  color: var(--text-faint);
+}
+
+.search-panel-head .search-clear:hover {
+  color: var(--danger);
 }
 
 .manual-search-entry strong {

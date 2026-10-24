@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname } from "node:path";
 import type { AppSettings, DeepPartial } from "../shared/types";
 import { DEFAULT_FONT_ID } from "../shared/fonts";
-import { DEFAULT_PROVIDER_ORDER } from "../shared/upstream/better-lyrics/constants";
+import { DEFAULT_PROVIDER_ORDER, migrateProviderOrder } from "../shared/upstream/better-lyrics/constants";
 import { DEFAULT_GRADIENT_SETTINGS } from "../shared/upstream/shaders/gradientSettings";
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -85,14 +85,22 @@ export class SettingsStore {
   }
 
   private load(): AppSettings {
-    if (!existsSync(this.filePath)) return structuredClone(DEFAULT_SETTINGS);
-    try {
-      const parsed = JSON.parse(readFileSync(this.filePath, "utf8"));
-      return merge(structuredClone(DEFAULT_SETTINGS), parsed);
-    } catch (error) {
-      console.warn("[Cadence] Settings file is unreadable, using defaults:", error);
-      return structuredClone(DEFAULT_SETTINGS);
+    let settings: AppSettings;
+    if (!existsSync(this.filePath)) {
+      settings = structuredClone(DEFAULT_SETTINGS);
+    } else {
+      try {
+        const parsed = JSON.parse(readFileSync(this.filePath, "utf8"));
+        settings = merge(structuredClone(DEFAULT_SETTINGS), parsed);
+      } catch (error) {
+        console.warn("[Cadence] Settings file is unreadable, using defaults:", error);
+        return structuredClone(DEFAULT_SETTINGS);
+      }
     }
+    // Migrate legacy provider keys (e.g. the split local source) and fill slots added in updates,
+    // preserving any custom relative order. Normalized here once so every process sees the same list.
+    settings.lyrics.providerOrder = migrateProviderOrder(settings.lyrics.providerOrder);
+    return settings;
   }
 
   get(): AppSettings {

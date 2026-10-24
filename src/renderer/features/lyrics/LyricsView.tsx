@@ -267,12 +267,10 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
             onReload={lyrics.reload}
             onSaveSidecar={() => void handleSave()}
             onChooseFile={() => void lyrics.chooseFile()}
-            searchDefaults={{
-              title: track?.title ?? "",
-              artist: track?.artist ?? "",
-              album: track?.album ?? "",
-              duration: track?.duration ?? 0,
-            }}
+            trackDuration={track?.duration ?? 0}
+            searchDraft={lyrics.searchDraft}
+            onDraftChange={lyrics.patchDraft}
+            onClearSearch={lyrics.clearSearch}
             manualSearchState={lyrics.manualSearchState}
             youtubeState={lyrics.youtubeState}
             onManualSearch={input => void lyrics.manualSearch(input)}
