@@ -44,6 +44,14 @@ export class LyricsCache {
     return `${artist.toLocaleLowerCase()}|${title.toLocaleLowerCase()}|${album.toLocaleLowerCase()}|${Math.round(duration)}`;
   }
 
+  /**
+   * Manual-search rows live under a prefixed namespace so they never collide with automatic
+   * resolution entries (the same words may be searched with different metadata).
+   */
+  static searchKey(artist: string, title: string, album: string, duration: number): string {
+    return `search:${this.key(artist, title, album, duration)}`;
+  }
+
   get(key: string): LyricsCandidate[] | null {
     const entry = this.data.entries[key];
     if (!entry) return null;

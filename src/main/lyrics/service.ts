@@ -13,16 +13,23 @@
  */
 
 import type { LibraryStore } from "../library/store";
-import type { LyricsCandidate, LyricsResolveRequest, LyricsResolveResult } from "../../shared/types";
+import type {
+  LyricsCandidate,
+  LyricsResolveRequest,
+  LyricsResolveResult,
+  LyricsSearchRequest,
+  LyricsSearchResponse,
+} from "../../shared/types";
 import {
   DEFAULT_PROVIDER_ORDER,
   type LyricSourceKey,
 } from "../../shared/upstream/better-lyrics/constants";
 import { mergePreferredProviders } from "../../shared/upstream/better-lyrics/providerList";
 import { LyricsCache } from "./cache";
-import { fetchLrclib } from "./lrclib";
-import { fetchBetterLyrics } from "./betterLyrics";
-import { fetchUnison } from "./unison";
+import { fetchLrclib, searchLrclib } from "./lrclib";
+import { fetchBetterLyrics, searchBetterLyrics } from "./betterLyrics";
+import { fetchUnison, searchUnison } from "./unison";
+import { fetchBinimum, searchBinimum } from "./binimum";
 import { readEmbeddedLyrics, readLyricsFile, readLyricsFolder, readSidecarLyrics } from "./localLyrics";
 import type { ProviderOutcome, ProviderQuery, ProviderStatus } from "./http";
 
@@ -37,7 +44,7 @@ async function runLrclib(query: ProviderQuery, enabledKeys: ReadonlySet<string>,
   const result = await fetchLrclib(query, signal);
   return {
     candidates: result.candidates.filter(candidate => enabledKeys.has(candidate.source)),
-    statuses: result.status,
+    statuses: result.statuses,
   };
 }
 
@@ -52,8 +59,31 @@ const NETWORK_MODULES: readonly NetworkModule[] = [
     keys: ["unison-richsynced", "unison-wordsynced", "unison-synced", "unison-plain"],
     run: fetchUnison,
   },
+  {
+    id: "binimum",
+    keys: ["binimum-richsynced", "binimum-synced"],
+    run: fetchBinimum,
+  },
   { id: "lrclib", keys: ["lrclib-synced", "lrclib-plain"], run: runLrclib },
 ];
+
+/** Manual-search runners, one per network module; only modules with an enabled key participate. */
+const SEARCH_MODULES: readonly { id: string; keys: readonly string[]; run: (query: ProviderQuery, enabledKeys: ReadonlySet<string>, signal?: AbortSignal) => Promise<ProviderOutcome> }[] = [
+  {
+    id: "better-lyrics",
+    keys: ["blyrics-richsynced", "blyrics-wordsynced", "blyrics-synced"],
+    run: searchBetterLyrics,
+  },
+  {
+    id: "unison",
+    keys: ["unison-richsynced", "unison-wordsynced", "unison-synced", "unison-plain"],
+    run: searchUnison,
+  },
+  { id: "binimum", keys: ["binimum-richsynced", "binimum-synced"], run: searchBinimum },
+  { id: "lrclib", keys: ["lrclib-synced", "lrclib-plain"], run: searchLrclib },
+];
+
+const MAX_SEARCH_RESULTS = 30;
 
 interface NetworkResult {
   candidates: LyricsCandidate[];
@@ -79,6 +109,8 @@ function rejectWhenAborted(signal: AbortSignal): Promise<never> {
 export class LyricsService {
   /** Metadata key → shared in-flight network lookup, so concurrent resolves fetch once. */
   private readonly inFlight = new Map<string, Promise<NetworkResult>>();
+  /** Manual-search key → shared in-flight search, so repeated submits never fan out twice. */
+  private readonly searchInFlight = new Map<string, Promise<LyricsSearchResponse>>();
 
   constructor(
     private readonly store: LibraryStore,
@@ -223,7 +255,113 @@ export class LyricsService {
     return `${cacheKey}::${[...enabledKeys].sort().join(",")}`;
   }
 
-  private cachedStatus(module: NetworkModule, cached: readonly LyricsCandidate[]): ProviderStatus {
+  /**
+   * Manual lyric search across every enabled network module. Automatic resolution is never
+   * touched: this only answers an explicit user query from the Lyrics Selector. Positive result
+   * sets are cached under their searched metadata (and re-served offline); empty answers and
+   * transient failures are not cached, so retrying with corrected spelling always reaches out.
+   */
+  async searchLyrics(
+    request: LyricsSearchRequest,
+    providerOrder?: string[],
+    signal?: AbortSignal
+  ): Promise<LyricsSearchResponse> {
+    const order = this.orderFor(providerOrder);
+    const enabledKeys = new Set<string>(order);
+    const title = request.title.trim();
+    const artist = request.artist?.trim() ?? "";
+    const album = request.album?.trim() ?? "";
+    const duration = Number(request.duration) || 0;
+    const query: ProviderQuery = { title, artist, album, duration };
+    const cacheKey = LyricsCache.searchKey(artist, title, album, duration);
+
+    const activeModules = SEARCH_MODULES.filter(module => module.keys.some(key => enabledKeys.has(key)));
+
+    // Cache first so the same manual search works fully offline, including all alternative rows.
+    const cached = this.cache.get(cacheKey);
+    if (cached !== null) {
+      const rows = cached.filter(candidate => enabledKeys.has(candidate.source));
+      return {
+        results: rows,
+        cached: true,
+        providerStatus: activeModules.map(module => this.cachedStatus(module, rows)),
+      };
+    }
+
+    if (request.localOnly) {
+      return {
+        results: [],
+        cached: true,
+        providerStatus: activeModules.map(module => ({ provider: module.id, status: "skipped" as const, detail: "Offline mode" })),
+      };
+    }
+    if (!title) {
+      return {
+        results: [],
+        cached: false,
+        providerStatus: activeModules.map(module => ({ provider: module.id, status: "skipped" as const, detail: "Title required" })),
+      };
+    }
+
+    const flightKey = `${cacheKey}::${[...enabledKeys].sort().join(",")}`;
+    const existing = this.searchInFlight.get(flightKey);
+    if (existing) return existing;
+
+    const promise = this.runSearch(query, activeModules, enabledKeys, cacheKey, signal).finally(() => {
+      this.searchInFlight.delete(flightKey);
+    });
+    this.searchInFlight.set(flightKey, promise);
+    if (signal) return Promise.race([promise, rejectWhenAborted(signal)]);
+    return promise;
+  }
+
+  private async runSearch(
+    query: ProviderQuery,
+    modules: typeof SEARCH_MODULES,
+    enabledKeys: ReadonlySet<string>,
+    cacheKey: string,
+    signal?: AbortSignal
+  ): Promise<LyricsSearchResponse> {
+    const settled = await Promise.allSettled(modules.map(module => module.run(query, enabledKeys, signal)));
+
+    const gathered: LyricsCandidate[] = [];
+    const providerStatus: ProviderStatus[] = [];
+    let definitive = true;
+
+    settled.forEach((outcome, index) => {
+      const module = modules[index];
+      if (outcome.status === "fulfilled") {
+        gathered.push(...outcome.value.candidates);
+        providerStatus.push(...outcome.value.statuses);
+        if (outcome.value.statuses.some(entry => entry.status === "error")) definitive = false;
+        return;
+      }
+      if ((outcome.reason as Error)?.name === "AbortError") throw outcome.reason;
+      definitive = false;
+      providerStatus.push({ provider: module.id, status: "error", detail: (outcome.reason as Error)?.message ?? "Request failed" });
+    });
+
+    // Same record can come back from several providers; keep one row per source + lyric text.
+    const seen = new Set<string>();
+    const results: LyricsCandidate[] = [];
+    const orderIndex = (source: string): number => (DEFAULT_PROVIDER_ORDER as string[]).indexOf(source);
+    for (const candidate of gathered) {
+      const dedupeKey = `${candidate.source}:${candidate.text}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      results.push(candidate);
+      if (results.length >= MAX_SEARCH_RESULTS) break;
+    }
+    results.sort((a, b) => orderIndex(a.source) - orderIndex(b.source));
+
+    // Only definitive, non-empty answers enter the cache: a 429/timeout/401 must not be remembered
+    // as "nothing found", and empty searches stay retryable with corrected metadata.
+    if (definitive && results.length > 0) this.cache.set(cacheKey, results);
+
+    return { results, providerStatus, cached: false };
+  }
+
+  private cachedStatus(module: { id: string; keys: readonly string[] }, cached: readonly LyricsCandidate[]): ProviderStatus {
     const hit = cached.some(candidate => module.keys.includes(candidate.source));
     return hit
       ? { provider: module.id, status: "hit", detail: "Cached lyrics" }

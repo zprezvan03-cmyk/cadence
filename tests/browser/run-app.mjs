@@ -361,6 +361,7 @@ await page.evaluateOnNewDocument(
       },
       lyrics: {
         resolve: async request => resolveLyrics(request),
+        search: async () => ({ results: [], providerStatus: [], cached: false }),
         translate: async request => ({
           translations: request.lines.map(line => `[translated] ${line}`),
           targetLanguage: request.targetLanguage,

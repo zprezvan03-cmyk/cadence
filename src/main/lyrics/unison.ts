@@ -70,6 +70,10 @@ type CandidateResult =
   | { ok: false; reason: "invalid" | "disabled" };
 
 /** Maps a Unison entry to the same source-key split the extension produces. */
+export function toUnisonCandidate(entry: UnisonEntry, enabledKeys: ReadonlySet<string>): CandidateResult {
+  return toCandidate(entry, enabledKeys);
+}
+
 function toCandidate(entry: UnisonEntry, enabledKeys: ReadonlySet<string>): CandidateResult {
   const format = entry.format as UnisonFormat | undefined;
   const syncType = entry.syncType as UnisonSyncType | undefined;
@@ -270,6 +274,67 @@ export async function fetchUnison(
     }
     statuses.push({ provider: PROVIDER, status: "hit", detail: "Matched via search" });
     return { candidates: [mapped.candidate], statuses };
+  } catch (error) {
+    if (isAbort(error)) throw error;
+    return { candidates: [], statuses: [{ provider: PROVIDER, ...describeHttpError(error) }] };
+  }
+}
+
+const MANUAL_SEARCH_LIMIT = 10;
+
+/**
+ * Manual search over Unison's ranked `/lyrics/search` endpoint. Song + artist are required by the
+ * server for the full-record mode, so callers skip this when the user left the artist blank.
+ * Every usable version is returned (not just the best one), each with its catalogue metadata.
+ */
+export async function searchUnison(
+  query: ProviderQuery,
+  enabledKeys: ReadonlySet<string>,
+  signal?: AbortSignal,
+  timeoutMs: number = UNISON_REQUEST_TIMEOUT_MS
+): Promise<ProviderOutcome> {
+  if (!query.artist.trim()) {
+    return { candidates: [], statuses: [{ provider: PROVIDER, status: "skipped", detail: "Artist required for Unison search" }] };
+  }
+  try {
+    const params = new URLSearchParams({ song: query.title, artist: query.artist, limit: String(MANUAL_SEARCH_LIMIT) });
+    if (query.album) params.set("album", query.album);
+    if (query.duration > 0) params.set("duration", String(Math.round(query.duration)));
+    const response = await getJson(`${UNISON_BASE_URL}/lyrics/search?${params.toString()}`, timeoutMs, signal);
+
+    if (response.status === 429) {
+      return { candidates: [], statuses: [{ provider: PROVIDER, status: "error", detail: retryAfter(response.headers) ? `Rate limited; retry after ${retryAfter(response.headers)}s` : "Rate limited" }] };
+    }
+    if (!response.ok) {
+      if (response.status === 404) return { candidates: [], statuses: [{ provider: PROVIDER, status: "miss", detail: "No matching lyrics on Unison" }] };
+      const envelope = asEnvelope(response.json);
+      return { candidates: [], statuses: [{ provider: PROVIDER, status: "error", detail: envelope?.error || `Request failed (${response.status})` }] };
+    }
+
+    const envelope = asEnvelope(response.json);
+    const records = Array.isArray(envelope?.data) ? envelope.data.map(asEntry).filter((e): e is UnisonEntry => e !== null) : [];
+    const candidates: LyricsCandidate[] = [];
+    const seen = new Set<string>();
+    for (const entry of records) {
+      const mapped = toUnisonCandidate(entry, enabledKeys);
+      if (!mapped.ok) continue;
+      const candidate = mapped.candidate;
+      const dedupeKey = `${candidate.source}:${candidate.text.length}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      candidates.push({
+        ...candidate,
+        matchTitle: entry.song ?? null,
+        matchArtist: entry.artist ?? null,
+        matchAlbum: entry.album ?? null,
+        matchDuration: typeof entry.duration === "number" ? entry.duration : null,
+      });
+    }
+
+    if (candidates.length === 0) {
+      return { candidates: [], statuses: [{ provider: PROVIDER, status: "miss", detail: "No matching lyrics on Unison" }] };
+    }
+    return { candidates, statuses: [{ provider: PROVIDER, status: "hit", detail: `${candidates.length} result${candidates.length === 1 ? "" : "s"}` }] };
   } catch (error) {
     if (isAbort(error)) throw error;
     return { candidates: [], statuses: [{ provider: PROVIDER, ...describeHttpError(error) }] };

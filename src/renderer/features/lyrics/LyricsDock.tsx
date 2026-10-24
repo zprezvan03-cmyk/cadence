@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from "react";
 import {
+  ArrowLeft,
   ChevronDown,
   Download,
   FolderOpen,
@@ -13,11 +14,13 @@ import {
   Minus,
   Plus,
   RefreshCw,
+  Search,
   Settings2,
   Sparkles,
   Wand2,
 } from "lucide-react";
 import type { LyricsCandidate, LyricsSettings } from "../../../shared/types";
+import type { ManualSearchState } from "./useLyrics";
 import { TRANSLATION_LANGUAGES } from "./translationLanguages";
 
 interface LyricsDockProps {
@@ -32,6 +35,11 @@ interface LyricsDockProps {
   onChooseFile: () => void;
   syncLabel: string;
   busy: boolean;
+  /** Prefill values for manual search, taken from the playing track's tags. */
+  searchDefaults: { title: string; artist: string };
+  manualSearchState: ManualSearchState;
+  onManualSearch: (title: string, artist: string) => void;
+  onSelectSearchResult: (candidate: LyricsCandidate) => void;
   /** Hover visibility: faded out and non-interactive while true. */
   concealed?: boolean;
   /** Reports whether a popover is open, so the controls stay visible while it is in use. */
@@ -50,15 +58,34 @@ export function LyricsDock({
   onChooseFile,
   syncLabel,
   busy,
+  searchDefaults,
+  manualSearchState,
+  onManualSearch,
+  onSelectSearchResult,
   concealed = false,
   onPopoverChange,
 }: LyricsDockProps) {
-  const [panel, setPanel] = useState<"none" | "sources" | "appearance">("none");
+  const [panel, setPanel] = useState<"none" | "sources" | "appearance" | "search">("none");
   const [languageOpen, setLanguageOpen] = useState(false);
+  const [searchTitle, setSearchTitle] = useState("");
+  const [searchArtist, setSearchArtist] = useState("");
 
   useEffect(() => {
     onPopoverChange?.(panel !== "none" || languageOpen);
   }, [panel, languageOpen, onPopoverChange]);
+
+  // Seed the form from the current track each time the search panel opens; typing afterwards is
+  // never overwritten because the effect only runs while the panel is closed.
+  useEffect(() => {
+    if (panel === "search") return;
+    setSearchTitle(searchDefaults.title);
+    setSearchArtist(searchDefaults.artist);
+  }, [panel, searchDefaults.title, searchDefaults.artist]);
+
+  const submitSearch = () => {
+    if (!searchTitle.trim() || manualSearchState.status === "loading") return;
+    onManualSearch(searchTitle, searchArtist);
+  };
 
   return (
     <div className={`lyrics-dock ${concealed ? "is-concealed" : ""}`} data-testid="lyrics-dock">
@@ -156,6 +183,101 @@ export function LyricsDock({
               <span className={`provider-${entry.status}`}>{entry.detail || entry.status}</span>
             </div>
           ))}
+          <div className="popover-divider" />
+          <button type="button" className="source-row manual-search-entry" onClick={() => setPanel("search")}>
+            <span>
+              <strong>
+                <Search size={13} /> Search Manually
+              </strong>
+              <em>Find lyrics with a different title or artist</em>
+            </span>
+            <ChevronDown size={14} className="chev-right" />
+          </button>
+        </div>
+      ) : null}
+
+      {panel === "search" ? (
+        <div className="dock-popover dock-search" data-testid="manual-search">
+          <div className="search-panel-head">
+            <button type="button" className="dock-icon" title="Back to sources" onClick={() => setPanel("sources")}>
+              <ArrowLeft size={15} />
+            </button>
+            <div className="popover-title">Search lyrics</div>
+          </div>
+          <form
+            className="search-form"
+            onSubmit={event => {
+              event.preventDefault();
+              submitSearch();
+            }}
+          >
+            <input
+              className="search-input"
+              type="text"
+              placeholder="Song title"
+              aria-label="Song title"
+              value={searchTitle}
+              onChange={event => setSearchTitle(event.target.value)}
+              autoFocus
+            />
+            <input
+              className="search-input"
+              type="text"
+              placeholder="Artist (optional)"
+              aria-label="Artist (optional)"
+              value={searchArtist}
+              onChange={event => setSearchArtist(event.target.value)}
+            />
+            <button type="submit" className="search-submit" disabled={!searchTitle.trim() || manualSearchState.status === "loading"}>
+              {manualSearchState.status === "loading" ? <RefreshCw size={15} className="spin" /> : <Search size={15} />}
+              Search
+            </button>
+          </form>
+
+          {manualSearchState.status === "loading" ? (
+            <div className="muted search-feedback">Searching providers…</div>
+          ) : null}
+          {manualSearchState.status === "empty" ? (
+            <div className="muted search-feedback">No lyrics found for that search. Try a different title or artist.</div>
+          ) : null}
+          {manualSearchState.status === "error" ? (
+            <div className="search-feedback search-error">
+              Search failed: {manualSearchState.error}
+              <button type="button" className="search-retry" onClick={submitSearch}>
+                <RefreshCw size={13} /> Retry
+              </button>
+            </div>
+          ) : null}
+          {manualSearchState.status === "ready"
+            ? manualSearchState.results.map(candidate => (
+                <button
+                  type="button"
+                  key={`${candidate.source}-${candidate.matchTitle ?? ""}-${candidate.text.length}`}
+                  className="source-row"
+                  onClick={() => {
+                    onSelectSearchResult(candidate);
+                    setPanel("none");
+                  }}
+                >
+                  <span>
+                    <strong>{candidate.matchTitle ?? searchTitle}</strong>
+                    <em>
+                      {[candidate.matchArtist, candidate.matchAlbum, candidate.matchDuration ? `${candidate.matchDuration}s` : null]
+                        .filter(Boolean)
+                        .join(" · ") || "Unknown artist"}
+                    </em>
+                    <em className="search-provider">
+                      {candidate.provider} ·{" "}
+                      {candidate.syncHint === "richsync"
+                        ? "Word synced"
+                        : candidate.syncHint === "synced"
+                          ? "Line synced"
+                          : "Unsynced"}
+                    </em>
+                  </span>
+                </button>
+              ))
+            : null}
         </div>
       ) : null}
 

@@ -35,6 +35,12 @@ export interface LyricsState {
   detectedLanguage: string | null;
 }
 
+export interface ManualSearchState {
+  status: "idle" | "loading" | "ready" | "empty" | "error";
+  results: LyricsCandidate[];
+  error: string | null;
+}
+
 const EMPTY: LyricsState = {
   status: "idle",
   candidates: [],
@@ -55,17 +61,34 @@ export interface UseLyricsResult extends LyricsState {
   reload: () => void;
   saveSidecar: () => Promise<string | null>;
   chooseFile: () => Promise<void>;
+  /** Manual-search state for the Lyrics Selector; never alters active lyrics on its own. */
+  manualSearchState: ManualSearchState;
+  manualSearch: (title: string, artist: string) => Promise<void>;
+  selectSearchResult: (candidate: LyricsCandidate) => void;
   hasLyrics: boolean;
 }
 
+const EMPTY_SEARCH: ManualSearchState = { status: "idle", results: [], error: null };
+
 export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyricsResult {
   const [state, setState] = useState<LyricsState>(EMPTY);
+  const [manualSearchState, setManualSearchState] = useState<ManualSearchState>(EMPTY_SEARCH);
   const [reloadToken, setReloadToken] = useState(0);
   const generation = useRef(0);
+  const searchGeneration = useRef(0);
   const parsedCache = useRef(new Map<string, ParsedLyrics>());
   const manualSource = useRef<string | null>(null);
   const resolvedFor = useRef<string | null>(null);
   const parsedRef = useRef<ParsedLyrics | null>(null);
+
+  // Manual search belongs to the track it was run against; a track switch clears stale rows so a
+  // previous song's results can never be selected for the current one, and its preferred-source
+  // override cannot silently pre-empt the new track's default candidate.
+  useEffect(() => {
+    searchGeneration.current += 1;
+    manualSource.current = null;
+    setManualSearchState(EMPTY_SEARCH);
+  }, [track?.id]);
 
   const parseCandidate = useCallback((candidate: LyricsCandidate, durationSeconds: number): ParsedLyrics => {
     const key = `${candidate.source}:${durationSeconds.toFixed(0)}:${candidate.text.length}`;
@@ -315,12 +338,65 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     }));
   }, [track]);
 
+  // Explicit manual search from the Lyrics Selector. It never changes the active lyrics — only an
+  // explicit result selection does — and a stale response (newer submit or track change) is dropped.
+  const manualSearch = useCallback(
+    async (title: string, artist: string) => {
+      if (!track || !title.trim()) return;
+      const token = ++searchGeneration.current;
+      setManualSearchState({ status: "loading", results: [], error: null });
+      try {
+        const response = await bridge.lyrics.search({
+          title: title.trim(),
+          artist: artist.trim(),
+          album: track.album,
+          duration: track.duration,
+        });
+        if (token !== searchGeneration.current) return;
+        setManualSearchState(
+          response.results.length
+            ? { status: "ready", results: response.results, error: null }
+            : { status: "empty", results: [], error: null }
+        );
+      } catch (error) {
+        if (token !== searchGeneration.current) return;
+        setManualSearchState({ status: "error", results: [], error: (error as Error).message });
+      }
+    },
+    [track]
+  );
+
+  // Promote a manually selected search result into the active candidate list, mirroring the
+  // "chosen file" flow: parsed once, kept as the manual source until the track changes.
+  const selectSearchResult = useCallback(
+    (candidate: LyricsCandidate) => {
+      if (!track) return;
+      const parsed = parseCandidate(candidate, track.duration);
+      manualSource.current = candidate.source;
+      parsedRef.current = parsed;
+      setState(previous => ({
+        ...previous,
+        status: "ready",
+        candidates: [candidate, ...previous.candidates.filter(entry => entry.source !== candidate.source)],
+        activeSource: candidate.source,
+        parsed,
+        lyrics: parsed.lyrics,
+        syncType: parsed.syncType,
+        error: null,
+      }));
+    },
+    [track, parseCandidate]
+  );
+
   return {
     ...state,
     selectSource,
     reload,
     saveSidecar,
     chooseFile,
+    manualSearchState,
+    manualSearch,
+    selectSearchResult,
     hasLyrics: Boolean(state.lyrics && state.lyrics.length > 0),
   };
 }

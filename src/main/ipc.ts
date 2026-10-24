@@ -13,6 +13,7 @@ import type {
   DeepPartial,
   LibraryScanResult,
   LyricsResolveRequest,
+  LyricsSearchRequest,
   TranslationRequest,
 } from "../shared/types";
 import { IPC } from "../shared/types";
@@ -133,6 +134,21 @@ export function registerIpc(context: IpcContext): void {
         title: stringParam(typed?.title, "title"),
         artist: stringParam(typed?.artist, "artist"),
         album: typeof typed?.album === "string" ? typed.album : "",
+        duration: Number(typed?.duration) || 0,
+        localOnly: Boolean(typed?.localOnly),
+      },
+      context.settings.get().lyrics.providerOrder
+    );
+  });
+
+  ipcMain.handle(IPC.lyricsSearch, async (_event, request: unknown) => {
+    const typed = request as LyricsSearchRequest;
+    const title = stringParam(typed?.title, "title").trim();
+    return context.lyrics.searchLyrics(
+      {
+        title,
+        artist: typeof typed?.artist === "string" ? typed.artist.trim() : "",
+        album: typeof typed?.album === "string" ? typed.album.trim() : "",
         duration: Number(typed?.duration) || 0,
         localOnly: Boolean(typed?.localOnly),
       },

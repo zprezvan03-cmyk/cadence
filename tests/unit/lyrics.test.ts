@@ -107,7 +107,7 @@ describe("LRCLIB provider", () => {
     );
     const result = await fetchLrclib({ title: "Harness Song", artist: "Harness Artist", album: "", duration: 300 });
     expect(result.candidates).toEqual([]);
-    expect(result.status[0].status).toBe("miss");
+    expect(result.statuses[0].status).toBe("miss");
   });
 
   it("treats a plain-text record as a plain candidate", async () => {
@@ -140,7 +140,7 @@ describe("LRCLIB provider", () => {
     );
     const result = await fetchLrclib({ title: "Harness Song", artist: "Harness Artist", album: "", duration: 100 });
     expect(result.candidates).toEqual([]);
-    expect(result.status[0]).toMatchObject({ provider: "lrclib", status: "error" });
+    expect(result.statuses[0]).toMatchObject({ provider: "lrclib", status: "error" });
   });
 });
 

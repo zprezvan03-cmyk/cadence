@@ -688,6 +688,111 @@ braccato-lyrics {
   width: 280px;
 }
 
+.dock-search {
+  width: 320px;
+  gap: 8px;
+}
+
+.search-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.search-panel-head .popover-title {
+  padding: 4px 6px;
+}
+
+.manual-search-entry strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.manual-search-entry .chev-right {
+  color: var(--text-faint);
+}
+
+.search-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+}
+
+.search-input:focus {
+  border-color: var(--accent);
+}
+
+.search-input::placeholder {
+  color: var(--text-faint);
+}
+
+.search-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--accent-soft);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.search-submit:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.search-feedback {
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.search-error {
+  color: var(--danger);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.search-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.search-provider {
+  color: var(--text-faint);
+}
+
 .popover-title {
   font-size: 10.5px;
   letter-spacing: 0.14em;

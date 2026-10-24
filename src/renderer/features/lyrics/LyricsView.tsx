@@ -259,6 +259,10 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
             onReload={lyrics.reload}
             onSaveSidecar={() => void handleSave()}
             onChooseFile={() => void lyrics.chooseFile()}
+            searchDefaults={{ title: track?.title ?? "", artist: track?.artist ?? "" }}
+            manualSearchState={lyrics.manualSearchState}
+            onManualSearch={(title, artist) => void lyrics.manualSearch(title, artist)}
+            onSelectSearchResult={lyrics.selectSearchResult}
             syncLabel={syncLabel}
             busy={lyrics.status === "loading" || lyrics.translating || lyrics.romanizing}
             concealed={!controlsVisible}

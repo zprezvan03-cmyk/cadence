@@ -89,6 +89,30 @@ export async function getJson(url: string, timeoutMs: number, signal?: AbortSign
   return { status: response.status, ok: response.ok, headers: response.headers, json };
 }
 
+/** GET a plain-text document (e.g. a TTML file behind a storage URL), with the same error model. */
+export async function getText(url: string, timeoutMs: number, signal?: AbortSignal): Promise<{ status: number; ok: boolean; text: string }> {
+  const target = new URL(url);
+  if (target.protocol !== "http:" && target.protocol !== "https:") {
+    throw new LyricsHttpError("Refusing to fetch a non-http(s) URL", "malformed");
+  }
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  try {
+    const response = await fetch(target.toString(), {
+      headers: { Accept: "text/plain, application/xml, */*", "User-Agent": CLIENT_NAME },
+      signal: combined,
+    });
+    const text = await response.text();
+    return { status: response.status, ok: response.ok, text };
+  } catch (error) {
+    if ((error as Error).name === "AbortError") {
+      if (signal?.aborted) throw new LyricsHttpError("Request aborted", "aborted");
+      throw new LyricsHttpError("Request timed out", "timeout");
+    }
+    throw new LyricsHttpError((error as Error).message || "Network request failed", "network");
+  }
+}
+
 export function retryAfter(headers: Headers): number | undefined {
   const raw = headers.get("Retry-After");
   if (!raw) return undefined;

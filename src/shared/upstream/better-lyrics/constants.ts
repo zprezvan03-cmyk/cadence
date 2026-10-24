@@ -21,10 +21,12 @@ export type LyricSourceKey =
   | "embedded-tag"
   | "blyrics-richsynced"
   | "unison-richsynced"
+  | "binimum-richsynced"
   | "blyrics-wordsynced"
   | "unison-wordsynced"
   | "blyrics-synced"
   | "unison-synced"
+  | "binimum-synced"
   | "lrclib-synced"
   | "unison-plain"
   | "lrclib-plain"
@@ -48,10 +50,14 @@ export const PROVIDER_CONFIGS: readonly ProviderConfig[] = [
   { key: "blyrics-richsynced", displayName: "Better Lyrics", syncType: "syllable", priority: 2, offline: false },
   // Unison (https://docs.betterlyrics.org/unison): community TTML/LRC/plain, no video ID required.
   { key: "unison-richsynced", displayName: "Unison", syncType: "syllable", priority: 3, offline: false },
-  { key: "blyrics-wordsynced", displayName: "Better Lyrics (QQ)", syncType: "word", priority: 4, offline: false },
-  { key: "unison-wordsynced", displayName: "Unison", syncType: "word", priority: 5, offline: false },
-  { key: "blyrics-synced", displayName: "Better Lyrics (Kugou)", syncType: "line", priority: 6, offline: false },
-  { key: "unison-synced", displayName: "Unison", syncType: "line", priority: 7, offline: false },
+  // BiniLyrics (https://lyrics.binimum.org/developers): fully keyless community TTML, the same
+  // native upstream the extension reaches as `binimum-richsynced`/`binimum-synced`.
+  { key: "binimum-richsynced", displayName: "BiniLyrics", syncType: "syllable", priority: 4, offline: false },
+  { key: "blyrics-wordsynced", displayName: "Better Lyrics (QQ)", syncType: "word", priority: 5, offline: false },
+  { key: "unison-wordsynced", displayName: "Unison", syncType: "word", priority: 6, offline: false },
+  { key: "blyrics-synced", displayName: "Better Lyrics (Kugou)", syncType: "line", priority: 7, offline: false },
+  { key: "unison-synced", displayName: "Unison", syncType: "line", priority: 8, offline: false },
+  { key: "binimum-synced", displayName: "BiniLyrics", syncType: "line", priority: 9, offline: false },
   { key: "lrclib-synced", displayName: "LRCLIB (synced)", syncType: "line", priority: 10, offline: false },
   { key: "unison-plain", displayName: "Unison", syncType: "unsynced", priority: 14, offline: false },
   { key: "lrclib-plain", displayName: "LRCLIB (plain)", syncType: "unsynced", priority: 15, offline: false },
@@ -79,9 +85,17 @@ export const BETTER_LYRICS_API_BASE_URL = "https://api.betterlyrics.org" as cons
  */
 export const UNISON_BASE_URL = "https://unison.betterlyrics.org" as const;
 
+/**
+ * BiniLyrics: the keyless community TTML catalogue the extension consumes as its native
+ * `binimum` provider (https://lyrics.binimum.org/developers). Lookup is metadata based and each
+ * result points at a TTML file fetched in a second request.
+ */
+export const BINIMUM_BASE_URL = "https://lyrics-api.binimum.org" as const;
+
 /** Per-request network timeouts, matching the extension's 10 s Unison timeout. */
 export const UNISON_REQUEST_TIMEOUT_MS = 10_000;
 export const BETTER_LYRICS_REQUEST_TIMEOUT_MS = 12_000;
+export const BINIMUM_REQUEST_TIMEOUT_MS = 10_000;
 
 /**
  * Upstream translate endpoints (src/core/constants.ts). Kept byte-for-byte so translation and

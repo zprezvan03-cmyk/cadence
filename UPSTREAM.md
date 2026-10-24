@@ -68,9 +68,15 @@ ID is never invented.
 | Cadence module | Endpoint(s) | Source keys |
 | --- | --- | --- |
 | `src/main/lyrics/betterLyrics.ts` | `GET https://api.betterlyrics.org/getLyrics` (`{ ttml }`), `/qq/getLyrics` (QRC), `/kugou/getLyrics` (LRC) — params `s`, `a`, `al`, `d` | `blyrics-richsynced`, `blyrics-wordsynced`, `blyrics-synced` |
-| `src/main/lyrics/unison.ts` | `GET https://unison.betterlyrics.org/lyrics?song&artist&album&duration`, then `GET /lyrics/search?…&limit=5` on a clean 404 | `unison-richsynced`, `unison-wordsynced`, `unison-synced`, `unison-plain` |
+| `src/main/lyrics/unison.ts` | `GET https://unison.betterlyrics.org/lyrics?song&artist&album&duration`, then `GET /lyrics/search?…&limit=5` on a clean 404; manual search uses `/lyrics/search?…&limit=10` | `unison-richsynced`, `unison-wordsynced`, `unison-synced`, `unison-plain` |
+| `src/main/lyrics/binimum.ts` | `GET https://lyrics-api.binimum.org/?track&artist&album&duration` (metadata index, no key), then `GET` each record's `lyricsUrl` for the TTML document | `binimum-richsynced`, `binimum-synced` |
 | `src/main/lyrics/lrclib.ts` | `GET https://lrclib.net/api/get` and `/search` | `lrclib-synced`, `lrclib-plain` |
 | `src/main/lyrics/http.ts`, `matching.ts` | — | Shared timeout/error-classification layer and conservative Unicode metadata matching |
+
+Every network module also exposes a manual-search variant (`searchBetterLyrics`, `searchUnison`,
+`searchBinimum`, `searchLrclib`) behind `LyricsService.searchLyrics` and the `lyrics:search` IPC
+channel; automatic resolution and the manual selector share one cache with `search:`-namespaced
+keys.
 
 Verified behavior and limitations:
 
@@ -86,6 +92,16 @@ Verified behavior and limitations:
   redistributed. Cadence sends no `X-API-Key`, treats `401` as a documented limitation (distinct
   from a miss), falls through to the next provider, and never negative-caches it. The QQ/Kugou
   provider endpoints are documented as keyless and still go through the same 401-safe handling.
+- **BiniLyrics is fully keyless.** Per https://lyrics.binimum.org/developers the index answers
+  metadata queries (`track`/`artist`/`album`/`duration`) with `{ total, results[] }` records that
+  each carry a `lyricsUrl` and a `timing_type` of `"word"` or `"line"`; the two-step index→TTML
+  flow mirrors the MIT-licensed `createBinimumProvider` in `@braccato/provider-blyrics` 0.2.3,
+  reimplemented in `binimum.ts` against Cadence's raw-text candidate architecture (the npm package
+  itself is not a dependency — it returns parsed `Lyric[]`, while Cadence keeps provider text
+  untouched). The TTML payload is re-validated after fetch, so a mislabeled record can never be
+  advertised as richer than it is; non-TTML storage responses are misses, and `429`/`Retry-After`
+  is surfaced as an error and never cached. The same two source keys
+  (`binimum-richsynced`/`binimum-synced`) appear in the extension's current `unified.ts`.
 - The extension's `unified.ts`/Cubey stream remains unusable standalone (Turnstile iframe challenge,
   JWT, cookie credentials, YouTube Music origin, mandatory `videoId`). See *Not ported* below.
 - Raw provider text (TTML, QRC, enhanced/LRC, plain) is passed to the renderer untouched; the
@@ -97,7 +113,7 @@ These replace the extension's YouTube Music dependencies and are Cadence's own w
 
 | Cadence module | Replaces |
 | --- | --- |
-| `src/main/lyrics/service.ts`, `betterLyrics.ts`, `unison.ts`, `lrclib.ts`, `http.ts`, `matching.ts`, `localLyrics.ts`, `cache.ts` | The upstream `unified.ts` provider stream (requires a Turnstile JWT and a `videoId`); keyed on artist/title/album/duration instead |
+| `src/main/lyrics/service.ts`, `betterLyrics.ts`, `unison.ts`, `binimum.ts`, `lrclib.ts`, `http.ts`, `matching.ts`, `localLyrics.ts`, `cache.ts` | The upstream `unified.ts` provider stream (requires a Turnstile JWT and a `videoId`); keyed on artist/title/album/duration instead. `binimum.ts` additionally adapts the keyless two-step index→TTML request flow from the MIT-licensed `createBinimumProvider` in `@braccato/provider-blyrics` 0.2.3, without taking the package as a dependency |
 | `src/main/library/*` | Nothing upstream — local file library, scanning, metadata, artwork, playlists |
 | `src/renderer/audio/*`, `player/queue.ts`, `state/*` | The YouTube Music player and DOM; local `<audio>` element and Zustand stores |
 | `src/main/index.ts`, `ipc.ts`, `protocol.ts`, `preload/index.ts` | The browser extension's `chrome.*` APIs; Electron main process and IPC |

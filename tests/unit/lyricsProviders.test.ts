@@ -319,13 +319,17 @@ describe("LyricsService provider orchestration", () => {
       LyricsService["resolve"]
     >[0];
 
+  const binimumEmpty = () => json({ total: 0, source: "HIT-LOCAL-LIBSQL", results: [] });
+
   function hostRoutedFetch(routes: Record<string, (url: string) => Response | Promise<Response>>): typeof fetch {
     return vi.fn(async (url: string) => {
       const target = url.includes("api.betterlyrics.org")
         ? routes.blyrics
         : url.includes("unison.betterlyrics.org")
           ? routes.unison
-          : routes.lrclib;
+          : url.includes("lyrics-api.binimum.org")
+            ? routes.binimum ?? binimumEmpty
+            : routes.lrclib;
       return target(url);
     }) as unknown as typeof fetch;
   }
