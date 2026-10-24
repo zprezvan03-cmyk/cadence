@@ -13,12 +13,15 @@ import type {
   DeepPartial,
   LibraryScanResult,
   LyricsResolveRequest,
+  LyricsSearchRequest,
   TranslationRequest,
+  YouTubeMetadataRequest,
 } from "../shared/types";
 import { IPC } from "../shared/types";
 import type { LibraryController } from "./library/controller";
 import type { LyricsService } from "./lyrics/service";
 import { writeSidecarLyrics } from "./lyrics/localLyrics";
+import { fetchYouTubeMetadata } from "./lyrics/youtube";
 import type { SettingsStore } from "./settings";
 import { classifierFor, romanizeBatch, translateBatch, type TranslationCache } from "./lyrics/translation";
 import { createTranslationCache } from "./lyrics/translation";
@@ -138,6 +141,27 @@ export function registerIpc(context: IpcContext): void {
       },
       context.settings.get().lyrics.providerOrder
     );
+  });
+
+  ipcMain.handle(IPC.lyricsSearch, async (_event, request: unknown) => {
+    const typed = request as LyricsSearchRequest;
+    const title = stringParam(typed?.title, "title").trim();
+    return context.lyrics.searchLyrics(
+      {
+        title,
+        artist: typeof typed?.artist === "string" ? typed.artist.trim() : "",
+        album: typeof typed?.album === "string" ? typed.album.trim() : "",
+        duration: Number(typed?.duration) || 0,
+        localOnly: Boolean(typed?.localOnly),
+      },
+      context.settings.get().lyrics.providerOrder
+    );
+  });
+
+  ipcMain.handle(IPC.lyricsYouTube, async (_event, request: unknown) => {
+    const typed = request as YouTubeMetadataRequest;
+    const url = stringParam(typed?.url, "url");
+    return fetchYouTubeMetadata(url);
   });
 
   ipcMain.handle(IPC.lyricsTranslate, async (_event, request: unknown) => {

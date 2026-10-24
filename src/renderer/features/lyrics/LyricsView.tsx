@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Minimize2, Music4, RefreshCw, Search } from "lucide-react";
 import type { AppSettings, Track } from "../../../shared/types";
+import { DEFAULT_PROVIDER_ORDER } from "../../../shared/upstream/better-lyrics/constants";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
 import { BraccatoLyrics } from "./BraccatoLyrics";
@@ -94,6 +95,14 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
     setToast(message);
     window.setTimeout(() => setToast(null), 3200);
   }, []);
+
+  // Stable identity so the dock's debounced YouTube lookup doesn't reset on unrelated re-renders.
+  const handleResolveYouTube = useCallback(
+    (url: string) => {
+      void lyrics.resolveYouTube(url);
+    },
+    [lyrics.resolveYouTube]
+  );
 
   const handleSave = useCallback(async () => {
     try {
@@ -258,6 +267,15 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
             onReload={lyrics.reload}
             onSaveSidecar={() => void handleSave()}
             onChooseFile={() => void lyrics.chooseFile()}
+            trackDuration={track?.duration ?? 0}
+            searchDraft={lyrics.searchDraft}
+            onDraftChange={lyrics.patchDraft}
+            onClearSearch={lyrics.clearSearch}
+            manualSearchState={lyrics.manualSearchState}
+            youtubeState={lyrics.youtubeState}
+            onManualSearch={input => void lyrics.manualSearch(input)}
+            onResolveYouTube={handleResolveYouTube}
+            onSelectSearchResult={lyrics.selectSearchResult}
             syncLabel={syncLabel}
             busy={lyrics.status === "loading" || lyrics.translating || lyrics.romanizing}
             concealed={!controlsVisible}
@@ -277,7 +295,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
 }
 
 const fallbackLyricsSettings: AppSettings["lyrics"] = {
-  providerOrder: ["local-sidecar", "embedded-tag", "lrclib-synced", "lrclib-plain"],
+  providerOrder: [...DEFAULT_PROVIDER_ORDER],
   autoFetch: true,
   offsetMs: 0,
   translationLanguage: "",

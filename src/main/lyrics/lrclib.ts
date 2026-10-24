@@ -9,6 +9,7 @@
 
 import { LRCLIB_BASE_URL } from "../../shared/upstream/better-lyrics/constants";
 import type { LyricsCandidate } from "../../shared/types";
+import { similarity } from "./matching";
 
 const CLIENT_NAME = "Cadence Player v0.1.0 (https://github.com/zprezvan03-cmyk/betterlyrics-standalone)";
 const REQUEST_TIMEOUT_MS = 12000;
@@ -33,38 +34,7 @@ interface LrclibRecord {
 
 export interface LrclibResult {
   candidates: LyricsCandidate[];
-  status: { provider: string; status: "hit" | "miss" | "error" | "skipped"; detail?: string }[];
-}
-
-const normalize = (value: string): string =>
-  value
-    .toLocaleLowerCase()
-    .normalize("NFKD")
-    .replace(/\p{M}/gu, "")
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim();
-
-/** Sørensen–Dice bigram similarity, used only to rank LRCLIB search results. */
-function similarity(a: string, b: string): number {
-  const left = normalize(a).replace(/\s+/g, "");
-  const right = normalize(b).replace(/\s+/g, "");
-  if (!left || !right) return 0;
-  if (left === right) return 1;
-  const bigrams = new Map<string, number>();
-  for (let i = 0; i < left.length - 1; i++) {
-    const bigram = left.slice(i, i + 2);
-    bigrams.set(bigram, (bigrams.get(bigram) ?? 0) + 1);
-  }
-  let matches = 0;
-  for (let i = 0; i < right.length - 1; i++) {
-    const bigram = right.slice(i, i + 2);
-    const count = bigrams.get(bigram) ?? 0;
-    if (count > 0) {
-      bigrams.set(bigram, count - 1);
-      matches += 1;
-    }
-  }
-  return (2 * matches) / (left.length - 1 + right.length - 1);
+  statuses: { provider: string; status: "hit" | "miss" | "error" | "skipped"; detail?: string }[];
 }
 
 async function request<T>(path: string, signal?: AbortSignal): Promise<{ ok: boolean; status: number; data: T | null }> {
@@ -97,7 +67,7 @@ function pickBest(records: LrclibRecord[], query: LrclibQuery): LrclibRecord | n
 
 export async function fetchLrclib(query: LrclibQuery, signal?: AbortSignal): Promise<LrclibResult> {
   const candidates: LyricsCandidate[] = [];
-  const status: LrclibResult["status"] = [];
+  const statuses: LrclibResult["statuses"] = [];
 
   const params = new URLSearchParams({
     track_name: query.title,
@@ -129,12 +99,12 @@ export async function fetchLrclib(query: LrclibQuery, signal?: AbortSignal): Pro
   }
 
   if (!record) {
-    status.push({
+    statuses.push({
       provider: "lrclib",
       status: lastError ? "error" : "miss",
       detail: lastError ?? "No matching lyrics on LRCLIB",
     });
-    return { candidates, status };
+    return { candidates, statuses };
   }
 
   const href = `https://lrclib.net/lyrics/${record.id}`;
@@ -162,6 +132,77 @@ export async function fetchLrclib(query: LrclibQuery, signal?: AbortSignal): Pro
       cached: false,
     });
   }
-  status.push({ provider: "lrclib", status: "hit", detail: record.syncedLyrics ? "Synced lyrics found" : "Plain lyrics found" });
-  return { candidates, status };
+  statuses.push({ provider: "lrclib", status: "hit", detail: record.syncedLyrics ? "Synced lyrics found" : "Plain lyrics found" });
+  return { candidates, statuses };
+}
+
+const SEARCH_RESULT_LIMIT = 8;
+
+/**
+ * Manual-search variant: returns every usable LRCLIB record (synced preferred per record) instead
+ * of only the closest one, so the lyrics selector can offer alternatives. Each candidate carries
+ * the catalogue record's own metadata for display.
+ */
+export async function searchLrclib(
+  query: LrclibQuery,
+  enabledKeys: ReadonlySet<string>,
+  signal?: AbortSignal
+): Promise<LrclibResult> {
+  const params = new URLSearchParams({ track_name: query.title });
+  if (query.artist) params.set("artist_name", query.artist);
+  try {
+    const response = await request<LrclibRecord[]>(`/search?${params.toString()}`, signal);
+    if (response.status === 404 || !Array.isArray(response.data)) {
+      return { candidates: [], statuses: [{ provider: "lrclib", status: "miss", detail: "No matching lyrics on LRCLIB" }] };
+    }
+    if (!response.ok) {
+      return { candidates: [], statuses: [{ provider: "lrclib", status: "error", detail: `Request failed (${response.status})` }] };
+    }
+
+    const candidates: LyricsCandidate[] = [];
+    for (const record of response.data) {
+      if (!record.syncedLyrics && !record.plainLyrics) continue;
+      const href = `https://lrclib.net/lyrics/${record.id}`;
+      const metadata = {
+        matchTitle: record.trackName,
+        matchArtist: record.artistName,
+        matchAlbum: record.albumName,
+        matchDuration: record.duration,
+      };
+      if (record.syncedLyrics && enabledKeys.has("lrclib-synced")) {
+        candidates.push({
+          source: "lrclib-synced",
+          provider: "LRCLIB (synced)",
+          text: record.syncedLyrics,
+          syncHint: "synced",
+          language: null,
+          songwriters: [],
+          sourceHref: href,
+          cached: false,
+          ...metadata,
+        });
+      }
+      if (record.plainLyrics && enabledKeys.has("lrclib-plain")) {
+        candidates.push({
+          source: "lrclib-plain",
+          provider: "LRCLIB",
+          text: record.plainLyrics,
+          syncHint: "none",
+          language: null,
+          songwriters: [],
+          sourceHref: href,
+          cached: false,
+          ...metadata,
+        });
+      }
+      if (candidates.length >= SEARCH_RESULT_LIMIT) break;
+    }
+
+    return candidates.length
+      ? { candidates, statuses: [{ provider: "lrclib", status: "hit", detail: `${candidates.length} result${candidates.length === 1 ? "" : "s"}` }] }
+      : { candidates: [], statuses: [{ provider: "lrclib", status: "miss", detail: "No matching lyrics on LRCLIB" }] };
+  } catch (error) {
+    if ((error as Error).name === "AbortError") throw error;
+    return { candidates: [], statuses: [{ provider: "lrclib", status: "error", detail: (error as Error).message }] };
+  }
 }

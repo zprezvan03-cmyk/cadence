@@ -46,6 +46,8 @@ const api: CadenceApi & { onMenuAction(listener: (action: "add-folder" | "rescan
   },
   lyrics: {
     resolve: request => ipcRenderer.invoke(IPC.lyricsResolve, request),
+    search: request => ipcRenderer.invoke(IPC.lyricsSearch, request),
+    youtubeMetadata: request => ipcRenderer.invoke(IPC.lyricsYouTube, request),
     translate: request => ipcRenderer.invoke(IPC.lyricsTranslate, request),
     romanize: request => ipcRenderer.invoke(IPC.lyricsRomanize, request),
     saveSidecar: (trackId: number, text: string) => ipcRenderer.invoke(IPC.lyricsSaveSidecar, trackId, text),

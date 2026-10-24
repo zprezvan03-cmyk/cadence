@@ -124,7 +124,57 @@ export interface LyricsCandidate {
   /** Direct link to the provider page, when the provider exposes one. */
   sourceHref: string | null;
   cached: boolean;
+  /**
+   * Metadata of the catalogue record this candidate came from. Automatic resolution leaves these
+   * unset (the local file's own tags apply); manual lyric searches populate them so the selector
+   * can show the matched title/artist/album even when they differ from the playing track's tags.
+   */
+  matchTitle?: string | null;
+  matchArtist?: string | null;
+  matchAlbum?: string | null;
+  matchDuration?: number | null;
 }
+
+export interface LyricsSearchRequest {
+  /** Manually entered song title; may differ from the playing track's tags. */
+  title: string;
+  /** Manually entered artist; optional because some catalogues match on title alone. */
+  artist: string;
+  album?: string;
+  /** Seconds, when known from the playing track. */
+  duration?: number;
+  /** Skip the network and answer from the local search cache only. */
+  localOnly?: boolean;
+}
+
+export interface LyricsSearchResponse {
+  /** Matching candidates, each carrying its `match*` catalogue metadata, best match first. */
+  results: LyricsCandidate[];
+  providerStatus: { provider: string; status: "hit" | "miss" | "error" | "skipped"; detail?: string }[];
+  /** True when every row came from the local cache (e.g. offline manual search). */
+  cached: boolean;
+}
+
+export interface YouTubeMetadataRequest {
+  /** Raw user input; the main process re-validates it even though the renderer pre-checks. */
+  url: string;
+}
+
+export interface YouTubeMetadata {
+  videoId: string;
+  /** Video title, used only to fill a blank title field — it never overwrites a user value. */
+  title: string;
+  /** Channel name with YouTube Music's " - Topic" suffix removed; null when unparseable. */
+  artist: string | null;
+  /** Video length in seconds; null when the best-effort lookup could not determine it. */
+  durationSeconds: number | null;
+  thumbnailUrl: string | null;
+}
+
+/** Discriminated result so the renderer shows inline failures instead of a thrown IPC error. */
+export type YouTubeMetadataResult =
+  | { ok: true; metadata: YouTubeMetadata }
+  | { ok: false; reason: "invalid" | "unavailable" | "error"; detail: string };
 
 export interface LyricsResolveRequest {
   trackId: number;
@@ -287,6 +337,8 @@ export interface CadenceApi {
   };
   lyrics: {
     resolve(request: LyricsResolveRequest): Promise<LyricsResolveResult>;
+    search(request: LyricsSearchRequest): Promise<LyricsSearchResponse>;
+    youtubeMetadata(request: YouTubeMetadataRequest): Promise<YouTubeMetadataResult>;
     translate(request: TranslationRequest): Promise<TranslationResult>;
     romanize(request: TranslationRequest): Promise<RomanizationResult>;
     saveSidecar(trackId: number, text: string): Promise<{ path: string }>;
@@ -335,6 +387,8 @@ export const IPC = {
   settingsPatch: "settings:patch",
   settingsReset: "settings:reset",
   lyricsResolve: "lyrics:resolve",
+  lyricsSearch: "lyrics:search",
+  lyricsYouTube: "lyrics:youtube-metadata",
   lyricsTranslate: "lyrics:translate",
   lyricsRomanize: "lyrics:romanize",
   lyricsSaveSidecar: "lyrics:save-sidecar",

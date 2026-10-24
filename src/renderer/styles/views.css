@@ -700,11 +700,122 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   padding: 9px 12px;
   border-radius: 9px;
   background: var(--surface);
   border: 1px solid var(--border);
   font-size: 13px;
+}
+
+.provider-order li.is-unavailable {
+  opacity: 0.72;
+}
+
+.provider-index {
+  flex: none;
+  width: 20px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.provider-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.provider-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.provider-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.provider-badge.offline {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.provider-badge.disabled,
+.provider-badge.unavailable {
+  background: color-mix(in srgb, var(--danger) 22%, transparent);
+  color: var(--danger);
+}
+
+.provider-order-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 4px 0 8px;
+}
+
+.provider-restore {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.provider-restore:hover {
+  border-color: var(--accent);
+}
+
+.provider-pool {
+  margin: -8px 0 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.provider-pool-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.provider-pool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.provider-pool-chip:hover {
+  border-color: var(--accent);
+}
+
+.provider-pool-chip .chip-unavailable {
+  font-style: normal;
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--danger);
 }
 
 .provider-buttons {

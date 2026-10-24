@@ -59,7 +59,7 @@ const ids = {
   wav: byTitle("fixture")?.id,
 };
 const lyricsByTrack = {
-  [ids.flac]: { text: RICH_LRC, source: "local-sidecar", provider: "Local file" },
+  [ids.flac]: { text: RICH_LRC, source: "local-rich", provider: "Local TTML/QRC" },
   [ids.wav]: { text: PLAIN_LRC, source: "embedded-tag", provider: "Embedded tag" },
   [ids.mp3]: { text: "Plain unsynced lyrics for the MP3 fixture\nno timings here", source: "lrclib-plain", provider: "LRCLIB" },
 };
@@ -170,7 +170,7 @@ await page.evaluateOnNewDocument(
       playback: { volume: 0.85, muted: false, shuffle: false, repeat: "off", playbackRate: 1, resumeOnLaunch: false },
       appearance: { accent: "#ff3d71", reduceMotion: false, compactSidebar: false, blurArtwork: true },
       lyrics: {
-        providerOrder: ["local-sidecar", "embedded-tag", "lrclib-synced", "lrclib-plain"],
+        providerOrder: ["local-rich", "blyrics-richsynced", "unison-richsynced", "binimum-richsynced", "blyrics-wordsynced", "local-lrc", "blyrics-line", "unison-synced", "blyrics-synced", "qq-line", "lrclib-synced", "lrclib-plain", "embedded-tag"],
         autoFetch: true,
         offsetMs: 0,
         translationLanguage: "en",
@@ -276,7 +276,8 @@ await page.evaluateOnNewDocument(
         return {
           candidates: [],
           providerStatus: [
-            { provider: "local-sidecar", status: "miss" },
+            { provider: "local-rich", status: "miss" },
+            { provider: "local-lrc", status: "miss" },
             { provider: "lrclib", status: "miss", detail: "No match" },
           ],
         };
@@ -361,6 +362,12 @@ await page.evaluateOnNewDocument(
       },
       lyrics: {
         resolve: async request => resolveLyrics(request),
+        search: async () => ({ results: [], providerStatus: [], cached: false }),
+        youtubeMetadata: async () => ({
+          ok: false,
+          reason: "error",
+          detail: "YouTube metadata is unavailable in the harness",
+        }),
         translate: async request => ({
           translations: request.lines.map(line => `[translated] ${line}`),
           targetLanguage: request.targetLanguage,
