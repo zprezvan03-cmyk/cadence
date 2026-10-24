@@ -343,7 +343,7 @@ export function SettingsView() {
                         {config?.offline ? <span className="provider-badge offline">offline</span> : null}
                         {disabled ? <span className="provider-badge disabled">disabled</span> : null}
                         {!config?.available ? (
-                          <span className="provider-badge unavailable" title={config.unavailableReason}>
+                          <span className="provider-badge unavailable" title={config?.unavailableReason}>
                             unavailable
                           </span>
                         ) : null}
@@ -511,12 +511,12 @@ export function SettingsView() {
           <dl className="about-grid">
             <dt>Cadence</dt>
             <dd>{info?.version ?? "–"}</dd>
-            <dt>Electron</dt>
-            <dd>{info?.electron ?? "–"}</dd>
-            <dt>Chromium</dt>
-            <dd>{info?.chrome ?? "–"}</dd>
-            <dt>Node</dt>
-            <dd>{info?.node ?? "–"}</dd>
+            <dt>Tauri</dt>
+            <dd>{info?.tauri || "2.x"}</dd>
+            <dt>WebView2 / Chromium</dt>
+            <dd>{info?.chrome || "–"}</dd>
+            <dt>Media protocol</dt>
+            <dd>{info?.mediaProtocol ?? "cadence-media"}</dd>
             <dt>Platform</dt>
             <dd>{info?.platform ?? "–"}</dd>
             <dt>Library database</dt>
@@ -539,7 +539,13 @@ export function SettingsView() {
             className="danger"
             onClick={async () => {
               if (!confirm("Clear cached remote lyrics?")) return;
-              showToast("Lyrics cache is cleared when the app restarts");
+              const clearFn = (window.cadence?.lyrics as unknown as { clearCache?: () => Promise<void> })?.clearCache;
+              if (clearFn) {
+                await clearFn();
+                showToast("Cached remote lyrics cleared");
+              } else {
+                showToast("Lyrics cache is cleared when the app restarts");
+              }
             }}
           >
             <Trash2 size={16} /> Clear lyrics cache

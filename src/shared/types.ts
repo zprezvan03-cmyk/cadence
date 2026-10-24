@@ -297,6 +297,7 @@ export interface LibraryScanResult {
 export interface AppInfo {
   name: string;
   version: string;
+  tauri?: string;
   electron: string;
   chrome: string;
   node: string;
@@ -305,7 +306,7 @@ export interface AppInfo {
   mediaProtocol: string;
 }
 
-/** The API exposed on `window.cadence` by the preload script. */
+/** The API exposed on `window.cadence` by the desktop runtime bridge. */
 export interface CadenceApi {
   info(): Promise<AppInfo>;
   library: {

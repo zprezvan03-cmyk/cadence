@@ -1,0 +1,72 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Cadence",
+  "version": "0.1.0",
+  "identifier": "app.cadence.player",
+  "build": {
+    "beforeDevCommand": "npm run dev:renderer",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build:renderer",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Cadence",
+        "width": 1440,
+        "height": 920,
+        "minWidth": 1040,
+        "minHeight": 680,
+        "resizable": true,
+        "maximizable": true,
+        "minimizable": true,
+        "closable": true,
+        "fullscreen": false,
+        "center": true,
+        "backgroundColor": "#08080b",
+        "backgroundThrottling": "disabled",
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: cadence-media: http://cadence-media.localhost https://cadence-media.localhost https://i.ytimg.com; media-src 'self' blob: cadence-media: http://cadence-media.localhost https://cadence-media.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost cadence-media: http://cadence-media.localhost https://cadence-media.localhost; worker-src 'self' blob:;",
+      "capabilities": ["default"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "category": "Music",
+    "shortDescription": "Desktop music player with synchronized, animated lyrics",
+    "longDescription": "Cadence is a desktop local music player featuring word- and syllable-synced Braccato lyrics, Kawarp WebGL album-artwork shaders, and lossless audio playback.",
+    "license": "GPL-3.0",
+    "licenseFile": "../LICENSE",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": ["flac", "mp3", "m4a", "aac", "wav", "ogg", "opus"],
+        "name": "Audio File",
+        "description": "Cadence Audio File",
+        "role": "Viewer"
+      }
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "startMenuFolder": "Cadence"
+      }
+    }
+  }
+}

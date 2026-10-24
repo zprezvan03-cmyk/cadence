@@ -1,44 +1,60 @@
 /**
- * `cadence-media://` — the streaming protocol the renderer uses for local audio, embedded artwork
+ * `cadence-media` — the streaming protocol the renderer uses for local audio, embedded artwork
  * and animated cover videos. Written for Cadence.
  *
- * Chromium will not read `file://` from a renderer under web security, and `<audio>` needs HTTP
- * range requests to seek reliably. This protocol provides both, plus the CORS headers Web Audio
- * needs before `createMediaElementSource` is allowed to expose samples to the analyser.
+ * WebView2 / Chromium will not read `file://` from a renderer under web security, and `<audio>`
+ * needs HTTP range requests to seek reliably. In production Tauri serves this scheme natively in
+ * Rust (`src-tauri/src/protocol.rs`); this Node-backed helper provides the identical handler for
+ * Node/Vitest integration tests.
  */
 
-import { protocol } from "electron";
 import {
   MEDIA_SCHEME,
   MediaAllowlist,
   artworkUrl,
+  decodePath,
   encodePath,
-  handleMediaRequest,
+  handleMediaRequest as handleMediaRequestCore,
+  parseMediaUrl,
+  tauriArtworkUrl,
   toMediaUrl,
+  toTauriMediaUrl,
   type PathPlatform,
-  type ServeOptions,
+  type ServeOptions as CoreServeOptions,
 } from "./media/protocolHandler";
+import { serveFile } from "./media/staticFile";
 
-export { MEDIA_SCHEME, MediaAllowlist, artworkUrl, encodePath, handleMediaRequest, toMediaUrl };
-export type { PathPlatform, ServeOptions };
+export {
+  MEDIA_SCHEME,
+  MediaAllowlist,
+  artworkUrl,
+  decodePath,
+  encodePath,
+  parseMediaUrl,
+  tauriArtworkUrl,
+  toMediaUrl,
+  toTauriMediaUrl,
+};
+export type { PathPlatform };
 
-/** Must run before `app.whenReady()`. */
-export function registerMediaScheme(): void {
-  protocol.registerSchemesAsPrivileged([
-    {
-      scheme: MEDIA_SCHEME,
-      privileges: {
-        standard: true,
-        secure: true,
-        supportFetchAPI: true,
-        corsEnabled: true,
-        stream: true,
-        bypassCSP: false,
-      },
-    },
-  ]);
+export interface ServeOptions extends Omit<CoreServeOptions, "serve"> {
+  serve?: (path: string, request: Request) => Promise<Response>;
 }
 
-export function registerMediaProtocol(options: ServeOptions): void {
-  protocol.handle(MEDIA_SCHEME, request => handleMediaRequest(request, options));
+export function handleMediaRequest(request: Request, options: ServeOptions): Promise<Response> {
+  return handleMediaRequestCore(request, {
+    ...options,
+    serve: options.serve ?? serveFile,
+  });
+}
+
+export type ProtocolRegistrar = (
+  scheme: string,
+  handler: (request: Request) => Promise<Response>
+) => void;
+
+export function registerMediaProtocol(options: ServeOptions, register?: ProtocolRegistrar): (request: Request) => Promise<Response> {
+  const handler = (request: Request) => handleMediaRequest(request, options);
+  register?.(MEDIA_SCHEME, handler);
+  return handler;
 }

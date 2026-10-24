@@ -1,0 +1,307 @@
+//! SQLite persistence for the Cadence library (`library.db`).
+//!
+//! Uses the exact 5-table schema (`tracks`, `lyrics`, `playlists`, `folders`, `meta`) established
+//! by `src/main/library/store.ts`, so existing user libraries migrate seamlessly without data loss.
+
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Mutex;
+
+use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbSnapshot {
+    pub tracks: Vec<Value>,
+    pub lyrics: HashMap<String, Value>,
+    pub playlists: Vec<Value>,
+    pub folders: Vec<String>,
+    pub next_playlist_id: i64,
+}
+
+impl Default for DbSnapshot {
+    fn default() -> Self {
+        Self {
+            tracks: Vec::new(),
+            lyrics: HashMap::new(),
+            playlists: Vec::new(),
+            folders: Vec::new(),
+            next_playlist_id: 1,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "op", rename_all = "camelCase")]
+pub enum DbMutation {
+    UpsertTrack {
+        id: i64,
+        path: String,
+        payload: String,
+    },
+    DeleteTrack {
+        id: i64,
+    },
+    SetLyrics {
+        #[serde(rename = "trackId")]
+        track_id: i64,
+        payload: String,
+    },
+    DeleteLyrics {
+        #[serde(rename = "trackId")]
+        track_id: i64,
+    },
+    UpsertPlaylist {
+        id: i64,
+        payload: String,
+        #[serde(rename = "nextPlaylistId")]
+        next_playlist_id: i64,
+    },
+    DeletePlaylist {
+        id: i64,
+    },
+    AddFolder {
+        path: String,
+    },
+    RemoveFolder {
+        path: String,
+    },
+}
+
+pub struct LibraryDb {
+    conn: Mutex<Connection>,
+}
+
+impl LibraryDb {
+    pub fn open(db_path: &Path, legacy_json_path: &Path) -> Result<Self, String> {
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+        conn.execute_batch(
+            "
+            PRAGMA journal_mode = WAL;
+            CREATE TABLE IF NOT EXISTS tracks (
+              id INTEGER PRIMARY KEY,
+              path TEXT NOT NULL UNIQUE,
+              payload TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS lyrics (
+              track_id INTEGER PRIMARY KEY,
+              payload TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS playlists (
+              id INTEGER PRIMARY KEY,
+              payload TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS folders (
+              path TEXT PRIMARY KEY
+            );
+            CREATE TABLE IF NOT EXISTS meta (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL
+            );
+            ",
+        )
+        .map_err(|e| e.to_string())?;
+
+        let db = Self {
+            conn: Mutex::new(conn),
+        };
+        let _ = db.import_legacy_json_if_empty(legacy_json_path);
+        Ok(db)
+    }
+
+    fn import_legacy_json_if_empty(&self, json_path: &Path) -> Result<(), String> {
+        if !json_path.is_file() {
+            return Ok(());
+        }
+        let mut conn = self.conn.lock().map_err(|_| "DB mutex poisoned")?;
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM tracks", [], |row| row.get(0))
+            .unwrap_or(0);
+        if count > 0 {
+            return Ok(());
+        }
+
+        let raw = std::fs::read_to_string(json_path).map_err(|e| e.to_string())?;
+        let parsed: DbSnapshot = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        for track in &parsed.tracks {
+            if let (Some(id), Some(path)) = (
+                track.get("id").and_then(|v| v.as_i64()),
+                track.get("path").and_then(|v| v.as_str()),
+            ) {
+                let _ = tx.execute(
+                    "INSERT OR REPLACE INTO tracks (id, path, payload) VALUES (?1, ?2, ?3)",
+                    params![id, path, track.to_string()],
+                );
+            }
+        }
+        for (track_id, payload) in &parsed.lyrics {
+            if let Ok(id) = track_id.parse::<i64>() {
+                let _ = tx.execute(
+                    "INSERT OR REPLACE INTO lyrics (track_id, payload) VALUES (?1, ?2)",
+                    params![id, payload.to_string()],
+                );
+            }
+        }
+        for playlist in &parsed.playlists {
+            if let Some(id) = playlist.get("id").and_then(|v| v.as_i64()) {
+                let _ = tx.execute(
+                    "INSERT OR REPLACE INTO playlists (id, payload) VALUES (?1, ?2)",
+                    params![id, playlist.to_string()],
+                );
+            }
+        }
+        for folder in &parsed.folders {
+            let _ = tx.execute(
+                "INSERT OR IGNORE INTO folders (path) VALUES (?1)",
+                params![folder],
+            );
+        }
+        let _ = tx.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('nextPlaylistId', ?1)",
+            params![parsed.next_playlist_id.to_string()],
+        );
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn load_snapshot(&self) -> Result<DbSnapshot, String> {
+        let conn = self.conn.lock().map_err(|_| "DB mutex poisoned")?;
+        let mut snapshot = DbSnapshot::default();
+
+        {
+            let mut stmt = conn
+                .prepare("SELECT payload FROM tracks")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|e| e.to_string())?;
+            for row in rows.flatten() {
+                if let Ok(val) = serde_json::from_str::<Value>(&row) {
+                    snapshot.tracks.push(val);
+                }
+            }
+        }
+
+        {
+            let mut stmt = conn
+                .prepare("SELECT track_id, payload FROM lyrics")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))
+                .map_err(|e| e.to_string())?;
+            for (id, payload) in rows.flatten() {
+                if let Ok(val) = serde_json::from_str::<Value>(&payload) {
+                    snapshot.lyrics.insert(id.to_string(), val);
+                }
+            }
+        }
+
+        {
+            let mut stmt = conn
+                .prepare("SELECT payload FROM playlists")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|e| e.to_string())?;
+            for row in rows.flatten() {
+                if let Ok(val) = serde_json::from_str::<Value>(&row) {
+                    snapshot.playlists.push(val);
+                }
+            }
+        }
+
+        {
+            let mut stmt = conn
+                .prepare("SELECT path FROM folders")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|e| e.to_string())?;
+            for path in rows.flatten() {
+                snapshot.folders.push(path);
+            }
+        }
+
+        if let Ok(val) = conn.query_row(
+            "SELECT value FROM meta WHERE key = 'nextPlaylistId'",
+            [],
+            |row| row.get::<_, String>(0),
+        ) {
+            snapshot.next_playlist_id = val.parse::<i64>().unwrap_or(1).max(1);
+        }
+
+        Ok(snapshot)
+    }
+
+    pub fn apply_batch(&self, ops: &[DbMutation]) -> Result<(), String> {
+        if ops.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn.lock().map_err(|_| "DB mutex poisoned")?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        for op in ops {
+            match op {
+                DbMutation::UpsertTrack { id, path, payload } => {
+                    tx.execute(
+                        "INSERT OR REPLACE INTO tracks (id, path, payload) VALUES (?1, ?2, ?3)",
+                        params![id, path, payload],
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+                DbMutation::DeleteTrack { id } => {
+                    tx.execute("DELETE FROM tracks WHERE id = ?1", params![id])
+                        .map_err(|e| e.to_string())?;
+                }
+                DbMutation::SetLyrics { track_id, payload } => {
+                    tx.execute(
+                        "INSERT OR REPLACE INTO lyrics (track_id, payload) VALUES (?1, ?2)",
+                        params![track_id, payload],
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+                DbMutation::DeleteLyrics { track_id } => {
+                    tx.execute("DELETE FROM lyrics WHERE track_id = ?1", params![track_id])
+                        .map_err(|e| e.to_string())?;
+                }
+                DbMutation::UpsertPlaylist {
+                    id,
+                    payload,
+                    next_playlist_id,
+                } => {
+                    tx.execute(
+                        "INSERT OR REPLACE INTO playlists (id, payload) VALUES (?1, ?2)",
+                        params![id, payload],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    tx.execute(
+                        "INSERT OR REPLACE INTO meta (key, value) VALUES ('nextPlaylistId', ?1)",
+                        params![next_playlist_id.to_string()],
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+                DbMutation::DeletePlaylist { id } => {
+                    tx.execute("DELETE FROM playlists WHERE id = ?1", params![id])
+                        .map_err(|e| e.to_string())?;
+                }
+                DbMutation::AddFolder { path } => {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO folders (path) VALUES (?1)",
+                        params![path],
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+                DbMutation::RemoveFolder { path } => {
+                    tx.execute("DELETE FROM folders WHERE path = ?1", params![path])
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())
+    }
+}

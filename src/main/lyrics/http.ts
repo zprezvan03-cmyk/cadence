@@ -32,6 +32,23 @@ export interface ProviderOutcome {
 export const CLIENT_NAME =
   "Cadence Player v0.1.0 (https://github.com/zprezvan03-cmyk/betterlyrics-standalone)";
 
+export type RuntimeFetch = typeof fetch;
+
+let activeFetch: RuntimeFetch = (...args) => globalThis.fetch(...args);
+
+/**
+ * Installs a runtime HTTP transport (e.g. Tauri's native Rust `reqwest` command so external APIs
+ * receive proper User-Agent / Lrclib-Client headers without WebView2 CORS restrictions). Defaults
+ * to `globalThis.fetch` so Vitest `vi.stubGlobal("fetch", ...)` continues working seamlessly.
+ */
+export function setRuntimeFetch(fn: RuntimeFetch): void {
+  activeFetch = fn;
+}
+
+export function runtimeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return activeFetch(input, init);
+}
+
 export class LyricsHttpError extends Error {
   constructor(
     message: string,
@@ -61,7 +78,7 @@ export async function getJson(url: string, timeoutMs: number, signal?: AbortSign
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await runtimeFetch(url, {
       headers: { Accept: "application/json", "User-Agent": CLIENT_NAME },
       signal: combined,
     });
@@ -98,7 +115,7 @@ export async function getText(url: string, timeoutMs: number, signal?: AbortSign
   const timeout = AbortSignal.timeout(timeoutMs);
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
   try {
-    const response = await fetch(target.toString(), {
+    const response = await runtimeFetch(target.toString(), {
       headers: { Accept: "text/plain, application/xml, */*", "User-Agent": CLIENT_NAME },
       signal: combined,
     });
