@@ -1,18 +1,7 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-
-const registeredHandlers = new Map<string, (request: Request) => Promise<Response>>();
-
-vi.mock("electron", () => ({
-  protocol: {
-    registerSchemesAsPrivileged: vi.fn(),
-    handle: vi.fn((scheme: string, handler: (request: Request) => Promise<Response>) => {
-      registeredHandlers.set(scheme, handler);
-    }),
-  },
-}));
 
 import {
   MediaAllowlist,
@@ -26,7 +15,9 @@ import {
   encodePath,
   handleMediaRequest,
   registerMediaProtocol,
+  tauriArtworkUrl,
   toMediaUrl,
+  toTauriMediaUrl,
 } from "../../src/main/protocol";
 import { LibraryController } from "../../src/main/library/controller";
 
@@ -172,37 +163,55 @@ describe("cadence-media:// protocol handler", () => {
     allowlist.addRoot(winArtworkRoot);
     allowlist.addRoot(winMusicRoot);
 
-    registerMediaProtocol({
-      allowlist,
-      artworkDirectory: winArtworkRoot,
-      platform: "win32",
-      serve: async (resolvedPath, req) => {
-        if (resolvedPath.toLowerCase() === winFlacPath.toLowerCase()) return serveFile(realFlac, req);
-        if (resolvedPath.toLowerCase() === winCoverPath.toLowerCase()) return serveFile(realCover, req);
-        return new Response("Not found", { status: 404 });
+    let registeredSchemeHandler: ((request: Request) => Promise<Response>) | undefined;
+    registerMediaProtocol(
+      {
+        allowlist,
+        artworkDirectory: winArtworkRoot,
+        platform: "win32",
+        serve: async (resolvedPath, req) => {
+          if (resolvedPath.toLowerCase() === winFlacPath.toLowerCase()) return serveFile(realFlac, req);
+          if (resolvedPath.toLowerCase() === winCoverPath.toLowerCase()) return serveFile(realCover, req);
+          return new Response("Not found", { status: 404 });
+        },
       },
-    });
+      (scheme, fn) => {
+        expect(scheme).toBe(MEDIA_SCHEME);
+        registeredSchemeHandler = fn;
+      }
+    );
 
-    const handler = registeredHandlers.get(MEDIA_SCHEME)!;
+    const handler = registeredSchemeHandler!;
     expect(handler).toBeTypeOf("function");
 
-    // 1. Permitted Windows audio request (full + HTTP Range) + case difference
-    const audioRes = await handler(new Request(toMediaUrl(winFlacPath, "file", "win32")));
-    expect(audioRes.status).toBe(200);
-    expect(audioRes.headers.get("Content-Type")).toBe("audio/flac");
+    // 1. Permitted Windows audio request (full + HTTP Range) + Tauri WebView2 URL + case difference
+    for (const audioUrl of [
+      toMediaUrl(winFlacPath, "file", "win32"),
+      toTauriMediaUrl(winFlacPath, "file", "win32"),
+    ]) {
+      const audioRes = await handler(new Request(audioUrl));
+      expect(audioRes.status).toBe(200);
+      expect(audioRes.headers.get("Content-Type")).toBe("audio/flac");
+      expect(audioRes.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    }
+    expect(toTauriMediaUrl(winFlacPath, "file", "win32")).toMatch(
+      /^http:\/\/cadence-media\.localhost\/file\/[A-Za-z0-9_-]+$/
+    );
 
     const rangeRes = await handler(
-      new Request(toMediaUrl("c:\\users\\alice\\music\\test bench\\fixture.flac", "file", "win32"), {
+      new Request(toTauriMediaUrl("c:\\users\\alice\\music\\test bench\\fixture.flac", "file", "win32"), {
         headers: { Range: "bytes=0-3" },
       })
     );
     expect(rangeRes.status).toBe(206);
     expect(Buffer.from(await rangeRes.arrayBuffer()).toString("ascii")).toBe("fLaC");
 
-    // 2. Permitted Windows artwork requests (full path via toMediaUrl, artworkUrl helper, relative filename, case diff)
+    // 2. Permitted Windows artwork requests (full path, Tauri WebView2 artwork URL, artworkUrl helper, relative filename, case diff)
     for (const url of [
       toMediaUrl(winCoverPath, "art", "win32"),
+      toTauriMediaUrl(winCoverPath, "art", "win32"),
       artworkUrl(winArtworkRoot, "cover.png", "win32"),
+      tauriArtworkUrl(winArtworkRoot, "cover.png", "win32"),
       `${MEDIA_SCHEME}://art/${encodePath("cover.png")}`,
       toMediaUrl("c:\\users\\alice\\appdata\\roaming\\cadence\\artwork\\cover.png", "art", "win32"),
     ]) {

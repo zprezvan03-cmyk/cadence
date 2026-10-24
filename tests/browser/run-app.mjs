@@ -22,7 +22,7 @@ import { PNG } from "pngjs";
 import chromium from "@sparticuz/chromium";
 
 const root = resolve(import.meta.dirname, "../..");
-const outDir = join(root, "out/renderer");
+const outDir = join(root, "dist");
 const harnessDir = join(root, ".artifacts/harness");
 const audioDir = join(root, ".artifacts/fixtures/formats");
 const shotDir = join(root, ".artifacts/screens");
@@ -304,7 +304,8 @@ await page.evaluateOnNewDocument(
         name: "Cadence",
         version: "0.1.0",
         platform: "browser-harness",
-        electron: "n/a (Chromium harness)",
+        tauri: "2.12 (Chromium harness)",
+        electron: "",
         chrome: navigator.userAgent,
         node: "n/a",
         userData: "/harness",

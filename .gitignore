@@ -2,6 +2,7 @@ node_modules/
 out/
 dist/
 release/
+src-tauri/target/
 .vite/
 *.log
 .DS_Store

@@ -1,63 +1,64 @@
 #!/usr/bin/env node
 /**
- * Build a portable Windows package from an existing electron-builder output.
+ * Build a portable Windows ZIP package from an existing Tauri release build.
  *
- * `electron-builder --win` already produces `release/win-unpacked/` before it packages the
- * installer, so this script wraps that directory in a ZIP that runs without installation. It is
- * deliberately separate from electron-builder so a portable build can be produced even when the
- * NSIS step is unavailable, and it never downloads anything itself.
+ * `npm run package:win` (`tauri build`) produces the native Windows executable (`cadence.exe`,
+ * with the production `dist/` frontend assets embedded directly inside the binary) under
+ * `src-tauri/target/x86_64-pc-windows-msvc/release/` or `src-tauri/target/release/`.
+ * This script packages that standalone executable (plus `LICENSE` and `UPSTREAM.md`) into a
+ * ready-to-run portable ZIP that requires no installer or administrator rights.
  *
  * Usage: npm run package:win:portable
  */
-import { createWriteStream, existsSync, readdirSync, statSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, mkdirSync, statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
 import { pipeline } from "node:stream/promises";
-import { createGzip } from "node:zlib";
+import { deflateRawSync } from "node:zlib";
+import { createHash } from "node:crypto";
 
 const root = resolve(import.meta.dirname, "..");
 const releaseDir = join(root, "release");
-const unpacked = join(releaseDir, "win-unpacked");
-const pkg = JSON.parse(await import("node:fs/promises").then(fs => fs.readFile(join(root, "package.json"), "utf8")));
+const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 
-if (!existsSync(unpacked)) {
+const candidateBins = [
+  join(root, "src-tauri/target/x86_64-pc-windows-msvc/release/cadence.exe"),
+  join(root, "src-tauri/target/x86_64-pc-windows-msvc/release/Cadence.exe"),
+  join(root, "src-tauri/target/release/cadence.exe"),
+  join(root, "src-tauri/target/release/Cadence.exe"),
+];
+
+const exePath = candidateBins.find(candidate => existsSync(candidate));
+if (!exePath) {
   console.error(
     [
-      `No Windows build at ${unpacked}.`,
+      "No compiled Tauri Windows executable found in src-tauri/target/.",
       "",
-      "electron-builder must produce it first, and it needs the Electron Windows zip:",
-      "  1. On a machine with network access:  npm run package:win",
-      "  2. Set ELECTRON_MIRROR if npm/Corepack is behind a proxy.",
+      "Build the native Windows target first on a machine with Rust + MSVC + WebView2:",
+      "  1. npm install",
+      "  2. npm run package:win",
       "",
-      "A portable package cannot be produced without that Electron binary — this script does not",
-      "download or fabricate one.",
+      "A portable package cannot be produced without compiling the Rust host binary — this script",
+      "never fabricates or downloads prebuilt binaries.",
     ].join("\n")
   );
   process.exit(1);
 }
 
-const required = ["Cadence.exe", "resources/app.asar"];
-for (const file of required) {
-  if (!existsSync(join(unpacked, file))) {
-    console.error(`win-unpacked is incomplete: ${file} is missing. Re-run npm run package:win.`);
-    process.exit(1);
-  }
+mkdirSync(releaseDir, { recursive: true });
+const exeDir = resolve(exePath, "..");
+
+const entriesToPack = [
+  { zipName: "Cadence.exe", diskPath: exePath },
+];
+const webviewLoader = join(exeDir, "WebView2Loader.dll");
+if (existsSync(webviewLoader)) {
+  entriesToPack.push({ zipName: "WebView2Loader.dll", diskPath: webviewLoader });
 }
-
-/** Minimal deterministic ZIP writer (deflate), so packaging needs no extra dependency. */
-const { deflateRawSync } = await import("node:zlib");
-const { createHash } = await import("node:crypto");
-
-const files = [];
-const walk = directory => {
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    const full = join(directory, entry.name);
-    if (entry.isDirectory()) walk(full);
-    else if (entry.isFile()) files.push(full);
-  }
-};
-walk(unpacked);
-files.sort();
+for (const doc of ["LICENSE", "UPSTREAM.md", "README.md"]) {
+  const full = join(root, doc);
+  if (existsSync(full)) entriesToPack.push({ zipName: doc, diskPath: full });
+}
 
 let crcTable = null;
 const crc32 = buffer => {
@@ -74,7 +75,6 @@ const crc32 = buffer => {
   return (crc ^ -1) >>> 0;
 };
 
-const { readFile } = await import("node:fs/promises");
 const chunks = [];
 const central = [];
 let offset = 0;
@@ -84,10 +84,9 @@ const dosDate = (() => {
   return ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
 })();
 
-for (const file of files) {
-  const data = await readFile(file);
-  const name = file.slice(unpacked.length + 1).split("\\").join("/");
-  const nameBytes = Buffer.from(name, "utf8");
+for (const item of entriesToPack) {
+  const data = await readFile(item.diskPath);
+  const nameBytes = Buffer.from(item.zipName, "utf8");
   const compressed = deflateRawSync(data, { level: 9 });
   const crc = crc32(data);
 
@@ -126,8 +125,8 @@ for (const file of files) {
 const centralBuffer = Buffer.concat(central);
 const end = Buffer.alloc(22);
 end.writeUInt32LE(0x06054b50, 0);
-end.writeUInt16LE(files.length, 8);
-end.writeUInt16LE(files.length, 10);
+end.writeUInt16LE(entriesToPack.length, 8);
+end.writeUInt16LE(entriesToPack.length, 10);
 end.writeUInt32LE(centralBuffer.length, 12);
 end.writeUInt32LE(offset, 16);
 
@@ -143,9 +142,9 @@ await pipeline(
 
 const size = statSync(target).size;
 const sha = createHash("sha256");
-await pipeline((await import("node:fs")).createReadStream(target), sha);
+await pipeline(createReadStream(target), sha);
 console.log(`portable package: ${target}`);
-console.log(`  files:  ${files.length}`);
-console.log(`  size:   ${(size / 1024 / 1024).toFixed(1)} MiB`);
+console.log(`  files:  ${entriesToPack.length}`);
+console.log(`  size:   ${(size / 1024 / 1024).toFixed(2)} MiB`);
 console.log(`  sha256: ${sha.digest("hex")}`);
-console.log("  run:    unzip and launch Cadence.exe (no installer, no admin rights)");
+console.log("  run:    unzip and launch Cadence.exe (uses Windows WebView2 runtime)");
