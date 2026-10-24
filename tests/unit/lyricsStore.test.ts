@@ -192,4 +192,40 @@ describe("lyrics session store", () => {
     const session = useLyricsStore.getState().ensureSession(track(11));
     expect(session.draft.title).toBe("Song 11");
   });
+
+  it("strips synthetic Unknown artist / Unknown album placeholders when seeding and clearing drafts", async () => {
+    const { useLyricsStore } = await freshStore();
+    const store = useLyricsStore.getState();
+
+    const untagged: Track = {
+      ...track(21),
+      title: "  Loose File  ",
+      artist: "  Unknown Artist ",
+      album: "unknown album",
+    };
+    const seeded = store.ensureSession(untagged);
+    expect(seeded.draft).toEqual({ title: "Loose File", artist: "", album: "", youtubeUrl: "" });
+
+    store.patchDraft(21, { artist: "Typed Artist", album: "Typed Album" });
+    store.clearSearch(21, untagged);
+    expect(useLyricsStore.getState().sessions[21].draft).toEqual({
+      title: "Loose File",
+      artist: "",
+      album: "",
+      youtubeUrl: "",
+    });
+
+    const realUnknown: Track = {
+      ...track(22),
+      title: "Multi-Love",
+      artist: "Unknown Mortal Orchestra",
+      album: "Unknown Pleasures",
+    };
+    expect(store.ensureSession(realUnknown).draft).toEqual({
+      title: "Multi-Love",
+      artist: "Unknown Mortal Orchestra",
+      album: "Unknown Pleasures",
+      youtubeUrl: "",
+    });
+  });
 });

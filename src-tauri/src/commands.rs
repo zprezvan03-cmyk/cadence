@@ -45,6 +45,7 @@ pub struct AppState {
     pub http_client: reqwest::Client,
     pub active_http_aborts: Mutex<HashMap<String, oneshot::Sender<()>>>,
     pub pending_open_files: Mutex<Vec<String>>,
+    pub user_json_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Serialize)]
@@ -114,12 +115,20 @@ fn atomic_write_utf8(target: &Path, content: &str) -> Result<(), String> {
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let tmp = target.with_extension("json.tmp");
+    let file_name = target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("data.json");
+    let tmp = target.with_file_name(format!("{file_name}.tmp"));
     std::fs::write(&tmp, content.as_bytes()).map_err(|e| e.to_string())?;
-    if cfg!(windows) && target.exists() {
-        let _ = std::fs::remove_file(target);
+    if let Err(rename_err) = std::fs::rename(&tmp, target) {
+        if cfg!(windows) && target.exists() {
+            std::fs::remove_file(target).map_err(|e| e.to_string())?;
+            return std::fs::rename(&tmp, target).map_err(|e| e.to_string());
+        }
+        return Err(rename_err.to_string());
     }
-    std::fs::rename(&tmp, target).map_err(|e| e.to_string())
+    Ok(())
 }
 
 pub fn is_audio_extension(path: &Path) -> bool {
@@ -328,9 +337,13 @@ pub async fn cmd_write_user_json(
         _ => return Err("Unsupported configuration file".to_string()),
     };
     let target = state.app_data_dir.join(file_name);
-    tauri::async_runtime::spawn_blocking(move || atomic_write_utf8(&target, &content))
-        .await
-        .map_err(|e| e.to_string())?
+    let lock = Arc::clone(&state.user_json_lock);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        atomic_write_utf8(&target, &content)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

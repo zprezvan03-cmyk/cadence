@@ -9,7 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LyricsCache } from "../../src/main/lyrics/cache";
 import { LyricsService } from "../../src/main/lyrics/service";
-import { fetchBetterLyrics } from "../../src/main/lyrics/betterLyrics";
+import { normalizeProviderQuery } from "../../src/main/lyrics/serviceCore";
+import { fetchBetterLyrics, searchBetterLyrics } from "../../src/main/lyrics/betterLyrics";
 import { fetchUnison } from "../../src/main/lyrics/unison";
 import { LibraryStore } from "../../src/main/library/store";
 import { parseLyricsText } from "../../src/renderer/features/lyrics/parseLyrics";
@@ -255,22 +256,87 @@ describe("Better Lyrics API provider", () => {
     expect(sung?.parts?.length).toBeGreaterThan(0);
   });
 
-  it("treats 401 as the documented keyless limitation, never throws and never sends a key", async () => {
+  it("treats 401 as an expected keyless cache miss, never throws and never sends a key", async () => {
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
       json({ error: "API key required", message: "Uncached queries require a valid API key" }, 401)
     );
     vi.stubGlobal("fetch", fetchMock);
     const result = await fetchBetterLyrics(QUERY, ALL_KEYS);
     expect(result.candidates).toEqual([]);
-    expect(result.statuses[0]).toMatchObject({ status: "error" });
-    expect(result.statuses[0].detail).toMatch(/API key|third-party/);
+    expect(result.statuses[0]).toMatchObject({ provider: "better-lyrics", status: "miss" });
+    expect(result.statuses[0].detail).not.toMatch(/API key/i);
     for (const call of fetchMock.mock.calls) {
       const headers = (call[1] as RequestInit).headers as Record<string, string>;
       expect(headers["X-API-Key"]).toBeUndefined();
     }
+
+    const searched = await searchBetterLyrics(QUERY, new Set(["blyrics-wordsynced"]));
+    expect(searched.candidates).toEqual([]);
+    expect(searched.statuses[0]).toMatchObject({ provider: "better-lyrics", status: "miss" });
+    expect(searched.statuses[0].detail).not.toMatch(/API key/i);
   });
 
-  it("distinguishes 404 misses, 429 rate limits and malformed payloads", async () => {
+  it("retries an endpoint once without album when a 401 occurs and the query included an album", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      const parsed = new URL(url);
+      if (parsed.searchParams.has("al")) {
+        return json({ error: "API key required", message: "Uncached queries require a valid API key" }, 401);
+      }
+      return json({ lyrics: QRC, provider: "qq" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchBetterLyrics(QUERY, new Set(["blyrics-wordsynced"]));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstUrl = new URL(String(fetchMock.mock.calls[0][0]));
+    const retryUrl = new URL(String(fetchMock.mock.calls[1][0]));
+    expect(firstUrl.searchParams.get("al")).toBe(QUERY.album);
+    expect(retryUrl.searchParams.has("al")).toBe(false);
+    expect(retryUrl.searchParams.get("s")).toBe(QUERY.title);
+    expect(retryUrl.searchParams.get("a")).toBe(QUERY.artist);
+    expect(retryUrl.searchParams.get("d")).toBe("200");
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0].source).toBe("blyrics-wordsynced");
+    expect(result.statuses[0]).toMatchObject({ provider: "better-lyrics", status: "hit" });
+  });
+
+  it("does not retry without album when album is absent, normalized away, or when status is not 401", async () => {
+    const fetchNoAlbum = vi.fn(async () => json({ error: "API key required" }, 401));
+    vi.stubGlobal("fetch", fetchNoAlbum);
+    const noAlbum = await fetchBetterLyrics({ ...QUERY, album: "" }, new Set(["blyrics-wordsynced"]));
+    expect(fetchNoAlbum).toHaveBeenCalledTimes(1);
+    expect(noAlbum.statuses[0].status).toBe("miss");
+    vi.unstubAllGlobals();
+
+    const fetchPlaceholderAlbum = vi.fn(async (_url: string) => json({ error: "API key required" }, 401));
+    vi.stubGlobal("fetch", fetchPlaceholderAlbum);
+    const placeholderAlbum = await fetchBetterLyrics(
+      { ...QUERY, album: "  Unknown Album  " },
+      new Set(["blyrics-wordsynced"])
+    );
+    expect(fetchPlaceholderAlbum).toHaveBeenCalledTimes(1);
+    expect(new URL(String(fetchPlaceholderAlbum.mock.calls[0][0])).searchParams.has("al")).toBe(false);
+    expect(placeholderAlbum.statuses[0].status).toBe("miss");
+    vi.unstubAllGlobals();
+
+    // Only one retry when both the album-qualified and album-less requests return 401.
+    const fetchBoth401 = vi.fn(async () => json({ error: "API key required" }, 401));
+    vi.stubGlobal("fetch", fetchBoth401);
+    await fetchBetterLyrics(QUERY, new Set(["blyrics-richsynced"]));
+    expect(fetchBoth401).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
+
+    // Non-401 statuses (404, 429, 500) must not trigger an album-less retry.
+    for (const status of [404, 429, 500]) {
+      const fetchNon401 = vi.fn(async () => json({ error: "nope" }, status));
+      vi.stubGlobal("fetch", fetchNon401);
+      await fetchBetterLyrics(QUERY, new Set(["blyrics-richsynced"]));
+      expect(fetchNon401).toHaveBeenCalledTimes(1);
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("distinguishes 404 misses, 429 rate limits, 5xx server errors, timeouts, network errors and malformed payloads", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => json({ error: "Lyrics not available for this track" }, 404)));
     const miss = await fetchBetterLyrics(QUERY, new Set(["blyrics-richsynced"]));
     expect(miss.statuses[0]).toMatchObject({ status: "miss" });
@@ -282,9 +348,46 @@ describe("Better Lyrics API provider", () => {
     expect(limited.statuses[0].detail).toContain("60");
     vi.unstubAllGlobals();
 
+    vi.stubGlobal("fetch", vi.fn(async () => json({ error: "Upstream failure" }, 503)));
+    const serverError = await fetchBetterLyrics(QUERY, new Set(["blyrics-richsynced"]));
+    expect(serverError.statuses[0]).toMatchObject({ status: "error", detail: "Server error (503)" });
+    vi.unstubAllGlobals();
+
+    vi.stubGlobal("fetch", hangingFetch());
+    const timedOut = await fetchBetterLyrics(QUERY, new Set(["blyrics-richsynced"]), undefined, 25);
+    expect(timedOut.statuses[0]).toMatchObject({ status: "error", detail: "Request timed out" });
+    vi.unstubAllGlobals();
+
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    }));
+    const networkFailed = await fetchBetterLyrics(QUERY, new Set(["blyrics-richsynced"]));
+    expect(networkFailed.statuses[0]).toMatchObject({
+      status: "error",
+      detail: expect.stringContaining("Network error"),
+    });
+    vi.unstubAllGlobals();
+
     vi.stubGlobal("fetch", vi.fn(async () => json({ unexpected: true })));
     const malformed = await fetchBetterLyrics(QUERY, new Set(["blyrics-richsynced"]));
     expect(malformed.statuses[0]).toMatchObject({ status: "error", detail: expect.stringContaining("malformed") });
+  });
+
+  it("propagates cancellation during initial request or album-less retry without extra requests", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn(async (url: string) => {
+      if (new URL(url).searchParams.has("al")) {
+        controller.abort();
+        return json({ error: "API key required" }, 401);
+      }
+      throw new Error("album-less retry must not hit network after abort");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      fetchBetterLyrics(QUERY, new Set(["blyrics-wordsynced", "blyrics-synced"]), controller.signal)
+    ).rejects.toMatchObject({ name: "LyricsHttpError", kind: "aborted" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("queries only enabled endpoints", async () => {
@@ -369,7 +472,7 @@ describe("LyricsService provider orchestration", () => {
     );
   });
 
-  it("falls back through providers and does not cache keyless/rate-limit failures", async () => {
+  it("caches fallback provider hits when Better Lyrics returns an expected 401 cache miss", async () => {
     const { service } = makeService();
     const fetchMock = vi.fn(
       hostRoutedFetch({
@@ -382,14 +485,110 @@ describe("LyricsService provider orchestration", () => {
 
     const first = await service.resolve(request());
     expect(first.candidates.map(c => c.source)).toEqual(["lrclib-synced"]);
-    expect(first.providerStatus.find(s => s.provider === "better-lyrics")?.status).toBe("error");
+    expect(first.providerStatus.find(s => s.provider === "better-lyrics")?.status).toBe("miss");
     expect(first.providerStatus.find(s => s.provider === "unison")?.status).toBe("miss");
 
-    // The 401 must not have been persisted as a negative result: a second resolve retries network.
+    // A keyless 401 is a normal cache miss, so valid fallback lyrics are persisted and served from cache.
+    const callsAfterFirst = fetchMock.mock.calls.length;
+    const second = await service.resolve(request());
+    expect(second.candidates.map(c => c.source)).toEqual(["lrclib-synced"]);
+    expect(second.candidates[0].cached).toBe(true);
+    expect(fetchMock.mock.calls.length).toBe(callsAfterFirst);
+  });
+
+  it("does not cache partial fallback results when Better Lyrics hits a genuine 429 or 5xx error", async () => {
+    const { service } = makeService();
+    const fetchMock = vi.fn(
+      hostRoutedFetch({
+        blyrics: () => json({ error: "Too Many Requests" }, 429, { "Retry-After": "30" }),
+        unison: () => json({ success: false, code: "NOT_FOUND" }, 404),
+        lrclib: () => lrclibHit(),
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = await service.resolve(request());
+    expect(first.candidates.map(c => c.source)).toEqual(["lrclib-synced"]);
+    expect(first.providerStatus.find(s => s.provider === "better-lyrics")?.status).toBe("error");
+
+    // Transient rate-limit/server errors prevent caching so a later resolve retries Better Lyrics.
     const callsAfterFirst = fetchMock.mock.calls.length;
     const second = await service.resolve(request());
     expect(second.candidates.map(c => c.source)).toEqual(["lrclib-synced"]);
     expect(fetchMock.mock.calls.length).toBeGreaterThan(callsAfterFirst);
+  });
+
+  it("strips synthetic Unknown artist / Unknown album placeholders while preserving real names", async () => {
+    expect(
+      normalizeProviderQuery({
+        title: "  Song Title  ",
+        artist: "  Unknown Artist ",
+        album: "unknown   album",
+        duration: 185,
+      })
+    ).toEqual({ title: "Song Title", artist: "", album: "", duration: 185 });
+
+    // Legitimate names containing "Unknown" must be preserved verbatim (apart from outer trim).
+    expect(
+      normalizeProviderQuery({
+        title: "Multi-Love",
+        artist: "  Unknown Mortal Orchestra ",
+        album: " Unknown Pleasures ",
+        duration: 250,
+      })
+    ).toEqual({
+      title: "Multi-Love",
+      artist: "Unknown Mortal Orchestra",
+      album: "Unknown Pleasures",
+      duration: 250,
+    });
+    expect(
+      normalizeProviderQuery({
+        title: "Track",
+        artist: "Unknown",
+        album: "Unknown",
+        duration: 120,
+      })
+    ).toEqual({ title: "Track", artist: "Unknown", album: "Unknown", duration: 120 });
+
+    const { service } = makeService();
+    const seenUrls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        seenUrls.push(String(url));
+        if (url.includes("api.betterlyrics.org")) return json({ ttml: TTML_WORD });
+        if (url.includes("unison.betterlyrics.org")) return json({ success: false, code: "NOT_FOUND" }, 404);
+        if (url.includes("lyrics-api.binimum.org")) return binimumEmpty();
+        return json({}, 404);
+      })
+    );
+
+    const resolved = await service.resolve(
+      request({ artist: "Unknown artist", album: "Unknown album" })
+    );
+    expect(resolved.candidates[0].source).toBe("blyrics-richsynced");
+    for (const rawUrl of seenUrls) {
+      expect(rawUrl.toLowerCase()).not.toContain("unknown+artist");
+      expect(rawUrl.toLowerCase()).not.toContain("unknown%20artist");
+      expect(rawUrl.toLowerCase()).not.toContain("unknown+album");
+      expect(rawUrl.toLowerCase()).not.toContain("unknown%20album");
+      const parsed = new URL(rawUrl);
+      expect(parsed.searchParams.has("al")).toBe(false);
+      expect(parsed.searchParams.has("album")).toBe(false);
+      expect(parsed.searchParams.has("album_name")).toBe(false);
+    }
+
+    seenUrls.length = 0;
+    await service.searchLyrics({
+      title: "Harness Song",
+      artist: "  UNKNOWN ARTIST ",
+      album: " <unknown> ",
+      duration: 200,
+    });
+    for (const rawUrl of seenUrls) {
+      expect(rawUrl.toLowerCase()).not.toContain("unknown");
+    }
   });
 
   it("negative-caches a clean all-provider miss and serves it without new requests", async () => {

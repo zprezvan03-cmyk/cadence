@@ -13,6 +13,7 @@ interface CacheEntry {
   savedAt: number;
   negative: boolean;
   candidates: LyricsCandidate[];
+  queriedKeys?: string[];
 }
 
 interface CacheFile {
@@ -51,7 +52,7 @@ export class LyricsCacheCore {
     return `search:${this.key(artist, title, album, duration)}`;
   }
 
-  get(key: string): LyricsCandidate[] | null {
+  get(key: string, requiredKeys?: readonly string[]): LyricsCandidate[] | null {
     const entry = this.data.entries[key];
     if (!entry) return null;
     const ttl = entry.negative ? LYRICS_NEGATIVE_CACHE_TTL_MS : LYRICS_CACHE_TTL_MS;
@@ -60,11 +61,22 @@ export class LyricsCacheCore {
       this.markDirty();
       return null;
     }
+    if (requiredKeys && entry.queriedKeys) {
+      const queried = new Set(entry.queriedKeys);
+      if (requiredKeys.some(required => !queried.has(required))) {
+        return null;
+      }
+    }
     return entry.negative ? [] : entry.candidates.map(candidate => ({ ...candidate, cached: true }));
   }
 
-  set(key: string, candidates: LyricsCandidate[]): void {
-    this.data.entries[key] = { savedAt: Date.now(), negative: candidates.length === 0, candidates };
+  set(key: string, candidates: LyricsCandidate[], queriedKeys?: readonly string[]): void {
+    this.data.entries[key] = {
+      savedAt: Date.now(),
+      negative: candidates.length === 0,
+      candidates,
+      ...(queriedKeys ? { queriedKeys: [...queriedKeys] } : {}),
+    };
     const keys = Object.keys(this.data.entries);
     if (keys.length > MAX_ENTRIES) {
       keys

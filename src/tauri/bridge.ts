@@ -434,6 +434,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
   );
 
   const onPageHide = () => {
+    void settings.flush();
     lyricsService.flush();
     void flushDbQueue();
   };
@@ -585,10 +586,14 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         return settings.get();
       },
       async patch(patch) {
-        return settings.patch(patch);
+        const next = settings.patch(patch);
+        await settings.flush();
+        return next;
       },
       async reset() {
-        return settings.reset();
+        const next = settings.reset();
+        await settings.flush();
+        return next;
       },
     },
 
@@ -768,6 +773,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
       youtubeController?.abort();
       translateController?.abort();
       romanizeController?.abort();
+      void settings.flush();
       lyricsCache.flush();
       store.close();
     },

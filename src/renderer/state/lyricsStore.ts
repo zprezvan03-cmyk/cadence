@@ -102,9 +102,22 @@ interface LyricsStoreState {
 const EMPTY_MANUAL: ManualSearchState = { status: "idle", results: [], error: null };
 const IDLE_YOUTUBE: YouTubeResolveState = { status: "idle", videoId: null, metadata: null, detail: null };
 const STORAGE_KEY = "cadence.lyrics.session.v1";
+const SYNTHETIC_ARTISTS = new Set(["unknown artist", "<unknown>"]);
+const SYNTHETIC_ALBUMS = new Set(["unknown album", "<unknown>"]);
+
+function normalizeDraftField(value: string | null | undefined, placeholders: ReadonlySet<string>): string {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) return "";
+  return placeholders.has(trimmed.replace(/\s+/g, " ").toLowerCase()) ? "" : trimmed;
+}
 
 function draftFromTrack(track: Track): SearchDraft {
-  return { title: track.title ?? "", artist: track.artist ?? "", album: track.album ?? "", youtubeUrl: "" };
+  return {
+    title: (track.title ?? "").trim(),
+    artist: normalizeDraftField(track.artist, SYNTHETIC_ARTISTS),
+    album: normalizeDraftField(track.album, SYNTHETIC_ALBUMS),
+    youtubeUrl: "",
+  };
 }
 
 function loadPersisted(): PersistedSession {

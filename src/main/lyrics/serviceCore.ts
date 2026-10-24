@@ -34,9 +34,14 @@ interface NetworkModule {
 
 async function runLrclib(query: ProviderQuery, enabledKeys: ReadonlySet<string>, signal?: AbortSignal): Promise<ProviderOutcome> {
   const result = await fetchLrclib(query, signal);
+  const filtered = result.candidates.filter(candidate => enabledKeys.has(candidate.source));
+  const hit = result.statuses.some(entry => entry.status === "hit");
   return {
-    candidates: result.candidates.filter(candidate => enabledKeys.has(candidate.source)),
-    statuses: result.statuses,
+    candidates: filtered,
+    statuses:
+      hit && filtered.length === 0
+        ? [{ provider: "lrclib", status: "miss", detail: "No matching enabled LRCLIB variant" }]
+        : result.statuses,
   };
 }
 
@@ -79,11 +84,68 @@ const SEARCH_MODULES: readonly {
 ];
 
 const MAX_SEARCH_RESULTS = 30;
+const SYNTHETIC_ARTISTS = new Set(["unknown artist", "<unknown>"]);
+const SYNTHETIC_ALBUMS = new Set(["unknown album", "<unknown>"]);
 
-interface NetworkResult {
-  candidates: LyricsCandidate[];
-  status: ProviderStatus[];
-  definitive: boolean;
+function normalizeQueryField(value: string | null | undefined, placeholders: ReadonlySet<string>): string {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) return "";
+  return placeholders.has(trimmed.replace(/\s+/g, " ").toLowerCase()) ? "" : trimmed;
+}
+
+export function normalizeProviderQuery(input: {
+  title: string;
+  artist?: string | null;
+  album?: string | null;
+  duration?: number | null;
+}): ProviderQuery {
+  return {
+    title: input.title.trim(),
+    artist: normalizeQueryField(input.artist, SYNTHETIC_ARTISTS),
+    album: normalizeQueryField(input.album, SYNTHETIC_ALBUMS),
+    duration: Number(input.duration) || 0,
+  };
+}
+
+const NETWORK_MODULE_BY_KEY = new Map<string, NetworkModule>();
+for (const module of NETWORK_MODULES) {
+  for (const key of module.keys) {
+    NETWORK_MODULE_BY_KEY.set(key, module);
+  }
+}
+
+function buildOrderIndex(order: readonly string[]): Map<string, number> {
+  const map = new Map<string, number>();
+  order.forEach((entry, index) => {
+    const key = untoggleProvider(entry);
+    if (!map.has(key)) map.set(key, index);
+  });
+  return map;
+}
+
+function compareByConfiguredOrder(
+  a: LyricsCandidate,
+  b: LyricsCandidate,
+  orderIndex: ReadonlyMap<string, number>
+): number {
+  const rankA = orderIndex.get(a.source) ?? Number.MAX_SAFE_INTEGER;
+  const rankB = orderIndex.get(b.source) ?? Number.MAX_SAFE_INTEGER;
+  if (rankA !== rankB) return rankA - rankB;
+  return providerPriority(a.source) - providerPriority(b.source);
+}
+
+function firstEnabledOrderIndex(
+  keys: readonly string[],
+  orderIndex: ReadonlyMap<string, number>,
+  enabledKeys: ReadonlySet<string>
+): number {
+  let best = Number.MAX_SAFE_INTEGER;
+  for (const key of keys) {
+    if (!enabledKeys.has(key)) continue;
+    const rank = orderIndex.get(key) ?? Number.MAX_SAFE_INTEGER;
+    if (rank < best) best = rank;
+  }
+  return best;
 }
 
 function rejectWhenAborted(signal: AbortSignal): Promise<never> {
@@ -103,7 +165,7 @@ function rejectWhenAborted(signal: AbortSignal): Promise<never> {
 export type LyricsLibraryLookup = Pick<LibraryStoreCore, "getTrack" | "getLyrics">;
 
 export class LyricsServiceCore {
-  private readonly inFlight = new Map<string, Promise<NetworkResult>>();
+  private readonly moduleInFlight = new Map<string, Promise<ProviderOutcome>>();
   private readonly searchInFlight = new Map<string, Promise<LyricsSearchResponse>>();
 
   constructor(
@@ -123,156 +185,187 @@ export class LyricsServiceCore {
     signal?: AbortSignal
   ): Promise<LyricsResolveResult> {
     const order = this.orderFor(providerOrder);
+    const orderIndex = buildOrderIndex(order);
+    const enabledKeys = new Set<string>(order.filter(key => !key.startsWith("d_")));
+
     const candidates: LyricsCandidate[] = [];
     const providerStatus: LyricsResolveResult["providerStatus"] = [];
     const track = this.store.getTrack(request.trackId);
     const trackPath = track?.path ?? null;
 
-    const enabledKeys = new Set<string>(order.filter(key => !key.startsWith("d_")));
-    const hasSlot = (key: string): boolean => order.some(entry => untoggleProvider(entry) === key);
-
-    const pushLocal = (candidate: LyricsCandidate | null, provider: string, label: string, unavailable?: string) => {
-      if (!candidate) {
-        if (unavailable) providerStatus.push({ provider, status: "skipped", detail: unavailable });
-        else providerStatus.push({ provider, status: "miss" });
-        return;
-      }
-      candidates.push(candidate);
-      providerStatus.push({ provider, status: "hit", detail: label });
-    };
-
-    if (trackPath && (hasSlot("local-rich") || hasSlot("local-lrc"))) {
-      const sidecar =
+    let sidecarLoaded = false;
+    let sidecarCache: Awaited<ReturnType<LocalLyricsReader["readSidecarLyrics"]>> = null;
+    const loadSidecar = async () => {
+      if (sidecarLoaded || !trackPath) return sidecarCache;
+      sidecarLoaded = true;
+      sidecarCache =
         (await this.localReader.readSidecarLyrics(trackPath)) ??
         (await this.localReader.readLyricsFolder(trackPath, track?.trackNo ?? null, track?.title ?? request.title));
-      const richFormat = sidecar?.format === "ttml" || sidecar?.format === "qrc";
-      const presentKey = sidecar ? (richFormat ? "local-rich" : "local-lrc") : null;
+      return sidecarCache;
+    };
 
-      for (const key of ["local-rich", "local-lrc"] as const) {
-        if (!hasSlot(key)) continue;
-        if (!enabledKeys.has(key)) {
+    const query = normalizeProviderQuery(request);
+    const cacheKey = LyricsCacheCore.key(query.artist, query.title, query.album, query.duration);
+    const enabledNetworkKeys = [...enabledKeys].filter(key => NETWORK_MODULE_BY_KEY.has(key));
+    const cachedNetwork =
+      !request.localOnly && enabledNetworkKeys.length > 0
+        ? this.cache.get(cacheKey, enabledNetworkKeys)
+        : null;
+    const wantedCachedNetwork = cachedNetwork
+      ? cachedNetwork.filter(candidate => enabledKeys.has(candidate.source) && candidate.text.trim().length > 0)
+      : null;
+
+    const firstEnabledModuleKey = new Map<string, string>();
+    const firstSlotModuleKey = new Map<string, string>();
+    for (const entry of order) {
+      const key = untoggleProvider(entry);
+      const module = NETWORK_MODULE_BY_KEY.get(key);
+      if (!module) continue;
+      if (!firstSlotModuleKey.has(module.id)) {
+        firstSlotModuleKey.set(module.id, key);
+      }
+      if (!entry.startsWith("d_") && !firstEnabledModuleKey.has(module.id)) {
+        firstEnabledModuleKey.set(module.id, key);
+      }
+    }
+
+    const handledModules = new Set<string>();
+    const freshNetworkCandidates: LyricsCandidate[] = [];
+    let networkDefinitive = true;
+
+    for (const entry of order) {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+      const disabled = entry.startsWith("d_");
+      const key = untoggleProvider(entry);
+
+      if (key === "local-rich" || key === "local-lrc") {
+        if (!trackPath || disabled) {
           providerStatus.push({ provider: key, status: "skipped", detail: "Provider disabled" });
           continue;
         }
-        if (!sidecar) {
+        const sidecar = await loadSidecar();
+        const richFormat = sidecar?.format === "ttml" || sidecar?.format === "qrc";
+        const presentKey = sidecar ? (richFormat ? "local-rich" : "local-lrc") : null;
+        if (!sidecar || presentKey !== key || !sidecar.text.trim()) {
           providerStatus.push({ provider: key, status: "miss" });
           continue;
         }
-        if (presentKey !== key) {
-          providerStatus.push({ provider: key, status: "miss" });
-          continue;
-        }
-        pushLocal(
-          {
-            source: key,
-            provider: richFormat ? "Local TTML/QRC" : "Local LRC",
-            text: sidecar.text,
-            syncHint: richFormat ? "richsync" : "synced",
-            language: null,
-            songwriters: [],
-            sourceHref: sidecar.path,
-            cached: true,
-          },
-          key,
-          sidecar.path
-        );
+        candidates.push({
+          source: key,
+          provider: richFormat ? "Local TTML/QRC" : "Local LRC",
+          text: sidecar.text,
+          syncHint: richFormat ? "richsync" : "synced",
+          language: null,
+          songwriters: [],
+          sourceHref: sidecar.path,
+          cached: true,
+        });
+        providerStatus.push({ provider: key, status: "hit", detail: sidecar.path });
+        continue;
       }
-    } else {
-      for (const key of ["local-rich", "local-lrc"] as const) {
-        if (hasSlot(key)) providerStatus.push({ provider: key, status: "skipped", detail: "Provider disabled" });
-      }
-    }
 
-    if (hasSlot("embedded-tag")) {
-      if (!enabledKeys.has("embedded-tag")) {
-        providerStatus.push({ provider: "embedded-tag", status: "skipped", detail: "Provider disabled" });
-      } else {
+      if (key === "embedded-tag") {
+        if (disabled) {
+          providerStatus.push({ provider: "embedded-tag", status: "skipped", detail: "Provider disabled" });
+          continue;
+        }
         const embedded = this.store.getLyrics(request.trackId);
-        pushLocal(
-          embedded
-            ? {
-                source: "embedded-tag",
-                provider: "Embedded tag",
-                text: embedded.text,
-                syncHint: embedded.kind === "lrc" ? "synced" : "none",
-                language: null,
-                songwriters: [],
-                sourceHref: trackPath,
-                cached: true,
-              }
-            : null,
-          "embedded-tag",
-          "USLT/SYLT tag",
-          trackPath ? undefined : "Track is not in the library"
-        );
+        if (!embedded || !embedded.text.trim()) {
+          if (!trackPath) {
+            providerStatus.push({ provider: "embedded-tag", status: "skipped", detail: "Track is not in the library" });
+          } else {
+            providerStatus.push({ provider: "embedded-tag", status: "miss" });
+          }
+          continue;
+        }
+        candidates.push({
+          source: "embedded-tag",
+          provider: "Embedded tag",
+          text: embedded.text,
+          syncHint: embedded.kind === "lrc" ? "synced" : "none",
+          language: null,
+          songwriters: [],
+          sourceHref: trackPath,
+          cached: true,
+        });
+        providerStatus.push({ provider: "embedded-tag", status: "hit", detail: "USLT/SYLT tag" });
+        continue;
+      }
+
+      const config = providerConfig(key);
+      if (config && !config.available) {
+        if (!providerStatus.some(status => status.provider === key)) {
+          providerStatus.push({
+            provider: key,
+            status: "skipped",
+            detail: disabled
+              ? "Provider disabled"
+              : `Unavailable: ${config.unavailableReason ?? "no keyless endpoint"}`,
+          });
+        }
+        continue;
+      }
+
+      const module = NETWORK_MODULE_BY_KEY.get(key);
+      if (!module || handledModules.has(module.id)) continue;
+
+      if (request.localOnly) {
+        handledModules.add(module.id);
+        providerStatus.push({ provider: module.id, status: "skipped", detail: "Offline mode" });
+        continue;
+      }
+
+      const triggerKey = firstEnabledModuleKey.get(module.id);
+      if (!triggerKey) {
+        if (firstSlotModuleKey.get(module.id) === key) {
+          handledModules.add(module.id);
+          providerStatus.push({ provider: module.id, status: "skipped", detail: "Provider disabled" });
+        }
+        continue;
+      }
+
+      if (key !== triggerKey) continue;
+      handledModules.add(module.id);
+
+      if (wantedCachedNetwork !== null) {
+        const moduleCached = wantedCachedNetwork.filter(candidate => module.keys.includes(candidate.source));
+        candidates.push(...moduleCached);
+        providerStatus.push(this.cachedStatus(module, wantedCachedNetwork));
+        continue;
+      }
+
+      const moduleEnabledKeys = new Set<string>(
+        order.filter(item => !item.startsWith("d_") && module.keys.includes(untoggleProvider(item)))
+      );
+      const outcome = await this.runSingleNetworkModule(module, cacheKey, query, moduleEnabledKeys, signal);
+      const valid = outcome.candidates.filter(
+        candidate => moduleEnabledKeys.has(candidate.source) && candidate.text.trim().length > 0
+      );
+      candidates.push(...valid);
+      freshNetworkCandidates.push(...valid);
+      providerStatus.push(...outcome.statuses);
+      if (outcome.statuses.some(status => status.status === "error")) {
+        networkDefinitive = false;
       }
     }
 
-    const cacheKey = LyricsCacheCore.key(request.artist, request.title, request.album, request.duration);
-    const networkResult = await this.resolveNetwork(request, enabledKeys, cacheKey, signal);
-    candidates.push(...networkResult.candidates);
-    providerStatus.push(...networkResult.status);
-
-    for (const entry of order) {
-      const key = untoggleProvider(entry);
-      const config = providerConfig(key);
-      if (config && !config.available && !providerStatus.some(status => status.provider === key)) {
+    for (const module of NETWORK_MODULES) {
+      if (!handledModules.has(module.id)) {
         providerStatus.push({
-          provider: key,
+          provider: module.id,
           status: "skipped",
-          detail: `Unavailable: ${config.unavailableReason ?? "no keyless endpoint"}`,
+          detail: request.localOnly ? "Offline mode" : "Provider disabled",
         });
       }
     }
 
-    candidates.sort((a, b) => providerPriority(a.source) - providerPriority(b.source));
+    if (!request.localOnly && wantedCachedNetwork === null && enabledNetworkKeys.length > 0 && networkDefinitive) {
+      this.cache.set(cacheKey, freshNetworkCandidates, enabledNetworkKeys);
+    }
+
+    candidates.sort((a, b) => compareByConfiguredOrder(a, b, orderIndex));
 
     return { candidates, providerStatus };
-  }
-
-  private async resolveNetwork(
-    request: LyricsResolveRequest,
-    enabledKeys: ReadonlySet<string>,
-    cacheKey: string,
-    signal?: AbortSignal
-  ): Promise<NetworkResult> {
-    const query: ProviderQuery = {
-      title: request.title,
-      artist: request.artist,
-      album: request.album,
-      duration: request.duration,
-    };
-
-    const activeModules = NETWORK_MODULES.filter(module => module.keys.some(key => enabledKeys.has(key)));
-
-    if (request.localOnly || activeModules.length === 0) {
-      const detail = request.localOnly ? "Offline mode" : "Provider disabled";
-      return {
-        candidates: [],
-        definitive: true,
-        status: NETWORK_MODULES.map(module => ({ provider: module.id, status: "skipped" as const, detail })),
-      };
-    }
-
-    const cached = this.cache.get(cacheKey);
-    if (cached !== null) {
-      const wanted = cached.filter(candidate => enabledKeys.has(candidate.source));
-      return {
-        candidates: wanted,
-        definitive: true,
-        status: activeModules.map(module => this.cachedStatus(module, wanted)),
-      };
-    }
-
-    const lookup = this.sharedLookup(cacheKey, query, enabledKeys);
-    if (signal) {
-      return Promise.race([lookup, rejectWhenAborted(signal)]);
-    }
-    return lookup;
-  }
-
-  private inFlightKey(cacheKey: string, enabledKeys: ReadonlySet<string>): string {
-    return `${cacheKey}::${[...enabledKeys].sort().join(",")}`;
   }
 
   async searchLyrics(
@@ -281,19 +374,29 @@ export class LyricsServiceCore {
     signal?: AbortSignal
   ): Promise<LyricsSearchResponse> {
     const order = this.orderFor(providerOrder);
+    const orderIndex = buildOrderIndex(order);
     const enabledKeys = new Set<string>(order.filter(key => !key.startsWith("d_")));
-    const title = request.title.trim();
-    const artist = request.artist?.trim() ?? "";
-    const album = request.album?.trim() ?? "";
-    const duration = Number(request.duration) || 0;
-    const query: ProviderQuery = { title, artist, album, duration };
-    const cacheKey = LyricsCacheCore.searchKey(artist, title, album, duration);
+    const query = normalizeProviderQuery(request);
+    const cacheKey = LyricsCacheCore.searchKey(query.artist, query.title, query.album, query.duration);
 
-    const activeModules = SEARCH_MODULES.filter(module => module.keys.some(key => enabledKeys.has(key)));
+    const activeModules = [...SEARCH_MODULES]
+      .filter(module => module.keys.some(key => enabledKeys.has(key)))
+      .sort(
+        (a, b) =>
+          firstEnabledOrderIndex(a.keys, orderIndex, enabledKeys) -
+          firstEnabledOrderIndex(b.keys, orderIndex, enabledKeys)
+      );
+    const enabledSearchKeys = [...enabledKeys].filter(key =>
+      SEARCH_MODULES.some(module => module.keys.includes(key))
+    );
 
-    const cached = this.cache.get(cacheKey);
+    const cached = request.localOnly
+      ? this.cache.get(cacheKey)
+      : this.cache.get(cacheKey, enabledSearchKeys);
     if (cached !== null) {
-      const rows = cached.filter(candidate => enabledKeys.has(candidate.source));
+      const rows = cached
+        .filter(candidate => enabledKeys.has(candidate.source) && candidate.text.trim().length > 0)
+        .sort((a, b) => compareByConfiguredOrder(a, b, orderIndex));
       return {
         results: rows,
         cached: true,
@@ -308,7 +411,7 @@ export class LyricsServiceCore {
         providerStatus: activeModules.map(module => ({ provider: module.id, status: "skipped" as const, detail: "Offline mode" })),
       };
     }
-    if (!title) {
+    if (!query.title) {
       return {
         results: [],
         cached: false,
@@ -316,11 +419,21 @@ export class LyricsServiceCore {
       };
     }
 
-    const flightKey = `${cacheKey}::${[...enabledKeys].sort().join(",")}`;
+    const flightKey = `${cacheKey}::${[...enabledKeys].join(",")}`;
     const existing = this.searchInFlight.get(flightKey);
-    if (existing) return existing;
+    if (existing) {
+      return signal ? Promise.race([existing, rejectWhenAborted(signal)]) : existing;
+    }
 
-    const promise = this.runSearch(query, activeModules, enabledKeys, cacheKey, signal).finally(() => {
+    const promise = this.runSearch(
+      query,
+      activeModules,
+      enabledKeys,
+      enabledSearchKeys,
+      orderIndex,
+      cacheKey,
+      signal
+    ).finally(() => {
       this.searchInFlight.delete(flightKey);
     });
     this.searchInFlight.set(flightKey, promise);
@@ -332,40 +445,49 @@ export class LyricsServiceCore {
     query: ProviderQuery,
     modules: typeof SEARCH_MODULES,
     enabledKeys: ReadonlySet<string>,
+    enabledSearchKeys: readonly string[],
+    orderIndex: ReadonlyMap<string, number>,
     cacheKey: string,
     signal?: AbortSignal
   ): Promise<LyricsSearchResponse> {
-    const settled = await Promise.allSettled(modules.map(module => module.run(query, enabledKeys, signal)));
-
     const gathered: LyricsCandidate[] = [];
     const providerStatus: ProviderStatus[] = [];
     let definitive = true;
 
-    settled.forEach((outcome, index) => {
-      const module = modules[index];
-      if (outcome.status === "fulfilled") {
-        gathered.push(...outcome.value.candidates);
-        providerStatus.push(...outcome.value.statuses);
-        if (outcome.value.statuses.some(entry => entry.status === "error")) definitive = false;
-        return;
+    for (const module of modules) {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+      const moduleEnabledKeys = new Set<string>(
+        [...enabledKeys].filter(key => module.keys.includes(key))
+      );
+      try {
+        const outcome = await module.run(query, moduleEnabledKeys, signal);
+        gathered.push(...outcome.candidates);
+        providerStatus.push(...outcome.statuses);
+        if (outcome.statuses.some(entry => entry.status === "error")) definitive = false;
+      } catch (reason) {
+        if ((reason as Error)?.name === "AbortError") throw reason;
+        definitive = false;
+        providerStatus.push({
+          provider: module.id,
+          status: "error",
+          detail: (reason as Error)?.message ?? "Request failed",
+        });
       }
-      if ((outcome.reason as Error)?.name === "AbortError") throw outcome.reason;
-      definitive = false;
-      providerStatus.push({ provider: module.id, status: "error", detail: (outcome.reason as Error)?.message ?? "Request failed" });
-    });
+    }
 
     const seen = new Set<string>();
     const results: LyricsCandidate[] = [];
     for (const candidate of gathered) {
+      if (!candidate.text.trim()) continue;
       const dedupeKey = `${candidate.source}:${candidate.text}`;
       if (seen.has(dedupeKey)) continue;
       seen.add(dedupeKey);
       results.push(candidate);
       if (results.length >= MAX_SEARCH_RESULTS) break;
     }
-    results.sort((a, b) => providerPriority(a.source) - providerPriority(b.source));
+    results.sort((a, b) => compareByConfiguredOrder(a, b, orderIndex));
 
-    if (definitive && results.length > 0) this.cache.set(cacheKey, results);
+    if (definitive && results.length > 0) this.cache.set(cacheKey, results, enabledSearchKeys);
 
     return { results, providerStatus, cached: false };
   }
@@ -377,46 +499,47 @@ export class LyricsServiceCore {
       : { provider: module.id, status: "miss", detail: "Cached negative result" };
   }
 
-  private sharedLookup(cacheKey: string, query: ProviderQuery, enabledKeys: ReadonlySet<string>): Promise<NetworkResult> {
-    const flightKey = this.inFlightKey(cacheKey, enabledKeys);
-    const existing = this.inFlight.get(flightKey);
-    if (existing) return existing;
-
-    const promise = this.runNetworkModules(query, enabledKeys)
-      .then(result => {
-        if (result.definitive) this.cache.set(cacheKey, result.candidates);
-        return result;
-      })
-      .finally(() => {
-        this.inFlight.delete(flightKey);
+  private runSingleNetworkModule(
+    module: NetworkModule,
+    cacheKey: string,
+    query: ProviderQuery,
+    moduleEnabledKeys: ReadonlySet<string>,
+    signal?: AbortSignal
+  ): Promise<ProviderOutcome> {
+    const flightKey = `${module.id}::${cacheKey}::${[...moduleEnabledKeys].join(",")}`;
+    let inFlight = this.moduleInFlight.get(flightKey);
+    if (!inFlight) {
+      inFlight = this.invokeModule(module, query, moduleEnabledKeys).finally(() => {
+        this.moduleInFlight.delete(flightKey);
       });
-    this.inFlight.set(flightKey, promise);
-    return promise;
+      this.moduleInFlight.set(flightKey, inFlight);
+    }
+    if (signal) {
+      return Promise.race([inFlight, rejectWhenAborted(signal)]);
+    }
+    return inFlight;
   }
 
-  private async runNetworkModules(query: ProviderQuery, enabledKeys: ReadonlySet<string>): Promise<NetworkResult> {
-    const settled = await Promise.allSettled(
-      NETWORK_MODULES.map(module => module.run(query, enabledKeys))
-    );
-
-    const candidates: LyricsCandidate[] = [];
-    const status: ProviderStatus[] = [];
-    let definitive = true;
-
-    settled.forEach((outcome, index) => {
-      const module = NETWORK_MODULES[index];
-      if (outcome.status === "fulfilled") {
-        candidates.push(...outcome.value.candidates);
-        status.push(...outcome.value.statuses);
-        if (outcome.value.statuses.some(entry => entry.status === "error")) definitive = false;
-        return;
-      }
-      if ((outcome.reason as Error)?.name === "AbortError") throw outcome.reason;
-      definitive = false;
-      status.push({ provider: module.id, status: "error", detail: (outcome.reason as Error)?.message ?? "Request failed" });
-    });
-
-    return { candidates, status, definitive };
+  private async invokeModule(
+    module: NetworkModule,
+    query: ProviderQuery,
+    enabledKeys: ReadonlySet<string>
+  ): Promise<ProviderOutcome> {
+    try {
+      return await module.run(query, enabledKeys);
+    } catch (error) {
+      if ((error as Error)?.name === "AbortError") throw error;
+      return {
+        candidates: [],
+        statuses: [
+          {
+            provider: module.id,
+            status: "error",
+            detail: (error as Error)?.message ?? "Request failed",
+          },
+        ],
+      };
+    }
   }
 
   async resolveUserFile(trackId: number, path: string): Promise<LyricsResolveResult> {

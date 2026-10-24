@@ -123,22 +123,38 @@ export function SettingsView() {
   const patchLyrics = (patch: Partial<AppSettings["lyrics"]>) => void patchSettings({ lyrics: patch });
   const patchShaders = (patch: Partial<ShaderSettings>) => void patchSettings({ shaders: patch });
 
+  const activeProviders = settings.lyrics.providerOrder.filter(entry => !entry.startsWith("d_"));
+  const disabledProviders = settings.lyrics.providerOrder.filter(entry => entry.startsWith("d_"));
+  const defaultKeySet = new Set<string>(DEFAULT_PROVIDER_ORDER);
+
   const moveProvider = (index: number, direction: -1 | 1) => {
-    const order = [...settings.lyrics.providerOrder];
+    const order = [...activeProviders];
     const target = index + direction;
     if (target < 0 || target >= order.length) return;
     [order[index], order[target]] = [order[target], order[index]];
-    patchLyrics({ providerOrder: order });
+    patchLyrics({ providerOrder: [...order, ...disabledProviders] });
   };
   const removeProvider = (index: number) => {
-    patchLyrics({ providerOrder: settings.lyrics.providerOrder.filter((_, i) => i !== index) });
+    const removed = activeProviders[index];
+    if (!removed) return;
+    const bare = untoggleProvider(removed);
+    const nextActive = activeProviders.filter((_, i) => i !== index);
+    const nextDisabled = disabledProviders.filter(entry => untoggleProvider(entry) !== bare);
+    if (defaultKeySet.has(bare)) {
+      // Keep default slots marked with `d_` so startup migration preserves user removals instead of
+      // re-inserting them as newly introduced providers.
+      nextDisabled.push(`d_${bare}`);
+    }
+    patchLyrics({ providerOrder: [...nextActive, ...nextDisabled] });
   };
   const addProvider = (key: string) => {
-    if (settings.lyrics.providerOrder.some(entry => untoggleProvider(entry) === key)) return;
-    patchLyrics({ providerOrder: [...settings.lyrics.providerOrder, key] });
+    const bare = untoggleProvider(key);
+    if (activeProviders.some(entry => untoggleProvider(entry) === bare)) return;
+    const nextDisabled = disabledProviders.filter(entry => untoggleProvider(entry) !== bare);
+    patchLyrics({ providerOrder: [...activeProviders, bare, ...nextDisabled] });
   };
   const restoreProviderOrder = () => patchLyrics({ providerOrder: [...DEFAULT_PROVIDER_ORDER] });
-  const orderedProviderKeys = new Set(settings.lyrics.providerOrder.map(untoggleProvider));
+  const orderedProviderKeys = new Set(activeProviders.map(untoggleProvider));
   const providerPool = PROVIDER_CONFIGS.filter(config => !orderedProviderKeys.has(config.key));
 
   return (
@@ -320,13 +336,13 @@ export function SettingsView() {
               without blocking the next provider.
             </p>
             <div className="provider-order-head">
-              <span className="muted">{settings.lyrics.providerOrder.length} active</span>
+              <span className="muted">{activeProviders.length} active</span>
               <button type="button" className="provider-restore" onClick={restoreProviderOrder}>
                 <RotateCcw size={14} /> Restore default order
               </button>
             </div>
             <ol className="provider-order" data-testid="provider-order">
-              {settings.lyrics.providerOrder.map((provider, index) => {
+              {activeProviders.map((provider, index) => {
                 const config = providerConfig(untoggleProvider(provider));
                 const disabled = provider.startsWith("d_");
                 return (

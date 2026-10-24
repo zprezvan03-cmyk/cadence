@@ -146,34 +146,60 @@ export function providerPriority(key: string): number {
 
 /**
  * Migrate any persisted provider order to the current registry:
+ *   - malformed / non-array / empty inputs safely yield the default order;
  *   - the legacy combined `local-sidecar` source splits into `local-rich` then `local-lrc`,
  *     preserving a `d_` disabled prefix;
- *   - unknown keys are dropped, duplicates collapsed;
- *   - newly introduced registry slots are merged in at their canonical positions.
- * A missing/empty order yields the exact recommended default.
+ *   - unknown or removed future keys are dropped, duplicates collapsed;
+ *   - newly introduced registry slots in `defaults` are merged in at their canonical positions
+ *     while preserving the user's relative ordering of known providers and keeping `d_`-disabled
+ *     slots disabled.
  */
-export function migrateProviderOrder(stored: readonly string[] | undefined | null): string[] {
-  if (!stored || stored.length === 0) return [...DEFAULT_PROVIDER_ORDER];
+export function migrateProviderOrder(
+  stored: unknown,
+  defaults: readonly string[] = DEFAULT_PROVIDER_ORDER
+): string[] {
+  if (!Array.isArray(stored) || stored.length === 0) return [...defaults];
+
+  const defaultKnownKeys = new Set(defaults.map(untoggleProvider));
+  const isRecognized = (key: string): boolean => isKnownProviderKey(key) || defaultKnownKeys.has(key);
 
   const migrated: string[] = [];
-  const remember = (key: string) => {
-    if (!migrated.some(existing => untoggleProvider(existing) === untoggleProvider(key))) migrated.push(key);
+  const remember = (entry: string) => {
+    const bare = untoggleProvider(entry);
+    if (!migrated.some(existing => untoggleProvider(existing) === bare)) {
+      migrated.push(entry);
+    }
   };
 
   for (const raw of stored) {
-    if (typeof raw !== "string" || !raw) continue;
-    const disabled = raw.startsWith("d_");
-    const key = untoggleProvider(raw);
+    if (typeof raw !== "string") continue;
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+
+    let disabled = false;
+    let key = trimmed;
+    while (key.startsWith("d_")) {
+      disabled = true;
+      key = key.slice(2).trim();
+    }
+    if (!key) continue;
+
     if (key === "local-sidecar") {
       remember(disabled ? "d_local-rich" : "local-rich");
       remember(disabled ? "d_local-lrc" : "local-lrc");
       continue;
     }
-    if (isKnownProviderKey(key)) remember(raw);
+    if (isRecognized(key)) {
+      remember(disabled ? `d_${key}` : key);
+    }
   }
 
-  // mergePreferredProviders only inserts keys that are missing, so custom relative order survives.
-  return mergePreferredProviders(migrated, DEFAULT_PROVIDER_ORDER).filter(isKnownProviderKey);
+  // mergePreferredProviders only inserts keys that are missing (neither active nor d_-prefixed),
+  // so custom relative order and explicitly disabled default slots both survive.
+  const merged = mergePreferredProviders(migrated, defaults).filter(entry =>
+    isRecognized(untoggleProvider(entry))
+  );
+  return merged.length > 0 ? merged : [...defaults];
 }
 
 export const LRCLIB_BASE_URL = "https://lrclib.net/api" as const;

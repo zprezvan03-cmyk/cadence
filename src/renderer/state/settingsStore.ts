@@ -11,27 +11,48 @@ interface SettingsState {
   reset: () => Promise<void>;
 }
 
+let inflightLoad: Promise<void> | null = null;
+let mutationSeq = 0;
+
 export const useSettings = create<SettingsState>()((set, get) => ({
   settings: null,
   loaded: false,
   error: null,
   load: async () => {
-    try {
-      const settings = await bridge.settings.get();
-      set({ settings, loaded: true, error: null });
-    } catch (error) {
-      set({ loaded: true, error: (error as Error).message });
-    }
+    if (inflightLoad) return inflightLoad;
+    const seqAtStart = mutationSeq;
+    inflightLoad = (async () => {
+      try {
+        const settings = await bridge.settings.get();
+        // Never let a late initial hydration overwrite settings changed while load() was in flight.
+        if (seqAtStart === mutationSeq) {
+          set({ settings, loaded: true, error: null });
+        } else {
+          set({ loaded: true, error: null });
+        }
+      } catch (error) {
+        set({ loaded: true, error: (error as Error).message });
+      } finally {
+        inflightLoad = null;
+      }
+    })();
+    return inflightLoad;
   },
   patch: async (patch: DeepPartial<AppSettings>) => {
+    const seq = ++mutationSeq;
     const current = get().settings;
     if (current) set({ settings: mergeSettings(current, patch) });
     const settings = await bridge.settings.patch(patch);
-    set({ settings });
+    if (seq === mutationSeq) {
+      set({ settings, loaded: true, error: null });
+    }
   },
   reset: async () => {
+    const seq = ++mutationSeq;
     const settings = await bridge.settings.reset();
-    set({ settings });
+    if (seq === mutationSeq) {
+      set({ settings, loaded: true, error: null });
+    }
   },
 }));
 

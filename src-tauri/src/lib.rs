@@ -198,6 +198,7 @@ pub fn run() {
                 http_client,
                 active_http_aborts: Mutex::new(HashMap::new()),
                 pending_open_files: Mutex::new(initial_files),
+                user_json_lock: Arc::new(Mutex::new(())),
             });
 
             #[cfg(target_os = "macos")]

@@ -69,7 +69,13 @@ export function mergeSettings<T>(base: T, patch: unknown): T {
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
     const current = (base as AnyRecord)[key];
-    result[key] = isPlainObject(value) && isPlainObject(current) ? mergeSettings(current, value) : value;
+    if (isPlainObject(current)) {
+      if (isPlainObject(value)) {
+        result[key] = mergeSettings(current, value);
+      }
+      continue;
+    }
+    result[key] = Array.isArray(value) ? [...value] : value;
   }
   return result as T;
 }
@@ -98,38 +104,67 @@ export interface SettingsPersistence {
 
 export class SettingsCore {
   private settings: AppSettings;
+  private pendingWrite: Promise<void> | null = null;
 
   constructor(private readonly persistence: SettingsPersistence = {}) {
     this.settings = parseSettingsJson(persistence.initialJson);
   }
 
   get(): AppSettings {
-    return this.settings;
+    return structuredClone(this.settings);
   }
 
   patch(patch: DeepPartial<AppSettings>): AppSettings {
     this.settings = mergeSettings(this.settings, patch);
+    if (isPlainObject(patch) && isPlainObject(patch.lyrics) && "providerOrder" in patch.lyrics) {
+      this.settings.lyrics.providerOrder = migrateProviderOrder(this.settings.lyrics.providerOrder);
+    }
     this.save();
-    return this.settings;
+    return structuredClone(this.settings);
   }
 
   reset(): AppSettings {
     this.settings = structuredClone(DEFAULT_SETTINGS);
     this.save();
-    return this.settings;
+    return structuredClone(this.settings);
   }
 
   save(): void {
-    if (!this.persistence.persist) return;
-    try {
-      const result = this.persistence.persist(JSON.stringify(this.settings, null, 2));
-      if (result && typeof (result as Promise<void>).catch === "function") {
-        (result as Promise<void>).catch(error => {
+    const persist = this.persistence.persist;
+    if (!persist) return;
+    const payload = JSON.stringify(this.settings, null, 2);
+
+    if (this.pendingWrite) {
+      const next = this.pendingWrite
+        .then(() => persist(payload))
+        .catch(error => {
           console.error("[Cadence] Failed to persist settings:", error);
+        })
+        .finally(() => {
+          if (this.pendingWrite === next) this.pendingWrite = null;
         });
+      this.pendingWrite = next;
+      return;
+    }
+
+    try {
+      const result = persist(payload);
+      if (result && typeof (result as Promise<void>).then === "function") {
+        const tracked = (result as Promise<void>)
+          .catch(error => {
+            console.error("[Cadence] Failed to persist settings:", error);
+          })
+          .finally(() => {
+            if (this.pendingWrite === tracked) this.pendingWrite = null;
+          });
+        this.pendingWrite = tracked;
       }
     } catch (error) {
       console.error("[Cadence] Failed to persist settings:", error);
     }
+  }
+
+  flush(): Promise<void> {
+    return this.pendingWrite ?? Promise.resolve();
   }
 }

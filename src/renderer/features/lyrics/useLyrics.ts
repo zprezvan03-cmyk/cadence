@@ -120,13 +120,18 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     return parsed;
   }, []);
 
-  // Resolve candidates whenever the track or the provider configuration changes. On remount with
-  // the same request key this returns immediately: the store already holds everything.
+  // Resolve candidates when the track or online/offline mode changes (or on explicit reload).
+  // Reordering providers while a track is already loaded intentionally leaves active lyrics untouched
+  // and applies to subsequent lookups.
   useEffect(() => {
     if (!track) return;
     const token = ++generations.resolve;
-    const requestKey = `${track.id}:${settings.autoFetch ? "online" : "local"}:${settings.providerOrder.join(",")}:${reloadTick}`;
-    if (resolvedForKey === requestKey && lyricsStore().trackId === track.id && lyricsStore().candidates.length > 0) {
+    const requestKey = `${track.id}:${settings.autoFetch ? "online" : "local"}:${reloadTick}`;
+    if (
+      resolvedForKey === requestKey &&
+      lyricsStore().trackId === track.id &&
+      (lyricsStore().status === "ready" || lyricsStore().status === "empty")
+    ) {
       return;
     }
     resolvedForKey = requestKey;
@@ -159,11 +164,29 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
           return;
         }
 
-        // Restore the user's explicit choice for this track (persisted across restarts), else default.
+        // Restore the user's explicit choice for this track (persisted across restarts), else pick
+        // the first candidate in the resolved provider order whose parsed lines are usable.
         const chosenSource = useLyricsStore.getState().selectedSources[track.id];
-        const preferred =
-          result.candidates.find(candidate => candidate.source === chosenSource) ?? result.candidates[0];
-        const parsed = parseCandidate(preferred, track.duration);
+        let preferred = chosenSource
+          ? result.candidates.find(candidate => candidate.source === chosenSource)
+          : undefined;
+        let parsed = preferred ? parseCandidate(preferred, track.duration) : null;
+        if (!preferred || !parsed || parsed.lyrics.length === 0) {
+          preferred = undefined;
+          parsed = null;
+          for (const candidate of result.candidates) {
+            const candidateParsed = parseCandidate(candidate, track.duration);
+            if (candidateParsed.lyrics.length > 0) {
+              preferred = candidate;
+              parsed = candidateParsed;
+              break;
+            }
+          }
+          if (!preferred || !parsed) {
+            preferred = result.candidates[0];
+            parsed = parseCandidate(preferred, track.duration);
+          }
+        }
         useLyricsStore.getState().setActive(track.id, {
           status: "ready",
           candidates: result.candidates,
@@ -185,7 +208,7 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     })();
     // parseCandidate is stable; reloadTick mirrors the module token that survives remounts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [track?.id, track?.duration, settings.autoFetch, settings.providerOrder, reloadTick, parseCandidate]);
+  }, [track?.id, track?.duration, settings.autoFetch, reloadTick, parseCandidate]);
 
   // Translation pass (ported Better Lyrics batching lives in the main process).
   useEffect(() => {

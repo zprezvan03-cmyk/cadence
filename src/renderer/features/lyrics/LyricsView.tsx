@@ -70,7 +70,9 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   // The toggle only applies in fullscreen; the normal page always shows lyrics.
   const lyricsVisible = !fullscreen || showLyrics;
 
-  const lyrics = useLyrics(track ?? null, lyricsSettings ?? fallbackLyricsSettings);
+  // Wait until persisted settings have hydrated before initiating automatic lyrics lookup so a
+  // custom providerOrder / autoFetch flag is never bypassed by fallback defaults at startup.
+  const lyrics = useLyrics(settings ? (track ?? null) : null, lyricsSettings ?? fallbackLyricsSettings);
 
   const themeCss = useMemo(() => (lyricsSettings ? buildThemeCss(lyricsSettings) : ""), [lyricsSettings]);
 
