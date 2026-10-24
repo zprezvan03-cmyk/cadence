@@ -1,65 +1,64 @@
 # Cadence
 
-A local desktop music player with the **Better Lyrics** lyrics engine and **Better Lyrics Shaders**
-artwork effects built in. Point it at your music folder; it reads your files, shows word-level
-karaoke lyrics over an audio-reactive Kawarp background, and never phones home unless you ask it to
-fetch lyrics.
+A local desktop music player built on **Tauri v2** (Windows WebView2) with the **Better Lyrics**
+lyrics engine and **Better Lyrics Shaders** artwork effects built in. Point it at your music
+folder; it reads your files, shows word-level karaoke lyrics over an audio-reactive Kawarp
+background, and never phones home unless you ask it to fetch lyrics.
 
 GPL-3.0. Upstream attribution and pinned commits: [`UPSTREAM.md`](UPSTREAM.md).
 
 ## Install
 
-### From a Windows package (once built on a networked machine)
+### Windows production build & installers
 
-```
-npm ci
-npm run package:win            # NSIS installer → release/Cadence-0.1.0-x64.exe (+ release/win-unpacked)
-npm run package:win:portable   # ZIP from that win-unpacked → release/Cadence-0.1.0-win-x64-portable.zip
-```
-
-The build is unsigned, so Windows SmartScreen will show "Unknown publisher" on first run
-(*More info → Run anyway*). A portable ZIP needs no admin rights: unzip and start `Cadence.exe`.
-
-### From source
-
-Requirements: Node.js ≥ 22.12, npm ≥ 10. Python 3 is only needed to regenerate audio test fixtures.
+Requirements on a Windows build host:
+- Node.js ≥ 22.12 and npm ≥ 10
+- Rust stable toolchain (`rustup`, ≥ 1.77.2) with the `x86_64-pc-windows-msvc` target + Visual Studio C++ Build Tools
+- Microsoft Edge WebView2 Runtime (preinstalled on Windows 10/11; the NSIS/MSI installer also ships Tauri's silent WebView2 bootstrapper fallback)
 
 ```bash
 npm ci
-npm run dev        # electron-vite dev server + Electron window
-npm run build      # production bundles in out/
-npm start          # run the built bundles
+npm run package:win            # Tauri NSIS (.exe) + MSI (.msi) installers in src-tauri/target/release/bundle/
+npm run package:win:portable   # Portable ZIP from the compiled release binary → release/Cadence-0.1.0-win-x64-portable.zip
+```
+
+The build is unsigned by default, so Windows SmartScreen will show "Unknown publisher" on first run
+(*More info → Run anyway*). A portable ZIP needs no admin rights: unzip and start `Cadence.exe`.
+
+### Development from source
+
+```bash
+npm ci
+npm run dev            # Vite dev server (http://localhost:1420) + Tauri desktop window
+npm run build          # Production frontend bundle in dist/
+npm run build:desktop  # Full Tauri production build (frontend + Rust host + platform bundles)
 ```
 
 ## Using it
 
-1. **Add music** — top-right button, or *File → Add music folder…*. Folders are scanned recursively;
+1. **Add music** — top-right button, or <kbd>Ctrl/Cmd</kbd>+<kbd>O</kbd>. Folders are scanned recursively;
    hidden directories and common system folders are skipped.
 2. **Play** — click a row. <kbd>Space</kbd> toggles, <kbd>←</kbd>/<kbd>→</kbd> seek 5 s
-   (<kbd>Shift</kbd> = previous/next), <kbd>↑</kbd>/<kbd>↓</kbd> volume, <kbd>M</kbd> mute,
-   <kbd>S</kbd> shuffle, <kbd>R</kbd> repeat, <kbd>Q</kbd> queue, <kbd>N</kbd> Now Playing,
-   <kbd>L</kbd> Now Playing, <kbd>F</kbd> fullscreen Now Playing, <kbd>Ctrl/Cmd</kbd>+<kbd>K</kbd> search.
-   OS media keys work through the Media Session API.
+   (<kbd>Shift</kbd> or <kbd>Ctrl/Cmd</kbd> = previous/next), <kbd>↑</kbd>/<kbd>↓</kbd> volume,
+   <kbd>M</kbd> mute, <kbd>S</kbd> shuffle, <kbd>R</kbd> repeat, <kbd>Q</kbd> queue, <kbd>N</kbd> / <kbd>L</kbd>
+   Now Playing, <kbd>F</kbd> / <kbd>F11</kbd> fullscreen Now Playing, <kbd>Ctrl/Cmd</kbd>+<kbd>K</kbd> search,
+   <kbd>Ctrl/Cmd</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> rescan library. Hardware media keys and Windows System
+   Media Transport Controls (SMTC) work through global shortcuts and the WebView2 Media Session API.
 3. **Now Playing** — open the Now Playing tab (sidebar, or the mic button in the player bar). Providers
-   run in order: local `.lrc`/`.ttml`/`.qrc` next to the file → embedded tag (USLT/SYLT/`©lyr`/Vorbis
-   `LYRICS`) → Better Lyrics API (TTML syllable, QQ word QRC, Kugou line LRC) → Unison community lyrics
-   (TTML/LRC/plain, matched by song/artist/album/duration — no video ID) → LRCLIB synced → LRCLIB plain
-   / Unison plain. Use the dock to change source, typography, offset (±0.05 s steps), translation,
-   romanization, reload, load a file, or save what is on screen as a sidecar `.lrc`. The bottom-right
-   fullscreen button (or <kbd>F</kbd>) opens a fullscreen view with the playback controls, queue and a
-   lyrics on/off switch; hiding lyrics there keeps playback and sync running, and the choice is saved in
-   settings. The Better Lyrics API serves cached songs without a key; an uncached song answers `401`
-   (no third-party keys are issued), which is reported in the dock and falls through to the next provider.
+   run in exact priority order: local `.ttml`/`.qrc` → Better Lyrics API / Unison / Binimum rich-synced →
+   Better Lyrics word-synced → local `.lrc` → Unison / Better Lyrics / LRCLIB line-synced → LRCLIB plain →
+   embedded tag (USLT/SYLT/`©lyr`/Vorbis `LYRICS`). Use the dock or Lyrics Selector to change source, run a
+   manual search (including keyless YouTube link metadata fill), adjust typography, offset (±0.05 s steps),
+   translation, romanization, reload, load a file, or save what is on screen as a sidecar `.lrc`.
 4. **Shaders** — Settings → Shaders. Opacity, warp, blur passes, animation speed, transition
    duration, saturation, dithering, auto-dim of bright artwork, audio reactivity (beat threshold,
    speed multiplier, scale boost), pause when idle, and a performance mode
    (`high`/`balanced`/`low`/`off`). `off` swaps in the artwork-blur fallback.
 5. **Settings → Playback → Appearance** picks the **font** used by the app and the lyrics view from
    system families (sans, serif and monospace stacks). Choices apply immediately, persist across
-   restarts, and each stack falls back to a similar system font when the named one is not installed;
-   the picker marks the ones this machine lacks.
+   restarts, and each stack falls back to a similar system font when the named one is not installed.
 6. **Settings → Library** shows folders, rescan, the SQLite engine in use and scan errors;
-   **About** lists versions and paths.
+   **About** lists versions and runtime information.
 
 ## What it supports
 
@@ -71,29 +70,28 @@ npm start          # run the built bundles
 | WAV (PCM) | yes | yes |
 | Ogg Vorbis | yes | yes |
 | Opus | yes | yes |
-| ALAC (.m4a) | **no** | yes — Chromium's FFmpeg demuxer reports `DEMUXER_ERROR_NO_SUPPORTED_STREAMS` |
+| ALAC (.m4a) | **no** | yes — WebView2/Chromium's FFmpeg demuxer reports `DEMUXER_ERROR_NO_SUPPORTED_STREAMS` |
 
 Unsupported codecs are labelled **no decoder** in the library and produce an actionable message
 (*"ALAC is not decodable by Chromium's built-in media stack. Convert the file to FLAC or WAV…"*),
 never a silent failure. `src/renderer/audio/codecs.ts` is the single source of truth for this table.
 
-Missing/moved files surface as scan errors in Settings → Library; corrupt files stay in the library
-flagged, so you can see and remove them instead of wondering where they went.
-
 ## Architecture
 
 ```
-src/main            Electron main: window, menu, IPC, media protocol, settings
-src/main/library    scanner, music-metadata extraction, artwork cache, SQLite/JSON store
-src/main/lyrics     provider orchestration, Better Lyrics/Unison/LRCLIB clients, local files, cache
-src/main/media      path allowlist for the cadence-media: protocol
-src/preload         contextBridge → window.cadence (the only renderer capability surface)
-src/renderer        React shell: routes, library views, player bar, queue, Now Playing, settings
+src-tauri/src       Tauri v2 Rust host: cadence-media Range protocol, path allowlist, rusqlite DB,
+                    rfd native dialogs, reqwest HTTP client + cancellation, single-instance & media keys
+src-tauri/capabilities/default.json   least-privilege window capability (no arbitrary shell or fs)
+src/tauri/bridge.ts WebView2 implementation of window.cadence (CadenceApi) over @tauri-apps/api
+src/main/library    runtime-agnostic library store, RangeTokenizer metadata core, artwork cache, scanner
+src/main/lyrics     provider orchestration, Better Lyrics/Unison/Binimum/LRCLIB clients, YouTube oEmbed, cache
+src/main/media      cross-platform path allowlist and cadence-media URL/Range handler
+src/renderer        React 19 shell: routes, library views, player bar, queue, Now Playing, settings
 src/renderer/audio  the <audio> clock authority + WebAudio analyser
-src/renderer/features/lyrics   Now Playing page, dock and fullscreen controls (Braccato renderer)
-src/renderer/features/shaders  Kawarp background component
+src/renderer/features/lyrics   Now Playing page, Lyrics Selector, dock and fullscreen controls (Braccato)
+src/renderer/features/shaders  Kawarp WebGL background component
 src/renderer/upstream           ported upstream modules (headers say where from)
-src/shared          cross-process contract and ported upstream data
+src/shared          cross-runtime contract and ported upstream data
 ```
 
 The `<audio>` element is the single timing authority: the lyric renderer binds to it directly, so
@@ -102,10 +100,11 @@ seek, pause, rate changes and track switches move the highlight with no second c
 ## Tests
 
 ```bash
-npm run typecheck    # tsc --noEmit for main and renderer
-npm test             # 47 vitest assertions (library, queue, lyrics, LRC parsing)
-npm run smoke        # tests + build + bundle sanity checks
-npm run test:ui      # production renderer in headless Chromium: 58 interactive checks
+npm run typecheck    # tsc --noEmit for Node/Tauri bridge and renderer
+npm test             # 201 Vitest assertions (library, protocol, providers, search, YouTube, Tauri bridge)
+npm run smoke        # fixtures + tests + Vite production build + Tauri config/capability checks
+npm run test:renderer # 25 headless Chromium audio/Braccato/Kawarp engine checks
+npm run test:ui      # production renderer in headless Chromium: interactive UI suite
 ```
 
 `npm run test:ui` needs `python3` with `av`, `soundfile`, `numpy`, `mutagen` for the first fixture
@@ -123,8 +122,8 @@ LD_LIBRARY_PATH=/tmp/al2023/lib npm run test:ui
 
 ## Troubleshooting
 
-**"Cadence needs its desktop shell"** — the renderer was opened in a browser. Start it with
-`npm run dev` or the packaged app.
+**"Cadence needs its desktop shell"** — the renderer was opened in a browser outside Tauri. Start it
+with `npm run dev` or the packaged app.
 
 **No sound, but the position moves** — check the output device and the volume control; Cadence uses
 the system mixer and has no exclusive-mode output.
@@ -135,20 +134,12 @@ the system mixer and has no exclusive-mode output.
 lyrics dock: it lists each provider as `hit`, `miss`, `skipped` (with the reason) or `error` (with the
 message, e.g. offline). Placing a `.lrc` next to the file always wins.
 
-**Wrong lyrics match** — LRCLIB and Unison's fuzzy search fallback are matched on
-artist/title/album/duration with a Sørensen–Dice score (Unison also enforces its ±2 s duration
-window); rename tags for a better match, reorder providers in Settings, or load a file manually from
-the dock. Local sidecar and embedded lyrics always take precedence and are never overwritten.
-
 **Shaders stutter on an integrated GPU** — Settings → Shaders → Performance mode `low` (halves blur
 passes and render resolution); `off` disables WebGL entirely and keeps the blurred-artwork fallback.
 
-**Search finds nothing** — search is over the local library only, and only after a scan finishes
-(watch the indicator in the top bar).
-
-**Where is my data?** — `%APPDATA%/Cadence` on Windows, `~/.config/Cadence` on Linux,
-`~/Library/Application Support/Cadence` on macOS: `settings.json`, `library.db` (or `library.json`),
-`artwork/`, `lyrics-cache.json`, `logs/main.log`.
+**Where is my data?** — `%APPDATA%/app.cadence.player` on Windows,
+`~/.local/share/app.cadence.player` on Linux, `~/Library/Application Support/app.cadence.player` on
+macOS: `settings.json`, `library.db`, `artwork/`, `lyrics-cache.json`.
 
 ## Licenses
 
