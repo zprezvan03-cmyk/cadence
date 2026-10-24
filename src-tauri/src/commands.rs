@@ -335,47 +335,43 @@ pub async fn cmd_write_user_json(
 
 #[tauri::command]
 pub async fn cmd_pick_folder(
-    window: WebviewWindow,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
-    let picked = rfd::AsyncFileDialog::new()
-        .set_title("Choose a music folder")
-        .set_parent(&window)
-        .pick_folder()
-        .await;
+    let picked = tauri::async_runtime::spawn_blocking(|| {
+        rfd::FileDialog::new()
+            .set_title("Choose a music folder")
+            .pick_folder()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
-    let Some(handle) = picked else {
+    let Some(raw_path) = picked else {
         return Ok(None);
     };
-    let path = handle.path().to_path_buf();
+    let path = crate::allowlist::strip_verbatim_prefix(raw_path);
     state.allowlist.add_root(&path);
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
 #[tauri::command]
-pub async fn cmd_pick_lyrics_file(window: WebviewWindow) -> Result<Option<PickedLyricsFile>, String> {
-    let picked = rfd::AsyncFileDialog::new()
-        .set_title("Choose a lyrics file")
-        .add_filter("Lyrics", &["ttml", "qrc", "lrc", "srt", "txt"])
-        .set_parent(&window)
-        .pick_file()
-        .await;
-
-    let Some(handle) = picked else {
-        return Ok(None);
-    };
-    let path = handle.path().to_path_buf();
-    let text = tauri::async_runtime::spawn_blocking({
-        let path = path.clone();
-        move || std::fs::read_to_string(&path).map_err(|e| e.to_string())
+pub async fn cmd_pick_lyrics_file() -> Result<Option<PickedLyricsFile>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let picked = rfd::FileDialog::new()
+            .set_title("Choose a lyrics file")
+            .add_filter("Lyrics", &["ttml", "qrc", "lrc", "srt", "txt"])
+            .pick_file();
+        let Some(raw_path) = picked else {
+            return Ok(None);
+        };
+        let path = crate::allowlist::strip_verbatim_prefix(raw_path);
+        let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        Ok(Some(PickedLyricsFile {
+            path: path.to_string_lossy().into_owned(),
+            text,
+        }))
     })
     .await
-    .map_err(|e| e.to_string())??;
-
-    Ok(Some(PickedLyricsFile {
-        path: path.to_string_lossy().into_owned(),
-        text,
-    }))
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

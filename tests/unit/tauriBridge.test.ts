@@ -29,6 +29,7 @@ describe("Tauri v2 migration — configuration, RangeTokenizer, and desktop brid
   });
 
   it("validates tauri.conf.json window/bundle configuration and least-privilege capabilities", () => {
+    const pkg = JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8"));
     const conf = JSON.parse(readFileSync(join(rootDir, "src-tauri/tauri.conf.json"), "utf8"));
     const schema = JSON.parse(
       readFileSync(join(rootDir, "node_modules/@tauri-apps/cli/config.schema.json"), "utf8")
@@ -44,6 +45,14 @@ describe("Tauri v2 migration — configuration, RangeTokenizer, and desktop brid
     expect(conf.identifier).toBe("app.cadence.player");
     expect(conf.version).toBe("0.1.0");
     expect(conf.build.frontendDist).toBe("../dist");
+
+    // beforeDevCommand and beforeBuildCommand must reference existing npm scripts in package.json
+    for (const cmdKey of ["beforeDevCommand", "beforeBuildCommand"] as const) {
+      const rawCmd = String(conf.build[cmdKey] ?? "");
+      const scriptMatch = rawCmd.match(/^npm run ([\w:-]+)$/);
+      expect(scriptMatch).not.toBeNull();
+      expect(typeof pkg.scripts?.[scriptMatch![1]]).toBe("string");
+    }
 
     const mainWindow = conf.app.windows[0];
     expect(mainWindow.width).toBe(1440);

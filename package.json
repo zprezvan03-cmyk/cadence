@@ -11,9 +11,12 @@
   },
   "scripts": {
     "dev": "tauri dev",
+    "dev:renderer": "vite",
     "dev:web": "vite",
     "build": "vite build",
+    "build:renderer": "vite build",
     "build:web": "vite build",
+    "build:desktop": "tauri build",
     "start": "vite preview",
     "tauri": "tauri",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",

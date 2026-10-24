@@ -77,8 +77,16 @@ const tauriCargoPath = join(root, "src-tauri/Cargo.toml");
 check("tauri-config-present", existsSync(tauriConfPath) && existsSync(tauriCargoPath), "src-tauri/{tauri.conf.json,Cargo.toml}");
 
 if (existsSync(tauriConfPath)) {
+  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   const conf = JSON.parse(readFileSync(tauriConfPath, "utf8"));
   const winCfg = conf?.app?.windows?.[0];
+  const devScript = String(conf?.build?.beforeDevCommand ?? "").replace(/^npm run\s+/, "");
+  const buildScript = String(conf?.build?.beforeBuildCommand ?? "").replace(/^npm run\s+/, "");
+  check(
+    "tauri-build-scripts",
+    Boolean(pkg?.scripts?.[devScript] && pkg?.scripts?.[buildScript]),
+    `${devScript}, ${buildScript}`
+  );
   check(
     "tauri-identity-and-window",
     conf.productName === "Cadence" &&

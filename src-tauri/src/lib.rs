@@ -147,8 +147,16 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .register_asynchronous_uri_scheme_protocol("cadence-media", |ctx, request, responder| {
-            let state = ctx.app_handle().state::<AppState>();
-            protocol::handle_async_media_protocol::<tauri::Wry>(
+            let Some(state) = ctx.app_handle().try_state::<AppState>() else {
+                responder.respond(
+                    tauri::http::Response::builder()
+                        .status(tauri::http::StatusCode::SERVICE_UNAVAILABLE)
+                        .body(Vec::new())
+                        .unwrap_or_else(|_| tauri::http::Response::new(Vec::new())),
+                );
+                return;
+            };
+            protocol::handle_async_media_protocol(
                 Arc::clone(&state.allowlist),
                 request,
                 responder,

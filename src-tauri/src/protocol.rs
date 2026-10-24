@@ -269,12 +269,11 @@ pub fn serve_media_request_sync(
         .unwrap_or_else(|_| Response::new(Vec::new()))
 }
 
-pub fn handle_async_media_protocol<R: tauri::Runtime>(
+pub fn handle_async_media_protocol(
     allowlist: Arc<MediaAllowlist>,
     request: Request<Vec<u8>>,
     responder: tauri::UriSchemeResponder,
 ) {
-    let _ = R::mark;
     tauri::async_runtime::spawn_blocking(move || {
         let response = serve_media_request_sync(request, &allowlist);
         responder.respond(response);
