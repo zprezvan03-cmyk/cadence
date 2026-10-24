@@ -4,10 +4,14 @@
  * React components. Written for Cadence.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  Album,
+  AlertCircle,
   ArrowLeft,
+  Check,
   ChevronDown,
+  Clock,
   Download,
   FolderOpen,
   Languages,
@@ -18,9 +22,11 @@ import {
   Settings2,
   Sparkles,
   Wand2,
+  Youtube,
 } from "lucide-react";
 import type { LyricsCandidate, LyricsSettings } from "../../../shared/types";
-import type { ManualSearchState } from "./useLyrics";
+import { formatDurationSeconds, resolveSearchFields, type ManualSearchInput } from "../../../shared/youtube";
+import type { ManualSearchState, YouTubeResolveState } from "./useLyrics";
 import { TRANSLATION_LANGUAGES } from "./translationLanguages";
 
 interface LyricsDockProps {
@@ -36,9 +42,11 @@ interface LyricsDockProps {
   syncLabel: string;
   busy: boolean;
   /** Prefill values for manual search, taken from the playing track's tags. */
-  searchDefaults: { title: string; artist: string };
+  searchDefaults: { title: string; artist: string; album: string; duration: number };
   manualSearchState: ManualSearchState;
-  onManualSearch: (title: string, artist: string) => void;
+  youtubeState: YouTubeResolveState;
+  onManualSearch: (input: ManualSearchInput) => void;
+  onResolveYouTube: (url: string) => void;
   onSelectSearchResult: (candidate: LyricsCandidate) => void;
   /** Hover visibility: faded out and non-interactive while true. */
   concealed?: boolean;
@@ -60,7 +68,9 @@ export function LyricsDock({
   busy,
   searchDefaults,
   manualSearchState,
+  youtubeState,
   onManualSearch,
+  onResolveYouTube,
   onSelectSearchResult,
   concealed = false,
   onPopoverChange,
@@ -69,6 +79,8 @@ export function LyricsDock({
   const [languageOpen, setLanguageOpen] = useState(false);
   const [searchTitle, setSearchTitle] = useState("");
   const [searchArtist, setSearchArtist] = useState("");
+  const [searchAlbum, setSearchAlbum] = useState("");
+  const [youtubeUrl, setYoutubeUrl] = useState("");
 
   useEffect(() => {
     onPopoverChange?.(panel !== "none" || languageOpen);
@@ -80,11 +92,39 @@ export function LyricsDock({
     if (panel === "search") return;
     setSearchTitle(searchDefaults.title);
     setSearchArtist(searchDefaults.artist);
-  }, [panel, searchDefaults.title, searchDefaults.artist]);
+    setSearchAlbum(searchDefaults.album);
+    // The hook drops resolved YouTube data on a track switch; clear the link field to match.
+    setYoutubeUrl("");
+  }, [panel, searchDefaults.title, searchDefaults.artist, searchDefaults.album]);
+
+  // Debounce link pastes so typing a URL does not fire a lookup per keystroke. The lookup itself
+  // is main-process and keyless; an empty field resets the resolved card immediately.
+  useEffect(() => {
+    if (panel !== "search") return;
+    const trimmed = youtubeUrl.trim();
+    if (!trimmed) {
+      onResolveYouTube("");
+      return;
+    }
+    const timer = window.setTimeout(() => onResolveYouTube(trimmed), 550);
+    return () => window.clearTimeout(timer);
+  }, [youtubeUrl, panel, onResolveYouTube]);
+
+  // Effective metadata after merging typed values, YouTube supplements and the track's duration.
+  // This is exactly what gets sent to the providers, and the card below renders the same values.
+  const effective = useMemo(
+    () =>
+      resolveSearchFields(
+        { title: searchTitle, artist: searchArtist, album: searchAlbum, youtubeUrl },
+        youtubeState.status === "ready" ? youtubeState.metadata : null,
+        searchDefaults.duration
+      ),
+    [searchTitle, searchArtist, searchAlbum, youtubeUrl, youtubeState, searchDefaults.duration]
+  );
 
   const submitSearch = () => {
-    if (!searchTitle.trim() || manualSearchState.status === "loading") return;
-    onManualSearch(searchTitle, searchArtist);
+    if (!effective.title || manualSearchState.status === "loading") return;
+    onManualSearch({ title: searchTitle, artist: searchArtist, album: searchAlbum, youtubeUrl });
   };
 
   return (
@@ -214,7 +254,7 @@ export function LyricsDock({
             <input
               className="search-input"
               type="text"
-              placeholder="Song title"
+              placeholder="Song title (required)"
               aria-label="Song title"
               value={searchTitle}
               onChange={event => setSearchTitle(event.target.value)}
@@ -228,7 +268,114 @@ export function LyricsDock({
               value={searchArtist}
               onChange={event => setSearchArtist(event.target.value)}
             />
-            <button type="submit" className="search-submit" disabled={!searchTitle.trim() || manualSearchState.status === "loading"}>
+            <div className="search-input-wrap">
+              <Album size={14} className="search-input-icon" aria-hidden />
+              <input
+                className="search-input has-icon"
+                type="text"
+                placeholder="Album (optional)"
+                aria-label="Album (optional)"
+                value={searchAlbum}
+                onChange={event => setSearchAlbum(event.target.value)}
+              />
+            </div>
+            <div className="search-input-wrap">
+              <Youtube size={15} className="search-input-icon" aria-hidden />
+              <input
+                className="search-input has-icon"
+                type="url"
+                inputMode="url"
+                placeholder="YouTube link (optional)"
+                aria-label="YouTube link (optional)"
+                value={youtubeUrl}
+                onChange={event => setYoutubeUrl(event.target.value)}
+              />
+            </div>
+
+            {youtubeState.status === "resolving" ? (
+              <div className="yt-card yt-resolving muted">
+                <RefreshCw size={13} className="spin" /> Looking up video metadata…
+              </div>
+            ) : null}
+            {youtubeState.status === "ready" && youtubeState.metadata ? (
+              <div className="yt-card" data-testid="youtube-metadata">
+                <div className="yt-card-head">
+                  <Youtube size={13} />
+                  <span>From YouTube video</span>
+                  <span className="yt-id">{youtubeState.metadata.videoId}</span>
+                </div>
+                <strong className="yt-title">{youtubeState.metadata.title}</strong>
+                <div className="yt-meta-line">
+                  {youtubeState.metadata.artist ? <span>{youtubeState.metadata.artist}</span> : null}
+                  {youtubeState.metadata.durationSeconds ? (
+                    <span className="yt-duration">
+                      <Clock size={11} /> {formatDurationSeconds(youtubeState.metadata.durationSeconds)}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="yt-fills">
+                  Fills missing:
+                  {effective.sources.title === "youtube" ? <span>title</span> : null}
+                  {effective.sources.artist === "youtube" ? <span>artist</span> : null}
+                  {effective.sources.duration === "youtube" ? <span>duration</span> : null}
+                  {effective.sources.title !== "youtube" &&
+                  effective.sources.artist !== "youtube" &&
+                  effective.sources.duration !== "youtube" ? (
+                    <em>nothing — all fields already provided</em>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+            {youtubeState.status === "invalid" ? (
+              <div className="yt-card yt-problem" role="alert">
+                <AlertCircle size={13} /> Enter a valid YouTube watch, youtu.be or Shorts link.
+              </div>
+            ) : null}
+            {youtubeState.status === "unavailable" ? (
+              <div className="yt-card yt-problem" role="alert">
+                <AlertCircle size={13} /> {youtubeState.detail || "This video is private or unavailable."}
+              </div>
+            ) : null}
+            {youtubeState.status === "error" ? (
+              <div className="yt-card yt-problem" role="alert">
+                <AlertCircle size={13} /> {youtubeState.detail || "Couldn't fetch video metadata."}
+                <button type="button" className="search-retry" onClick={() => onResolveYouTube(youtubeUrl)}>
+                  <RefreshCw size={12} /> Retry
+                </button>
+              </div>
+            ) : null}
+
+            <div className="effective-search" data-testid="effective-search">
+              <div className="effective-head">
+                <Check size={12} /> Searching as
+              </div>
+              <div className="effective-line" title="Title sent to providers">
+                <span className="effective-label">Title</span>
+                <span className="effective-value">{effective.title || "—"}</span>
+                {effective.sources.title ? <span className="effective-source">{effective.sources.title}</span> : null}
+              </div>
+              <div className="effective-line" title="Artist sent to providers">
+                <span className="effective-label">Artist</span>
+                <span className="effective-value">{effective.artist || "—"}</span>
+                {effective.sources.artist ? <span className="effective-source">{effective.sources.artist}</span> : null}
+              </div>
+              {effective.album ? (
+                <div className="effective-line" title="Album sent to providers">
+                  <span className="effective-label">Album</span>
+                  <span className="effective-value">{effective.album}</span>
+                  <span className="effective-source">user</span>
+                </div>
+              ) : null}
+              {effective.duration ? (
+                <div className="effective-line" title="Duration sent to providers">
+                  <span className="effective-label">Duration</span>
+                  <span className="effective-value">{formatDurationSeconds(effective.duration)}</span>
+                  <span className="effective-source">{effective.sources.duration ?? ""}</span>
+                </div>
+              ) : null}
+            </div>
+
+            <button type="submit" className="search-submit" disabled={!effective.title || manualSearchState.status === "loading"}>
               {manualSearchState.status === "loading" ? <RefreshCw size={15} className="spin" /> : <Search size={15} />}
               Search
             </button>

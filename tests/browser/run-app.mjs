@@ -362,6 +362,11 @@ await page.evaluateOnNewDocument(
       lyrics: {
         resolve: async request => resolveLyrics(request),
         search: async () => ({ results: [], providerStatus: [], cached: false }),
+        youtubeMetadata: async () => ({
+          ok: false,
+          reason: "error",
+          detail: "YouTube metadata is unavailable in the harness",
+        }),
         translate: async request => ({
           translations: request.lines.map(line => `[translated] ${line}`),
           targetLanguage: request.targetLanguage,

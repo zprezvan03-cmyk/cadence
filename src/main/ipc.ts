@@ -15,11 +15,13 @@ import type {
   LyricsResolveRequest,
   LyricsSearchRequest,
   TranslationRequest,
+  YouTubeMetadataRequest,
 } from "../shared/types";
 import { IPC } from "../shared/types";
 import type { LibraryController } from "./library/controller";
 import type { LyricsService } from "./lyrics/service";
 import { writeSidecarLyrics } from "./lyrics/localLyrics";
+import { fetchYouTubeMetadata } from "./lyrics/youtube";
 import type { SettingsStore } from "./settings";
 import { classifierFor, romanizeBatch, translateBatch, type TranslationCache } from "./lyrics/translation";
 import { createTranslationCache } from "./lyrics/translation";
@@ -154,6 +156,12 @@ export function registerIpc(context: IpcContext): void {
       },
       context.settings.get().lyrics.providerOrder
     );
+  });
+
+  ipcMain.handle(IPC.lyricsYouTube, async (_event, request: unknown) => {
+    const typed = request as YouTubeMetadataRequest;
+    const url = stringParam(typed?.url, "url");
+    return fetchYouTubeMetadata(url);
   });
 
   ipcMain.handle(IPC.lyricsTranslate, async (_event, request: unknown) => {

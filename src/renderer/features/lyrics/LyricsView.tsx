@@ -96,6 +96,14 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
     window.setTimeout(() => setToast(null), 3200);
   }, []);
 
+  // Stable identity so the dock's debounced YouTube lookup doesn't reset on unrelated re-renders.
+  const handleResolveYouTube = useCallback(
+    (url: string) => {
+      void lyrics.resolveYouTube(url);
+    },
+    [lyrics.resolveYouTube]
+  );
+
   const handleSave = useCallback(async () => {
     try {
       const path = await lyrics.saveSidecar();
@@ -259,9 +267,16 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
             onReload={lyrics.reload}
             onSaveSidecar={() => void handleSave()}
             onChooseFile={() => void lyrics.chooseFile()}
-            searchDefaults={{ title: track?.title ?? "", artist: track?.artist ?? "" }}
+            searchDefaults={{
+              title: track?.title ?? "",
+              artist: track?.artist ?? "",
+              album: track?.album ?? "",
+              duration: track?.duration ?? 0,
+            }}
             manualSearchState={lyrics.manualSearchState}
-            onManualSearch={(title, artist) => void lyrics.manualSearch(title, artist)}
+            youtubeState={lyrics.youtubeState}
+            onManualSearch={input => void lyrics.manualSearch(input)}
+            onResolveYouTube={handleResolveYouTube}
             onSelectSearchResult={lyrics.selectSearchResult}
             syncLabel={syncLabel}
             busy={lyrics.status === "loading" || lyrics.translating || lyrics.romanizing}

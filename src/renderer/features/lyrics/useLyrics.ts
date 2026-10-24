@@ -6,7 +6,14 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Lyric, LyricSyncType } from "@braccato/types";
-import type { LyricsCandidate, LyricsSettings, Track } from "../../../shared/types";
+import type {
+  LyricsCandidate,
+  LyricsSettings,
+  Track,
+  YouTubeMetadata,
+  YouTubeMetadataResult,
+} from "../../../shared/types";
+import { parseYouTubeVideoId, resolveSearchFields, type ManualSearchInput } from "../../../shared/youtube";
 import { bridge } from "../../state/bridge";
 import {
   applyRomanization,
@@ -41,6 +48,16 @@ export interface ManualSearchState {
   error: string | null;
 }
 
+/** Resolution state of the optional YouTube link in the manual-search form. */
+export interface YouTubeResolveState {
+  status: "idle" | "resolving" | "ready" | "invalid" | "unavailable" | "error";
+  videoId: string | null;
+  metadata: YouTubeMetadata | null;
+  detail: string | null;
+}
+
+const IDLE_YOUTUBE: YouTubeResolveState = { status: "idle", videoId: null, metadata: null, detail: null };
+
 const EMPTY: LyricsState = {
   status: "idle",
   candidates: [],
@@ -63,8 +80,11 @@ export interface UseLyricsResult extends LyricsState {
   chooseFile: () => Promise<void>;
   /** Manual-search state for the Lyrics Selector; never alters active lyrics on its own. */
   manualSearchState: ManualSearchState;
-  manualSearch: (title: string, artist: string) => Promise<void>;
+  manualSearch: (input: ManualSearchInput) => Promise<void>;
   selectSearchResult: (candidate: LyricsCandidate) => void;
+  /** State of the optional YouTube-link lookup, including any resolved metadata. */
+  youtubeState: YouTubeResolveState;
+  resolveYouTube: (url: string) => Promise<YouTubeMetadataResult | null>;
   hasLyrics: boolean;
 }
 
@@ -73,9 +93,11 @@ const EMPTY_SEARCH: ManualSearchState = { status: "idle", results: [], error: nu
 export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyricsResult {
   const [state, setState] = useState<LyricsState>(EMPTY);
   const [manualSearchState, setManualSearchState] = useState<ManualSearchState>(EMPTY_SEARCH);
+  const [youtubeState, setYoutubeState] = useState<YouTubeResolveState>(IDLE_YOUTUBE);
   const [reloadToken, setReloadToken] = useState(0);
   const generation = useRef(0);
   const searchGeneration = useRef(0);
+  const youtubeGeneration = useRef(0);
   const parsedCache = useRef(new Map<string, ParsedLyrics>());
   const manualSource = useRef<string | null>(null);
   const resolvedFor = useRef<string | null>(null);
@@ -86,8 +108,10 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
   // override cannot silently pre-empt the new track's default candidate.
   useEffect(() => {
     searchGeneration.current += 1;
+    youtubeGeneration.current += 1;
     manualSource.current = null;
     setManualSearchState(EMPTY_SEARCH);
+    setYoutubeState(IDLE_YOUTUBE);
   }, [track?.id]);
 
   const parseCandidate = useCallback((candidate: LyricsCandidate, durationSeconds: number): ParsedLyrics => {
@@ -338,19 +362,60 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     }));
   }, [track]);
 
+  // Resolve the optional YouTube link through the keyless main-process lookup. Plain malformed
+  // links are caught locally (no IPC round trip); a stale response (newer paste or track change)
+  // is dropped via a generation token.
+  const resolveYouTube = useCallback(async (url: string): Promise<YouTubeMetadataResult | null> => {
+    const trimmed = url.trim();
+    const videoId = parseYouTubeVideoId(trimmed);
+    if (!videoId) {
+      setYoutubeState(trimmed ? { status: "invalid", videoId: null, metadata: null, detail: null } : IDLE_YOUTUBE);
+      return null;
+    }
+    const token = ++youtubeGeneration.current;
+    setYoutubeState({ status: "resolving", videoId, metadata: null, detail: null });
+    try {
+      const result = await bridge.lyrics.youtubeMetadata({ url: trimmed });
+      if (token !== youtubeGeneration.current) return result;
+      if (result.ok) {
+        setYoutubeState({ status: "ready", videoId, metadata: result.metadata, detail: null });
+      } else {
+        setYoutubeState({
+          status: result.reason === "invalid" ? "invalid" : result.reason,
+          videoId,
+          metadata: null,
+          detail: result.detail,
+        });
+      }
+      return result;
+    } catch (error) {
+      if (token !== youtubeGeneration.current) return null;
+      setYoutubeState({
+        status: "error",
+        videoId,
+        metadata: null,
+        detail: (error as Error).message || "Metadata lookup failed",
+      });
+      return null;
+    }
+  }, []);
+
   // Explicit manual search from the Lyrics Selector. It never changes the active lyrics — only an
   // explicit result selection does — and a stale response (newer submit or track change) is dropped.
+  // YouTube metadata only fills blank fields; everything the user typed takes precedence.
   const manualSearch = useCallback(
-    async (title: string, artist: string) => {
-      if (!track || !title.trim()) return;
+    async (input: ManualSearchInput) => {
+      if (!track) return;
+      const effective = resolveSearchFields(input, youtubeState.metadata, track.duration);
+      if (!effective.title) return;
       const token = ++searchGeneration.current;
       setManualSearchState({ status: "loading", results: [], error: null });
       try {
         const response = await bridge.lyrics.search({
-          title: title.trim(),
-          artist: artist.trim(),
-          album: track.album,
-          duration: track.duration,
+          title: effective.title,
+          artist: effective.artist,
+          album: effective.album,
+          duration: effective.duration ?? undefined,
         });
         if (token !== searchGeneration.current) return;
         setManualSearchState(
@@ -363,7 +428,7 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
         setManualSearchState({ status: "error", results: [], error: (error as Error).message });
       }
     },
-    [track]
+    [track, youtubeState.metadata]
   );
 
   // Promote a manually selected search result into the active candidate list, mirroring the
@@ -397,6 +462,8 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     manualSearchState,
     manualSearch,
     selectSearchResult,
+    youtubeState,
+    resolveYouTube,
     hasLyrics: Boolean(state.lyrics && state.lyrics.length > 0),
   };
 }

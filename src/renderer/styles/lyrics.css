@@ -690,7 +690,167 @@ braccato-lyrics {
 
 .dock-search {
   width: 320px;
+  max-width: calc(100vw - 32px);
   gap: 8px;
+}
+
+.search-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-input-icon {
+  position: absolute;
+  left: 11px;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+.search-input.has-icon {
+  padding-left: 32px;
+}
+
+.yt-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 12px;
+}
+
+.yt-card-head,
+.yt-meta-line,
+.yt-fills,
+.effective-head,
+.effective-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.yt-card-head {
+  color: var(--text-faint);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.yt-id {
+  margin-left: auto;
+  font-family: monospace;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.yt-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.yt-meta-line {
+  color: var(--text-faint);
+  flex-wrap: wrap;
+}
+
+.yt-duration {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.yt-fills {
+  flex-wrap: wrap;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+
+.yt-fills span {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.yt-fills em {
+  font-style: normal;
+}
+
+.yt-resolving,
+.yt-problem {
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+}
+
+.yt-problem {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  flex-wrap: wrap;
+}
+
+.yt-problem .search-retry {
+  margin-left: auto;
+}
+
+.effective-search {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--border);
+}
+
+.effective-head {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  margin-bottom: 2px;
+}
+
+.effective-line {
+  font-size: 12px;
+  gap: 8px;
+}
+
+.effective-label {
+  width: 52px;
+  flex: none;
+  color: var(--text-faint);
+}
+
+.effective-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.effective-source {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+@media (max-width: 560px) {
+  .dock-search {
+    width: min(320px, calc(100vw - 24px));
+  }
 }
 
 .search-panel-head {

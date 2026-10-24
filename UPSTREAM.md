@@ -102,6 +102,18 @@ Verified behavior and limitations:
   advertised as richer than it is; non-TTML storage responses are misses, and `429`/`Retry-After`
   is surfaced as an error and never cached. The same two source keys
   (`binimum-richsynced`/`binimum-synced`) appear in the extension's current `unified.ts`.
+- **YouTube links in manual search use only public, keyless metadata.** An optional YouTube URL in
+  the Lyrics Selector is validated and parsed in `src/shared/youtube.ts` (watch, `youtu.be`,
+  Shorts, embed/live/v and `youtube-nocookie.com` forms). The main process
+  (`src/main/lyrics/youtube.ts`) then calls YouTube's public oEmbed endpoint
+  (`https://www.youtube.com/oembed?url=…&format=json`) for the title and channel name, and makes
+  one best-effort read of the public watch page for its published `lengthSeconds`; oEmbed 401/404
+  maps to "video unavailable", and every watch-page failure degrades to duration `null` rather than
+  failing the lookup. The extracted video ID is **never** sent to a lyrics provider — only the
+  derived title/artist/duration are used, and only to fill fields the user left blank. No audio is
+  downloaded, no stream URLs are extracted, and the YouTube Data API (which requires a key) is not
+  used. Search without a link behaves exactly as before, and all results still flow through the
+  same provider fallback, in-flight dedupe and `search:`-namespaced cache.
 - The extension's `unified.ts`/Cubey stream remains unusable standalone (Turnstile iframe challenge,
   JWT, cookie credentials, YouTube Music origin, mandatory `videoId`). See *Not ported* below.
 - Raw provider text (TTML, QRC, enhanced/LRC, plain) is passed to the renderer untouched; the
@@ -114,6 +126,7 @@ These replace the extension's YouTube Music dependencies and are Cadence's own w
 | Cadence module | Replaces |
 | --- | --- |
 | `src/main/lyrics/service.ts`, `betterLyrics.ts`, `unison.ts`, `binimum.ts`, `lrclib.ts`, `http.ts`, `matching.ts`, `localLyrics.ts`, `cache.ts` | The upstream `unified.ts` provider stream (requires a Turnstile JWT and a `videoId`); keyed on artist/title/album/duration instead. `binimum.ts` additionally adapts the keyless two-step index→TTML request flow from the MIT-licensed `createBinimumProvider` in `@braccato/provider-blyrics` 0.2.3, without taking the package as a dependency |
+| `src/main/lyrics/youtube.ts`, `src/shared/youtube.ts` | The extension's YouTube Music page context (it receives video metadata from the host page, which a local player does not have); replaced by a keyless public oEmbed lookup plus best-effort watch-page duration, used only to supplement blank manual-search fields |
 | `src/main/library/*` | Nothing upstream — local file library, scanning, metadata, artwork, playlists |
 | `src/renderer/audio/*`, `player/queue.ts`, `state/*` | The YouTube Music player and DOM; local `<audio>` element and Zustand stores |
 | `src/main/index.ts`, `ipc.ts`, `protocol.ts`, `preload/index.ts` | The browser extension's `chrome.*` APIs; Electron main process and IPC |

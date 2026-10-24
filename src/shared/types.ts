@@ -155,6 +155,27 @@ export interface LyricsSearchResponse {
   cached: boolean;
 }
 
+export interface YouTubeMetadataRequest {
+  /** Raw user input; the main process re-validates it even though the renderer pre-checks. */
+  url: string;
+}
+
+export interface YouTubeMetadata {
+  videoId: string;
+  /** Video title, used only to fill a blank title field — it never overwrites a user value. */
+  title: string;
+  /** Channel name with YouTube Music's " - Topic" suffix removed; null when unparseable. */
+  artist: string | null;
+  /** Video length in seconds; null when the best-effort lookup could not determine it. */
+  durationSeconds: number | null;
+  thumbnailUrl: string | null;
+}
+
+/** Discriminated result so the renderer shows inline failures instead of a thrown IPC error. */
+export type YouTubeMetadataResult =
+  | { ok: true; metadata: YouTubeMetadata }
+  | { ok: false; reason: "invalid" | "unavailable" | "error"; detail: string };
+
 export interface LyricsResolveRequest {
   trackId: number;
   title: string;
@@ -317,6 +338,7 @@ export interface CadenceApi {
   lyrics: {
     resolve(request: LyricsResolveRequest): Promise<LyricsResolveResult>;
     search(request: LyricsSearchRequest): Promise<LyricsSearchResponse>;
+    youtubeMetadata(request: YouTubeMetadataRequest): Promise<YouTubeMetadataResult>;
     translate(request: TranslationRequest): Promise<TranslationResult>;
     romanize(request: TranslationRequest): Promise<RomanizationResult>;
     saveSidecar(trackId: number, text: string): Promise<{ path: string }>;
@@ -366,6 +388,7 @@ export const IPC = {
   settingsReset: "settings:reset",
   lyricsResolve: "lyrics:resolve",
   lyricsSearch: "lyrics:search",
+  lyricsYouTube: "lyrics:youtube-metadata",
   lyricsTranslate: "lyrics:translate",
   lyricsRomanize: "lyrics:romanize",
   lyricsSaveSidecar: "lyrics:save-sidecar",
