@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Least-privilege capability for the main Cadence player window. Filesystem, media streaming, dialogs, and external links are mediated exclusively by scoped Rust commands.",
+  "description": "Least-privilege capability for the main Cadence player window. Filesystem, media streaming, dialogs, and external links are mediated exclusively by scoped Rust commands. The start-dragging and internal-toggle-maximize permissions back the integrated title bar's drag region (drag to move, double-click to maximize).",
   "local": true,
   "windows": ["main"],
   "permissions": [
@@ -9,6 +9,8 @@
     "core:window:allow-set-fullscreen",
     "core:window:allow-minimize",
     "core:window:allow-toggle-maximize",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
     "core:window:allow-close"
   ]
 }

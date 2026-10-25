@@ -352,10 +352,32 @@ export interface CadenceApi {
     openExternal(url: string): Promise<void>;
     openPath(path: string): Promise<void>;
     chooseLyricsFile(trackId: number): Promise<{ canceled: boolean; path?: string; text?: string }>;
-    window(action: "minimize" | "maximize" | "close" | "fullscreen" | "exitFullscreen"): Promise<void>;
+    window(action: WindowAction): Promise<void>;
     isFullScreen(): Promise<boolean>;
+    /** Frame state captured while the bridge boots, so the title bar renders on the first frame. */
+    initialWindowChrome: WindowChromeState;
+    windowChrome(): Promise<WindowChromeState>;
+    onWindowChromeChange(listener: (state: WindowChromeState) => void): () => void;
   };
 }
+
+/** Window-frame state used to draw Cadence's integrated title bar. */
+export interface WindowChromeState {
+  /** The OS draws no frame, so the renderer draws the title bar and its window controls. */
+  undecorated: boolean;
+  maximized: boolean;
+  fullscreen: boolean;
+  focused: boolean;
+}
+
+/** Native window commands reachable from the integrated title bar. */
+export type WindowAction =
+  | "minimize"
+  | "maximize"
+  | "restore"
+  | "close"
+  | "fullscreen"
+  | "exitFullscreen";
 
 export type MediaCommand = "play-pause" | "next" | "previous" | "stop" | "seek-forward" | "seek-back";
 

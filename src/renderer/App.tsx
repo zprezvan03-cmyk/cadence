@@ -6,6 +6,7 @@ import { useCurrentTrack } from "./app/hooks";
 import { PlaylistPicker } from "./app/PlaylistPicker";
 import { Sidebar } from "./app/Sidebar";
 import { TopBar } from "./app/TopBar";
+import { useWindowChrome, WindowTitleBar } from "./app/WindowTitleBar";
 import { useBootstrap } from "./app/useBootstrap";
 import { AlbumView, ArtistView, PlaylistView, SearchView } from "./features/library/DetailViews";
 import { HomeView } from "./features/library/HomeView";
@@ -60,11 +61,16 @@ export function App() {
   const fullscreenLyrics = useUi(state => state.fullscreenLyrics);
   const route = useUi(state => state.route);
   const error = usePlayer(state => state.error);
+  const chrome = useWindowChrome();
 
   const immersive = fullscreenLyrics && route.name === "lyrics";
+  // The title bar is only drawn when the OS frame is off (Windows); immersive and native fullscreen
+  // hand the whole window to the content.
+  const titleBar = chrome.undecorated && !chrome.fullscreen && !immersive;
 
   return (
-    <div className={`app-shell ${immersive ? "is-immersive" : ""}`}>
+    <div className={`app-shell ${immersive ? "is-immersive" : ""} ${titleBar ? "has-title-bar" : ""}`}>
+      {titleBar ? <WindowTitleBar chrome={chrome} /> : null}
       {!immersive ? <Sidebar /> : null}
       <main className="app-main">
         {!immersive ? <TopBar /> : null}

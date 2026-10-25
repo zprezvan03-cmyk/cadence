@@ -60,6 +60,27 @@ pub struct BootstrapPayload {
     pub lyrics_cache_json: Option<String>,
     pub db_snapshot: DbSnapshot,
     pub startup_files: Vec<String>,
+    /// False when the OS draws no window frame, so the renderer draws its own title bar.
+    pub undecorated: bool,
+}
+
+/// Window frame state the renderer needs to draw Cadence's integrated title bar.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowChromeState {
+    pub undecorated: bool,
+    pub maximized: bool,
+    pub fullscreen: bool,
+    pub focused: bool,
+}
+
+fn read_window_chrome(window: &WebviewWindow) -> WindowChromeState {
+    WindowChromeState {
+        undecorated: !window.is_decorated().unwrap_or(true),
+        maximized: window.is_maximized().unwrap_or(false),
+        fullscreen: window.is_fullscreen().unwrap_or(false),
+        focused: window.is_focused().unwrap_or(true),
+    }
 }
 
 #[derive(Serialize)]
@@ -258,7 +279,10 @@ fn is_valid_artwork_filename(name: &str) -> bool {
 }
 
 #[tauri::command]
-pub fn cmd_bootstrap(state: State<'_, AppState>) -> Result<BootstrapPayload, String> {
+pub fn cmd_bootstrap(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<BootstrapPayload, String> {
     let settings_path = state.app_data_dir.join("settings.json");
     let lyrics_cache_path = state.app_data_dir.join("lyrics-cache.json");
 
@@ -296,6 +320,7 @@ pub fn cmd_bootstrap(state: State<'_, AppState>) -> Result<BootstrapPayload, Str
         lyrics_cache_json,
         db_snapshot,
         startup_files,
+        undecorated: read_window_chrome(&window).undecorated,
     })
 }
 
@@ -638,6 +663,7 @@ pub fn cmd_window_action(action: String, window: WebviewWindow) -> Result<(), St
                 window.maximize().map_err(|e| e.to_string())
             }
         }
+        "restore" => window.unmaximize().map_err(|e| e.to_string()),
         "close" => window.close().map_err(|e| e.to_string()),
         "fullscreen" => window.set_fullscreen(true).map_err(|e| e.to_string()),
         "exitFullscreen" => window.set_fullscreen(false).map_err(|e| e.to_string()),
@@ -652,4 +678,9 @@ pub fn cmd_window_action(action: String, window: WebviewWindow) -> Result<(), St
 #[tauri::command]
 pub fn cmd_window_is_fullscreen(window: WebviewWindow) -> Result<bool, String> {
     window.is_fullscreen().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn cmd_window_chrome_state(window: WebviewWindow) -> Result<WindowChromeState, String> {
+    Ok(read_window_chrome(&window))
 }

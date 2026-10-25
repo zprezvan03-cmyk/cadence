@@ -82,6 +82,7 @@ never a silent failure. `src/renderer/audio/codecs.ts` is the single source of t
 src-tauri/src       Tauri v2 Rust host: cadence-media Range protocol, path allowlist, rusqlite DB,
                     rfd native dialogs, reqwest HTTP client + cancellation, single-instance & media keys
 src-tauri/capabilities/default.json   least-privilege window capability (no arbitrary shell or fs)
+src-tauri/tauri.windows.conf.json     Windows-only window overlay: decorations off for the integrated title bar
 src/tauri/bridge.ts WebView2 implementation of window.cadence (CadenceApi) over @tauri-apps/api
 src/main/library    runtime-agnostic library store, RangeTokenizer metadata core, artwork cache, scanner
 src/main/lyrics     provider orchestration, Better Lyrics/Unison/Binimum/LRCLIB clients, YouTube oEmbed, cache
@@ -93,6 +94,17 @@ src/renderer/features/shaders  Kawarp WebGL background component
 src/renderer/upstream           ported upstream modules (headers say where from)
 src/shared          cross-runtime contract and ported upstream data
 ```
+
+### Window chrome
+
+Windows builds run without native decorations (`src-tauri/tauri.windows.conf.json`) so no OS-coloured
+caption strip can sit above the app. `src/renderer/app/WindowTitleBar.tsx` draws the replacement title
+bar as the first row of the app shell: it continues the sidebar and top-bar surfaces, carries the drag
+region (`data-tauri-drag-region` plus the `core:window:allow-start-dragging` capability), and puts
+minimize / maximize-restore / close flush in the top-right corner. macOS and Linux keep their native
+frames — the Rust side reports `undecorated: false`, so the custom bar is never rendered twice. The bar
+covers the first `--titlebar-height` pixels for any view that sizes itself against the viewport
+(`--window-chrome-top`), and it steps aside in immersive Now Playing and native fullscreen.
 
 The `<audio>` element is the single timing authority: the lyric renderer binds to it directly, so
 seek, pause, rate changes and track switches move the highlight with no second clock to drift.

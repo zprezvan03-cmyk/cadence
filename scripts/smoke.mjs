@@ -72,6 +72,7 @@ check(
 
 // 4. Tauri v2 configuration, least-privilege capabilities, and Windows icons ------------------
 const tauriConfPath = join(root, "src-tauri/tauri.conf.json");
+const tauriWinConfPath = join(root, "src-tauri/tauri.windows.conf.json");
 const tauriCapPath = join(root, "src-tauri/capabilities/default.json");
 const tauriCargoPath = join(root, "src-tauri/Cargo.toml");
 check("tauri-config-present", existsSync(tauriConfPath) && existsSync(tauriCargoPath), "src-tauri/{tauri.conf.json,Cargo.toml}");
@@ -98,6 +99,22 @@ if (existsSync(tauriConfPath)) {
       winCfg?.backgroundThrottling === "disabled",
     `${conf.productName} (${conf.identifier}) ${winCfg?.width}x${winCfg?.height}`
   );
+  // The integrated title bar depends on the Windows overlay undecorating the window. Platform
+  // configs replace `app.windows` wholesale, so the overlay must repeat every base field.
+  if (existsSync(tauriWinConfPath)) {
+    const winConf = JSON.parse(readFileSync(tauriWinConfPath, "utf8"));
+    const winOverlay = winConf?.app?.windows?.[0] ?? {};
+    const baseKeys = Object.keys(winCfg ?? {}).filter(key => key !== "decorations");
+    check(
+      "tauri-windows-title-bar",
+      winOverlay.decorations === false &&
+        baseKeys.every(key => winOverlay[key] === winCfg[key]) &&
+        Object.keys(winOverlay).filter(key => key !== "decorations").length === baseKeys.length,
+      "src-tauri/tauri.windows.conf.json undecorates the main window and mirrors the base config"
+    );
+  } else {
+    fail("tauri-windows-title-bar", "src-tauri/tauri.windows.conf.json is missing");
+  }
   check(
     "tauri-windows-icons",
     existsSync(join(root, "src-tauri/icons/icon.ico")) &&
@@ -116,6 +133,12 @@ if (existsSync(tauriCapPath)) {
     "tauri-least-privilege",
     cap.local === true && !hasUnrestrictedShellOrFs,
     `${perms.length} scoped window/core permissions`
+  );
+  check(
+    "tauri-title-bar-permissions",
+    perms.includes("core:window:allow-start-dragging") &&
+      perms.includes("core:window:allow-internal-toggle-maximize"),
+    "drag region (drag to move, double-click to maximize) is allowed"
   );
 }
 
