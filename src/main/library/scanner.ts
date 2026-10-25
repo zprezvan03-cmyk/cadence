@@ -9,7 +9,7 @@
 import { promises as fs } from "node:fs";
 import { join, relative, sep } from "node:path";
 import type { LibraryScanResult, ScanProgress } from "../../shared/types";
-import { isAudioFile, findSidecarLyrics, readTrackMetadata } from "./metadata";
+import { animatedArtCandidates, isAudioFile, findSidecarLyrics, readTrackMetadata } from "./metadata";
 import type { LibraryStore } from "./store";
 
 const SKIP_DIRECTORIES = new Set([
@@ -94,6 +94,17 @@ export async function scanLibrary(store: LibraryStore, options: ScanOptions): Pr
       errors.push({ path: folder, reason: (error as Error).message });
     }
   }
+
+  // Animated covers use media extensions too, but they are artwork sidecars, not library tracks.
+  // Exclude every sidecar referenced by another audio candidate while preserving standalone audio.
+  const animatedArtPaths = new Set<string>();
+  for (const file of files) {
+    for (const candidate of animatedArtCandidates(file)) animatedArtPaths.add(candidate.toLowerCase());
+  }
+  const audioFiles = files.filter(file => !animatedArtPaths.has(file.toLowerCase()));
+  files.length = 0;
+  files.push(...audioFiles);
+  progress.filesSeen = files.length;
 
   progress.phase = "reading";
   progress.message = `Reading ${files.length} files…`;

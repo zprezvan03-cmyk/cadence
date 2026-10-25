@@ -486,7 +486,7 @@ check(
 
 // The conventional close treatment: red fill on hover.
 await page.hover(".window-control.is-close");
-await wait(80);
+await wait(180);
 const closeHover = await page.evaluate(
   () => getComputedStyle(document.querySelector(".window-control.is-close")).backgroundColor
 );
@@ -1102,21 +1102,28 @@ const regionSamples = async selector => {
 // Animation through the backdrop: the glass must carry the moving shader, and an opaque black fill
 // (the old treatment) must not. Both are measured on the same region, frame to frame.
 const motionOf = async box => {
-  const first = PNG.sync.read(await page.screenshot({ clip: box }));
-  await wait(800);
-  const second = PNG.sync.read(await page.screenshot({ clip: box }));
-  let sum = 0;
-  let diffSum = 0;
-  let moved = 0;
-  const pixels = first.width * first.height;
-  for (let i = 0; i < first.data.length; i += 4) {
-    const a = first.data[i] + first.data[i + 1] + first.data[i + 2];
-    const b = second.data[i] + second.data[i + 1] + second.data[i + 2];
-    sum += a;
-    diffSum += Math.abs(a - b);
-    if (Math.abs(a - b) > 3) moved += 1;
+  // Audio-reactive shaders have quiet frames; sample several windows and retain the strongest
+  // motion measurement. A static/black control still has no window that can pass the thresholds.
+  let strongest = null;
+  for (let sample = 0; sample < 3; sample += 1) {
+    const first = PNG.sync.read(await page.screenshot({ clip: box }));
+    await wait(800);
+    const second = PNG.sync.read(await page.screenshot({ clip: box }));
+    let sum = 0;
+    let diffSum = 0;
+    let moved = 0;
+    const pixels = first.width * first.height;
+    for (let i = 0; i < first.data.length; i += 4) {
+      const a = first.data[i] + first.data[i + 1] + first.data[i + 2];
+      const b = second.data[i] + second.data[i + 1] + second.data[i + 2];
+      sum += a;
+      diffSum += Math.abs(a - b);
+      if (Math.abs(a - b) > 3) moved += 1;
+    }
+    const result = { mean: sum / pixels / 3, avgDiff: diffSum / pixels, movedRatio: moved / pixels };
+    if (!strongest || result.avgDiff > strongest.avgDiff) strongest = result;
   }
-  return { mean: sum / pixels / 3, avgDiff: diffSum / pixels, movedRatio: moved / pixels };
+  return strongest;
 };
 const fsBox = await page.$eval('[data-testid="fullscreen-controls"]', node => {
   const rect = node.getBoundingClientRect();

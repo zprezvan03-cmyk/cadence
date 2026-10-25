@@ -101,6 +101,7 @@ describe("scanning", () => {
     expect(result.errors).toEqual([]);
     const tracks = store.getTracks();
     expect(tracks.length).toBe(8);
+    expect(tracks.some(track => track.path.endsWith("cover.webm"))).toBe(false);
 
     const wav = tracks.find(track => track.path.endsWith("fixture.wav"))!;
     expect(wav.title).toBe("fixture");
@@ -112,6 +113,7 @@ describe("scanning", () => {
     expect(flac.artist).toBe("Harness Artist");
     expect(store.getLyrics(flac.id)?.text).toContain("Fixture first line");
     expect(flac.hasEmbeddedLyrics).toBe(true);
+    expect(flac.animatedArtPath?.endsWith("cover.webm")).toBe(true);
 
     const broken = tracks.find(track => track.path.endsWith("broken.flac"))!;
     expect(broken.title).toBe("broken");

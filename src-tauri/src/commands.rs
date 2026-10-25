@@ -165,6 +165,20 @@ fn mtime_milliseconds(meta: &std::fs::Metadata) -> f64 {
         .unwrap_or(0.0)
 }
 
+fn animated_art_candidate_names(audio_path: &Path) -> Vec<String> {
+    let stem = audio_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    vec![
+        "cover.mp4".to_string(),
+        "cover.webm".to_string(),
+        format!("{stem}.mp4"),
+        format!("{stem}.webm"),
+        format!("{stem}-animated.mp4"),
+    ]
+}
+
 fn build_audio_entry(
     audio_path: &Path,
     meta: &std::fs::Metadata,
@@ -193,13 +207,7 @@ fn build_audio_entry(
         }
     }
 
-    let animated_candidates = [
-        "cover.mp4".to_string(),
-        "cover.webm".to_string(),
-        format!("{stem}.mp4"),
-        format!("{stem}.webm"),
-        format!("{stem}-animated.mp4"),
-    ];
+    let animated_candidates = animated_art_candidate_names(audio_path);
     let mut animated_art_path = None;
     for candidate_name in &animated_candidates {
         if let Some(found) = lookup_file(candidate_name) {
@@ -257,7 +265,21 @@ fn walk_directory_recursive(
         }
     }
 
-    for audio_path in files {
+    // Animated covers share audio extensions, but must not become independent library tracks.
+    let mut animated_art_paths = HashSet::new();
+    for audio_path in &files {
+        for candidate_name in animated_art_candidate_names(audio_path) {
+            if let Some(found) = sibling_map.get(&candidate_name.to_lowercase()) {
+                if found != audio_path {
+                    animated_art_paths.insert(found.clone());
+                }
+            }
+        }
+    }
+    for audio_path in files
+        .into_iter()
+        .filter(|path| !animated_art_paths.contains(path))
+    {
         if let Ok(meta) = std::fs::metadata(&audio_path) {
             out.push(build_audio_entry(&audio_path, &meta, Some(&sibling_map)));
         }

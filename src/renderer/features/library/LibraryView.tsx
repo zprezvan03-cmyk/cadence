@@ -2,7 +2,7 @@
  * Library browsing: songs, albums, artists, playlists and favourites. Written for Cadence.
  */
 
-import { useDeferredValue, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { FolderPlus, Play, Plus, Search, Shuffle, Trash2 } from "lucide-react";
 import type { LibraryTab } from "../../state/uiStore";
 import { useLibrary } from "../../state/libraryStore";

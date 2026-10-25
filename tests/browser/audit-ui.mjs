@@ -88,6 +88,7 @@ const server = createServer((req, res) => {
   const decode = value => decodeURIComponent(value);
   let file = null;
   if (url.pathname.startsWith("/audio/")) file = join(audioDir, decode(url.pathname.slice(7)));
+  else if (url.pathname.startsWith("/media/")) file = join(audioDir, decode(url.pathname.slice(7)));
   else if (url.pathname.startsWith("/artwork/")) file = join(harnessDir, decode(url.pathname.slice(9)));
   else {
     const path = url.pathname === "/" ? "/index.html" : url.pathname;
@@ -144,8 +145,16 @@ page.on("pageerror", error => logs.push(`[pageerror] ${error.message}`));
 
 const results = {};
 const check = (name, value, detail = "") => {
-  results[name] = { value, detail };
+  results[name] = { value, status: value ? "PASS" : "FAIL", detail };
   console.log(`${value ? "PASS" : "FAIL"} ${name}${detail ? ` — ${detail}` : ""}`);
+};
+const blocked = (name, detail) => {
+  results[name] = { value: null, status: "BLOCKED", detail };
+  console.log(`BLOCKED ${name} — ${detail}`);
+};
+const notTested = (name, detail) => {
+  results[name] = { value: null, status: "NOT TESTED", detail };
+  console.log(`NOT TESTED ${name} — ${detail}`);
 };
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const audioState = () =>
@@ -710,7 +719,7 @@ await runSection("queue-regressions-completes", async () => {
   check("play-next-shuffled-preserves-current-track", shuffledBefore.title === shuffledAfter.title && shuffledBefore.src === shuffledAfter.src, `${shuffledBefore.title} → ${shuffledAfter.title}`);
   await setShuffle(false); await nav("Songs"); await playTrack("Fixture FLAC"); await openQueue();
   const originalQueue = await queueState(); const secondTitle = originalQueue.titles[1];
-  await page.$$eval(".queue-track", nodes => nodes[1]?.click()); await wait(400);
+  const queueTracks = await page.$$(".queue-track"); await queueTracks[1].click(); await wait(400);
   const firstRemove = await page.$('.queue-list li:first-child button[aria-label^="Remove "]'); await firstRemove.click(); await wait(150);
   const removedState = { title: await playerTitle(), src: (await audioState()).src, queue: await queueState() };
   check("remove-earlier-queue-entry-preserves-current", removedState.title === secondTitle && removedState.queue.titles[removedState.queue.current] === secondTitle, `expected ${secondTitle}; ${JSON.stringify(removedState)}`);
@@ -1057,7 +1066,7 @@ await runSection("expanded-lyrics-completes", async () => {
   await page.evaluate(() => { window.__audit.state.chooseLyricsResult = { canceled: true }; });
   await page.click('button[title="Open a lyrics file"]'); await wait(100);
   check("lyrics-file-cancel", (await page.$eval(".lyrics-body", node => node.textContent)).includes("Alternate first line"), "cancel leaves lyrics unchanged");
-  await page.evaluate(() => { window.__audit.state.chooseLyricsResult = { canceled: false, path: "/chosen.lrc", text: "[00:00.30]Chosen file line\n[00:01.60]Chosen second line" }; });
+  await page.evaluate(() => { window.__audit.state.chooseLyricsResult = { canceled: false, path: "/chosen.lrc", text: "[au:Audit Writer]\n[00:00.30]Chosen file line\n[00:01.60]Chosen second line" }; });
   await page.click('button[title="Open a lyrics file"]'); await wait(180);
   check("lyrics-file-open", (await page.$eval(".lyrics-body", node => node.textContent)).includes("Chosen file line"), "chosen file rendered");
 
@@ -1289,6 +1298,199 @@ await runSection("expanded-window-and-media-completes", async () => {
   await page.keyboard.press("Escape");
 });
 
+await runSection("expanded-search-and-topbar-completes", async () => {
+  await nav("Songs");
+  const searchFor = async value => {
+    const input = await page.$("#global-search");
+    await input.click();
+    await page.keyboard.down("Control"); await page.keyboard.press("A"); await page.keyboard.up("Control");
+    if (value) await page.keyboard.type(value); else await page.keyboard.press("Backspace");
+    await wait(450);
+  };
+  await searchFor("FLAC");
+  check("global-search-results", Boolean(await page.$('[data-testid="search-view"]')) && (await page.$$eval('[data-testid="search-track-list"] .title-text', nodes => nodes.map(node => node.textContent.trim()))).includes("Fixture FLAC"), "track result rendered");
+  await page.click('button[aria-label="Clear search"]'); await wait(150);
+  check("global-search-clear", !(await page.$('[data-testid="search-view"]')) && (await page.$eval("#global-search", node => node.value)) === "", "cleared and returned home");
+  await searchFor("Fixture");
+  await clickText(".search-view .shelf-heading .link", "Play all"); await wait(500);
+  check("search-play-all", !(await audioState()).paused && (await page.evaluate(() => location.hash)).startsWith("#/search/"), "search queue starts playing");
+  await pausePlayback();
+  await searchFor("Harness Artist");
+  check("search-artist-album-results", Boolean(await page.$(".search-view .artist-card")) && Boolean(await page.$(".search-view [data-testid=\"album-card\"]")), "artist and album shelves");
+  await (await page.$(".search-view [data-testid=\"album-card\"]")).click(); await wait(150);
+  check("search-album-card-opens", Boolean(await page.$(".detail-hero")), "album detail");
+  await nav("Songs"); await searchFor("zzzz-no-match");
+  check("search-no-results", (await page.$eval(".search-view", node => node.textContent)).includes("No songs match"), "empty result message");
+  await page.click('button[aria-label="Clear search"]'); await wait(120);
+  const addsBefore = await page.evaluate(() => window.__audit.state.calls.filter(call => call[0] === "add-folder").length);
+  await clickText(".top-bar .ghost-button", "Add music"); await wait(100);
+  check("topbar-add-music", (await page.evaluate(() => window.__audit.state.calls.filter(call => call[0] === "add-folder").length)) === addsBefore + 1, "folder picker request");
+});
+
+await runSection("expanded-player-controls-completes", async () => {
+  await nav("Songs"); await setShuffle(false); await playTrack("Fixture FLAC");
+  const metadata = await page.evaluate(() => ({ title: navigator.mediaSession?.metadata?.title, artist: navigator.mediaSession?.metadata?.artist, artwork: navigator.mediaSession?.metadata?.artwork?.[0]?.src ?? "" }));
+  check("media-session-track-metadata", metadata.title === "Fixture FLAC" && metadata.artist === "Harness Artist" && metadata.artwork.includes("/artwork/"), JSON.stringify(metadata));
+  const wasPaused = (await audioState()).paused;
+  await page.click('[data-testid="play-toggle"]'); await wait(180);
+  check("player-play-pause", (await audioState()).paused !== wasPaused, "transport toggles audio");
+  await page.click('[data-testid="play-toggle"]'); await wait(180);
+  check("player-play-resume", !(await audioState()).paused, "transport resumes audio");
+  const seek = await page.$('.player-bar input[aria-label="Seek"]'); const seekBox = await seek.boundingBox();
+  await page.mouse.click(seekBox.x + seekBox.width * 0.55, seekBox.y + seekBox.height * 0.5); await wait(150);
+  check("player-seek", (await audioState()).currentTime > 0.5, `position=${(await audioState()).currentTime}`);
+  const volume = await page.$('.player-bar input[aria-label="Volume"]'); await volume.focus(); await page.keyboard.press("End"); await wait(100);
+  check("player-volume-slider", (await page.$eval("audio", node => node.volume)) === 1, "volume End sets maximum");
+  await page.click('.player-bar button[aria-label="Mute"]'); await wait(80);
+  check("player-mute", await page.$eval("audio", node => node.muted), "mute applied");
+  await page.click('.player-bar button[aria-label="Unmute"]'); await wait(80);
+  check("player-unmute", !(await page.$eval("audio", node => node.muted)), "unmute applied");
+  await page.click('.player-bar button[aria-label="Next track"]'); await wait(400);
+  const nextTitle = await playerTitle();
+  check("player-next", nextTitle !== "Fixture FLAC", nextTitle);
+  await page.click('.player-bar button[aria-label="Previous track"]'); await wait(400);
+  check("player-previous", (await playerTitle()) === "Fixture FLAC", await playerTitle());
+  const repeatBefore = await page.$eval('.player-bar button[aria-label^="Repeat:"]', node => node.getAttribute("aria-label"));
+  await page.click('.player-bar button[aria-label^="Repeat:"]'); await wait(80);
+  check("player-repeat-cycle", (await page.$eval('.player-bar button[aria-label^="Repeat:"]', node => node.getAttribute("aria-label"))) !== repeatBefore, "repeat advances");
+  await page.click('.player-bar button[aria-label="Add to favourites"]'); await wait(120);
+  check("player-favorite", Boolean(await page.$('.player-bar button[aria-label="Remove from favourites"]')), "favorite state applied");
+  await page.click('.player-bar button[aria-label="Remove from favourites"]'); await wait(120);
+  check("player-unfavorite", Boolean(await page.$('.player-bar button[aria-label="Add to favourites"]')), "favorite state cleared");
+  await page.click('.player-bar button[aria-label="Now Playing"]'); await wait(120);
+  check("player-now-playing", Boolean(await page.$('[data-testid="lyrics-view"]')), "lyrics destination");
+  await nav("Songs"); await openQueue();
+  check("player-queue-open", Boolean(await page.$('[data-testid="queue-panel"]')), "queue button");
+  await closeQueue();
+  await page.click('.player-bar button[aria-label="Fullscreen lyrics"]'); await wait(150);
+  check("player-fullscreen-open", Boolean(await page.$(".lyrics-view.is-fullscreen")), "fullscreen button");
+  await page.click('button[aria-label="Exit fullscreen lyrics"]'); await wait(120);
+  check("player-fullscreen-close", !(await page.$(".lyrics-view.is-fullscreen")), "exit button");
+  await pausePlayback();
+});
+
+await runSection("expanded-queue-controls-completes", async () => {
+  await nav("Songs"); await setShuffle(false); await playTrack("Fixture FLAC"); await openQueue();
+  const queueTracks = await page.$$(".queue-track"); await queueTracks[1].click(); await wait(400);
+  const jumped = await queueState();
+  check("queue-jump-to-track", jumped.current === 1 && (await playerTitle()) === jumped.titles[1], JSON.stringify(jumped));
+  const beforeRemoval = await queueState();
+  const currentTitle = jumped.titles[jumped.current];
+  const removeIndex = jumped.current === 0 ? 1 : 0;
+  await (await page.$(`.queue-list li:nth-child(${removeIndex + 1}) button[aria-label^="Remove "]`)).click(); await wait(150);
+  const afterRemoval = await queueState();
+  check("queue-remove-noncurrent", afterRemoval.titles.length === beforeRemoval.titles.length - 1 && afterRemoval.titles[afterRemoval.current] === currentTitle, "current track preserved");
+  await closeQueue(); await nav("Songs"); await openQueue(); await page.click('button[aria-label="Clear queue"]'); await wait(100); await closeQueue();
+  await page.click("#global-search"); await page.keyboard.type("Fixture FLAC"); await wait(450); await (await trackRow("Fixture FLAC")).click(); await wait(400);
+  await page.click('button[aria-label="Clear search"]'); await wait(100); await nav("Songs");
+  await openTrackMenu("Fixture MP3"); await clickText(".context-menu button", "Add to queue"); await openQueue();
+  const two = await queueState();
+  await closeQueue(); await nav("Songs"); await openTrackMenu("Fixture MP3"); await clickText(".context-menu button", "Add to queue"); await openQueue();
+  const deduped = await queueState();
+  check("queue-add-and-dedupe", two.titles.length === 2 && deduped.titles.length === 2 && deduped.titles.filter(title => title === "Fixture MP3").length === 1, JSON.stringify(deduped));
+  await page.keyboard.press("Escape"); await wait(100);
+  check("queue-escape-close", !(await page.$('[data-testid="queue-panel"]')) && !(await page.$(".lyrics-view.is-fullscreen")), "Escape closes only queue");
+  await pausePlayback();
+});
+
+await runSection("expanded-dialog-and-menu-completes", async () => {
+  await nav("Songs"); await openTrackMenu("Fixture FLAC"); await page.keyboard.press("Escape"); await wait(80);
+  check("context-menu-escape", !(await page.$(".context-menu")), "menu closed");
+  await openTrackMenu("Fixture FLAC"); await page.mouse.click(1000, 120); await wait(80);
+  check("context-menu-outside-click", !(await page.$(".context-menu")), "outside click closed");
+  await openTrackMenu("Fixture FLAC"); await clickText(".context-menu button", "Add to playlist…");
+  check("playlist-picker-opens", Boolean(await page.$(".modal-backdrop")), "picker opened");
+  await page.click('.modal-header button[aria-label="Close"]'); await wait(80);
+  check("playlist-picker-close-button", !(await page.$(".modal-backdrop")), "close button");
+  await openTrackMenu("Fixture FLAC"); await clickText(".context-menu button", "Add to playlist…"); await page.keyboard.press("Escape"); await wait(100);
+  check("playlist-picker-escape", !(await page.$(".modal-backdrop")), "Escape closes picker");
+  await openTrackMenu("Fixture FLAC"); await clickText(".context-menu button", "Add to playlist…"); await page.mouse.click(1000, 120); await wait(80);
+  check("playlist-picker-backdrop", !(await page.$(".modal-backdrop")), "backdrop closes picker");
+  await nav("Playlists"); await clickText(".list-toolbar button", "New playlist", false); await page.type('.inline-create input[placeholder="Playlist name"]', "Modal Mix"); await clickText(".inline-create button", "Create"); await wait(200);
+  await clickText(".detail-hero button", "Add songs", false); await page.keyboard.press("Escape"); await wait(100);
+  check("playlist-add-escape", !(await page.$(".modal-backdrop")), "Escape closes add-songs dialog");
+  await clickText(".detail-hero button", "Add songs", false); await page.click('.modal-header button[aria-label="Close"]'); await wait(80);
+  check("playlist-add-close-button", !(await page.$(".modal-backdrop")), "close button");
+  await nav("Playlists"); const deleteButton = await page.$('button[aria-label="Delete Modal Mix"]'); if (deleteButton) await deleteButton.click();
+});
+
+await runSection("expanded-appearance-controls-completes", async () => {
+  await nav("Settings"); await page.click(".view-heading button"); await wait(150); await settingsTab("Appearance");
+  const currentAccent = await page.evaluate(async () => (await window.cadence.settings.get()).appearance.accent);
+  check("appearance-accent-display", (await page.$eval('input[type="color"]', node => node.value)) === currentAccent, `native color input reflects applied accent ${currentAccent}`);
+  const fontValues = await page.$eval('[data-testid="font-select"]', node => [...node.options].map(option => option.value));
+  for (const value of fontValues) {
+    await selectSetting("Font", value);
+    check(`appearance-font-option-${value}`, (await storedSettings()).appearance?.fontFamily === value, value);
+  }
+  await selectSetting("Font", "system");
+  await toggleSetting("Blur artwork behind the player");
+  check("appearance-blur-toggle-live", (await page.$eval("html", node => node.dataset.blurArtwork)) === "false", "artwork layer disabled");
+  await toggleSetting("Blur artwork behind the player");
+  await toggleSetting("Reduce motion");
+  check("appearance-reduce-motion-live", (await page.$eval("html", node => node.dataset.reduceMotion)) === "true", "reduced motion root state");
+  await toggleSetting("Reduce motion");
+  await toggleSetting("Compact sidebar");
+  check("appearance-compact-live", (await page.$eval("html", node => node.dataset.compactSidebar)) === "true", "compact root state");
+  await toggleSetting("Compact sidebar");
+  await toggleSetting("Enable shader background");
+  check("appearance-shader-disable", (await storedSettings()).shaders?.enabled === false, "shader setting disabled");
+  await toggleSetting("Enable shader background");
+  for (const mode of ["high", "balanced", "low", "off"]) {
+    await selectSetting("Performance mode", mode);
+    check(`appearance-performance-${mode}`, (await storedSettings()).shaders?.performanceMode === mode, mode);
+  }
+  await selectSetting("Performance mode", "balanced");
+  for (const label of ["React to the audio", "Pause when playback stops", "Dim bright artwork", "Animated artwork"]) {
+    const before = (await storedSettings()).shaders;
+    await toggleSetting(label);
+    const after = (await storedSettings()).shaders;
+    const key = { "React to the audio": "audioResponsive", "Pause when playback stops": "pauseOnInactive", "Dim bright artwork": "autoDimBrightArtwork", "Animated artwork": "enableAnimatedArt" }[label];
+    check(`appearance-toggle-${key}`, after?.[key] === !before?.[key], `${label} stored=${after?.[key]}`);
+    await toggleSetting(label);
+  }
+  await settingsTab("Playback");
+  await toggleSetting("Restore the last session on launch");
+  check("appearance-playback-resume-toggle", (await storedSettings()).playback?.resumeOnLaunch === true, "resume setting stored");
+  await toggleSetting("Restore the last session on launch");
+  await settingsTab("Appearance");
+  const themeValues = await page.$$eval('.setting-row select', nodes => {
+    const row = nodes.find(node => node.closest(".setting-row")?.querySelector("strong")?.textContent === "Theme");
+    return row ? [...row.options].map(option => option.value) : [];
+  });
+  for (const theme of themeValues) {
+    await selectSetting("Theme", theme);
+    check(`appearance-theme-${theme}`, (await storedSettings()).lyrics?.themeId === theme, theme);
+  }
+  await page.click(".view-heading button"); await wait(150);
+});
+
+await runSection("expanded-album-fallback-completes", async () => {
+  await page.evaluate(() => {
+    const state = window.__audit.state;
+    state.albumBackup = structuredClone(state.tracks);
+    const track = state.tracks.find(entry => entry.title === "Fixture FLAC");
+    if (track) track.albumArtist = null;
+  });
+  try {
+    await nav("Settings"); await settingsTab("Library"); await clickText(".heading-actions button", "Rescan now"); await wait(150);
+    await nav("Albums");
+    const cards = await page.$$('[data-testid="album-card"]');
+    let albumCard = null;
+    for (const card of cards) if ((await card.$eval(".card-title", node => node.textContent.trim())) === "Test Bench") { albumCard = card; break; }
+    if (!albumCard) throw new Error("Test Bench card missing after albumArtist fallback");
+    await albumCard.click(); await wait(150);
+    check("album-fallback-detail-tracks", Boolean(await trackRow("Fixture FLAC")), "album detail retains track with missing albumArtist");
+    await clickText(".detail-hero .heading-actions button", "Play"); await wait(400);
+    check("album-fallback-play", !(await audioState()).paused, "album Play uses displayed album key");
+    await pausePlayback(); await nav("Songs"); await openTrackMenu("Fixture FLAC"); await clickText(".context-menu button", "Go to album");
+    check("album-fallback-context-route", Boolean(await trackRow("Fixture FLAC")), "Go to album uses the same fallback key");
+  } finally {
+    await page.evaluate(() => { const state = window.__audit.state; if (state.albumBackup) { state.tracks = state.albumBackup; delete state.albumBackup; } });
+    await nav("Settings"); await settingsTab("Library"); await clickText(".heading-actions button", "Rescan now"); await wait(150);
+  }
+});
+
 await runSection("expanded-empty-library-completes", async () => {
   await page.evaluate(() => { window.__audit.state.folders = ["/fixtures"]; });
   await nav("Settings"); await settingsTab("Library"); await clickText(".heading-actions button", "Rescan now"); await wait(200);
@@ -1317,10 +1519,23 @@ await runSection("expanded-async-settings-completes", async () => {
   await page.click(".view-heading button"); await wait(180);
 });
 
+blocked("native-windows-smtc", "No Windows host is available; actual SMTC flyout, AUMID registration, media keys, and native metadata remain unverified.");
+blocked("native-window-and-os-dialogs", "Chromium exercises renderer dispatch and stubbed dialogs only; native Tauri window controls, fullscreen, and filesystem dialogs require Windows.");
+blocked("physical-media-keys", "MediaSession metadata and renderer command dispatch are tested; physical keyboard/media-key delivery requires a Windows session.");
+blocked("live-online-lyrics-providers", "External provider services and credentials are unavailable; local/embedded and fixture-backed provider paths are tested instead.");
+notTested("native-accent-color-picker", "The accent input value is synchronized, but changing it through the native OS color picker was not possible in headless Chromium.");
+notTested("windows-installer-shortcut-aumid", "The unpacked/installed Windows shortcut and process AUMID association were not exercised without a Windows host.");
+notTested("hardware-gpu-memory-and-long-run", "SwiftShader smoke coverage is complete, but physical GPU performance, RAM growth, and long-running native freeze/leak behavior were not measured.");
 await auditShot("final-audit-state");
 const phase = process.env.AUDIT_PHASE || "targeted";
 writeFileSync(join(auditDir, `${phase}-results.json`), JSON.stringify({ results, logs }, null, 2));
-const summary = Object.entries(results).reduce((acc, [, result]) => { acc[result.value ? "passed" : "failed"] += 1; return acc; }, { passed: 0, failed: 0 });
-console.log(`Audit ${phase}: ${summary.passed} passed, ${summary.failed} failed`);
+const summary = Object.values(results).reduce((acc, result) => {
+  if (result.status === "BLOCKED") acc.blocked += 1;
+  else if (result.status === "NOT TESTED") acc.notTested += 1;
+  else if (result.value) acc.passed += 1;
+  else acc.failed += 1;
+  return acc;
+}, { passed: 0, failed: 0, blocked: 0, notTested: 0 });
+console.log(`Audit ${phase}: ${summary.passed} passed, ${summary.failed} failed, ${summary.blocked} blocked, ${summary.notTested} not tested`);
 await browser.close(); server.close();
 if (summary.failed > 0) process.exitCode = 1;
