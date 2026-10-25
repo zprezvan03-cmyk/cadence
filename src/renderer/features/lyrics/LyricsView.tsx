@@ -216,8 +216,20 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
           <div className="lyrics-empty-panel">
             <h2>No lyrics found</h2>
             <p>
-              Cadence looked for a sidecar <code>.lrc</code>/<code>.ttml</code> file, an embedded tag and
-              LRCLIB{lyricsSettings?.autoFetch ? "" : " (offline mode is on)"}.
+              {lyricsSettings?.autoFetch ? (
+                <>
+                  Cadence checked sidecar <code>.lrc</code>/<code>.ttml</code>/<code>.qrc</code> files, embedded
+                  tags, and enabled online providers (Better Lyrics, Unison, BiniLyrics, LRCLIB).
+                  {lyrics.providerStatus.some(entry => entry.status === "error")
+                    ? ` Some providers reported an issue (${lyrics.providerStatus.find(entry => entry.status === "error")?.detail ?? "request failed"}).`
+                    : ""}
+                </>
+              ) : (
+                <>
+                  Cadence checked sidecar <code>.lrc</code>/<code>.ttml</code>/<code>.qrc</code> files and embedded
+                  tags (online lyrics lookup is turned off).
+                </>
+              )}
             </p>
             <div className="empty-actions">
               <button type="button" className="primary" onClick={() => void lyrics.chooseFile()}>

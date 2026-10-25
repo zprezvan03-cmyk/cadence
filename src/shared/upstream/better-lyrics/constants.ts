@@ -145,9 +145,30 @@ export function providerPriority(key: string): number {
 }
 
 /**
+ * Rank of `source` within the user's configured `order` (ignoring `d_` disabled prefixes),
+ * falling back to canonical registry priority when `source` is not listed in `order`.
+ */
+export function providerOrderRank(source: string, order: readonly string[]): number {
+  for (let i = 0; i < order.length; i += 1) {
+    if (untoggleProvider(order[i]) === source) return i;
+  }
+  return 1000 + providerPriority(source);
+}
+
+/** Canonical Cadence keys for upstream Better Lyrics extension provider identifiers. */
+const UPSTREAM_PROVIDER_ALIASES: Readonly<Record<string, string>> = {
+  "bLyrics-richsynced": "blyrics-richsynced",
+  "bLyrics-synced": "blyrics-synced",
+  "portato-richsynced": "blyrics-wordsynced",
+  "legato-synced": "blyrics-synced",
+};
+
+/**
  * Migrate any persisted provider order to the current registry:
  *   - the legacy combined `local-sidecar` source splits into `local-rich` then `local-lrc`,
  *     preserving a `d_` disabled prefix;
+ *   - upstream Better Lyrics extension identifiers (`bLyrics-*`, `portato-*`, `legato-*`) map
+ *     to their canonical Cadence source keys, preserving any `d_` disabled prefix;
  *   - unknown keys are dropped, duplicates collapsed;
  *   - newly introduced registry slots are merged in at their canonical positions.
  * A missing/empty order yields the exact recommended default.
@@ -163,13 +184,14 @@ export function migrateProviderOrder(stored: readonly string[] | undefined | nul
   for (const raw of stored) {
     if (typeof raw !== "string" || !raw) continue;
     const disabled = raw.startsWith("d_");
-    const key = untoggleProvider(raw);
-    if (key === "local-sidecar") {
+    const rawKey = untoggleProvider(raw);
+    if (rawKey === "local-sidecar") {
       remember(disabled ? "d_local-rich" : "local-rich");
       remember(disabled ? "d_local-lrc" : "local-lrc");
       continue;
     }
-    if (isKnownProviderKey(key)) remember(raw);
+    const key = UPSTREAM_PROVIDER_ALIASES[rawKey] ?? rawKey;
+    if (isKnownProviderKey(key)) remember(disabled ? `d_${key}` : key);
   }
 
   // mergePreferredProviders only inserts keys that are missing, so custom relative order survives.
