@@ -1,0 +1,25 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Cadence",
+        "width": 1440,
+        "height": 920,
+        "minWidth": 1040,
+        "minHeight": 680,
+        "resizable": true,
+        "maximizable": true,
+        "minimizable": true,
+        "closable": true,
+        "fullscreen": false,
+        "center": true,
+        "backgroundColor": "#08080b",
+        "backgroundThrottling": "disabled",
+        "dragDropEnabled": false,
+        "decorations": false
+      }
+    ]
+  }
+}

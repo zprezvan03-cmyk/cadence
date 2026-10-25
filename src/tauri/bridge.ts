@@ -8,7 +8,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen, TauriEvent, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppInfo,
   CadenceApi,
@@ -18,6 +18,7 @@ import type {
   PlayerSnapshot,
   ScanProgress,
   Track,
+  WindowChromeState,
 } from "../shared/types";
 import { isPathInside, type PathPlatform } from "../main/media/allowlist";
 import { toTauriMediaUrl } from "../main/media/protocolHandler";
@@ -62,6 +63,7 @@ export interface BootstrapPayload {
   lyricsCacheJson: string | null;
   dbSnapshot: DatabaseShape;
   startupFiles: string[];
+  undecorated: boolean;
 }
 
 interface HttpFetchResponse {
@@ -158,6 +160,14 @@ export interface InstalledTauriBridge {
 
 export async function installTauriBridge(): Promise<InstalledTauriBridge> {
   const bootstrap = await invoke<BootstrapPayload>("cmd_bootstrap");
+  // Captured before the first render so an undecorated (custom title bar) window does not flash a
+  // gapless layout for a frame while the async chrome state is still in flight.
+  const initialWindowChrome: WindowChromeState = {
+    undecorated: bootstrap.undecorated,
+    maximized: false,
+    fullscreen: false,
+    focused: true,
+  };
   const pathPlatform: PathPlatform = bootstrap.platform === "win32" ? "win32" : "posix";
 
   setRuntimeFetch(createTauriRuntimeFetch());
@@ -730,6 +740,44 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
 
       async isFullScreen(): Promise<boolean> {
         return invoke<boolean>("cmd_window_is_fullscreen");
+      },
+
+      initialWindowChrome,
+
+      async windowChrome(): Promise<WindowChromeState> {
+        return invoke<WindowChromeState>("cmd_window_chrome_state");
+      },
+
+      onWindowChromeChange(listener: (state: WindowChromeState) => void): () => void {
+        let active = true;
+        const handles: UnlistenFn[] = [];
+        const refresh = () => {
+          void invoke<WindowChromeState>("cmd_window_chrome_state")
+            .then(state => {
+              if (active) listener(state);
+            })
+            .catch(() => {
+              /* the window went away while the state was being read */
+            });
+        };
+        // tao re-emits resize for maximize, restore and fullscreen transitions; focus/blur carry the
+        // active-window treatment of the controls.
+        void Promise.all([
+          listen(TauriEvent.WINDOW_RESIZED, refresh),
+          listen(TauriEvent.WINDOW_FOCUS, refresh),
+          listen(TauriEvent.WINDOW_BLUR, refresh),
+        ]).then(registered => {
+          if (!active) {
+            for (const unlisten of registered) unlisten();
+            return;
+          }
+          handles.push(...registered);
+        });
+        refresh();
+        return () => {
+          active = false;
+          for (const unlisten of handles) unlisten();
+        };
       },
     },
 

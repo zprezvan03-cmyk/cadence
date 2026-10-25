@@ -27,7 +27,7 @@
 /* ------------------------------------------------------------ home empty */
 
 .home-empty {
-  min-height: calc(100vh - var(--player-height) - var(--topbar-height) - 60px);
+  min-height: calc(100vh - var(--window-chrome-top) - var(--player-height) - var(--topbar-height) - 60px);
   display: flex;
   flex-direction: column;
   align-items: center;

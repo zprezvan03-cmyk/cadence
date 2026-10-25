@@ -164,6 +164,10 @@ const audioState = () =>
 await page.evaluateOnNewDocument(
   data => {
     const { snapshot, lyricsByTrack } = data;
+    // Mirrors the Windows shell: undecorated window, so the renderer draws the title bar.
+    window.__chrome = { undecorated: true, maximized: false, fullscreen: false, focused: true };
+    window.__chromeListeners = new Set();
+    window.__cadenceWindowActions = [];
     const SETTINGS_KEY = "cadence.harness.settings.v1";
     const defaultSettings = {
       version: 1,
@@ -385,8 +389,21 @@ await page.evaluateOnNewDocument(
         openExternal: async () => undefined,
         openPath: async () => undefined,
         chooseLyricsFile: async () => null,
-        window: async () => undefined,
-        isFullScreen: async () => false,
+        window: async action => {
+          window.__cadenceWindowActions.push(action);
+          if (action === "maximize") window.__chrome.maximized = true;
+          if (action === "restore") window.__chrome.maximized = false;
+          if (action === "fullscreen") window.__chrome.fullscreen = true;
+          if (action === "exitFullscreen") window.__chrome.fullscreen = false;
+          for (const listener of window.__chromeListeners) listener({ ...window.__chrome });
+        },
+        isFullScreen: async () => window.__chrome.fullscreen,
+        initialWindowChrome: { ...window.__chrome },
+        windowChrome: async () => ({ ...window.__chrome }),
+        onWindowChromeChange: listener => {
+          window.__chromeListeners.add(listener);
+          return () => window.__chromeListeners.delete(listener);
+        },
       },
       onMenuAction: () => () => {},
     };
@@ -405,6 +422,97 @@ await page.waitForSelector(".sidebar", { timeout: 20_000 }).catch(async () => {
 });
 await wait(600);
 check("app-boots", (await page.$$(".nav-item")).length >= 6, `${(await page.$$(".sidebar-link")).length} playlists in sidebar`);
+
+/* ------------------------------------------------- integrated title bar */
+
+const layout = await page.evaluate(() => {
+  const box = selector => {
+    const node = document.querySelector(selector);
+    if (!node) return null;
+    const rect = node.getBoundingClientRect();
+    return { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left, width: rect.width, height: rect.height };
+  };
+  return {
+    width: window.innerWidth,
+    bar: box(".window-title-bar"),
+    brand: box(".title-bar-brand"),
+    sidebar: box(".sidebar"),
+    topBar: box(".top-bar"),
+    controls: [...document.querySelectorAll(".window-control")].map(node => {
+      const rect = node.getBoundingClientRect();
+      return {
+        label: node.getAttribute("aria-label"),
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        left: rect.left,
+        dragRegion: node.hasAttribute("data-tauri-drag-region"),
+      };
+    }),
+    barDragRegion: document.querySelector(".window-title-bar")?.hasAttribute("data-tauri-drag-region") ?? false,
+  };
+});
+
+check("titlebar-present", layout.bar !== null, "undecorated window draws its own title bar");
+check(
+  "titlebar-spans-window",
+  Math.abs(layout.bar.top) < 1 && Math.abs(layout.bar.width - layout.width) < 1,
+  `bar ${layout.bar.width}x${layout.bar.height} at ${layout.bar.top}`
+);
+check(
+  "titlebar-no-overlap",
+  layout.sidebar.top >= layout.bar.bottom - 1 && layout.topBar.top >= layout.bar.bottom - 1,
+  `sidebar ${layout.sidebar.top}, top bar ${layout.topBar.top}, bar bottom ${layout.bar.bottom}`
+);
+check("titlebar-drag-region", layout.barDragRegion, "title bar is a Tauri drag region");
+check(
+  "window-controls-corner",
+  layout.controls.length === 3 &&
+    Math.abs(layout.controls.at(-1).right - layout.width) < 1 &&
+    Math.abs(layout.controls[0].top) < 1 &&
+    layout.controls.every(control => control.dragRegion === false),
+  `controls at ${layout.controls.map(control => control.label).join(", ")}; none are drag regions`
+);
+check(
+  "window-controls-styled",
+  await page.evaluate(() => {
+    const group = document.querySelector('[role="group"][aria-label="Window controls"]');
+    const close = document.querySelector(".window-control.is-close");
+    if (!group || !close) return false;
+    return getComputedStyle(close).backgroundColor === "rgba(0, 0, 0, 0)";
+  }),
+  "window controls sit in a labelled group and rest without a fill"
+);
+
+// The conventional close treatment: red fill on hover.
+await page.hover(".window-control.is-close");
+await wait(80);
+const closeHover = await page.evaluate(
+  () => getComputedStyle(document.querySelector(".window-control.is-close")).backgroundColor
+);
+check("close-hover-treatment", closeHover === "rgb(196, 43, 28)", `close hover background ${closeHover}`);
+
+// Maximize flips to the restore glyph through the native window-state round trip.
+await page.click(".window-control[aria-label='Maximize']");
+await wait(120);
+const maximizeState = await page.evaluate(() => ({
+  actions: window.__cadenceWindowActions,
+  label: document.querySelectorAll(".window-control")[1].getAttribute("aria-label"),
+}));
+check(
+  "maximize-round-trip",
+  maximizeState.actions.at(0) === "maximize" && maximizeState.label === "Restore down",
+  `actions ${maximizeState.actions.join(",")}; label ${maximizeState.label}`
+);
+await page.click(".window-control[aria-label='Restore down']");
+await wait(120);
+check(
+  "restore-round-trip",
+  (await page.evaluate(() => document.querySelectorAll(".window-control")[1].getAttribute("aria-label"))) === "Maximize",
+  "restore returns the maximize label"
+);
+await page.hover(".top-bar");
+await page.screenshot({ path: join(shotDir, "00-title-bar.png"), clip: { x: 0, y: 0, width: 1480, height: 140 } });
 await page.screenshot({ path: join(shotDir, "01-home.png") });
 
 /* ---------------------------------------------------------------- playback */

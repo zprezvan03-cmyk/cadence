@@ -226,6 +226,7 @@ pub fn run() {
             commands::cmd_shell_open_external,
             commands::cmd_window_action,
             commands::cmd_window_is_fullscreen,
+            commands::cmd_window_chrome_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Cadence Tauri application");

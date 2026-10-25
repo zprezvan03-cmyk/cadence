@@ -69,6 +69,20 @@ describe("Tauri v2 migration — configuration, RangeTokenizer, and desktop brid
       expect(statSync(full).size).toBeGreaterThan(256);
     }
 
+    // The integrated Windows title bar requires an undecorated window. Platform configs replace the
+    // base `app.windows` array wholesale (JSON Merge Patch), so the Windows overlay must repeat every
+    // base field or the window silently falls back to defaults.
+    const winConf = JSON.parse(
+      readFileSync(join(rootDir, "src-tauri/tauri.windows.conf.json"), "utf8")
+    );
+    const winWindow = winConf.app.windows[0];
+    expect(mainWindow.decorations).toBeUndefined();
+    expect(winWindow.decorations).toBe(false);
+    expect(Object.keys(winWindow).sort()).toEqual([...Object.keys(mainWindow), "decorations"].sort());
+    for (const key of Object.keys(mainWindow)) {
+      expect(winWindow[key]).toEqual(mainWindow[key]);
+    }
+
     // Capabilities must enforce least privilege (no arbitrary shell or unrestricted fs plugins)
     const cap = JSON.parse(
       readFileSync(join(rootDir, "src-tauri/capabilities/default.json"), "utf8")
@@ -79,6 +93,9 @@ describe("Tauri v2 migration — configuration, RangeTokenizer, and desktop brid
       expect(perm.startsWith("shell:")).toBe(false);
       expect(perm.startsWith("fs:")).toBe(false);
     }
+    // The custom title bar's drag region needs these two core window permissions.
+    expect(cap.permissions).toContain("core:window:allow-start-dragging");
+    expect(cap.permissions).toContain("core:window:allow-internal-toggle-maximize");
   });
 
   it("extracts FLAC and MP3 tags, cover artwork SHA-1, and embedded lyrics via RangeTokenizer", async () => {
@@ -169,6 +186,7 @@ describe("Tauri v2 migration — configuration, RangeTokenizer, and desktop brid
                 lyricsCacheJson: persistedLyricsCacheJson,
                 dbSnapshot: structuredClone(persistedDb),
                 startupFiles: [],
+                undecorated: true,
               };
 
             case "cmd_allowlist_sync":
@@ -306,6 +324,14 @@ describe("Tauri v2 migration — configuration, RangeTokenizer, and desktop brid
             case "cmd_window_is_fullscreen":
               return windowActions.at(-1) === "fullscreen";
 
+            case "cmd_window_chrome_state":
+              return {
+                undecorated: true,
+                maximized: windowActions.at(-1) === "maximize",
+                fullscreen: windowActions.at(-1) === "fullscreen",
+                focused: true,
+              };
+
             default:
               return null;
           }
@@ -421,6 +447,15 @@ describe("Tauri v2 migration — configuration, RangeTokenizer, and desktop brid
     expect(await api.app.isFullScreen()).toBe(true);
     await api.app.window("exitFullscreen");
     expect(await api.app.isFullScreen()).toBe(false);
+
+    // Integrated title bar: the startup snapshot is synchronous, the live state follows the window.
+    expect(api.app.initialWindowChrome.undecorated).toBe(true);
+    expect(await api.app.windowChrome()).toMatchObject({ undecorated: true, fullscreen: false });
+    await api.app.window("maximize");
+    expect(windowActions.at(-1)).toBe("maximize");
+    expect((await api.app.windowChrome()).maximized).toBe(true);
+    await api.app.window("restore");
+    expect((await api.app.windowChrome()).maximized).toBe(false);
     expect(openedUrls).toEqual(["https://github.com/better-lyrics/better-lyrics"]);
     expect(revealedPaths).toEqual([winFlacPath]);
 
