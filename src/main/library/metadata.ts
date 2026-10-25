@@ -37,10 +37,10 @@ export interface ParsedPicture {
 }
 
 /** Animated covers are a sidecar video next to the audio file (Apple Music style). */
-export function findAnimatedArt(audioPath: string): string | null {
+export function animatedArtCandidates(audioPath: string): string[] {
   const directory = dirname(audioPath);
   const base = basename(audioPath, extname(audioPath));
-  const candidates = [
+  return [
     join(directory, "cover.mp4"),
     join(directory, "cover.webm"),
     join(directory, "Cover.mp4"),
@@ -48,9 +48,11 @@ export function findAnimatedArt(audioPath: string): string | null {
     join(directory, base + ".mp4"),
     join(directory, base + ".webm"),
     join(directory, base + "-animated.mp4"),
-  ];
-  for (const candidate of candidates) {
-    if (candidate === audioPath) continue;
+  ].filter(candidate => candidate !== audioPath);
+}
+
+export function findAnimatedArt(audioPath: string): string | null {
+  for (const candidate of animatedArtCandidates(audioPath)) {
     if (existsSync(candidate)) return candidate;
   }
   return null;

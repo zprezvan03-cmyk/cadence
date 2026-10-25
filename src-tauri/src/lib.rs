@@ -211,6 +211,7 @@ pub fn run() {
             commands::cmd_bootstrap,
             commands::cmd_allowlist_sync,
             commands::cmd_db_mutate,
+            commands::cmd_load_lyrics,
             commands::cmd_write_user_json,
             commands::cmd_pick_folder,
             commands::cmd_pick_lyrics_file,

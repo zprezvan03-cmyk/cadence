@@ -2,7 +2,7 @@
  * Library browsing: songs, albums, artists, playlists and favourites. Written for Cadence.
  */
 
-import { useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { FolderPlus, Play, Plus, Search, Shuffle, Trash2 } from "lucide-react";
 import type { LibraryTab } from "../../state/uiStore";
 import { useLibrary } from "../../state/libraryStore";
@@ -29,16 +29,27 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
   const createPlaylist = useLibrary(state => state.createPlaylist);
   const deletePlaylist = useLibrary(state => state.deletePlaylist);
   const playQueue = usePlayer(state => state.playQueue);
+  const playShuffled = usePlayer(state => state.playShuffled);
   const navigate = useUi(state => state.navigate);
   const [sort, setSort] = useState<SortKey>("title");
   const [filter, setFilter] = useState("");
+  const deferredFilter = useDeferredValue(filter);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
+  const playlistCreateRequested = useUi(state => state.playlistCreateRequested);
+  const acknowledgePlaylistCreate = useUi(state => state.acknowledgePlaylistCreate);
+
+  useEffect(() => {
+    if (tab !== "playlists" || !playlistCreateRequested) return;
+    setCreating(true);
+    setNewName("");
+    acknowledgePlaylistCreate();
+  }, [tab, playlistCreateRequested, acknowledgePlaylistCreate]);
 
   const tracks = useMemo(() => {
     let list = [...(snapshot?.tracks ?? [])];
     if (tab === "favorites") list = list.filter(track => track.favorite);
-    const needle = filter.trim().toLocaleLowerCase();
+    const needle = deferredFilter.trim().toLocaleLowerCase();
     if (needle) {
       list = list.filter(track =>
         [track.title, track.artist, track.album].some(value => value.toLocaleLowerCase().includes(needle))
@@ -61,7 +72,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
         list.sort((a, b) => a.title.localeCompare(b.title));
     }
     return list;
-  }, [snapshot?.tracks, tab, sort, filter]);
+  }, [snapshot?.tracks, tab, sort, deferredFilter]);
 
   if (!snapshot) return <div className="view-loading">Loading…</div>;
 
@@ -83,7 +94,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
               <button type="button" className="primary" onClick={playAll}>
                 <Play size={16} fill="currentColor" /> Play
               </button>
-              <button type="button" onClick={() => void playQueue(tracks.map(track => track.id), Math.floor(Math.random() * tracks.length))}>
+              <button type="button" onClick={() => void playShuffled(tracks.map(track => track.id), Math.floor(Math.random() * tracks.length))}>
                 <Shuffle size={16} /> Shuffle
               </button>
             </>

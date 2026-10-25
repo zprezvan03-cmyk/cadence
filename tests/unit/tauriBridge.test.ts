@@ -44,6 +44,15 @@ describe("Tauri v2 migration — configuration, RangeTokenizer, and desktop brid
     expect(conf.productName).toBe("Cadence");
     expect(conf.identifier).toBe("app.cadence.player");
     expect(conf.version).toBe("0.1.0");
+
+    // WebView2 owns the existing SMTC session. Its host process must claim the same AUMID that
+    // Tauri writes to the Cadence shortcut, before the window and media session are created.
+    const windowsEntryPoint = readFileSync(join(rootDir, "src-tauri/src/main.rs"), "utf8");
+    expect(windowsEntryPoint).toContain("SetCurrentProcessExplicitAppUserModelID");
+    expect(windowsEntryPoint).toContain(`windows::core::w!("${conf.identifier}")`);
+    expect(windowsEntryPoint.indexOf("configure_windows_app_identity();")).toBeLessThan(
+      windowsEntryPoint.indexOf("cadence_lib::run();")
+    );
     expect(conf.build.frontendDist).toBe("../dist");
 
     // beforeDevCommand and beforeBuildCommand must reference existing npm scripts in package.json
@@ -168,6 +177,7 @@ describe("Tauri v2 migration — configuration, RangeTokenizer, and desktop brid
     const openedUrls: string[] = [];
     const revealedPaths: string[] = [];
     const windowActions: string[] = [];
+    const lyricLoads: number[] = [];
     let httpCallCount = 0;
 
     const installBackendMock = () => {
@@ -184,7 +194,8 @@ describe("Tauri v2 migration — configuration, RangeTokenizer, and desktop brid
                 tauriVersion: "2.12.5",
                 settingsJson: persistedSettingsJson,
                 lyricsCacheJson: persistedLyricsCacheJson,
-                dbSnapshot: structuredClone(persistedDb),
+                // Rust bootstrap deliberately omits embedded text; it is read per track below.
+                dbSnapshot: { ...structuredClone(persistedDb), lyrics: {} },
                 startupFiles: [],
                 undecorated: true,
               };
@@ -217,9 +228,14 @@ describe("Tauri v2 migration — configuration, RangeTokenizer, and desktop brid
             }
 
             case "cmd_save_artwork": {
-              savedArtFiles.set(payload.fileName, Buffer.from(payload.data));
-              return payload.fileName;
+              // Raw `Uint8Array` request body; the real command reads the filename from headers.
+              savedArtFiles.set("cover", Buffer.from(payload));
+              return "cover";
             }
+
+            case "cmd_load_lyrics":
+              lyricLoads.push(payload.trackId);
+              return persistedDb.lyrics[String(payload.trackId)] ?? null;
 
             case "cmd_db_mutate": {
               for (const op of payload.ops) {
@@ -355,6 +371,7 @@ describe("Tauri v2 migration — configuration, RangeTokenizer, and desktop brid
     const addRes = await api.library.addFolder();
     expect(addRes.canceled).toBe(false);
     expect(addRes.result?.added).toBe(1);
+    expect(savedArtFiles.get("cover")?.subarray(0, 4)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     expect(allowlistRoots).toEqual([winMusicRoot]);
 
     const snap = await api.library.snapshot();
@@ -486,6 +503,8 @@ describe("Tauri v2 migration — configuration, RangeTokenizer, and desktop brid
     });
     expect(httpCallCount).toBe(callsBeforeRestart);
     expect(cachedLyrics.candidates.some(c => c.cached && c.source === "lrclib-synced")).toBe(true);
+    expect(cachedLyrics.candidates.some(c => c.source === "embedded-tag" && c.text.includes("Fixture first line"))).toBe(true);
+    expect(lyricLoads.at(-1)).toBe(reloadedSnap.tracks[0].id);
 
     secondSession.dispose();
   });

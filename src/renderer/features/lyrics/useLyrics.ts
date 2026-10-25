@@ -126,7 +126,11 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     if (!track) return;
     const token = ++generations.resolve;
     const requestKey = `${track.id}:${settings.autoFetch ? "online" : "local"}:${settings.providerOrder.join(",")}:${reloadTick}`;
-    if (resolvedForKey === requestKey && lyricsStore().trackId === track.id && lyricsStore().candidates.length > 0) {
+    if (
+      resolvedForKey === requestKey &&
+      lyricsStore().trackId === track.id &&
+      (lyricsStore().candidates.length > 0 || lyricsStore().status === "empty")
+    ) {
       return;
     }
     resolvedForKey = requestKey;
@@ -481,7 +485,12 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
   );
 
   const clearSearch = useCallback(() => {
-    if (track) useLyricsStore.getState().clearSearch(track.id, track);
+    if (!track) return;
+    // Clearing is a new search session, not merely a form edit: a response submitted before the
+    // clear must not repopulate the freshly reset panel.
+    generations.search += 1;
+    generations.youtube += 1;
+    useLyricsStore.getState().clearSearch(track.id, track);
   }, [track]);
 
   return useMemo<UseLyricsResult>(

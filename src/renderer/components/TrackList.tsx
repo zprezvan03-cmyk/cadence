@@ -2,7 +2,7 @@
  * Track list with playback, favourites and queue actions. Written for Cadence.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Disc3,
   Heart,
@@ -22,6 +22,11 @@ import { codecSupport } from "../audio/codecs";
 import { currentTrackId } from "../state/playerStore";
 import { Artwork } from "./Artwork";
 
+const ROW_HEIGHT_PX = 58;
+const HEADER_HEIGHT_PX = 40;
+const OVERSCAN_ROWS = 8;
+const VIRTUALIZATION_THRESHOLD = 100;
+
 interface TrackListProps {
   tracks: Track[];
   /** Optional label for the artwork column (albums/playlists). */
@@ -39,7 +44,95 @@ interface MenuState {
   y: number;
 }
 
-export function TrackList({
+interface TrackRowProps {
+  track: Track;
+  index: number;
+  active: boolean;
+  playing: boolean;
+  showAlbum: boolean;
+  showArtwork: boolean;
+  onPlay: (index: number) => void;
+  onToggle: () => Promise<void>;
+  onFavorite: (id: number, favorite: boolean) => Promise<void>;
+  onOpenMenu: (track: Track, anchor: HTMLElement) => void;
+}
+
+/** Rows are memoized so playback and favourite updates do not rebuild every visible row. */
+const TrackRow = memo(function TrackRow({
+  track,
+  index,
+  active,
+  playing,
+  showAlbum,
+  showArtwork,
+  onPlay,
+  onToggle,
+  onFavorite,
+  onOpenMenu,
+}: TrackRowProps) {
+  return (
+    <div
+      className={`track-row ${active ? "active" : ""}`}
+      onDoubleClick={() => onPlay(index)}
+      onClick={() => {
+        if (active) {
+          void onToggle();
+          return;
+        }
+        onPlay(index);
+      }}
+      data-testid="track-row"
+      data-track-id={track.id}
+    >
+      <span className="col-index">
+        <span className="index-number">{index + 1}</span>
+        <span className="index-play">{active && playing ? <Rows3 size={15} /> : <Play size={15} />}</span>
+      </span>
+      <span className="col-title">
+        {showArtwork ? <Artwork src={track.artworkUrl} alt={track.album} size="xs" /> : null}
+        <span className="title-block">
+          <span className="title-text">{track.title}</span>
+          <span className="subtitle-text">{track.artist}</span>
+        </span>
+        {!track.playable || codecSupport(track) === "unsupported" ? (
+          <span
+            className="badge warn"
+            title={`${track.codec} is not decodable by Chromium's built-in media stack — convert to FLAC to play it`}
+          >
+            no decoder
+          </span>
+        ) : null}
+        {track.hasSidecarLyrics ? (
+          <span className="badge" title="Sidecar lyrics found">
+            LRC
+          </span>
+        ) : null}
+      </span>
+      {showAlbum ? <span className="col-album">{track.album}</span> : null}
+      <span className="col-duration">{formatTime(track.duration)}</span>
+      <span className="col-actions" onClick={event => event.stopPropagation()}>
+        <button
+          type="button"
+          className={`icon-button heart ${track.favorite ? "active" : ""}`}
+          aria-label={track.favorite ? "Remove from favourites" : "Add to favourites"}
+          onClick={() => void onFavorite(track.id, !track.favorite)}
+        >
+          <Heart size={15} fill={track.favorite ? "currentColor" : "none"} />
+        </button>
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="More actions"
+          onClick={event => onOpenMenu(track, event.currentTarget)}
+        >
+          <MoreHorizontal size={17} />
+        </button>
+      </span>
+    </div>
+  );
+});
+
+export const TrackList = memo(function TrackList({
   tracks,
   showAlbum = true,
   showArtwork = true,
@@ -50,6 +143,8 @@ export function TrackList({
 }: TrackListProps) {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const [visibleRange, setVisibleRange] = useState({ start: 0, end: 40 });
   const playQueue = usePlayer(state => state.playQueue);
   const addToQueue = usePlayer(state => state.addToQueue);
   const playNext = usePlayer(state => state.playNext);
@@ -59,6 +154,18 @@ export function TrackList({
   const setFavorite = useLibrary(state => state.setFavorite);
   const openPlaylistPicker = useUi(state => state.openPlaylistPicker);
   const navigate = useUi(state => state.navigate);
+
+  const trackIds = useMemo(() => tracks.map(track => track.id), [tracks]);
+  const play = useCallback(
+    (index: number) => {
+      void playQueue(trackIds, index);
+    },
+    [playQueue, trackIds]
+  );
+  const openMenu = useCallback((track: Track, anchor: HTMLElement) => {
+    const rect = anchor.getBoundingClientRect();
+    setMenu({ track, x: rect.right, y: rect.bottom + 6 });
+  }, []);
 
   useEffect(() => {
     if (!menu) return;
@@ -77,19 +184,53 @@ export function TrackList({
     };
   }, [menu]);
 
-  const play = (index: number) => {
-    void playQueue(
-      tracks.map(track => track.id),
-      index
-    );
-  };
+  const virtualized = tracks.length >= VIRTUALIZATION_THRESHOLD;
+
+  useEffect(() => {
+    if (!virtualized || !listRef.current) return;
+    const list = listRef.current;
+    const scroller = list.closest(".content-scroll");
+    if (!(scroller instanceof HTMLElement)) return;
+
+    let frame: number | null = null;
+    const updateRange = () => {
+      frame = null;
+      const viewport = scroller.getBoundingClientRect();
+      const listBox = list.getBoundingClientRect();
+      const rowsTop = listBox.top + HEADER_HEIGHT_PX;
+      const first = Math.floor((viewport.top - rowsTop) / ROW_HEIGHT_PX) - OVERSCAN_ROWS;
+      const last = Math.ceil((viewport.bottom - rowsTop) / ROW_HEIGHT_PX) + OVERSCAN_ROWS;
+      const start = Math.max(0, Math.min(tracks.length, first));
+      const end = Math.max(start, Math.min(tracks.length, last));
+      setVisibleRange(previous => (previous.start === start && previous.end === end ? previous : { start, end }));
+    };
+    const scheduleUpdate = () => {
+      if (frame !== null) return;
+      frame = requestAnimationFrame(updateRange);
+    };
+
+    updateRange();
+    scroller.addEventListener("scroll", scheduleUpdate, { passive: true });
+    window.addEventListener("resize", scheduleUpdate);
+    const observer = new ResizeObserver(scheduleUpdate);
+    observer.observe(scroller);
+    return () => {
+      scroller.removeEventListener("scroll", scheduleUpdate);
+      window.removeEventListener("resize", scheduleUpdate);
+      observer.disconnect();
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
+  }, [tracks.length, virtualized]);
 
   if (tracks.length === 0) {
     return <div className="empty-state">{emptyMessage}</div>;
   }
 
+  const start = virtualized ? Math.min(visibleRange.start, Math.max(0, tracks.length - 1)) : 0;
+  const end = virtualized ? Math.max(start, Math.min(visibleRange.end, tracks.length)) : tracks.length;
+
   return (
-    <div className={`track-list ${compact ? "compact" : ""}`} data-testid={testId}>
+    <div className={`track-list ${compact ? "compact" : ""}`} data-testid={testId} ref={listRef}>
       <div className="track-head">
         <span className="col-index">#</span>
         <span className="col-title">Title</span>
@@ -97,73 +238,29 @@ export function TrackList({
         <span className="col-duration">Time</span>
         <span className="col-actions" />
       </div>
-      {tracks.map((track, index) => {
+      {start > 0 ? <div aria-hidden="true" style={{ height: start * ROW_HEIGHT_PX, flexShrink: 0 }} /> : null}
+      {tracks.slice(start, end).map((track, visibleIndex) => {
+        const index = start + visibleIndex;
         const active = track.id === currentId;
         return (
-          <div
-            key={`${track.id}-${index}`}
-            className={`track-row ${active ? "active" : ""}`}
-            onDoubleClick={() => play(index)}
-            onClick={() => {
-              if (active) {
-                void toggle();
-                return;
-              }
-              play(index);
-            }}
-            data-testid="track-row"
-            data-track-id={track.id}
-          >
-            <span className="col-index">
-              <span className="index-number">{index + 1}</span>
-              <span className="index-play">{active && isPlaying ? <Rows3 size={15} /> : <Play size={15} />}</span>
-            </span>
-            <span className="col-title">
-              {showArtwork ? <Artwork src={track.artworkUrl} alt={track.album} size="xs" /> : null}
-              <span className="title-block">
-                <span className="title-text">{track.title}</span>
-                <span className="subtitle-text">{track.artist}</span>
-              </span>
-              {!track.playable || codecSupport(track) === "unsupported" ? (
-                <span
-                  className="badge warn"
-                  title={`${track.codec} is not decodable by Chromium's built-in media stack — convert to FLAC to play it`}
-                >
-                  no decoder
-                </span>
-              ) : null}
-              {track.hasSidecarLyrics ? (
-                <span className="badge" title="Sidecar lyrics found">
-                  LRC
-                </span>
-              ) : null}
-            </span>
-            {showAlbum ? <span className="col-album">{track.album}</span> : null}
-            <span className="col-duration">{formatTime(track.duration)}</span>
-            <span className="col-actions" onClick={event => event.stopPropagation()}>
-              <button
-                type="button"
-                className={`icon-button heart ${track.favorite ? "active" : ""}`}
-                aria-label={track.favorite ? "Remove from favourites" : "Add to favourites"}
-                onClick={() => void setFavorite(track.id, !track.favorite)}
-              >
-                <Heart size={15} fill={track.favorite ? "currentColor" : "none"} />
-              </button>
-              <button
-                type="button"
-                className="icon-button"
-                aria-label="More actions"
-                onClick={event => {
-                  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-                  setMenu({ track, x: rect.right, y: rect.bottom + 6 });
-                }}
-              >
-                <MoreHorizontal size={17} />
-              </button>
-            </span>
-          </div>
+          <TrackRow
+            key={track.id}
+            track={track}
+            index={index}
+            active={active}
+            playing={active && isPlaying}
+            showAlbum={showAlbum}
+            showArtwork={showArtwork}
+            onPlay={play}
+            onToggle={toggle}
+            onFavorite={setFavorite}
+            onOpenMenu={openMenu}
+          />
         );
       })}
+      {end < tracks.length ? (
+        <div aria-hidden="true" style={{ height: (tracks.length - end) * ROW_HEIGHT_PX, flexShrink: 0 }} />
+      ) : null}
 
       {menu ? (
         <div className="context-menu" style={{ left: Math.max(12, menu.x - 220), top: menu.y }} ref={menuRef}>
@@ -179,7 +276,7 @@ export function TrackList({
           <button
             type="button"
             onClick={() => {
-              navigate({ name: "album", albumId: `${menu.track.albumArtist}\u0000${menu.track.album}` });
+              navigate({ name: "album", albumId: `${menu.track.albumArtist || menu.track.artist}\u0000${menu.track.album}` });
               setMenu(null);
             }}
           >
@@ -201,4 +298,4 @@ export function TrackList({
       ) : null}
     </div>
   );
-}
+});

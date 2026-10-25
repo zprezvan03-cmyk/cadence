@@ -70,6 +70,8 @@ export interface LibraryPersistenceAdapter {
   deleteTrack?(id: number): void;
   setLyrics?(trackId: number, payload: { text: string; kind: string }): void;
   deleteLyrics?(trackId: number): void;
+  /** Optional lazy backend used by Tauri so startup does not load every embedded lyric. */
+  loadLyrics?(trackId: number): Promise<{ text: string; kind: string } | null>;
   upsertPlaylist?(playlist: PlaylistRow, nextPlaylistId: number): void;
   deletePlaylist?(id: number): void;
   addFolder?(path: string): void;
@@ -87,6 +89,11 @@ export class LibraryStoreCore {
   protected data: DatabaseShape;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private dirty = false;
+  private readonly loadedLyrics = new Set<number>();
+  private readonly lyricLoads = new Map<number, Promise<void>>();
+  private readonly tracksById = new Map<number, StoredTrack>();
+  private readonly tracksByPath = new Map<string, StoredTrack>();
+  private nextTrackId = 1;
 
   constructor(
     readonly artworkDirectory: string,
@@ -102,6 +109,12 @@ export class LibraryStoreCore {
       folders: initialData?.folders ?? [],
       nextPlaylistId: initialData?.nextPlaylistId ?? 1,
     };
+    for (const id of Object.keys(this.data.lyrics)) this.loadedLyrics.add(Number(id));
+    for (const track of this.data.tracks) {
+      this.tracksById.set(track.id, track);
+      this.tracksByPath.set(track.path, track);
+      this.nextTrackId = Math.max(this.nextTrackId, track.id + 1);
+    }
   }
 
   flush(): void {
@@ -140,11 +153,11 @@ export class LibraryStoreCore {
   }
 
   getTrack(id: number): StoredTrack | null {
-    return this.data.tracks.find(track => track.id === id) ?? null;
+    return this.tracksById.get(id) ?? null;
   }
 
   getTrackByPath(path: string): StoredTrack | null {
-    return this.data.tracks.find(track => track.path === path) ?? null;
+    return this.tracksByPath.get(path) ?? null;
   }
 
   upsertTrack(track: NewTrack): { inserted: boolean; id: number } {
@@ -161,14 +174,16 @@ export class LibraryStoreCore {
         playCount: existing.playCount,
       };
       delete (merged as { embeddedLyrics?: unknown }).embeddedLyrics;
-      this.data.tracks[this.data.tracks.findIndex(candidate => candidate.id === existing.id)] = merged;
-      this.persistTrack(merged);
+      // Preserve the indexed object identity and avoid a second linear array lookup on updates.
+      Object.assign(existing, merged);
+      this.tracksByPath.set(existing.path, existing);
+      this.persistTrack(existing);
       if (embeddedLyrics) this.setLyrics(existing.id, embeddedLyrics.text, embeddedLyrics.kind);
       this.markDirty();
       return { inserted: false, id: existing.id };
     }
 
-    const id = this.data.tracks.reduce((max, candidate) => Math.max(max, candidate.id), 0) + 1;
+    const id = this.nextTrackId++;
     const row: StoredTrack = {
       ...track,
       id,
@@ -179,6 +194,8 @@ export class LibraryStoreCore {
     };
     delete (row as { embeddedLyrics?: unknown }).embeddedLyrics;
     this.data.tracks.push(row);
+    this.tracksById.set(id, row);
+    this.tracksByPath.set(row.path, row);
     this.persistTrack(row);
     if (embeddedLyrics) this.setLyrics(id, embeddedLyrics.text, embeddedLyrics.kind);
     this.markDirty();
@@ -190,8 +207,11 @@ export class LibraryStoreCore {
     if (removed.length === 0) return 0;
     const removedIds = new Set(removed.map(track => track.id));
     this.data.tracks = this.data.tracks.filter(track => !paths.has(track.path));
+    for (const track of removed) this.tracksByPath.delete(track.path);
     for (const id of removedIds) {
+      this.tracksById.delete(id);
       delete this.data.lyrics[String(id)];
+      this.loadedLyrics.delete(id);
       this.persistence.deleteLyrics?.(id);
       this.persistence.deleteTrack?.(id);
     }
@@ -233,6 +253,7 @@ export class LibraryStoreCore {
 
   setLyrics(trackId: number, text: string, kind: string): void {
     this.data.lyrics[String(trackId)] = { text, kind };
+    this.loadedLyrics.add(trackId);
     this.persistence.setLyrics?.(trackId, { text, kind });
     const track = this.getTrack(trackId);
     if (track && !track.hasEmbeddedLyrics) {
@@ -242,8 +263,39 @@ export class LibraryStoreCore {
     this.markDirty();
   }
 
+  /** Load one track's embedded lyrics on demand; concurrent callers share the same read. */
+  async ensureLyrics(trackId: number): Promise<void> {
+    const trackPath = this.getTrack(trackId)?.path;
+    if (!trackPath || this.loadedLyrics.has(trackId) || !this.persistence.loadLyrics) return;
+    const existing = this.lyricLoads.get(trackId);
+    if (existing) return existing;
+    const load = this.persistence
+      .loadLyrics(trackId)
+      .then(payload => {
+        // A scan may remove or replace the track while its lyric read is in flight.
+        if (this.getTrack(trackId)?.path !== trackPath) return;
+        if (payload) this.data.lyrics[String(trackId)] = payload;
+        this.loadedLyrics.add(trackId);
+      })
+      .finally(() => this.lyricLoads.delete(trackId));
+    this.lyricLoads.set(trackId, load);
+    return load;
+  }
+
   getLyrics(trackId: number): { text: string; kind: string } | null {
     return this.data.lyrics[String(trackId)] ?? null;
+  }
+
+  /** Drop lazily loaded text after use; the lazy persistence backend can read it again on demand. */
+  releaseLyrics(trackId?: number): void {
+    if (!this.persistence.loadLyrics) return;
+    if (trackId === undefined) {
+      this.data.lyrics = {};
+      this.loadedLyrics.clear();
+      return;
+    }
+    delete this.data.lyrics[String(trackId)];
+    this.loadedLyrics.delete(trackId);
   }
 
   // ----------------------------------------------------------------- folders

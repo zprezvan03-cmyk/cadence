@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -172,6 +172,7 @@ impl LibraryDb {
 
     pub fn load_snapshot(&self) -> Result<DbSnapshot, String> {
         let conn = self.conn.lock().map_err(|_| "DB mutex poisoned")?;
+        // Keep embedded lyrics out of bootstrap IPC; cmd_load_lyrics reads one row when needed.
         let mut snapshot = DbSnapshot::default();
 
         {
@@ -184,20 +185,6 @@ impl LibraryDb {
             for row in rows.flatten() {
                 if let Ok(val) = serde_json::from_str::<Value>(&row) {
                     snapshot.tracks.push(val);
-                }
-            }
-        }
-
-        {
-            let mut stmt = conn
-                .prepare("SELECT track_id, payload FROM lyrics")
-                .map_err(|e| e.to_string())?;
-            let rows = stmt
-                .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))
-                .map_err(|e| e.to_string())?;
-            for (id, payload) in rows.flatten() {
-                if let Ok(val) = serde_json::from_str::<Value>(&payload) {
-                    snapshot.lyrics.insert(id.to_string(), val);
                 }
             }
         }
@@ -237,6 +224,22 @@ impl LibraryDb {
         }
 
         Ok(snapshot)
+    }
+
+    /// Embedded lyrics can be large and are only needed when resolving one playing track.
+    pub fn load_lyrics(&self, track_id: i64) -> Result<Option<Value>, String> {
+        let conn = self.conn.lock().map_err(|_| "DB mutex poisoned")?;
+        let payload = conn
+            .query_row(
+                "SELECT payload FROM lyrics WHERE track_id = ?1",
+                params![track_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        payload
+            .map(|raw| serde_json::from_str::<Value>(&raw).map_err(|e| e.to_string()))
+            .transpose()
     }
 
     pub fn apply_batch(&self, ops: &[DbMutation]) -> Result<(), String> {

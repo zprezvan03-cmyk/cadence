@@ -3,7 +3,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Clock3, Mic2, Play, Plus, Search, Shuffle, Trash2 } from "lucide-react";
+import { ArrowLeft, Clock3, Mic2, Play, Plus, Search, Shuffle, Trash2, X } from "lucide-react";
 import type { Playlist, Track } from "../../../shared/types";
 import { useLibrary } from "../../state/libraryStore";
 import { usePlayer } from "../../state/playerStore";
@@ -66,11 +66,12 @@ function Hero({
 export function AlbumView({ albumId }: { albumId: string }) {
   const snapshot = useLibrary(state => state.snapshot);
   const playQueue = usePlayer(state => state.playQueue);
+  const playShuffled = usePlayer(state => state.playShuffled);
   const album = snapshot?.albums.find(candidate => candidate.id === albumId);
   const tracks = useMemo(
     () =>
       (snapshot?.tracks ?? [])
-        .filter(track => `${track.albumArtist}\u0000${track.album}` === albumId)
+        .filter(track => `${track.albumArtist || track.artist}\u0000${track.album}` === albumId)
         .sort((a, b) => (a.discNo ?? 0) - (b.discNo ?? 0) || (a.trackNo ?? 0) - (b.trackNo ?? 0)),
     [snapshot?.tracks, albumId]
   );
@@ -85,7 +86,7 @@ export function AlbumView({ albumId }: { albumId: string }) {
         title={album.name}
         meta={`${album.albumArtist}${album.year ? ` · ${album.year}` : ""} · ${album.trackCount} songs · ${formatTime(album.duration)}`}
         onPlay={() => void playQueue(tracks.map(track => track.id), 0)}
-        onShuffle={() => void playQueue(tracks.map(track => track.id), Math.floor(Math.random() * tracks.length))}
+        onShuffle={() => void playShuffled(tracks.map(track => track.id), Math.floor(Math.random() * tracks.length))}
       />
       <TrackList tracks={tracks} showAlbum={false} showArtwork={false} testId="album-track-list" />
     </div>
@@ -95,6 +96,7 @@ export function AlbumView({ albumId }: { albumId: string }) {
 export function ArtistView({ artistId }: { artistId: string }) {
   const snapshot = useLibrary(state => state.snapshot);
   const playQueue = usePlayer(state => state.playQueue);
+  const playShuffled = usePlayer(state => state.playShuffled);
   const artist = snapshot?.artists.find(candidate => candidate.id === artistId);
   const tracks = useMemo(
     () =>
@@ -118,7 +120,7 @@ export function ArtistView({ artistId }: { artistId: string }) {
         title={artist.name}
         meta={`${artist.trackCount} songs · ${artist.albumCount} albums`}
         onPlay={() => void playQueue(tracks.map(track => track.id), 0)}
-        onShuffle={() => void playQueue(tracks.map(track => track.id), Math.floor(Math.random() * tracks.length))}
+        onShuffle={() => void playShuffled(tracks.map(track => track.id), Math.floor(Math.random() * tracks.length))}
       />
       <div className="shelf">
         <h2>Albums</h2>
@@ -237,6 +239,7 @@ export function PlaylistView({ playlistId }: { playlistId: number }) {
   const renamePlaylist = useLibrary(state => state.renamePlaylist);
   const addToPlaylist = useLibrary(state => state.addToPlaylist);
   const playQueue = usePlayer(state => state.playQueue);
+  const playShuffled = usePlayer(state => state.playShuffled);
   const [tracks, setTracks] = useState<Track[]>([]);
   const [adding, setAdding] = useState(false);
   const [addQuery, setAddQuery] = useState("");
@@ -272,7 +275,7 @@ export function PlaylistView({ playlistId }: { playlistId: number }) {
         title={playlist.name}
         meta={`${playlist.trackCount} songs · ${formatTime(playlist.duration)}`}
         onPlay={() => void playQueue(tracks.map(track => track.id), 0)}
-        onShuffle={() => void playQueue(tracks.map(track => track.id), Math.floor(Math.random() * Math.max(1, tracks.length)))}
+        onShuffle={() => void playShuffled(tracks.map(track => track.id), Math.floor(Math.random() * Math.max(1, tracks.length)))}
       >
         <button type="button" onClick={() => setAdding(true)}>
           <Plus size={16} /> Add songs
@@ -315,12 +318,22 @@ export function PlaylistView({ playlistId }: { playlistId: number }) {
       />
 
       {adding ? (
-        <div className="modal-backdrop" onClick={() => setAdding(false)}>
+        <div
+          className="modal-backdrop"
+          onClick={() => setAdding(false)}
+          onKeyDown={event => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              setAdding(false);
+            }
+          }}
+        >
           <div className="modal" onClick={event => event.stopPropagation()}>
             <header className="modal-header">
               <h2>Add songs</h2>
               <button type="button" className="icon-button" onClick={() => setAdding(false)} aria-label="Close">
-                <Trash2 size={16} />
+                <X size={16} />
               </button>
             </header>
             <label className="inline-search full">
