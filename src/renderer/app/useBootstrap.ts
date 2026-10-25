@@ -491,8 +491,13 @@ export function useBootstrap(): void {
     };
 
     apply();
-    const unsubscribePlayer = usePlayer.subscribe(apply);
-    const unsubscribeSettings = useSettings.subscribe(apply);
+    // Playback clock ticks do not change analysis configuration; only play/pause and shader settings do.
+    const unsubscribePlayer = usePlayer.subscribe((state, previous) => {
+      if (state.isPlaying !== previous.isPlaying) apply();
+    });
+    const unsubscribeSettings = useSettings.subscribe((state, previous) => {
+      if (state.settings?.shaders !== previous.settings?.shaders) apply();
+    });
     return () => {
       unsubscribePlayer();
       unsubscribeSettings();

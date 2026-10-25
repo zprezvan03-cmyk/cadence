@@ -52,6 +52,18 @@ fn with_cors_headers(builder: tauri::http::response::Builder) -> tauri::http::re
         )
 }
 
+fn with_cache_policy(
+    builder: tauri::http::response::Builder,
+    is_artwork: bool,
+) -> tauri::http::response::Builder {
+    if is_artwork {
+        // Artwork filenames are content hashes, so a cached response never becomes stale.
+        builder.header("Cache-Control", "public, max-age=31536000, immutable")
+    } else {
+        builder
+    }
+}
+
 fn plain_response(status: StatusCode, message: &'static str) -> Response<Vec<u8>> {
     with_cors_headers(Response::builder().status(status))
         .header("Content-Type", "text/plain; charset=utf-8")
@@ -175,6 +187,7 @@ pub fn serve_media_request_sync(
         Err(_) => return plain_response(StatusCode::BAD_REQUEST, "Bad request"),
     };
 
+    let is_artwork = matches!(&target, MediaTarget::Art(_));
     let resolved_path = match target {
         MediaTarget::Art(raw) => allowlist.resolve_contained_artwork(&raw),
         MediaTarget::File(raw) => allowlist.resolve_allowed_media(&raw),
@@ -235,7 +248,10 @@ pub fn serve_media_request_sync(
             range.start
         };
 
-        return with_cors_headers(Response::builder().status(StatusCode::PARTIAL_CONTENT))
+        return with_cache_policy(
+            with_cors_headers(Response::builder().status(StatusCode::PARTIAL_CONTENT)),
+            is_artwork,
+        )
             .header("Content-Type", content_type)
             .header("Accept-Ranges", "bytes")
             .header(
@@ -248,7 +264,10 @@ pub fn serve_media_request_sync(
     }
 
     if is_head {
-        return with_cors_headers(Response::builder().status(StatusCode::OK))
+        return with_cache_policy(
+            with_cors_headers(Response::builder().status(StatusCode::OK)),
+            is_artwork,
+        )
             .header("Content-Type", content_type)
             .header("Accept-Ranges", "bytes")
             .header("Content-Length", total_size.to_string())
@@ -261,7 +280,10 @@ pub fn serve_media_request_sync(
         Err(_) => return plain_response(StatusCode::NOT_FOUND, "Not found"),
     };
 
-    with_cors_headers(Response::builder().status(StatusCode::OK))
+    with_cache_policy(
+        with_cors_headers(Response::builder().status(StatusCode::OK)),
+        is_artwork,
+    )
         .header("Content-Type", content_type)
         .header("Accept-Ranges", "bytes")
         .header("Content-Length", body.len().to_string())

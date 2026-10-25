@@ -87,6 +87,7 @@ export class BeatAnalyser {
   private settings: AnalysisSettings = { ...DEFAULT_ANALYSIS_SETTINGS };
   private dataArray: Uint8Array<ArrayBuffer> | null = null;
   private rafId: number | null = null;
+  private analysisRequested = false;
   private lastAnalysisTime = 0;
   private listeners = new Set<(multipliers: DynamicMultipliers) => void>();
   private readonly multipliers: DynamicMultipliers = { ...DEFAULT_DYNAMIC_MULTIPLIERS };
@@ -95,7 +96,18 @@ export class BeatAnalyser {
 
   subscribe(listener: (multipliers: DynamicMultipliers) => void): () => void {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    if (this.analysisRequested && this.rafId === null) {
+      this.lastAnalysisTime = 0;
+      this.rafId = this.deps.requestFrame(this.frame);
+    }
+    return () => {
+      this.listeners.delete(listener);
+      // Browsing pages have no shader subscribers; do not sample audio in the background there.
+      if (this.listeners.size === 0 && this.rafId !== null) {
+        this.deps.cancelFrame(this.rafId);
+        this.rafId = null;
+      }
+    };
   }
 
   configure(settings: AnalysisSettings): void {
@@ -107,18 +119,24 @@ export class BeatAnalyser {
   }
 
   start(): void {
-    if (this.rafId !== null) return;
+    this.analysisRequested = true;
+    if (this.rafId !== null || this.listeners.size === 0) return;
     this.lastAnalysisTime = 0;
     this.rafId = this.deps.requestFrame(this.frame);
   }
 
   stop(): void {
+    this.analysisRequested = false;
     if (this.rafId === null) return;
     this.deps.cancelFrame(this.rafId);
     this.rafId = null;
   }
 
   private frame = (timestamp: number): void => {
+    if (this.listeners.size === 0) {
+      this.rafId = null;
+      return;
+    }
     const analyser = this.deps.getAnalyser();
     if (!analyser) {
       this.rafId = null;

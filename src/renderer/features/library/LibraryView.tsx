@@ -2,7 +2,7 @@
  * Library browsing: songs, albums, artists, playlists and favourites. Written for Cadence.
  */
 
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import { FolderPlus, Play, Plus, Search, Shuffle, Trash2 } from "lucide-react";
 import type { LibraryTab } from "../../state/uiStore";
 import { useLibrary } from "../../state/libraryStore";
@@ -32,13 +32,14 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
   const navigate = useUi(state => state.navigate);
   const [sort, setSort] = useState<SortKey>("title");
   const [filter, setFilter] = useState("");
+  const deferredFilter = useDeferredValue(filter);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
 
   const tracks = useMemo(() => {
     let list = [...(snapshot?.tracks ?? [])];
     if (tab === "favorites") list = list.filter(track => track.favorite);
-    const needle = filter.trim().toLocaleLowerCase();
+    const needle = deferredFilter.trim().toLocaleLowerCase();
     if (needle) {
       list = list.filter(track =>
         [track.title, track.artist, track.album].some(value => value.toLocaleLowerCase().includes(needle))
@@ -61,7 +62,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
         list.sort((a, b) => a.title.localeCompare(b.title));
     }
     return list;
-  }, [snapshot?.tracks, tab, sort, filter]);
+  }, [snapshot?.tracks, tab, sort, deferredFilter]);
 
   if (!snapshot) return <div className="view-loading">Loading…</div>;
 

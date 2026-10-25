@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use tauri::ipc::Response as IpcResponse;
+use tauri::ipc::{InvokeBody, Response as IpcResponse};
 use tauri::{State, WebviewWindow};
 use tokio::sync::oneshot;
 
@@ -342,6 +342,17 @@ pub async fn cmd_db_mutate(
 }
 
 #[tauri::command]
+pub async fn cmd_load_lyrics(
+    track_id: i64,
+    state: State<'_, AppState>,
+) -> Result<Option<serde_json::Value>, String> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || db.load_lyrics(track_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn cmd_write_user_json(
     kind: String,
     content: String,
@@ -501,13 +512,23 @@ pub async fn cmd_read_file_chunk(
 
 #[tauri::command]
 pub async fn cmd_save_artwork(
-    file_name: String,
-    data: Vec<u8>,
+    request: tauri::ipc::Request<'_>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    let file_name = request
+        .headers()
+        .get("x-file-name")
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| "Missing artwork file name".to_string())?
+        .to_string();
     if !is_valid_artwork_filename(&file_name) {
         return Err("Invalid artwork file name".to_string());
     }
+    let InvokeBody::Raw(bytes) = request.body() else {
+        return Err("Artwork must be sent as raw bytes".to_string());
+    };
+    let data = bytes.to_vec();
+    drop(request); // Do not carry the IPC borrow across the blocking-file-write await.
     let target = state.artwork_dir.join(&file_name);
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         if !target.exists() {

@@ -218,6 +218,9 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
     deleteLyrics(trackId: number) {
       enqueueDbOp({ op: "deleteLyrics", trackId });
     },
+    loadLyrics(trackId: number) {
+      return invoke<{ text: string; kind: string } | null>("cmd_load_lyrics", { trackId });
+    },
     upsertPlaylist(playlist: PlaylistRow, nextPlaylistId: number) {
       enqueueDbOp({
         op: "upsertPlaylist",
@@ -286,9 +289,9 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         const hash = await sha1Hex(data);
         const ext = artworkExtensionForMime(format);
         const fileName = `${hash}${ext}`;
-        await invoke<string>("cmd_save_artwork", {
-          fileName,
-          data: Array.from(data),
+        // Raw IPC avoids a second JS number array and JSON string for every embedded cover.
+        await invoke<string>("cmd_save_artwork", data, {
+          headers: { "x-file-name": fileName },
         });
         return fileName;
       },
@@ -356,6 +359,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
     )
       .then(async result => {
         await flushDbQueue();
+        store.releaseLyrics();
         emitLibraryChanged();
         return result;
       })
@@ -382,6 +386,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         });
       }
       await flushDbQueue();
+      store.releaseLyrics();
       emitLibraryChanged();
     } catch (error) {
       console.warn("[Cadence] Could not import opened audio files:", error);
@@ -608,6 +613,8 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         const controller = new AbortController();
         resolveController = controller;
         try {
+          await store.ensureLyrics(request.trackId);
+          if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
           return await lyricsService.resolve(
             request,
             settings.get().lyrics.providerOrder,
@@ -615,6 +622,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
           );
         } finally {
           if (resolveController === controller) resolveController = null;
+          store.releaseLyrics(request.trackId);
           lyricsCache.flush();
         }
       },
