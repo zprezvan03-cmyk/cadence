@@ -108,7 +108,7 @@ pub fn is_path_inside_resolved(root: &Path, candidate: &Path) -> bool {
             (Some(rc), Some(cc)) => {
                 let equal = match (rc, cc) {
                     (Component::Prefix(rp), Component::Prefix(cp)) => {
-                        prefix_key(rp) == prefix_key(cp)
+                        prefix_key(rp.kind()) == prefix_key(cp.kind())
                     }
                     (Component::RootDir, Component::RootDir) => true,
                     (Component::Normal(rn), Component::Normal(cn)) => {
