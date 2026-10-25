@@ -18,7 +18,11 @@ export function PlayerBar() {
   const toggleFullscreenLyrics = useUi(state => state.toggleFullscreenLyrics);
 
   return (
-    <footer className={`player-bar ${track ? "" : "is-empty"}`} data-testid="player-bar">
+    <footer
+      className={`player-bar ${track ? "" : "is-empty"}`}
+      data-testid="player-bar"
+      style={track?.artworkUrl ? { ["--player-artwork" as string]: `url("${track.artworkUrl}")` } : undefined}
+    >
       <div className="player-track">
         <Artwork src={track?.artworkUrl} alt={track?.album ?? "No track"} size="sm" />
         <div className="player-track-meta">

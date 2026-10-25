@@ -30,6 +30,7 @@ const NAV: { label: string; icon: React.ReactNode; route: Parameters<ReturnType<
 export function Sidebar() {
   const route = useUi(state => state.route);
   const navigate = useUi(state => state.navigate);
+  const requestPlaylistCreate = useUi(state => state.requestPlaylistCreate);
   const playlists = useLibrary(state => state.snapshot?.playlists ?? EMPTY_PLAYLISTS);
   const counts = useLibrary(state => state.snapshot?.counts);
 
@@ -43,7 +44,17 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar">
-      <div className="brand" onClick={() => navigate({ name: "home" })} role="button" tabIndex={0} onKeyDown={e => e.key === "Enter" && navigate({ name: "home" })}>
+      <div
+        className="brand"
+        onClick={() => navigate({ name: "home" })}
+        role="button"
+        tabIndex={0}
+        onKeyDown={event => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          navigate({ name: "home" });
+        }}
+      >
         <span className="brand-mark">
           <Library size={19} />
         </span>
@@ -71,7 +82,7 @@ export function Sidebar() {
       <div className="sidebar-section">
         <div className="sidebar-heading">
           <span>Playlists</span>
-          <button type="button" className="icon-button" onClick={() => navigate({ name: "library", tab: "playlists" })} aria-label="New playlist">
+          <button type="button" className="icon-button" onClick={requestPlaylistCreate} aria-label="New playlist">
             <Plus size={15} />
           </button>
         </div>

@@ -26,6 +26,7 @@ export function HomeView() {
   const scanning = useLibrary(state => state.scanning);
   const navigate = useUi(state => state.navigate);
   const playQueue = usePlayer(state => state.playQueue);
+  const playShuffled = usePlayer(state => state.playShuffled);
 
   const recentlyPlayed = useMemo(
     () =>
@@ -101,9 +102,8 @@ export function HomeView() {
           <button
             type="button"
             onClick={() => {
-              const shuffled = [...snapshot.tracks];
-              const start = Math.floor(Math.random() * Math.max(1, shuffled.length));
-              void playQueue(shuffled.map(track => track.id), start);
+              const start = Math.floor(Math.random() * snapshot.tracks.length);
+              void playShuffled(snapshot.tracks.map(track => track.id), start);
             }}
           >
             <Shuffle size={16} /> Shuffle

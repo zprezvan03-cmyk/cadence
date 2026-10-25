@@ -24,7 +24,12 @@ export function QueuePanel() {
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") toggleQueue(false);
+      if (event.key === "Escape") {
+        // This overlay owns Escape. Do not let the immersive-view shortcut also handle the same key.
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        toggleQueue(false);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

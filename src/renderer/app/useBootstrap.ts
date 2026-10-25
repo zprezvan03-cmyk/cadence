@@ -36,6 +36,8 @@ export function useBootstrap(): void {
   useEffect(() => {
     let disposed = false;
     let lastHardwareCommandAt = 0;
+    // Read before any settings setter can persist the store's initial empty queue over the session.
+    const savedSession = readSession();
 
     void (async () => {
       await useSettings.getState().load();
@@ -52,15 +54,12 @@ export function useBootstrap(): void {
       player.setRepeat(settings.playback.repeat);
       if (settings.playback.shuffle !== player.shuffle) player.toggleShuffle();
 
-      if (settings.playback.resumeOnLaunch) {
-        const session = readSession();
-        if (session) {
-          // Drop queue entries whose files no longer exist in the library.
-          const available = useLibrary.getState().tracksById;
-          const queue = session.queue.filter(id => available.has(id));
-          if (queue.length > 0) {
-            await usePlayer.getState().restore({ ...session, queue });
-          }
+      if (settings.playback.resumeOnLaunch && savedSession) {
+        // Drop queue entries whose files no longer exist in the library.
+        const available = useLibrary.getState().tracksById;
+        const queue = savedSession.queue.filter(id => available.has(id));
+        if (queue.length > 0) {
+          await usePlayer.getState().restore({ ...savedSession, queue });
         }
       }
     })();
@@ -306,6 +305,9 @@ export function useBootstrap(): void {
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (isTypingTarget(event.target)) return;
+      // Space is the native activation key for focused buttons. Let the control handle it instead
+      // of turning every keyboard activation into a global play/pause shortcut.
+      if (event.key === " " && event.target instanceof HTMLElement && event.target.closest("button, [role='button']")) return;
       const player = usePlayer.getState();
       const ui = useUi.getState();
       const cmd = event.ctrlKey || event.metaKey;
@@ -417,6 +419,18 @@ export function useBootstrap(): void {
           player.cycleRepeat();
           break;
         case "Escape":
+          // Overlays consume Escape before the immersive view does. QueuePanel also listens for
+          // this key; toggling to false in both places is idempotent and prevents a double exit.
+          if (ui.playlistPicker) {
+            ui.closePlaylistPicker();
+            return;
+          }
+          if (ui.queueOpen) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            ui.toggleQueue(false);
+            return;
+          }
           if (ui.fullscreenLyrics) {
             ui.setFullscreenLyrics(false);
             void (async () => {
@@ -455,6 +469,49 @@ export function useBootstrap(): void {
         }
       }
       window.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
+
+  // Playback settings and the transport are two views of the same live state. Settings changes
+  // (including Reset all) apply immediately; transport, volume and media-key changes are written
+  // back so navigating to Settings never shows stale values and they survive the next launch.
+  useEffect(() => {
+    let applyingSettings = false;
+    const applySettings = (settings: AppSettings | null) => {
+      if (!settings) return;
+      const player = usePlayer.getState();
+      applyingSettings = true;
+      try {
+        if (player.volume !== settings.playback.volume) player.setVolume(settings.playback.volume);
+        if (player.muted !== settings.playback.muted) player.setMuted(settings.playback.muted);
+        if (player.rate !== settings.playback.playbackRate) player.setRate(settings.playback.playbackRate);
+        if (player.repeat !== settings.playback.repeat) player.setRepeat(settings.playback.repeat);
+        if (player.shuffle !== settings.playback.shuffle) player.toggleShuffle();
+      } finally {
+        applyingSettings = false;
+      }
+    };
+
+    const unsubscribeSettings = useSettings.subscribe((state, previous) => {
+      if (state.settings?.playback !== previous.settings?.playback) applySettings(state.settings);
+    });
+    const unsubscribePlayer = usePlayer.subscribe((state, previous) => {
+      if (applyingSettings) return;
+      const settings = useSettings.getState().settings;
+      if (!settings) return;
+      const playback: Partial<AppSettings["playback"]> = {};
+      if (state.volume !== previous.volume && settings.playback.volume !== state.volume) playback.volume = state.volume;
+      if (state.muted !== previous.muted && settings.playback.muted !== state.muted) playback.muted = state.muted;
+      if (state.rate !== previous.rate && settings.playback.playbackRate !== state.rate) playback.playbackRate = state.rate;
+      if (state.repeat !== previous.repeat && settings.playback.repeat !== state.repeat) playback.repeat = state.repeat;
+      if (state.shuffle !== previous.shuffle && settings.playback.shuffle !== state.shuffle) playback.shuffle = state.shuffle;
+      if (Object.keys(playback).length > 0) void useSettings.getState().patch({ playback });
+    });
+
+    applySettings(useSettings.getState().settings);
+    return () => {
+      unsubscribeSettings();
+      unsubscribePlayer();
     };
   }, []);
 

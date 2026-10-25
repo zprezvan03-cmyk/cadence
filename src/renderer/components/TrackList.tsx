@@ -276,7 +276,7 @@ export const TrackList = memo(function TrackList({
           <button
             type="button"
             onClick={() => {
-              navigate({ name: "album", albumId: `${menu.track.albumArtist}\u0000${menu.track.album}` });
+              navigate({ name: "album", albumId: `${menu.track.albumArtist || menu.track.artist}\u0000${menu.track.album}` });
               setMenu(null);
             }}
           >

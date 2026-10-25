@@ -144,6 +144,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
         animatedArtUrl={track?.animatedArtUrl ?? null}
         settings={shaderSettings ?? settings.shaders}
         playing={playing}
+        verbose={settings.advanced.showLogs}
       />
 
       {fullscreen && showLyricsSetting ? (
@@ -192,7 +193,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
       <div className={`lyrics-body ${lyricsVisible ? "" : "is-hidden"}`}>
         {track ? (
           <BraccatoLyrics
-            lyrics={lyrics.lyrics}
+            lyrics={lyricsSettings?.hideInstrumentalOnly && lyrics.parsed?.instrumentalOnly ? [] : lyrics.lyrics}
             themeCss={themeCss}
             offsetMs={lyricsSettings?.offsetMs ?? 0}
             passiveScroll={lyricsSettings?.passiveScroll ?? true}

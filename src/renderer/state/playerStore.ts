@@ -3,6 +3,7 @@ import type { RepeatMode } from "../../shared/types";
 import { audioEngine } from "../audio/engine";
 import { advancePosition, buildOrder } from "../player/queue";
 import { getTrackById } from "./trackRegistry";
+import { useLibrary } from "./libraryStore";
 
 const SESSION_KEY = "cadence.session.v1";
 
@@ -26,6 +27,7 @@ interface PlayerState extends SessionState {
   error: string | null;
   ended: boolean;
   playQueue: (trackIds: number[], startIndex?: number) => Promise<void>;
+  playShuffled: (trackIds: number[], startIndex?: number) => Promise<void>;
   playTrack: (trackId: number) => Promise<void>;
   playNext: (trackIds: number[]) => void;
   addToQueue: (trackIds: number[]) => void;
@@ -98,6 +100,7 @@ export function readSession(): SessionState | null {
 }
 
 let loadToken = 0;
+let lastPositionPersistAt = 0;
 
 export const usePlayer = create<PlayerState>()((set, get) => {
   const after = () => persist(get());
@@ -116,7 +119,15 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     audioEngine.setVolume(state.volume);
     audioEngine.setMuted(state.muted);
     audioEngine.setRate(state.rate);
-    if (autoplay) await audioEngine.play();
+    if (autoplay) {
+      await audioEngine.play();
+      if (token !== loadToken) return;
+      // The engine reports decoder/play() failures through its own state; only a track that really
+      // started belongs in Home → Recently played.
+      if (!audioEngine.paused && !audioEngine.element.error) {
+        void useLibrary.getState().recordPlay(trackId).catch(() => undefined);
+      }
+    }
   };
 
   const goToPosition = async (position: number, autoplay: boolean): Promise<void> => {
@@ -162,6 +173,12 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       after();
     },
 
+    playShuffled: async (trackIds, startIndex = 0) => {
+      if (trackIds.length === 0) return;
+      if (!get().shuffle) get().toggleShuffle();
+      await get().playQueue(trackIds, startIndex);
+    },
+
     playTrack: async trackId => {
       const state = get();
       const existing = state.queue.indexOf(trackId);
@@ -194,14 +211,34 @@ export const usePlayer = create<PlayerState>()((set, get) => {
 
     playNext: trackIds => {
       const state = get();
-      const insertable = trackIds.filter(id => !state.queue.includes(id));
-      if (insertable.length === 0) return;
+      const currentQueueIndex = state.order[state.orderPosition];
+      const currentId = currentQueueIndex === undefined ? null : state.queue[currentQueueIndex] ?? null;
+      const requested = [...new Set(trackIds)].filter(id => id !== currentId);
+      if (requested.length === 0) return;
+
+      // Keep the original queue indices intact (shuffle and unshuffle depend on them), but move any
+      // requested entries out of their old order positions before inserting them after the current
+      // track. Previously an existing queue entry made this action a no-op, and a new entry rebuilt
+      // a shuffled order as identity and silently changed the displayed current track.
       const queue = [...state.queue];
-      const insertAt = state.order[state.orderPosition] + 1;
-      queue.splice(insertAt, 0, ...insertable);
-      const order = queue.map((_, index) => index);
-      const orderPosition = state.orderPosition;
-      set({ queue, order, orderPosition });
+      for (const id of requested) {
+        if (!queue.includes(id)) queue.push(id);
+      }
+      const inserted = requested.map(id => queue.indexOf(id)).filter(index => index >= 0);
+      const insertedSet = new Set(inserted);
+      const remainingOrder = state.order.filter(index => !insertedSet.has(index));
+      const currentOrderPosition = currentQueueIndex === undefined ? -1 : remainingOrder.indexOf(currentQueueIndex);
+      const insertAt = currentOrderPosition >= 0 ? currentOrderPosition + 1 : 0;
+      const order = [
+        ...remainingOrder.slice(0, insertAt),
+        ...inserted,
+        ...remainingOrder.slice(insertAt),
+      ];
+      set({
+        queue,
+        order,
+        orderPosition: currentOrderPosition >= 0 ? currentOrderPosition : 0,
+      });
       after();
     },
 
@@ -226,11 +263,20 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       const order = state.order
         .filter(index => index !== queueIndex)
         .map(index => (index > queueIndex ? index - 1 : index));
-      const orderPosition = Math.min(
-        state.orderPosition,
-        Math.max(0, order.length - 1)
-      );
-      set({ queue, order, orderPosition });
+      const removedOrderPosition = state.order.indexOf(queueIndex);
+      // Removing an entry before the current one shifts the current entry one position to the left.
+      // Keeping the old numeric position made the UI point at the next song while audio continued.
+      const orderPosition = removingCurrent
+        ? Math.min(state.orderPosition, Math.max(0, order.length - 1))
+        : removedOrderPosition >= 0 && removedOrderPosition < state.orderPosition
+          ? state.orderPosition - 1
+          : state.orderPosition;
+      set({
+        queue,
+        order,
+        orderPosition,
+        ...(removingCurrent ? { position: 0, duration: 0, ended: false } : {}),
+      });
       if (removingCurrent) {
         if (queue.length === 0) {
           audioEngine.pause();
@@ -326,7 +372,9 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       const shuffle = !state.shuffle;
       const current = state.order[state.orderPosition] ?? 0;
       const order = buildOrder(state.queue.length, shuffle, current);
-      set({ shuffle, order, orderPosition: 0 });
+      // Shuffled orders put the current queue index first; an unshuffled identity order instead
+      // addresses that same entry at its own index.
+      set({ shuffle, order, orderPosition: shuffle ? 0 : current });
       after();
     },
 
@@ -371,10 +419,18 @@ export const usePlayer = create<PlayerState>()((set, get) => {
 
     syncTime: (position, duration, buffered) => {
       set({ position, duration, buffered });
+      // Do not write localStorage on every 100 ms clock tick, but do checkpoint progress often
+      // enough that Restore last session resumes where the listener actually stopped.
+      const now = Date.now();
+      if (now - lastPositionPersistAt >= 1000) {
+        lastPositionPersistAt = now;
+        after();
+      }
     },
 
     syncState: state => {
       set({ isPlaying: state.playing, buffering: state.buffering, ended: state.ended });
+      if (!state.playing) after();
     },
 
     setError: message => set({ error: message }),

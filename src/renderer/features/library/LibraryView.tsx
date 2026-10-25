@@ -29,12 +29,22 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
   const createPlaylist = useLibrary(state => state.createPlaylist);
   const deletePlaylist = useLibrary(state => state.deletePlaylist);
   const playQueue = usePlayer(state => state.playQueue);
+  const playShuffled = usePlayer(state => state.playShuffled);
   const navigate = useUi(state => state.navigate);
   const [sort, setSort] = useState<SortKey>("title");
   const [filter, setFilter] = useState("");
   const deferredFilter = useDeferredValue(filter);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
+  const playlistCreateRequested = useUi(state => state.playlistCreateRequested);
+  const acknowledgePlaylistCreate = useUi(state => state.acknowledgePlaylistCreate);
+
+  useEffect(() => {
+    if (tab !== "playlists" || !playlistCreateRequested) return;
+    setCreating(true);
+    setNewName("");
+    acknowledgePlaylistCreate();
+  }, [tab, playlistCreateRequested, acknowledgePlaylistCreate]);
 
   const tracks = useMemo(() => {
     let list = [...(snapshot?.tracks ?? [])];
@@ -84,7 +94,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
               <button type="button" className="primary" onClick={playAll}>
                 <Play size={16} fill="currentColor" /> Play
               </button>
-              <button type="button" onClick={() => void playQueue(tracks.map(track => track.id), Math.floor(Math.random() * tracks.length))}>
+              <button type="button" onClick={() => void playShuffled(tracks.map(track => track.id), Math.floor(Math.random() * tracks.length))}>
                 <Shuffle size={16} /> Shuffle
               </button>
             </>

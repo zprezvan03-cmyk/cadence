@@ -18,6 +18,7 @@ interface UiState {
   fullscreenLyrics: boolean;
   searchFocused: boolean;
   playlistPicker: { trackIds: number[] } | null;
+  playlistCreateRequested: boolean;
   toast: string | null;
   navigate: (route: Route) => void;
   goBack: () => void;
@@ -28,6 +29,8 @@ interface UiState {
   setSearchFocused: (value: boolean) => void;
   openPlaylistPicker: (trackIds: number[]) => void;
   closePlaylistPicker: () => void;
+  requestPlaylistCreate: () => void;
+  acknowledgePlaylistCreate: () => void;
   showToast: (message: string) => void;
   syncFromHash: () => void;
 }
@@ -91,6 +94,7 @@ export const useUi = create<UiState>()((set, get) => ({
   fullscreenLyrics: false,
   searchFocused: false,
   playlistPicker: null,
+  playlistCreateRequested: false,
   toast: null,
   navigate: route => {
     const hash = routeToHash(route);
@@ -115,6 +119,11 @@ export const useUi = create<UiState>()((set, get) => ({
   setSearchFocused: value => set({ searchFocused: value }),
   openPlaylistPicker: trackIds => set({ playlistPicker: { trackIds } }),
   closePlaylistPicker: () => set({ playlistPicker: null }),
+  requestPlaylistCreate: () => {
+    get().navigate({ name: "library", tab: "playlists" });
+    set({ playlistCreateRequested: true });
+  },
+  acknowledgePlaylistCreate: () => set({ playlistCreateRequested: false }),
   showToast: message => {
     set({ toast: message });
     window.setTimeout(() => {

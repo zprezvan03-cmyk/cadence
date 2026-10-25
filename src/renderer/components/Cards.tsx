@@ -22,7 +22,9 @@ export function AlbumCard({ album }: { album: Album }) {
       role="button"
       tabIndex={0}
       onKeyDown={event => {
-        if (event.key === "Enter") navigate({ name: "album", albumId: album.id });
+        if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        navigate({ name: "album", albumId: album.id });
       }}
     >
       <div className="card-art">
@@ -35,7 +37,7 @@ export function AlbumCard({ album }: { album: Album }) {
             event.stopPropagation();
             const tracks =
               snapshot?.tracks
-                .filter(track => `${track.albumArtist}\u0000${track.album}` === album.id)
+                .filter(track => `${track.albumArtist || track.artist}\u0000${track.album}` === album.id)
                 .sort((a, b) => (a.discNo ?? 0) - (b.discNo ?? 0) || (a.trackNo ?? 0) - (b.trackNo ?? 0)) ?? [];
             void playQueue(tracks.map(track => track.id), 0);
           }}
@@ -63,7 +65,9 @@ export function ArtistCard({ artist }: { artist: Artist }) {
       role="button"
       tabIndex={0}
       onKeyDown={event => {
-        if (event.key === "Enter") navigate({ name: "artist", artistId: artist.id });
+        if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        navigate({ name: "artist", artistId: artist.id });
       }}
     >
       <Artwork src={artist.artworkUrl} alt={artist.name} size="md" rounded="full" />
@@ -85,7 +89,9 @@ export function PlaylistCard({ playlist }: { playlist: Playlist }) {
       tabIndex={0}
       data-testid="playlist-card"
       onKeyDown={event => {
-        if (event.key === "Enter") navigate({ name: "playlist", playlistId: playlist.id });
+        if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        navigate({ name: "playlist", playlistId: playlist.id });
       }}
     >
       <Artwork src={playlist.artworkUrl} alt={playlist.name} size="md" />

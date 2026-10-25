@@ -2,6 +2,8 @@ import { create } from "zustand";
 import type { AppSettings, DeepPartial } from "../../shared/types";
 import { bridge } from "./bridge";
 
+let mutationRevision = 0;
+
 interface SettingsState {
   settings: AppSettings | null;
   loaded: boolean;
@@ -24,14 +26,18 @@ export const useSettings = create<SettingsState>()((set, get) => ({
     }
   },
   patch: async (patch: DeepPartial<AppSettings>) => {
+    const revision = ++mutationRevision;
     const current = get().settings;
     if (current) set({ settings: mergeSettings(current, patch) });
     const settings = await bridge.settings.patch(patch);
-    set({ settings });
+    // IPC responses can arrive out of order. Keep the newest optimistic mutation instead of
+    // allowing an older full-settings response to undo a control the user changed afterwards.
+    if (revision === mutationRevision) set({ settings });
   },
   reset: async () => {
+    const revision = ++mutationRevision;
     const settings = await bridge.settings.reset();
-    set({ settings });
+    if (revision === mutationRevision) set({ settings });
   },
 }));
 

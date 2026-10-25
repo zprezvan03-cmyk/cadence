@@ -52,6 +52,8 @@ export interface KawarpBackgroundProps {
   playing: boolean;
   /** Rendered behind the position the artwork changes from. */
   className?: string;
+  /** Emits renderer-side diagnostics for the verbose shader setting. */
+  verbose?: boolean;
   onError?: (message: string) => void;
 }
 
@@ -61,11 +63,13 @@ export function KawarpBackground({
   settings,
   playing,
   className,
+  verbose = false,
   onError,
 }: KawarpBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const instanceRef = useRef<Kawarp | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const stateRef = useRef({
     currentImageUrl: null as string | null,
     pendingImageUrl: null as string | null,
@@ -87,6 +91,10 @@ export function KawarpBackground({
   const multipliersRef = useRef<DynamicMultipliers>({ isBeat: false, speedMultiplier: 1, scaleMultiplier: 1 });
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+
+  useEffect(() => {
+    if (verbose) console.debug("[Cadence] Kawarp shader settings", settings);
+  }, [verbose, settings]);
 
   const motionSpeed = (value: ShaderSettings, multipliers: DynamicMultipliers): number =>
     value.kawarpAnimationSpeed * multipliers.speedMultiplier;
@@ -162,7 +170,6 @@ export function KawarpBackground({
       dithering: value.kawarpDithering,
       scale: stateRef.current.currentScale,
     });
-    if (containerRef.current) containerRef.current.style.opacity = String(value.kawarpOpacity);
     applyArtworkBrightness(SETTING_CHANGE_FILTER_TRANSITION_MS, stateRef.current.videoMode);
   };
 
@@ -275,6 +282,7 @@ export function KawarpBackground({
     const useVideo = Boolean(animatedArtUrl && settings.enableAnimatedArt);
     if (useVideo && animatedArtUrl) {
       const video = document.createElement("video");
+      videoRef.current = video;
       video.src = animatedArtUrl;
       video.muted = true;
       video.loop = true;
@@ -308,6 +316,7 @@ export function KawarpBackground({
         }
         state.videoMode = false;
         video.pause();
+        videoRef.current = null;
         video.remove();
       };
     }
@@ -349,26 +358,39 @@ export function KawarpBackground({
       return settingsRef.current.pauseOnInactive && !playing;
     };
 
+    const syncVideo = () => {
+      const video = videoRef.current;
+      if (!video) return;
+      if (state.paused) video.pause();
+      else void video.play().catch(() => undefined);
+    };
+
     state.paused = shouldPause();
     const value = settingsRef.current;
     state.targetSpeed = state.paused ? 0 : motionSpeed(value, multipliersRef.current);
     if (!state.paused) instance.start();
+    syncVideo();
     if (state.speedFrame === null) state.speedFrame = requestAnimationFrame(() => animateSpeed(instance));
 
     const onVisibility = () => {
       state.paused = shouldPause();
       state.targetSpeed = state.paused ? 0 : motionSpeed(settingsRef.current, multipliersRef.current);
+      syncVideo();
       if (state.speedFrame === null) state.speedFrame = requestAnimationFrame(() => animateSpeed(instance));
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playing, settings.pauseOnInactive, settings.enabled, settings.performanceMode]);
+  }, [playing, settings.pauseOnInactive, settings.enabled, settings.performanceMode, animatedArtUrl, settings.enableAnimatedArt]);
 
   const disabled = !settings.enabled || settings.performanceMode === "off";
 
   return (
-    <div className={className ? `kawarp-bg ${className}` : "kawarp-bg"} aria-hidden="true">
+    <div
+      className={className ? `kawarp-bg ${className}` : "kawarp-bg"}
+      style={{ opacity: settings.kawarpOpacity }}
+      aria-hidden="true"
+    >
       {disabled ? (
         <div
           className="kawarp-fallback"

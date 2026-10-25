@@ -408,6 +408,43 @@ a {
   padding: 0 12px 4px;
 }
 
+/* Compact mode keeps every destination and the playlist-create action available as icon buttons. */
+[data-compact-sidebar="true"] {
+  --sidebar-width: 76px;
+}
+
+[data-compact-sidebar="true"] .sidebar {
+  padding-inline: 10px;
+}
+
+[data-compact-sidebar="true"] .brand,
+[data-compact-sidebar="true"] .nav-item,
+[data-compact-sidebar="true"] .sidebar-heading,
+[data-compact-sidebar="true"] .title-bar-brand {
+  justify-content: center;
+}
+
+[data-compact-sidebar="true"] .brand {
+  padding-inline: 0;
+}
+
+[data-compact-sidebar="true"] .brand-text,
+[data-compact-sidebar="true"] .nav-item span,
+[data-compact-sidebar="true"] .sidebar-stats,
+[data-compact-sidebar="true"] .sidebar-heading > span,
+[data-compact-sidebar="true"] .sidebar-playlists,
+[data-compact-sidebar="true"] .title-bar-text {
+  display: none;
+}
+
+[data-compact-sidebar="true"] .nav-item {
+  padding-inline: 0;
+}
+
+[data-compact-sidebar="true"] .title-bar-brand {
+  padding-inline: 0;
+}
+
 /* -------------------------------------------------------------- title bar */
 
 .window-title-bar {
@@ -753,8 +790,33 @@ a {
   gap: 18px;
   padding: 0 20px;
   border-top: 1px solid var(--border);
-  background: rgba(12, 12, 17, 0.92);
+  background: rgba(12, 12, 17, 0.86);
   backdrop-filter: blur(20px);
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.player-bar::before {
+  content: "";
+  position: absolute;
+  inset: -32px;
+  z-index: 0;
+  background-image: var(--player-artwork, none);
+  background-position: center;
+  background-size: cover;
+  filter: blur(26px) saturate(1.2);
+  opacity: 0.24;
+  pointer-events: none;
+}
+
+.player-bar > * {
+  position: relative;
+  z-index: 1;
+}
+
+[data-blur-artwork="false"] .player-bar::before {
+  display: none;
 }
 
 .player-track {
@@ -1190,6 +1252,7 @@ input[type="range"].volume:hover::-webkit-slider-thumb {
 
 .toast {
   position: fixed;
+  pointer-events: none;
   left: 50%;
   bottom: calc(var(--player-height) + 22px);
   transform: translateX(-50%);

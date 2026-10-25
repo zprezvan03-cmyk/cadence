@@ -83,6 +83,14 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
   },
   recordPlay: async id => {
     await bridge.library.recordPlay(id);
+    const snapshot = get().snapshot;
+    if (!snapshot) return;
+    const playedAt = Date.now();
+    const tracks = snapshot.tracks.map(track =>
+      track.id === id ? { ...track, lastPlayedAt: playedAt, playCount: track.playCount + 1 } : track
+    );
+    const tracksById = indexTracks({ ...snapshot, tracks });
+    set({ snapshot: { ...snapshot, tracks }, tracksById });
   },
   createPlaylist: async (name, trackIds = []) => {
     const playlist = await bridge.playlists.create(name, trackIds);
