@@ -475,8 +475,8 @@ if (api.hasHarness) {
   );
 
   /* 2e — romanization the lyrics file itself supplies (TTML transliterations) beats generated
-     romanization; generation only fills lines the file left bare, and with generation off the
-     file's romanization still shows. */
+     romanization; generation only fills lines the file left bare, and with the toggle off every
+     romanized line (file-supplied included) is hidden. */
   const TTML_LOCAL = `<?xml version="1.0" encoding="UTF-8"?>
 <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" xml:lang="ja">
   <head>
@@ -533,10 +533,8 @@ if (api.hasHarness) {
   );
   const localOffLines = await readRomanized();
   check(
-    "local-romanization-survives-generation-off",
-    localOffLines[0] === "sakura no hana ga saku" &&
-      localOffLines[1] === "sora wa aoi" &&
-      localOffLines[2] === null,
+    "romanization-off-hides-file-supplied-lines",
+    localOffLines[0] === null && localOffLines[1] === null && localOffLines[2] === null,
     JSON.stringify(localOffLines)
   );
 

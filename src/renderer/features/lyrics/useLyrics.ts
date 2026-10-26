@@ -30,6 +30,7 @@ import {
   type YouTubeResolveState,
 } from "../../state/lyricsStore";
 import {
+  applyFileRomanization,
   applyRomanization,
   applyTranslations,
   embeddedTranslationsForLanguage,
@@ -37,7 +38,7 @@ import {
   parseLyricsText,
   romanizationGaps,
   scatterRomanizations,
-  stripGeneratedRomanization,
+  stripRomanization,
   stripTranslations,
   translationGaps,
   type ParsedLyrics,
@@ -91,6 +92,22 @@ export interface UseLyricsResult {
   /** Explicit reset: back to the track's tag defaults and an empty search session. */
   clearSearch: () => void;
   hasLyrics: boolean;
+}
+
+/**
+ * Restores file-supplied romanization (and its word timing) onto the lines currently in the store,
+ * matched by position. Used by the romanization pass so a toggle-off / toggle-on round trip, or a
+ * late-arriving generation batch, never loses the file's own transliteration.
+ */
+function applyFileRomanizationToStore(parsed: ParsedLyrics): void {
+  useLyricsStore.setState(previous => {
+    if (previous.parsed !== parsed) return previous;
+    const base = previous.lyrics ?? parsed.lyrics;
+    const next = applyFileRomanization(base, parsed.lyrics);
+    return next === base && previous.lyrics === base && !previous.romanizing
+      ? previous
+      : { ...previous, lyrics: next, romanizing: false };
+  });
 }
 
 function textHash(value: string): string {
@@ -161,6 +178,12 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     // Clears the previous track's candidates/provider identity when the track changed, so a
     // fallback to another provider never renders under the old provider's name.
     useLyricsStore.getState().beginResolve(track.id);
+    // `beginResolve` drops the decorated line array, so the "already decorated this parse" guards
+    // no longer describe what is in the store. Leaving them set would skip the decoration passes
+    // for the lyrics that land next (e.g. A → B → A reuses A's cached parse, whose id still
+    // matched the guard) and show the new lines without their translation/romanization.
+    appliedTranslationKey = null;
+    appliedRomanizationKey = null;
 
     void (async () => {
       try {
@@ -193,12 +216,17 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
         const preferred =
           result.candidates.find(candidate => candidate.source === chosenSource) ?? result.candidates[0];
         const parsed = parseCandidate(preferred, track.duration);
+        const previous = useLyricsStore.getState();
+        // A re-resolve can hand back the same cached parse (provider order / auto-fetch changed).
+        // Its line objects are still the ones carrying the translation and generated romanization,
+        // so keep them instead of rebuilding undecorated lines.
+        const sameParse = previous.parsed === parsed;
         useLyricsStore.getState().setActive(track.id, {
           status: "ready",
           candidates: result.candidates,
           activeSource: preferred.source,
           parsed,
-          lyrics: parsed.lyrics,
+          lyrics: sameParse && previous.lyrics ? previous.lyrics : parsed.lyrics,
           syncType: parsed.syncType,
           providerStatus: result.providerStatus,
           error: null,
@@ -242,7 +270,10 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
 
     const parsedId = parsedIds.get(parsed);
     const applyKey = `${parsedId}:${settings.translationLanguage}`;
-    if (applyKey === appliedTranslationKey) return; // decorated before unmount; no redundant request
+    // Decorated before a remount: the store still holds those lines. Every path that resets them
+    // (re-resolve, source switch, chosen file) either keeps them, registers a fresh parse id or
+    // clears this key, so a matching key means there is nothing left to do.
+    if (applyKey === appliedTranslationKey) return;
 
     const embedded = embeddedTranslationsForLanguage(parsed.lyrics, settings.translationLanguage);
     const gaps = translationGaps(parsed.lyrics, settings.translationLanguage);
@@ -251,11 +282,12 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
       appliedTranslationKey = applyKey;
       const embeddedCount = embedded.filter(Boolean).length;
       useLyricsStore.setState(previous => {
-        const base =
-          previous.parsed === parsed ? previous.lyrics ?? parsed.lyrics : parsed.lyrics;
+        if (previous.parsed !== parsed) return previous;
+        const base = previous.lyrics ?? parsed.lyrics;
         return {
           ...previous,
           translating: false,
+          error: null,
           translatedLanguage: embeddedCount > 0 ? settings.translationLanguage : null,
           lyrics:
             embeddedCount > 0
@@ -282,13 +314,16 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
         const merged = embedded.map((localText, idx) => localText ?? generated[idx] ?? null);
         const translatedCount = merged.filter(Boolean).length;
         useLyricsStore.setState(previous => {
-          // Decorate the lines as they currently stand (same parsed set) rather than rebuilding
-          // from `parsed.lyrics`, so a romanization that landed first survives this pass.
-          const base =
-            previous.parsed === parsed ? previous.lyrics ?? parsed.lyrics : parsed.lyrics;
+          // The parse changed under the request (track/provider switch): its result belongs to
+          // lyrics that are no longer on screen and must not overwrite them.
+          if (previous.parsed !== parsed) return previous;
+          // Decorate the lines as they currently stand rather than rebuilding from
+          // `parsed.lyrics`, so a romanization that landed first survives this pass.
+          const base = previous.lyrics ?? parsed.lyrics;
           return {
             ...previous,
             translating: false,
+            error: null,
             translatedLanguage: translatedCount > 0 ? settings.translationLanguage : null,
             detectedLanguage: result.detectedLanguage || parsed.language,
             lyrics:
@@ -299,11 +334,15 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
         });
       } catch (error) {
         if (cancelled) return;
-        useLyricsStore.setState(previous => ({
-          ...previous,
-          translating: false,
-          error: `Translation failed: ${(error as Error).message}`,
-        }));
+        useLyricsStore.setState(previous =>
+          previous.parsed === parsed
+            ? {
+                ...previous,
+                translating: false,
+                error: `Translation failed: ${(error as Error).message}`,
+              }
+            : previous
+        );
       }
     })();
     return () => {
@@ -311,15 +350,16 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     };
   }, [store.parsed, store.status, settings.translationLanguage]);
 
-  // Romanization pass. Romanization the lyrics file itself supplied (parsed lines) always wins:
-  // generation is requested only for lines that have none, and switching the toggle off removes
-  // only generated text, never the file's own.
+  // Romanization pass. The toggle decides whether romanization is shown at all. Romanization the
+  // lyrics file itself supplied is preferred over generated text (it keeps the file's word timing);
+  // generation only fills the lines the file left bare, so a fully transliterated TTML never calls
+  // the provider, and an empty/failed batch never hides or overwrites the file's text.
   useEffect(() => {
     const parsed = store.parsed;
     if (!parsed || store.status !== "ready") return;
     if (!settings.romanization) {
       useLyricsStore.setState(previous => {
-        const stripped = previous.lyrics ? stripGeneratedRomanization(previous.lyrics, parsed.lyrics) : previous.lyrics;
+        const stripped = previous.lyrics ? stripRomanization(previous.lyrics) : previous.lyrics;
         appliedRomanizationKey = null;
         return stripped === previous.lyrics && !previous.romanizing
           ? previous
@@ -328,14 +368,20 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
       return;
     }
     const parsedId = parsedIds.get(parsed);
-    if (parsedId && appliedRomanizationKey === parsedId) return; // already generated for this parse
+    if (parsedId && appliedRomanizationKey === parsedId) return; // decorated before a remount
 
     const gaps = romanizationGaps(parsed.lyrics);
     if (gaps.length === 0) {
-      // Every sung line already carries the file's romanization; nothing to generate.
-      useLyricsStore.setState(previous => (previous.romanizing ? { ...previous, romanizing: false } : previous));
+      // Every sung line already carries the file's romanization; only make sure the current lines
+      // show it (the toggle may have hidden it since they were parsed) and never generate.
+      applyFileRomanizationToStore(parsed);
+      appliedRomanizationKey = parsedId ?? null;
       return;
     }
+
+    // File transliterations show immediately, even while the gaps are being generated or if the
+    // request fails; generation only ever adds to those lines.
+    applyFileRomanizationToStore(parsed);
     let cancelled = false;
     useLyricsStore.setState(previous => ({ ...previous, romanizing: true }));
     void (async () => {
@@ -350,15 +396,23 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
         appliedRomanizationKey = parsedId ?? null;
         const romanizations = scatterRomanizations(parsed.lyrics.length, gaps, result.romanizations);
         const count = romanizations.filter(Boolean).length;
-        useLyricsStore.setState(previous => ({
-          ...previous,
-          romanizing: false,
-          detectedLanguage: result.detectedLanguage || parsed.language,
-          lyrics: count > 0 ? applyRomanization(previous.lyrics ?? parsed.lyrics, romanizations) : previous.lyrics,
-        }));
+        useLyricsStore.setState(previous => {
+          // The parse changed under the request (track/provider switch): its result belongs to
+          // lyrics that are no longer on screen.
+          if (previous.parsed !== parsed) return previous;
+          return {
+            ...previous,
+            romanizing: false,
+            detectedLanguage: result.detectedLanguage || parsed.language,
+            lyrics:
+              count > 0
+                ? applyRomanization(previous.lyrics ?? parsed.lyrics, romanizations)
+                : previous.lyrics ?? parsed.lyrics,
+          };
+        });
       } catch {
         if (cancelled) return;
-        useLyricsStore.setState(previous => ({ ...previous, romanizing: false }));
+        useLyricsStore.setState(previous => (previous.parsed === parsed ? { ...previous, romanizing: false } : previous));
       }
     })();
     return () => {
@@ -376,7 +430,9 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
       useLyricsStore.setState(previous => ({
         ...previous,
         parsed,
-        lyrics: parsed.lyrics,
+        // Re-selecting the provider that is already showing must not throw away the decorations
+        // hanging off its lines (clicking the active row used to reset them to the raw parse).
+        lyrics: previous.parsed === parsed ? previous.lyrics ?? parsed.lyrics : parsed.lyrics,
         syncType: parsed.syncType,
         status: "ready",
       }));
@@ -420,6 +476,10 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
       sourceHref: result.path ?? null,
       cached: true,
     };
+    // Parsed outside `parseCandidate`, so give it the identity the decoration guards key on;
+    // without one, every chosen file would share the same guard key and later files could be
+    // skipped by the translation / romanization passes.
+    parsedIds.set(parsed, `p${parsedSequence++}`);
     useLyricsStore.setState(previous => ({
       ...previous,
       status: "ready",
@@ -528,7 +588,7 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
         candidates: [candidate, ...previous.candidates.filter(entry => entry.source !== candidate.source)],
         activeSource: candidate.source,
         parsed,
-        lyrics: parsed.lyrics,
+        lyrics: previous.parsed === parsed ? previous.lyrics ?? parsed.lyrics : parsed.lyrics,
         syncType: parsed.syncType,
         error: null,
       }));

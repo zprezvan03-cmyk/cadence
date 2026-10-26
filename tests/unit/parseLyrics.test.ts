@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyFileRomanization,
   applyRomanization,
   applyTranslations,
   detectSyncType,
   parseLyricsText,
   romanizationGaps,
   scatterRomanizations,
-  stripGeneratedRomanization,
   stripRomanization,
   stripTranslations,
 } from "../../src/renderer/features/lyrics/parseLyrics";
@@ -218,16 +218,46 @@ describe("local file romanization priority", () => {
     expect(scatterRomanizations(3, [], [])).toEqual([null, null, null]);
   });
 
-  it("disabling generation restores local romanization and drops only generated text", () => {
+  it("the romanization toggle hides local and generated text alike, and restores the file's text without a request", () => {
     const lyrics = local();
     const withGenerated = applyRomanization(lyrics, [null, null, "AUTO three"]);
-    const restored = stripGeneratedRomanization(withGenerated, lyrics);
-    expect(restored[0].romanization).toBe("sakura no hana ga saku");
-    expect(restored[1].romanization).toBe("sora wa aoi");
-    expect(restored[2].romanization).toBeUndefined();
-    // Already matching the local state: no rebuild.
-    expect(stripGeneratedRomanization(lyrics, lyrics)).toBe(lyrics);
-    const stripped = stripGeneratedRomanization(restored, lyrics);
-    expect(stripped).toBe(restored);
+    expect(withGenerated.map(line => line.romanization)).toEqual([
+      "sakura no hana ga saku",
+      "sora wa aoi",
+      "AUTO three",
+    ]);
+
+    // Toggle off: every romanized line is hidden, including the two the file supplied.
+    const off = stripRomanization(withGenerated);
+    expect(off.map(line => line.romanization)).toEqual([undefined, undefined, undefined]);
+    // Nothing left to strip: identity contract.
+    expect(stripRomanization(off)).toBe(off);
+
+    // Toggle on again: the file's text is restored verbatim, generated text is not resurrected.
+    const on = applyFileRomanization(off, lyrics);
+    expect(on.map(line => line.romanization)).toEqual(["sakura no hana ga saku", "sora wa aoi", undefined]);
+    // Applying it again is a no-op.
+    expect(applyFileRomanization(on, lyrics)).toBe(on);
+  });
+
+  it("restores file romanization word timing together with the text", () => {
+    const lyrics = local();
+    const timed = lyrics.map((line, index) =>
+      index === 0
+        ? {
+            ...line,
+            timedRomanization: [
+              { startTimeMs: 1000, durationMs: 500, words: "sakura ", isBackground: false },
+              { startTimeMs: 1500, durationMs: 1000, words: "no hana", isBackground: false },
+            ],
+          }
+        : line
+    );
+    const decorated = applyFileRomanization(stripRomanization(timed), timed);
+    expect(decorated[0].romanization).toBe("sakura no hana ga saku");
+    expect(decorated[0].timedRomanization?.map(part => part.words)).toEqual(["sakura ", "no hana"]);
+    const stripped = stripRomanization(decorated);
+    expect(stripped[0].romanization).toBeUndefined();
+    expect(stripped[0].timedRomanization).toBeUndefined();
   });
 });
