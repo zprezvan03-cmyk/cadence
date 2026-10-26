@@ -274,6 +274,16 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * Starts the native decode for a track that is very likely to be played next, without touching
+   * the current playback: the result lands in the on-disk WAV cache, so the actual `load()` is a
+   * cache hit instead of another full decode. Non-ALAC tracks cost nothing — `resolvePlaybackSource`
+   * returns the stream URL without calling the bridge.
+   */
+  prewarm(track: { streamUrl: string; title: string; path?: string; codec?: string | null }): void {
+    void resolvePlaybackSource(track).catch(() => undefined);
+  }
+
   async play(): Promise<void> {
     this.ensureGraph();
     try {

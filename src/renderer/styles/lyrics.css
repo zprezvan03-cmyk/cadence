@@ -422,6 +422,23 @@ braccato-lyrics {
   line-height: 1.6;
 }
 
+/* When there are no lyrics to show, the empty/error card *is* the lyrics area: the body centres it
+   in the space the lines would use, rather than scrolling it below a full-height empty host. */
+.lyrics-body.has-status-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  /* The body's fade would wash out the top and bottom of the card. */
+  mask-image: none;
+}
+
+/* The renderer stays mounted (its clock and scroll position survive), but it must not reserve the
+   whole body while a status card is shown. */
+.lyrics-body.has-status-panel braccato-lyrics {
+  display: none;
+}
+
 .lyrics-empty-panel {
   max-width: 560px;
   margin: 20px auto 40px;
@@ -437,6 +454,27 @@ braccato-lyrics {
   gap: 10px;
 }
 
+/* One width for both status cards, so "no lyrics" and "could not load" are the same object. */
+.lyrics-body.has-status-panel .lyrics-empty-panel {
+  margin: 0;
+  width: min(520px, 100%);
+  max-width: 100%;
+}
+
+/* A quiet mark above the copy, so the card reads as a deliberate empty state. */
+.lyrics-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  margin-bottom: 2px;
+  border-radius: 12px;
+  color: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
 .lyrics-empty-panel h2 {
   font-size: 18px;
 }
@@ -449,6 +487,19 @@ braccato-lyrics {
 
 .lyrics-empty-panel.error {
   border-color: rgba(255, 93, 93, 0.4);
+}
+
+/* Loading reads as a quiet placeholder, not an alarm: no card chrome, just the mark and copy. */
+.lyrics-empty-panel.loading {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+  backdrop-filter: none;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.lyrics-empty-panel.loading h2 {
+  color: rgba(255, 255, 255, 0.82);
 }
 
 .empty-actions {

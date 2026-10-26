@@ -1882,7 +1882,10 @@ const shaderSection = await page.$('[data-testid="settings-shaders"]');
 const lyricsSection = await page.$('[data-testid="settings-lyrics"]');
 check(
   "settings-tabs-consolidated",
-  settingsTabs.length === 4 && settingsTabs.includes("Appearance") && !settingsTabs.includes("Lyrics") && !settingsTabs.includes("Shaders"),
+  settingsTabs.length === 5 &&
+    ["Appearance", "Library", "Playback", "Cache", "About"].every(tab => settingsTabs.includes(tab)) &&
+    !settingsTabs.includes("Lyrics") &&
+    !settingsTabs.includes("Shaders"),
   `${settingsTabs.join(", ")}`
 );
 check("settings-appearance-subsections", Boolean(shaderSection) && Boolean(lyricsSection), "lyrics and shader controls in Appearance");
@@ -1965,10 +1968,28 @@ await page.evaluate(() => window.__addDecodeFixtureTracks());
 await wait(500);
 const audioSrcBeforeDecode = await page.$eval("audio", node => node.currentSrc || node.src).catch(() => "");
 
-await page.click('aside.sidebar button[title="Decode Tester"]');
+check(
+  "decode-tester-not-in-sidebar",
+  (await page.$$('aside.sidebar button[title="Decode Tester"]')).length === 0,
+  "the tester is only reachable from Settings"
+);
+await page.click('aside.sidebar button[title="Settings"]');
+await wait(250);
+await page.evaluate(() => {
+  [...document.querySelectorAll(".settings-tabs button")]
+    .find(node => /library/i.test(node.textContent ?? ""))
+    ?.click();
+});
+await wait(300);
+await page.screenshot({ path: join(shotDir, "07b-settings-library.png") });
+await page.evaluate(() => {
+  [...document.querySelectorAll('[data-testid="settings-library"] button')]
+    .find(node => /decode tester/i.test(node.textContent ?? ""))
+    ?.click();
+});
 await page.waitForSelector('[data-testid="decode-tester-view"]');
 await wait(300);
-check("decode-tester-route", (await page.evaluate(() => location.hash)) === "#/decode-tester", "sidebar opens the Decode Tester");
+check("decode-tester-route", (await page.evaluate(() => location.hash)) === "#/decode-tester", "Settings opens the Decode Tester");
 check("decode-tester-idle-state", Boolean(await page.$('[data-testid="decode-empty-idle"]')), "pre-scan empty state");
 check(
   "decode-tester-library-count",

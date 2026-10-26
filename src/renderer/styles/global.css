@@ -846,6 +846,24 @@ a {
   text-overflow: ellipsis;
 }
 
+/* Native ALAC decode before playback: subtle, and only shown when the wait is perceptible. */
+.player-preparing {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.62);
+  white-space: nowrap;
+  animation: player-preparing-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes player-preparing-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 .player-center {
   display: flex;
   flex-direction: column;

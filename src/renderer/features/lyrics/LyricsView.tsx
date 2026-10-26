@@ -32,6 +32,8 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   const settings = useSettings(state => state.settings);
   const patchSettings = useSettings(state => state.patch);
   const [toast, setToast] = useState<string | null>(null);
+  // Local files resolve almost instantly; only a wait the listener can notice earns a loading card.
+  const [slowLoading, setSlowLoading] = useState(false);
   const [syncLabel, setSyncLabel] = useState("No lyrics");
   const [dockPopoverOpen, setDockPopoverOpen] = useState(false);
   const queueOpen = useUi(state => state.queueOpen);
@@ -71,6 +73,15 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   const lyricsVisible = !fullscreen || showLyrics;
 
   const lyrics = useLyrics(track ?? null, lyricsSettings ?? fallbackLyricsSettings);
+
+  useEffect(() => {
+    if (lyrics.status !== "loading") {
+      setSlowLoading(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setSlowLoading(true), 350);
+    return () => window.clearTimeout(timer);
+  }, [lyrics.status, track?.id]);
 
   const themeCss = useMemo(() => (lyricsSettings ? buildThemeCss(lyricsSettings) : ""), [lyricsSettings]);
 
@@ -133,6 +144,12 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
     </div>
   );
 
+  // "Loading", "no lyrics" and "could not load" all replace the lyric lines, so the body centres
+  // that card instead of scrolling it below a full-height lyric host (or, worse, leaving the
+  // previous track's lines on screen while the new track resolves).
+  const statusPanel =
+    track !== null && (slowLoading || lyrics.status === "empty" || lyrics.status === "error");
+
   return (
     <div
       ref={viewRef}
@@ -190,7 +207,11 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
         </div>
       ) : null}
 
-      <div className={`lyrics-body ${lyricsVisible ? "" : "is-hidden"}`}>
+      <div
+        className={`lyrics-body ${lyricsVisible ? "" : "is-hidden"} ${
+          statusPanel ? "has-status-panel" : ""
+        }`}
+      >
         {track ? (
           <BraccatoLyrics
             lyrics={lyricsSettings?.hideInstrumentalOnly && lyrics.parsed?.instrumentalOnly ? [] : lyrics.lyrics}
@@ -212,8 +233,21 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
           </div>
         )}
 
+        {track && lyrics.status === "loading" && slowLoading ? (
+          <div className="lyrics-empty-panel loading" role="status" data-testid="lyrics-loading-panel">
+            <div className="lyrics-empty-icon" aria-hidden="true">
+              <RefreshCw size={20} className="spin" />
+            </div>
+            <h2>Finding lyrics…</h2>
+            <p>Checking local files, embedded tags and your enabled providers.</p>
+          </div>
+        ) : null}
+
         {track && lyrics.status === "empty" ? (
-          <div className="lyrics-empty-panel">
+          <div className="lyrics-empty-panel" data-testid="lyrics-empty-panel">
+            <div className="lyrics-empty-icon" aria-hidden="true">
+              <Music4 size={20} />
+            </div>
             <h2>No lyrics found</h2>
             <p>
               {lyricsSettings?.autoFetch ? (
@@ -248,12 +282,17 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
         ) : null}
 
         {track && lyrics.status === "error" ? (
-          <div className="lyrics-empty-panel error">
+          <div className="lyrics-empty-panel error" data-testid="lyrics-error-panel">
+            <div className="lyrics-empty-icon" aria-hidden="true">
+              <RefreshCw size={20} />
+            </div>
             <h2>Lyrics could not be loaded</h2>
             <p>{lyrics.error}</p>
-            <button type="button" onClick={lyrics.reload}>
-              <RefreshCw size={16} /> Retry
-            </button>
+            <div className="empty-actions">
+              <button type="button" onClick={lyrics.reload}>
+                <RefreshCw size={16} /> Retry
+              </button>
+            </div>
           </div>
         ) : null}
       </div>
