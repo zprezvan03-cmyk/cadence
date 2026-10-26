@@ -261,12 +261,17 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
     persist: json => invoke("cmd_write_user_json", { kind: "lyricsCache", content: json }),
   });
 
-  const localLyricsReader = createLocalLyricsReader({
-    readTextFile: path => invoke<string | null>("cmd_read_sidecar_text", { path }),
-    writeTextFile: async () => {
-      throw new Error("Use cmd_write_sidecar_lrc");
+  const localLyricsReader = createLocalLyricsReader(
+    {
+      // The Rust side validates the allowlist and extension, then returns null for missing files.
+      readTextFile: path => invoke<string | null>("cmd_read_sidecar_text", { path }),
+      listFiles: directory => invoke<string[]>("cmd_list_directory", { directory }),
+      writeTextFile: async () => {
+        throw new Error("Use cmd_write_sidecar_lrc");
+      },
     },
-  });
+    { caseInsensitivePaths: bootstrap.platform === "win32" }
+  );
 
   const lyricsService = new LyricsServiceCore(store, lyricsCache, localLyricsReader);
   const translationCache = createTranslationCache();

@@ -40,6 +40,8 @@ export interface InspectedLyricsPayload {
   syncType: LyricsSyncType;
   language: string | null;
   songwriters: string[];
+  /** Present when a parser threw; callers can report it instead of hiding a malformed payload. */
+  error?: string;
 }
 
 const UNUSABLE_PAYLOAD: InspectedLyricsPayload = {
@@ -145,7 +147,11 @@ export function inspectLyricsPayload(
       language: null,
       songwriters: [],
     };
-  } catch {
-    return { ...UNUSABLE_PAYLOAD, format };
+  } catch (error) {
+    return {
+      ...UNUSABLE_PAYLOAD,
+      format,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
