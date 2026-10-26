@@ -508,4 +508,129 @@ describe("Tauri v2 migration — configuration, RangeTokenizer, and desktop brid
 
     secondSession.dispose();
   });
+
+  it("forwards Decode Tester delete/export to scoped Rust commands and drops only deleted tracks", async () => {
+    const winMusicRoot = "C:\\Users\\Alice\\Music";
+    const brokenPath = `${winMusicRoot}\\broken.flac`;
+    const lockedPath = `${winMusicRoot}\\locked.mp3`;
+    const goodPath = `${winMusicRoot}\\fixture.flac`;
+    const storedTrack = (id: number, path: string, codec: string): StoredTrack => ({
+      id,
+      path,
+      title: path.split("\\").at(-1) ?? path,
+      artist: "Harness Artist",
+      albumArtist: "Harness Artist",
+      album: "Test Bench",
+      genre: "",
+      year: 2024,
+      trackNo: id,
+      discNo: null,
+      duration: 6,
+      bitrate: null,
+      sampleRate: 44100,
+      channels: 2,
+      codec,
+      container: codec.toLowerCase(),
+      fileSize: 1234,
+      mtimeMs: 1_700_000_000_000,
+      artworkFile: null,
+      animatedArtPath: null,
+      accentColor: null,
+      hasEmbeddedLyrics: false,
+      hasSidecarLyrics: false,
+      playable: true,
+      favorite: false,
+      addedAt: 1_700_000_000_000,
+      lastPlayedAt: null,
+      playCount: 0,
+    });
+
+    const persistedDb: DatabaseShape = emptyDatabase();
+    persistedDb.folders = [winMusicRoot];
+    persistedDb.tracks = [
+      storedTrack(11, brokenPath, "FLAC"),
+      storedTrack(12, lockedPath, "MP3"),
+      storedTrack(13, goodPath, "FLAC"),
+    ];
+
+    const deleteRequests: string[][] = [];
+    const exportRequests: string[][] = [];
+    const deletedTrackIds: number[] = [];
+    let exportCanceled = false;
+
+    mockIPC(
+      async (cmd, payload: any) => {
+        switch (cmd) {
+          case "cmd_bootstrap":
+            return {
+              appDataDir: "C:\\Users\\Alice\\AppData\\Roaming\\app.cadence.player",
+              artworkDir: "C:\\Users\\Alice\\AppData\\Roaming\\app.cadence.player\\artwork",
+              platform: "win32",
+              arch: "x86_64",
+              appVersion: "0.1.0",
+              tauriVersion: "2.12.5",
+              settingsJson: null,
+              lyricsCacheJson: null,
+              dbSnapshot: structuredClone(persistedDb),
+              startupFiles: [],
+              undecorated: true,
+            };
+          case "cmd_decode_delete_files":
+            deleteRequests.push([...payload.paths]);
+            // Mirror the Rust contract: one outcome per requested path, failures included.
+            return (payload.paths as string[]).map(path => ({
+              path,
+              deleted: path !== lockedPath,
+              error: path === lockedPath ? "Permission denied (os error 5)" : null,
+            }));
+          case "cmd_decode_export_list":
+            exportRequests.push([...payload.paths]);
+            return exportCanceled ? null : "C:\\Users\\Alice\\Desktop\\cadence-decode-problems.txt";
+          case "cmd_db_mutate":
+            for (const op of payload.ops) {
+              if (op.op === "deleteTrack") deletedTrackIds.push(op.id);
+            }
+            return null;
+          default:
+            return null;
+        }
+      },
+      { shouldMockEvents: true }
+    );
+
+    const session = await installTauriBridge();
+    const { api } = session;
+    let changedNotifications = 0;
+    const unsubscribe = api.library.onChanged(() => {
+      changedNotifications += 1;
+    });
+
+    expect((await api.library.snapshot()).tracks).toHaveLength(3);
+
+    const exported = await api.decodeTester.exportFileList([brokenPath, lockedPath]);
+    expect(exported).toEqual({
+      canceled: false,
+      path: "C:\\Users\\Alice\\Desktop\\cadence-decode-problems.txt",
+    });
+    expect(exportRequests).toEqual([[brokenPath, lockedPath]]);
+
+    exportCanceled = true;
+    expect(await api.decodeTester.exportFileList([brokenPath])).toEqual({ canceled: true });
+
+    const outcomes = await api.decodeTester.deleteFiles([brokenPath, lockedPath]);
+    expect(deleteRequests).toEqual([[brokenPath, lockedPath]]);
+    expect(outcomes).toEqual([
+      { path: brokenPath, deleted: true, error: null },
+      { path: lockedPath, deleted: false, error: "Permission denied (os error 5)" },
+    ]);
+
+    // Only the file Rust actually deleted leaves the library (and the persisted DB).
+    const after = await api.library.snapshot();
+    expect(after.tracks.map(track => track.path).sort()).toEqual([goodPath, lockedPath].sort());
+    expect(deletedTrackIds).toEqual([11]);
+    expect(changedNotifications).toBeGreaterThan(0);
+
+    unsubscribe();
+    session.dispose();
+  });
 });

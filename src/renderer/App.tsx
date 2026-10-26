@@ -8,6 +8,7 @@ import { Sidebar } from "./app/Sidebar";
 import { TopBar } from "./app/TopBar";
 import { useWindowChrome, WindowTitleBar } from "./app/WindowTitleBar";
 import { useBootstrap } from "./app/useBootstrap";
+import { DecodeTesterView } from "./features/decode-tester/DecodeTesterView";
 import { AlbumView, ArtistView, PlaylistView, SearchView } from "./features/library/DetailViews";
 import { HomeView } from "./features/library/HomeView";
 import { LibraryView } from "./features/library/LibraryView";
@@ -49,6 +50,8 @@ function RouteContent() {
           onOpenSearch={() => navigate({ name: "settings" })}
         />
       );
+    case "decode-tester":
+      return <DecodeTesterView />;
     case "settings":
       return <SettingsView />;
     default:

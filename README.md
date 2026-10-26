@@ -59,6 +59,15 @@ npm run build:desktop  # Full Tauri production build (frontend + Rust host + pla
    restarts, and each stack falls back to a similar system font when the named one is not installed.
 6. **Settings → Library** shows folders, rescan, the SQLite engine in use and scan errors;
    **About** lists versions and runtime information.
+7. **Decode Tester** (sidebar, or Settings → Library) health-checks your library by really decoding
+   every file — beginning, middle and end — through the same Chromium media stack playback uses,
+   streamed over the `cadence-media` Range protocol (nothing is loaded wholesale into memory, and
+   scanning never modifies files). Corrupt, truncated, inaccessible and unsupported-codec files are
+   listed separately with the decoder's error. For each you can **Keep** it (marks it intentionally
+   retained; it stays in results unless you enable *Hide kept files*), **Remove** selected files
+   (an explicit confirmation lists them first; only confirmed deletions touch disk and leave the
+   library), or **Export file list** to a UTF-8 `.txt` with one problematic path per line via a
+   native save dialog. Music keeps playing while a scan runs, and a scan can be canceled anytime.
 
 ## What it supports
 

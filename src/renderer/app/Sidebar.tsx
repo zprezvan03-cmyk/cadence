@@ -12,6 +12,7 @@ import {
   Music2,
   Plus,
   Settings,
+  Stethoscope,
   Users,
 } from "lucide-react";
 import { EMPTY_PLAYLISTS, useLibrary } from "../state/libraryStore";
@@ -25,6 +26,7 @@ const NAV: { label: string; icon: React.ReactNode; route: Parameters<ReturnType<
   { label: "Playlists", icon: <ListMusic size={18} />, route: { name: "library", tab: "playlists" } },
   { label: "Liked songs", icon: <Heart size={18} />, route: { name: "library", tab: "favorites" } },
   { label: "Now Playing", icon: <Mic2 size={18} />, route: { name: "lyrics" } },
+  { label: "Decode Tester", icon: <Stethoscope size={18} />, route: { name: "decode-tester" } },
 ];
 
 export function Sidebar() {

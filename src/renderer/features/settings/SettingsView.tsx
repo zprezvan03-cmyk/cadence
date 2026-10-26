@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronUp, FolderMinus, FolderPlus, RotateCcw, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, FolderMinus, FolderPlus, RotateCcw, Stethoscope, Trash2 } from "lucide-react";
 import type { AppInfo, AppSettings, ShaderSettings } from "../../../shared/types";
 import { FONT_KINDS, FONT_OPTIONS, resolveFontOption } from "../../../shared/fonts";
 import { detectUnavailableFonts } from "../../app/fonts";
@@ -104,6 +104,7 @@ export function SettingsView() {
   const [section, setSection] = useState<"library" | "playback" | "appearance" | "about">("appearance");
   const [unavailableFonts, setUnavailableFonts] = useState<ReadonlySet<string>>(() => new Set());
   const showToast = useUi(state => state.showToast);
+  const navigate = useUi(state => state.navigate);
 
   useEffect(() => {
     void window.cadence.info().then(setInfo).catch(() => undefined);
@@ -445,7 +446,15 @@ export function SettingsView() {
             <button type="button" onClick={() => void rescan()} disabled={scanning}>
               {scanning ? "Scanning…" : "Rescan now"}
             </button>
+            <button type="button" onClick={() => navigate({ name: "decode-tester" })}>
+              <Stethoscope size={16} /> Open Decode Tester
+            </button>
           </div>
+          <p className="muted">
+            The Decode Tester goes beyond tags: it decodes the start, middle and end of every file with
+            the playback decoder and lists corrupt, truncated or unsupported files so you can keep,
+            export or delete them.
+          </p>
           <p className="muted">
             Last scan: {snapshot?.scan.finishedAt ? new Date(snapshot.scan.finishedAt).toLocaleString() : "never"} ·{" "}
             {snapshot?.scan.filesSeen ?? 0} files seen · {snapshot?.scan.errors.length ?? 0} unreadable
