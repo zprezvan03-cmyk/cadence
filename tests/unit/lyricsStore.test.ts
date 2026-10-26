@@ -76,6 +76,52 @@ describe("lyrics session store", () => {
     expect(after.selectedSources[7]).toBe("blyrics-richsynced");
   });
 
+  it("drops the previous track's provider identity when a new resolve starts", async () => {
+    const { useLyricsStore } = await freshStore();
+    const store = useLyricsStore.getState();
+
+    store.setActive(7, {
+      status: "ready",
+      candidates: [
+        { source: "blyrics-richsynced", provider: "Better Lyrics", text: "lyrics", syncHint: "richsync" } as never,
+      ],
+      activeSource: "blyrics-richsynced",
+      syncType: "richsync",
+      providerStatus: [{ provider: "better-lyrics", status: "hit", detail: "Better Lyrics" }],
+    });
+
+    // A different track starts resolving: nothing from the previous result may survive, otherwise
+    // a fallback to another provider renders under the old provider's name.
+    useLyricsStore.getState().beginResolve(8);
+    const loading = useLyricsStore.getState();
+    expect(loading).toMatchObject({
+      trackId: 8,
+      status: "loading",
+      activeSource: null,
+      syncType: "none",
+      lyrics: null,
+      parsed: null,
+    });
+    expect(loading.candidates).toEqual([]);
+    expect(loading.providerStatus).toEqual([]);
+
+    // Re-resolving the same track (provider order change, manual reload) keeps what is on screen
+    // until the new result lands.
+    useLyricsStore.getState().setActive(8, {
+      status: "ready",
+      candidates: [
+        { source: "blyrics-line", provider: "Better Lyrics Line", text: "lyrics", syncHint: "synced" } as never,
+      ],
+      activeSource: "blyrics-line",
+      syncType: "synced",
+    });
+    useLyricsStore.getState().beginResolve(8);
+    const reloading = useLyricsStore.getState();
+    expect(reloading.status).toBe("loading");
+    expect(reloading.activeSource).toBe("blyrics-line");
+    expect(reloading.candidates).toHaveLength(1);
+  });
+
   it("creates one search session per track, seeded from the track tags, and isolates them", async () => {
     const { useLyricsStore } = await freshStore();
     const store = useLyricsStore.getState();

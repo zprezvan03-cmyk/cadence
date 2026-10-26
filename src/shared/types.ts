@@ -155,6 +155,12 @@ export interface LyricsSearchResponse {
   cached: boolean;
 }
 
+/** Outcome of Settings -> About -> "Clear lyrics cache", reported once the file has been written. */
+export interface LyricsCacheClearResult {
+  /** Cached songs (lyrics plus manual-search rows) that were removed. */
+  removedEntries: number;
+}
+
 export interface YouTubeMetadataRequest {
   /** Raw user input; the main process re-validates it even though the renderer pre-checks. */
   url: string;
@@ -373,6 +379,13 @@ export interface CadenceApi {
     translate(request: TranslationRequest): Promise<TranslationResult>;
     romanize(request: TranslationRequest): Promise<RomanizationResult>;
     saveSidecar(trackId: number, text: string): Promise<{ path: string }>;
+    /**
+     * Empties the persistent remote-lyrics cache. Resolves only after the emptied cache file has
+     * been written to disk and rejects with the filesystem error when it could not be, so the UI
+     * never claims a deletion that did not happen. User data (library, settings, sidecar lyrics,
+     * artwork) is untouched.
+     */
+    clearCache(): Promise<LyricsCacheClearResult>;
   };
   player: {
     reportState(state: PlayerSnapshot): Promise<void>;

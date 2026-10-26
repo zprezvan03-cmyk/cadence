@@ -31,7 +31,7 @@ export interface ProviderOutcome {
 }
 
 export const CLIENT_NAME =
-  "Cadence Player v0.2.0 (https://github.com/zprezvan03-cmyk/betterlyrics-standalone)";
+  "Cadence Player v0.2.1 (https://github.com/zprezvan03-cmyk/betterlyrics-standalone)";
 
 export type RuntimeFetch = typeof fetch;
 

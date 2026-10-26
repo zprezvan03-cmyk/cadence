@@ -70,7 +70,8 @@ export interface ProviderConfig {
 export const PROVIDER_CONFIGS: readonly ProviderConfig[] = [
   // 1 — local rich lyrics (TTML/QRC sidecars and the Lyrics/ folder convention).
   { key: "local-rich", displayName: "Local TTML/QRC", syncType: "syllable", priority: 1, offline: true, available: true },
-  // 2 — Better Lyrics API: TTML syllable sync from /getLyrics.
+  // 2 — Better Lyrics API: TTML from /getLyrics that genuinely carries per-syllable timing.
+  //     Line-only TTML from the same endpoint belongs to `blyrics-line` (7), not here.
   { key: "blyrics-richsynced", displayName: "Better Lyrics", syncType: "syllable", priority: 2, offline: false, available: true },
   // 3 — Unison community TTML (syllable).
   { key: "unison-richsynced", displayName: "Unison", syncType: "syllable", priority: 3, offline: false, available: true },
@@ -80,16 +81,9 @@ export const PROVIDER_CONFIGS: readonly ProviderConfig[] = [
   { key: "blyrics-wordsynced", displayName: "QQ Word", syncType: "word", priority: 5, offline: false, available: true },
   // 6 — local line-synced LRC sidecars.
   { key: "local-lrc", displayName: "Local LRC", syncType: "line", priority: 6, offline: true, available: true },
-  // 7 — no separate generic Better Lyrics line endpoint exists; its line lyrics come from Kugou (9).
-  {
-    key: "blyrics-line",
-    displayName: "Better Lyrics Line",
-    syncType: "line",
-    priority: 7,
-    offline: false,
-    available: false,
-    unavailableReason: "The Better Lyrics API serves line-synced lyrics only through its Kugou endpoint (see Kugou Line).",
-  },
+  // 7 — Better Lyrics API `/getLyrics` again: the same endpoint also serves TTML with line-level
+  // timing only. Those results are attributed here, never to the syllable slot above (2).
+  { key: "blyrics-line", displayName: "Better Lyrics Line", syncType: "line", priority: 7, offline: false, available: true },
   // 8 — Unison line-synced LRC.
   { key: "unison-synced", displayName: "Unison Line", syncType: "line", priority: 8, offline: false, available: true },
   // 9 — Better Lyrics Kugou endpoint: line-synced LRC.

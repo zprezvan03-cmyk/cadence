@@ -43,7 +43,7 @@ describe("Tauri v2 migration — configuration, RangeTokenizer, and desktop brid
 
     expect(conf.productName).toBe("Cadence");
     expect(conf.identifier).toBe("app.cadence.player");
-    expect(conf.version).toBe("0.2.0");
+    expect(conf.version).toBe("0.2.1");
 
     // WebView2 owns the existing SMTC session. Its host process must claim the same AUMID that
     // Tauri writes to the Cadence shortcut, before the window and media session are created.

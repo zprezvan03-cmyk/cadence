@@ -5,7 +5,9 @@
  * provider client can:
  *   1. Reject empty, header-only, or unparseable payloads instead of treating them as hits.
  *   2. Determine actual synchronization precision (`richsync` vs `synced` vs `none`) from the
- *      timed tokens present in the payload rather than trusting a server label blindly.
+ *      timed tokens present in the payload rather than trusting a server label blindly. The
+ *      syllable-vs-line rule lives in {@link hasSyllableTiming} so the renderer applies exactly
+ *      the same test (a single part repeating the whole line is line timing, not syllable timing).
  *   3. Extract TTML `xml:lang` and format-specific songwriter credits up front.
  */
 
@@ -21,6 +23,7 @@ import {
   type LyricFormat,
 } from "@braccato/parsers";
 import type { LyricsSyncType } from "../../shared/types";
+import { hasSyllableTiming } from "../../shared/lyricsTiming";
 
 /** Matches both standard `<mm:ss.xx>` and shorthand `<ss.xx>` enhanced-LRC word tags. */
 const ENHANCED_LRC_WORD_TAG = /<(?:\d+:)?\d+\.\d+>/;
@@ -69,8 +72,9 @@ export function inspectLyricsPayload(
       if (sungLines.length === 0) {
         return { usable: false, format: "ttml", syncType: "none", language: parsed.language ?? null, songwriters: [] };
       }
-      const hasWordParts =
-        parsed.isWordSynced && sungLines.some(line => (line.parts?.length ?? 0) > 0);
+      // `isWordSynced` is true even when every `<p>` holds one span covering the whole line, so
+      // the parts themselves decide whether the payload is genuinely syllable timed.
+      const hasWordParts = parsed.isWordSynced && hasSyllableTiming(sungLines);
       return {
         usable: true,
         format: "ttml",
@@ -90,7 +94,7 @@ export function inspectLyricsPayload(
       if (sungLines.length === 0) {
         return { usable: false, format: "qrc", syncType: "none", language: null, songwriters: [] };
       }
-      const hasWordParts = sungLines.some(line => (line.parts?.length ?? 0) > 0);
+      const hasWordParts = hasSyllableTiming(sungLines);
       return {
         usable: true,
         format: "qrc",
@@ -106,8 +110,7 @@ export function inspectLyricsPayload(
       if (sungLines.length === 0) {
         return { usable: false, format: "lrc", syncType: "none", language: null, songwriters: [] };
       }
-      const hasWordParts =
-        sungLines.some(line => (line.parts?.length ?? 0) > 0) || ENHANCED_LRC_WORD_TAG.test(rawText);
+      const hasWordParts = hasSyllableTiming(sungLines) || ENHANCED_LRC_WORD_TAG.test(rawText);
       return {
         usable: true,
         format: "lrc",

@@ -19,7 +19,7 @@ Requirements on a Windows build host:
 ```bash
 npm ci
 npm run package:win            # Tauri NSIS (.exe) + MSI (.msi) installers in src-tauri/target/release/bundle/
-npm run package:win:portable   # Portable ZIP from the compiled release binary → release/Cadence-0.2.0-win-x64-portable.zip
+npm run package:win:portable   # Portable ZIP from the compiled release binary → release/Cadence-0.2.1-win-x64-portable.zip
 ```
 
 The build is unsigned by default, so Windows SmartScreen will show "Unknown publisher" on first run

@@ -59,6 +59,21 @@ function RouteContent() {
   }
 }
 
+/**
+ * Shared feedback toast. `uiStore.showToast` is called from Settings, the playlist picker and
+ * bootstrap, but nothing rendered it, so those confirmations (including "Clear lyrics cache")
+ * were invisible. The lyrics view keeps its own toast for in-view messages.
+ */
+function AppToast() {
+  const toast = useUi(state => state.toast);
+  if (!toast) return null;
+  return (
+    <div className="toast" role="status" data-testid="app-toast">
+      {toast}
+    </div>
+  );
+}
+
 export function App() {
   useBootstrap();
   const fullscreenLyrics = useUi(state => state.fullscreenLyrics);
@@ -92,6 +107,7 @@ export function App() {
       </main>
       <QueuePanel />
       <PlaylistPicker />
+      <AppToast />
     </div>
   );
 }

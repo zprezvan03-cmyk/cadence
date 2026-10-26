@@ -3,8 +3,10 @@
  * documented at https://docs.betterlyrics.org (base URL `https://api.betterlyrics.org`).
  *
  * Verified contract (OpenAPI/reference docs plus the server's `routes.go`/`handlers.go`):
- * - `GET /getLyrics?s&a&al&d` returns `{ ttml }` — syllable/line-timed TTML, metadata based, no
- *   video ID required.
+ * - `GET /getLyrics?s&a&al&d` returns `{ ttml }` — syllable *or* line-timed TTML, metadata based,
+ *   no video ID required. The endpoint serves both, so the parsed payload — not the endpoint, the
+ *   `ttml` field name or the MIME type — decides whether the result is attributed to
+ *   `blyrics-richsynced` ("Better Lyrics") or `blyrics-line` ("Better Lyrics Line").
  * - `GET /qq/getLyrics`   returns `{ lyrics, provider }` — word-timed QRC (or timed LRC).
  * - `GET /kugou/getLyrics` returns `{ lyrics, provider }` — line-synced LRC-style text.
  * - Reads need no key *for cached songs*. An uncached query answers 401 because fresh-fetch API
@@ -17,7 +19,7 @@ import {
   BETTER_LYRICS_API_BASE_URL,
   BETTER_LYRICS_REQUEST_TIMEOUT_MS,
 } from "../../shared/upstream/better-lyrics/constants";
-import type { LyricsCandidate, LyricsSyncType } from "../../shared/types";
+import type { LyricsCandidate } from "../../shared/types";
 import {
   describeHttpError,
   getJson,
@@ -33,38 +35,51 @@ import { inspectLyricsPayload, type InspectedLyricsPayload } from "./syncInspect
 const PROVIDER = "better-lyrics";
 const NO_LYRICS_SENTINEL = "NoLyricsSentinel";
 
-interface EndpointSpec {
+/** The provider identity a payload resolves to: one registry source key and its display name. */
+interface ProviderIdentity {
   source: string;
-  path: "/getLyrics" | "/qq/getLyrics" | "/kugou/getLyrics";
-  bodyField: "ttml" | "lyrics";
   providerName: string;
 }
 
-/** Word/syllable TTML nests timed `<span>` elements inside each `<p>`; line TTML has only `<p>`. */
-export function ttmlSyncHint(ttml: string): LyricsSyncType {
-  const inspected = inspectLyricsPayload(ttml);
-  if (inspected.usable && inspected.format === "ttml") return inspected.syncType;
-  return /<span[^>]*\bbegin\s*=/i.test(ttml) ? "richsync" : "synced";
+interface EndpointSpec {
+  path: "/getLyrics" | "/qq/getLyrics" | "/kugou/getLyrics";
+  bodyField: "ttml" | "lyrics";
+  /** Every registry key this endpoint can produce; the endpoint runs if any one is enabled. */
+  sources: readonly string[];
+  /** Picks the identity from the *parsed* payload, never from the endpoint or the field name. */
+  identify(inspected: InspectedLyricsPayload): ProviderIdentity;
 }
+
+const BETTER_LYRICS_SYLLABLE: ProviderIdentity = {
+  source: "blyrics-richsynced",
+  providerName: "Better Lyrics",
+};
+const BETTER_LYRICS_LINE: ProviderIdentity = {
+  source: "blyrics-line",
+  providerName: "Better Lyrics Line",
+};
 
 const ENDPOINTS: readonly EndpointSpec[] = [
   {
-    source: "blyrics-richsynced",
     path: "/getLyrics",
     bodyField: "ttml",
-    providerName: "Better Lyrics",
+    sources: [BETTER_LYRICS_SYLLABLE.source, BETTER_LYRICS_LINE.source],
+    // `/getLyrics` serves both granularities. Only TTML whose parsed lines are genuinely split
+    // into timed syllables is Better Lyrics; everything else is Better Lyrics Line.
+    identify: inspected =>
+      inspected.syncType === "richsync" ? BETTER_LYRICS_SYLLABLE : BETTER_LYRICS_LINE,
   },
   {
-    source: "blyrics-wordsynced",
     path: "/qq/getLyrics",
     bodyField: "lyrics",
-    providerName: "Better Lyrics (QQ)",
+    sources: ["blyrics-wordsynced"],
+    identify: () => ({ source: "blyrics-wordsynced", providerName: "Better Lyrics (QQ)" }),
   },
   {
-    source: "blyrics-synced",
     path: "/kugou/getLyrics",
     bodyField: "lyrics",
-    providerName: "Better Lyrics (Kugou)",
+    sources: ["blyrics-synced"],
+    identify: () => ({ source: "blyrics-synced", providerName: "Better Lyrics (Kugou)" }),
   },
 ];
 
@@ -131,7 +146,7 @@ async function queryBetterLyricsEndpoints(
   signal?: AbortSignal,
   timeoutMs: number = BETTER_LYRICS_REQUEST_TIMEOUT_MS
 ): Promise<ProviderOutcome> {
-  const enabled = ENDPOINTS.some(endpoint => enabledKeys.has(endpoint.source));
+  const enabled = ENDPOINTS.some(endpoint => endpoint.sources.some(key => enabledKeys.has(key)));
   if (!enabled) {
     return { candidates: [], statuses: [{ provider: PROVIDER, status: "skipped", detail: "Provider disabled" }] };
   }
@@ -141,11 +156,15 @@ async function queryBetterLyricsEndpoints(
 
   const candidates: LyricsCandidate[] = [];
   const problems: string[] = [];
+  /** Identities the payload resolved to whose registry slot the user has disabled. */
+  const disabledHits: string[] = [];
   let sawRateLimit = false;
   let maxRetryAfter: number | undefined;
 
   for (const endpoint of ENDPOINTS) {
-    if (!enabledKeys.has(endpoint.source)) continue;
+    // An endpoint is queried when *any* identity it can produce is enabled; the payload then
+    // decides which one, and a result for a disabled slot is dropped below.
+    if (!endpoint.sources.some(key => enabledKeys.has(key))) continue;
     try {
       const response = await getJson(buildUrl(endpoint.path, query), timeoutMs, signal);
 
@@ -167,9 +186,16 @@ async function queryBetterLyricsEndpoints(
           problems.push(`${endpoint.path}: malformed response`);
           continue;
         }
+        // Identity is derived per response, inside the loop: a fallback to a later endpoint can
+        // never inherit the identity of an earlier one.
+        const identity = endpoint.identify(inspected);
+        if (!enabledKeys.has(identity.source)) {
+          disabledHits.push(identity.providerName);
+          continue;
+        }
         const candidate: LyricsCandidate = {
-          source: endpoint.source,
-          provider: endpoint.providerName,
+          source: identity.source,
+          provider: identity.providerName,
           text: extracted.text,
           syncHint: inspected.syncType,
           language: inspected.language,
@@ -226,7 +252,7 @@ async function queryBetterLyricsEndpoints(
     }
   }
 
-  const status = summarize(candidates, problems, sawRateLimit, maxRetryAfter);
+  const status = summarize(candidates, problems, disabledHits, sawRateLimit, maxRetryAfter);
   return { candidates, statuses: [status] };
 }
 
@@ -260,6 +286,7 @@ export async function searchBetterLyrics(
 function summarize(
   candidates: LyricsCandidate[],
   problems: string[],
+  disabledHits: string[],
   sawRateLimit: boolean,
   retryAfterSeconds?: number
 ): ProviderStatus {
@@ -271,7 +298,12 @@ function summarize(
     };
   }
   if (problems.length === 0) {
-    return { provider: PROVIDER, status: "miss", detail: "No lyrics on the Better Lyrics API" };
+    // Lyrics existed but belonged to a provider slot the user removed/disabled: say so instead of
+    // pretending the API had nothing, and never re-label them as an enabled sibling provider.
+    const detail = disabledHits.length
+      ? `${[...new Set(disabledHits)].join(", ")} disabled for this track`
+      : "No lyrics on the Better Lyrics API";
+    return { provider: PROVIDER, status: "miss", detail };
   }
   // Rate limits and transport/keyless failures stay distinct from a genuine miss, and (in the
   // service) prevent a negative cache entry from blocking a later retry.

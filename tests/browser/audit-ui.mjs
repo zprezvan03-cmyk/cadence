@@ -17,9 +17,10 @@
 import { createServer } from "node:http";
 import { createReadStream, existsSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import puppeteer from "puppeteer-core";
 import { PNG } from "pngjs";
-import chromium from "@sparticuz/chromium";
+import chromium, { inflate, setupLambdaEnvironment } from "@sparticuz/chromium";
 
 const root = resolve(import.meta.dirname, "../..");
 const outDir = join(root, "dist");
@@ -128,6 +129,12 @@ await new Promise(r => server.listen(4791, "0.0.0.0", r));
 const base = "http://127.0.0.1:4791";
 
 /* ------------------------------------------------------------------ browser */
+
+// `@sparticuz/chromium` only unpacks its bundled NSS/NSPR libraries on Amazon Linux; elsewhere the
+// browser dies with `libnspr4.so: cannot open shared object file`. Unpack them and point the
+// dynamic loader at them before launching.
+await inflate(join(root, "node_modules/@sparticuz/chromium/bin/al2023.tar.br"));
+setupLambdaEnvironment(join(tmpdir(), "al2023", "lib"));
 
 chromium.setGraphicsMode = true;
 const browser = await puppeteer.launch({
@@ -570,7 +577,11 @@ async function installAuditBridge() {
   window.cadence.lyrics.translate = async request => { state.calls.push(["translate", request.targetLanguage]); return originalTranslate(request); };
   window.cadence.lyrics.romanize = async request => { state.calls.push(["romanize"]); return originalRomanize(request); };
   window.cadence.lyrics.saveSidecar = async (trackId, text) => { state.calls.push(["save-sidecar", trackId, text]); return { path: "/harness/lyrics.lrc" }; };
-  window.cadence.lyrics.clearCache = async () => { state.calls.push(["clear-lyrics-cache"]); };
+  window.cadence.lyrics.clearCache = async () => {
+    state.calls.push(["clear-lyrics-cache"]);
+    if (state.failClearCache) throw "Access is denied. (os error 5)";
+    return { removedEntries: state.clearCacheRemovedEntries ?? 2 };
+  };
   window.cadence.app.chooseLyricsFile = async trackId => { state.calls.push(["choose-lyrics", trackId]); return structuredClone(state.chooseLyricsResult); };
   window.cadence.app.openExternal = async url => { state.calls.push(["open-external", url]); };
 }
