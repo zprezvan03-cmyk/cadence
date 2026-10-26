@@ -38,6 +38,12 @@ export class LyricsCacheCore {
   private data: CacheFile = { version: CACHE_VERSION, entries: {} };
   private timer: ReturnType<typeof setTimeout> | null = null;
   private dirty = false;
+  /**
+   * Bumped by {@link clear}. A lookup that was already in flight when the user cleared the cache
+   * carries the previous token, so its result is dropped instead of writing the entries the user
+   * just deleted straight back to disk.
+   */
+  private generation = 0;
 
   constructor(private readonly persistence: LyricsCachePersistence = {}) {
     if (persistence.initialJson) {
@@ -70,7 +76,19 @@ export class LyricsCacheCore {
     return entry.negative ? [] : entry.candidates.map(candidate => ({ ...candidate, cached: true }));
   }
 
-  set(key: string, candidates: LyricsCandidate[]): void {
+  /** Token to hand back to {@link set} when the write is the result of a long-running lookup. */
+  currentGeneration(): number {
+    return this.generation;
+  }
+
+  /** Number of cached songs, used to report what a clear actually removed. */
+  size(): number {
+    return Object.keys(this.data.entries).length;
+  }
+
+  set(key: string, candidates: LyricsCandidate[], generation: number = this.generation): void {
+    // The cache was cleared while this lookup was running: keep it cleared.
+    if (generation !== this.generation) return;
     this.data.entries[key] = { savedAt: Date.now(), negative: candidates.length === 0, candidates };
     const keys = Object.keys(this.data.entries);
     if (keys.length > MAX_ENTRIES) {
@@ -83,6 +101,7 @@ export class LyricsCacheCore {
   }
 
   clear(): void {
+    this.generation += 1;
     this.data = { version: CACHE_VERSION, entries: {} };
     this.markDirty();
   }
@@ -96,7 +115,19 @@ export class LyricsCacheCore {
     }, 500);
   }
 
+  /** Fire-and-forget persistence for the hot paths: failures are logged, never thrown. */
   flush(): void {
+    void this.persistNow().catch(error => {
+      console.warn("[Cadence] Could not persist lyrics cache:", error);
+    });
+  }
+
+  /**
+   * Persists and resolves only once the write has actually landed, rejecting when it fails, so a
+   * caller that reports the result to the user (Settings -> "Clear lyrics cache") can tell the
+   * truth. A failed write leaves the data marked dirty so the next flush retries it.
+   */
+  async persistNow(): Promise<void> {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
@@ -105,14 +136,11 @@ export class LyricsCacheCore {
     this.dirty = false;
     if (!this.persistence.persist) return;
     try {
-      const result = this.persistence.persist(JSON.stringify(this.data));
-      if (result && typeof (result as Promise<void>).catch === "function") {
-        (result as Promise<void>).catch(error => {
-          console.warn("[Cadence] Could not persist lyrics cache:", error);
-        });
-      }
+      // `persist` may be synchronous (Node) or a promise (Tauri `invoke`); both are awaited here.
+      await this.persistence.persist(JSON.stringify(this.data));
     } catch (error) {
-      console.warn("[Cadence] Could not persist lyrics cache:", error);
+      this.dirty = true;
+      throw error;
     }
   }
 }

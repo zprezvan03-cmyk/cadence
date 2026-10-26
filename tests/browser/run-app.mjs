@@ -439,6 +439,12 @@ await page.evaluateOnNewDocument(
         }),
         romanize: async request => ({ romanizations: request.lines.map(line => `[romanized] ${line}`) }),
         saveSidecar: async () => "/harness/lyrics.lrc",
+        // Mirrors the real contract: resolves with what was removed, rejects when the write fails.
+        clearCache: async () => {
+          const removedEntries = Object.keys(lyricsByTrack).length;
+          window.__clearCacheCalls = (window.__clearCacheCalls ?? 0) + 1;
+          return { removedEntries };
+        },
       },
       player: {
         reportState: async () => undefined,

@@ -26,6 +26,13 @@ import {
 import { THEMES } from "../../upstream/better-lyrics/themes";
 import { TRANSLATION_LANGUAGES } from "../lyrics/translationLanguages";
 
+/** Tauri's `invoke` rejects with a plain string; Error instances come from the renderer itself. */
+function describeError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  const text = typeof error === "string" ? error : JSON.stringify(error);
+  return text && text !== "{}" ? text : "unknown error";
+}
+
 /** Human label for a sync-kind badge; keeps syllable/word/line/unsynced variants distinct. */
 const SYNC_BADGE: Record<string, string> = {
   syllable: "Syllable",
@@ -109,6 +116,7 @@ export function SettingsView() {
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [section, setSection] = useState<"library" | "playback" | "appearance" | "about">("appearance");
   const [unavailableFonts, setUnavailableFonts] = useState<ReadonlySet<string>>(() => new Set());
+  const [clearingCache, setClearingCache] = useState(false);
   const showToast = useUi(state => state.showToast);
   const navigate = useUi(state => state.navigate);
 
@@ -547,18 +555,27 @@ export function SettingsView() {
           <button
             type="button"
             className="danger"
+            disabled={clearingCache}
             onClick={async () => {
               if (!confirm("Clear cached remote lyrics?")) return;
-              const clearFn = (window.cadence?.lyrics as unknown as { clearCache?: () => Promise<void> })?.clearCache;
-              if (clearFn) {
-                await clearFn();
-                showToast("Cached remote lyrics cleared");
-              } else {
-                showToast("Lyrics cache is cleared when the app restarts");
+              setClearingCache(true);
+              try {
+                // Resolves only once the emptied cache file has been written to disk; a
+                // filesystem error rejects here instead of being reported as a success.
+                const { removedEntries } = await window.cadence.lyrics.clearCache();
+                showToast(
+                  removedEntries > 0
+                    ? `Lyrics cache cleared (${removedEntries} cached ${removedEntries === 1 ? "song" : "songs"} removed)`
+                    : "Lyrics cache was already empty"
+                );
+              } catch (error) {
+                showToast(`Could not clear the lyrics cache: ${describeError(error)}`);
+              } finally {
+                setClearingCache(false);
               }
             }}
           >
-            <Trash2 size={16} /> Clear lyrics cache
+            <Trash2 size={16} /> {clearingCache ? "Clearing lyrics cache…" : "Clear lyrics cache"}
           </button>
         </section>
       ) : null}

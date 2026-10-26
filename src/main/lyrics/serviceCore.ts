@@ -501,6 +501,8 @@ export class LyricsServiceCore {
     cacheKey: string,
     signal?: AbortSignal
   ): Promise<LyricsSearchResponse> {
+    // Taken before the request: a clear that happens while it runs invalidates the write below.
+    const generation = this.cache.currentGeneration();
     const settled = await Promise.allSettled(
       modules.map(module => this.runModule(module, query, enabledKeys, signal))
     );
@@ -537,7 +539,7 @@ export class LyricsServiceCore {
       if (results.length >= MAX_SEARCH_RESULTS) break;
     }
 
-    if (definitive && results.length > 0) this.cache.set(cacheKey, results);
+    if (definitive && results.length > 0) this.cache.set(cacheKey, results, generation);
 
     return { results, providerStatus, cached: false };
   }
@@ -568,9 +570,11 @@ export class LyricsServiceCore {
     signal?: AbortSignal
   ): Promise<NetworkResult> {
     const flightKey = this.inFlightKey(cacheKey, enabledKeys);
+    // Taken before the request: a clear that happens while it runs invalidates the write below.
+    const generation = this.cache.currentGeneration();
     return shareInFlight(this.inFlight, flightKey, signal, sharedSignal =>
       this.runNetworkModules(query, enabledKeys, sharedSignal).then(result => {
-        if (result.definitive) this.cache.set(cacheKey, result.candidates);
+        if (result.definitive) this.cache.set(cacheKey, result.candidates, generation);
         return result;
       })
     );
@@ -647,8 +651,34 @@ export class LyricsServiceCore {
     };
   }
 
+  /** Entries a failed clear removed from memory but could not yet remove from disk. */
+  private unpersistedClearedEntries = 0;
+
   clearRateLimits(): void {
     this.rateLimitedUntil.clear();
+  }
+
+  /**
+   * Empties the lyrics/search cache and waits for the emptied file to reach disk, rejecting when
+   * that write fails so the caller can report the real outcome. Lookups that are already running
+   * keep serving their caller but can no longer repopulate what was just deleted.
+   *
+   * Only the provider cache is touched: the library database, settings, sidecar lyrics files and
+   * artwork are user data and are left alone.
+   */
+  async clearCache(): Promise<number> {
+    // A previous attempt may have emptied memory but failed to reach disk; those entries are still
+    // cached on disk, so the retry is what really removes them and must say so.
+    const removedEntries = this.cache.size() + this.unpersistedClearedEntries;
+    this.cache.clear();
+    try {
+      await this.cache.persistNow();
+    } catch (error) {
+      this.unpersistedClearedEntries = removedEntries;
+      throw error;
+    }
+    this.unpersistedClearedEntries = 0;
+    return removedEntries;
   }
 
   flush(): void {

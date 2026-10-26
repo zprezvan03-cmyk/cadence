@@ -713,6 +713,19 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         emitLibraryChanged();
         return { path: savedPath };
       },
+
+      /**
+       * Settings -> About -> "Clear lyrics cache". Empties the provider cache and waits for the
+       * emptied `lyrics-cache.json` to be written by Rust (`cmd_write_user_json` resolves only
+       * after its atomic write succeeded), so a filesystem error surfaces in the UI instead of a
+       * false success. The in-memory translation/romanization cache goes with it; the library
+       * database, settings, sidecar lyrics and artwork are user data and are left untouched.
+       */
+      async clearCache() {
+        const removedEntries = await lyricsService.clearCache();
+        clearTranslationCache(translationCache);
+        return { removedEntries };
+      },
     },
 
     player: {
@@ -820,13 +833,6 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
     getLastReportedPlayerState(): PlayerSnapshot | null {
       return lastPlayerState;
     },
-  };
-
-  // Expose cache clearing for Settings -> About -> "Clear lyrics cache"
-  (api.lyrics as unknown as { clearCache?: () => Promise<void> }).clearCache = async () => {
-    lyricsCache.clear();
-    lyricsCache.flush();
-    clearTranslationCache(translationCache);
   };
 
   if (typeof window !== "undefined") {

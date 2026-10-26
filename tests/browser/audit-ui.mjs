@@ -577,7 +577,11 @@ async function installAuditBridge() {
   window.cadence.lyrics.translate = async request => { state.calls.push(["translate", request.targetLanguage]); return originalTranslate(request); };
   window.cadence.lyrics.romanize = async request => { state.calls.push(["romanize"]); return originalRomanize(request); };
   window.cadence.lyrics.saveSidecar = async (trackId, text) => { state.calls.push(["save-sidecar", trackId, text]); return { path: "/harness/lyrics.lrc" }; };
-  window.cadence.lyrics.clearCache = async () => { state.calls.push(["clear-lyrics-cache"]); };
+  window.cadence.lyrics.clearCache = async () => {
+    state.calls.push(["clear-lyrics-cache"]);
+    if (state.failClearCache) throw "Access is denied. (os error 5)";
+    return { removedEntries: state.clearCacheRemovedEntries ?? 2 };
+  };
   window.cadence.app.chooseLyricsFile = async trackId => { state.calls.push(["choose-lyrics", trackId]); return structuredClone(state.chooseLyricsResult); };
   window.cadence.app.openExternal = async url => { state.calls.push(["open-external", url]); };
 }
