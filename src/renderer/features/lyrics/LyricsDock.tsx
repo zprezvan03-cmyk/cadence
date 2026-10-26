@@ -26,6 +26,7 @@ import {
   Youtube,
 } from "lucide-react";
 import type { LyricsCandidate, LyricsSettings } from "../../../shared/types";
+import { providerConfig } from "../../../shared/upstream/better-lyrics/constants";
 import { formatDurationSeconds, resolveSearchFields, type ManualSearchInput } from "../../../shared/youtube";
 import type { SearchDraft } from "../../state/lyricsStore";
 import type { ManualSearchState, YouTubeResolveState } from "./useLyrics";
@@ -59,6 +60,16 @@ interface LyricsDockProps {
   concealed?: boolean;
   /** Reports whether a popover is open, so the controls stay visible while it is in use. */
   onPopoverChange?: (open: boolean) => void;
+}
+
+/**
+ * The name shown for a candidate. Registry keys resolve through `PROVIDER_CONFIGS` — the same
+ * authoritative configuration Settings renders — so "Better Lyrics" and "Better Lyrics Line" read
+ * identically in both places. Ephemeral sources (a chosen file, a manual search row from a
+ * catalogue) keep the provider's own label.
+ */
+function providerLabel(candidate: LyricsCandidate): string {
+  return providerConfig(candidate.source)?.displayName ?? candidate.provider;
 }
 
 export function LyricsDock({
@@ -205,7 +216,7 @@ export function LyricsDock({
               }}
             >
               <span>
-                <strong>{candidate.provider}</strong>
+                <strong>{providerLabel(candidate)}</strong>
                 <em>{candidate.syncHint === "richsync" ? "Word synced" : candidate.syncHint === "synced" ? "Line synced" : "Unsynced"}</em>
               </span>
               {candidate.cached ? <span className="badge">cached</span> : null}
@@ -215,7 +226,7 @@ export function LyricsDock({
           <div className="popover-title">Providers</div>
           {providerStatus.map(entry => (
             <div className="provider-row" key={entry.provider}>
-              <span>{entry.provider}</span>
+              <span>{providerConfig(entry.provider)?.displayName ?? entry.provider}</span>
               <span className={`provider-${entry.status}`}>{entry.detail || entry.status}</span>
             </div>
           ))}
@@ -421,7 +432,7 @@ export function LyricsDock({
                         .join(" · ") || "Unknown artist"}
                     </em>
                     <em className="search-provider">
-                      {candidate.provider} ·{" "}
+                      {providerLabel(candidate)} ·{" "}
                       {candidate.syncHint === "richsync"
                         ? "Word synced"
                         : candidate.syncHint === "synced"

@@ -15,10 +15,17 @@ interface CacheEntry {
   candidates: LyricsCandidate[];
 }
 
+/**
+ * `version` 2: entries written by earlier builds attributed every `/getLyrics` TTML to
+ * `blyrics-richsynced`, so replaying them would resurrect the wrong provider identity for up to
+ * the 30-day TTL. Older files are dropped rather than migrated — the lyrics are one request away.
+ */
 interface CacheFile {
-  version: 1;
+  version: 2;
   entries: Record<string, CacheEntry>;
 }
+
+const CACHE_VERSION = 2;
 
 const MAX_ENTRIES = 800;
 
@@ -28,7 +35,7 @@ export interface LyricsCachePersistence {
 }
 
 export class LyricsCacheCore {
-  private data: CacheFile = { version: 1, entries: {} };
+  private data: CacheFile = { version: CACHE_VERSION, entries: {} };
   private timer: ReturnType<typeof setTimeout> | null = null;
   private dirty = false;
 
@@ -36,9 +43,9 @@ export class LyricsCacheCore {
     if (persistence.initialJson) {
       try {
         const parsed = JSON.parse(persistence.initialJson) as CacheFile;
-        if (parsed?.version === 1 && parsed.entries) this.data = parsed;
+        if (parsed?.version === CACHE_VERSION && parsed.entries) this.data = parsed;
       } catch {
-        this.data = { version: 1, entries: {} };
+        this.data = { version: CACHE_VERSION, entries: {} };
       }
     }
   }
@@ -76,7 +83,7 @@ export class LyricsCacheCore {
   }
 
   clear(): void {
-    this.data = { version: 1, entries: {} };
+    this.data = { version: CACHE_VERSION, entries: {} };
     this.markDirty();
   }
 

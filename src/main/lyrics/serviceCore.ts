@@ -48,7 +48,9 @@ async function runLrclib(
 const NETWORK_MODULES: readonly NetworkModule[] = [
   {
     id: "better-lyrics",
-    keys: ["blyrics-richsynced", "blyrics-wordsynced", "blyrics-synced"],
+    // `blyrics-line` is produced by the same `/getLyrics` call as `blyrics-richsynced`; listing it
+    // keeps the module active (and its cached status honest) when only the line slot is enabled.
+    keys: ["blyrics-richsynced", "blyrics-line", "blyrics-wordsynced", "blyrics-synced"],
     run: fetchBetterLyrics,
   },
   {
@@ -67,7 +69,7 @@ const NETWORK_MODULES: readonly NetworkModule[] = [
 const SEARCH_MODULES: readonly NetworkModule[] = [
   {
     id: "better-lyrics",
-    keys: ["blyrics-richsynced", "blyrics-wordsynced", "blyrics-synced"],
+    keys: ["blyrics-richsynced", "blyrics-line", "blyrics-wordsynced", "blyrics-synced"],
     run: searchBetterLyrics,
   },
   {
@@ -358,12 +360,15 @@ export class LyricsServiceCore {
     const cached = this.cache.get(cacheKey);
     if (cached !== null) {
       const wanted = cached.filter(candidate => enabledKeys.has(candidate.source));
+      // Cached results for a slot the user has since switched off are dropped, never re-labelled
+      // as an enabled sibling — and the status says so rather than claiming a cached miss.
+      const droppedByConfig = cached.filter(candidate => !enabledKeys.has(candidate.source));
       return {
         candidates: wanted,
         definitive: true,
         status: NETWORK_MODULES.map(module =>
           module.keys.some(key => enabledKeys.has(key))
-            ? this.cachedStatus(module, wanted)
+            ? this.cachedStatus(module, wanted, droppedByConfig)
             : { provider: module.id, status: "skipped" as const, detail: "Provider disabled" }
         ),
       };
@@ -539,12 +544,21 @@ export class LyricsServiceCore {
 
   private cachedStatus(
     module: { id: string; keys: readonly string[] },
-    cached: readonly LyricsCandidate[]
+    cached: readonly LyricsCandidate[],
+    droppedByConfig: readonly LyricsCandidate[] = []
   ): ProviderStatus {
     const hit = cached.some(candidate => module.keys.includes(candidate.source));
-    return hit
-      ? { provider: module.id, status: "hit", detail: "Cached lyrics" }
-      : { provider: module.id, status: "miss", detail: "Cached negative result" };
+    if (hit) return { provider: module.id, status: "hit", detail: "Cached lyrics" };
+    // Same wording as the live fetch path, so switching a slot off reads the same whether the
+    // answer came from the API or from the cache.
+    const disabled = droppedByConfig.filter(candidate => module.keys.includes(candidate.source));
+    if (disabled.length > 0) {
+      const names = [
+        ...new Set(disabled.map(candidate => providerConfig(candidate.source)?.displayName ?? candidate.provider)),
+      ];
+      return { provider: module.id, status: "miss", detail: `${names.join(", ")} disabled for this track` };
+    }
+    return { provider: module.id, status: "miss", detail: "Cached negative result" };
   }
 
   private sharedLookup(

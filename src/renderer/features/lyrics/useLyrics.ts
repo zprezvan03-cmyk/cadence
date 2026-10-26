@@ -158,7 +158,9 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     const token = ++generations.resolve;
     resolvedForKey = requestKey;
 
-    useLyricsStore.getState().setActive(track.id, { status: "loading", error: null, lyrics: null });
+    // Clears the previous track's candidates/provider identity when the track changed, so a
+    // fallback to another provider never renders under the old provider's name.
+    useLyricsStore.getState().beginResolve(track.id);
 
     void (async () => {
       try {

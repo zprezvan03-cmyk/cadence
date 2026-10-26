@@ -20,6 +20,13 @@ import {
   providerConfig,
   untoggleProvider,
 } from "../../src/shared/upstream/better-lyrics/constants";
+import {
+  activeProviderEntries,
+  addProviderToOrder,
+  moveProviderInOrder,
+  removeProviderFromOrder,
+} from "../../src/shared/providerOrder";
+import { parseSettingsJson } from "../../src/main/settingsCore";
 
 const RECOMMENDED_13 = [
   "local-rich",
@@ -51,12 +58,24 @@ describe("provider registry and default order", () => {
     });
   });
 
-  it("flags only the two slots without a keyless endpoint as unavailable, with explanations", () => {
+  it("flags only the slot without a keyless endpoint as unavailable, with an explanation", () => {
     const unavailable = PROVIDER_CONFIGS.filter(config => !config.available).map(config => config.key);
-    expect(unavailable).toEqual(["blyrics-line", "qq-line"]);
+    expect(unavailable).toEqual(["qq-line"]);
     for (const key of unavailable) {
       expect(providerConfig(key)?.unavailableReason).toBeTruthy();
     }
+  });
+
+  it("registers Better Lyrics and Better Lyrics Line as two independent, available slots", () => {
+    const syllable = providerConfig("blyrics-richsynced");
+    const line = providerConfig("blyrics-line");
+    expect(syllable).toMatchObject({ displayName: "Better Lyrics", syncType: "syllable", available: true });
+    expect(line).toMatchObject({ displayName: "Better Lyrics Line", syncType: "line", available: true });
+    // Separate keys, separate names and separate positions in the recommended order.
+    expect(syllable?.key).not.toBe(line?.key);
+    expect(syllable?.priority).not.toBe(line?.priority);
+    expect(DEFAULT_PROVIDER_ORDER).toContain("blyrics-richsynced");
+    expect(DEFAULT_PROVIDER_ORDER).toContain("blyrics-line");
   });
 
   it("keeps implemented variants outside the default but available in the registry", () => {
@@ -124,6 +143,80 @@ describe("migrateProviderOrder", () => {
   });
 });
 
+describe("Settings edits to the provider order", () => {
+  /** What the Settings screen persists after the user presses a button. */
+  const reload = (order: readonly string[]): string[] =>
+    parseSettingsJson(JSON.stringify({ lyrics: { providerOrder: [...order] } })).lyrics.providerOrder;
+
+  it("keeps a removed provider out of the order across a reload", () => {
+    const removed = removeProviderFromOrder(DEFAULT_PROVIDER_ORDER, "blyrics-line");
+
+    expect(removed).toContain("d_blyrics-line");
+    expect(activeProviderEntries(removed)).not.toContain("blyrics-line");
+    // The regression this guards: splicing the key out lets migrateProviderOrder merge the default
+    // straight back in — enabled — so the removal silently undid itself on the next load.
+    expect(reload(DEFAULT_PROVIDER_ORDER.filter(key => key !== "blyrics-line"))).toContain("blyrics-line");
+    expect(activeProviderEntries(reload(removed))).not.toContain("blyrics-line");
+    expect(reload(removed)).toContain("d_blyrics-line");
+  });
+
+  it("removes the two Better Lyrics slots independently of each other", () => {
+    const withoutLine = removeProviderFromOrder(DEFAULT_PROVIDER_ORDER, "blyrics-line");
+    expect(activeProviderEntries(withoutLine)).toContain("blyrics-richsynced");
+    expect(activeProviderEntries(withoutLine)).not.toContain("blyrics-line");
+
+    const withoutSyllable = removeProviderFromOrder(DEFAULT_PROVIDER_ORDER, "blyrics-richsynced");
+    expect(activeProviderEntries(withoutSyllable)).toContain("blyrics-line");
+    expect(activeProviderEntries(withoutSyllable)).not.toContain("blyrics-richsynced");
+
+    const neither = removeProviderFromOrder(withoutLine, "blyrics-richsynced");
+    expect(activeProviderEntries(neither)).not.toContain("blyrics-line");
+    expect(activeProviderEntries(neither)).not.toContain("blyrics-richsynced");
+  });
+
+  it("re-adds a removed provider at its old priority and appends an unknown-to-the-order one", () => {
+    const removed = removeProviderFromOrder(DEFAULT_PROVIDER_ORDER, "blyrics-line");
+    const restored = addProviderToOrder(removed, "blyrics-line");
+    expect(restored).toEqual([...DEFAULT_PROVIDER_ORDER]);
+
+    const appended = addProviderToOrder(DEFAULT_PROVIDER_ORDER, "unison-plain");
+    expect(appended.at(-1)).toBe("unison-plain");
+    expect(addProviderToOrder(appended, "unison-plain")).toEqual(appended);
+  });
+
+  it("moves an active provider past its active neighbour without disturbing disabled slots", () => {
+    const moved = moveProviderInOrder(DEFAULT_PROVIDER_ORDER, "blyrics-line", -1);
+    expect(moved.indexOf("blyrics-line")).toBe(DEFAULT_PROVIDER_ORDER.indexOf("blyrics-line") - 1);
+    expect(moved.indexOf("blyrics-richsynced")).toBe(DEFAULT_PROVIDER_ORDER.indexOf("blyrics-richsynced"));
+    expect([...moved].sort()).toEqual([...DEFAULT_PROVIDER_ORDER].sort());
+
+    // A disabled entry sitting between two active ones keeps its slot.
+    const withHole = ["local-rich", "d_blyrics-richsynced", "blyrics-line", "lrclib-synced"];
+    expect(moveProviderInOrder(withHole, "blyrics-line", -1)).toEqual([
+      "blyrics-line",
+      "d_blyrics-richsynced",
+      "local-rich",
+      "lrclib-synced",
+    ]);
+
+    // No-ops at the ends and for a provider that is not in the order.
+    expect(moveProviderInOrder(DEFAULT_PROVIDER_ORDER, "local-rich", -1)).toEqual([...DEFAULT_PROVIDER_ORDER]);
+    expect(moveProviderInOrder(DEFAULT_PROVIDER_ORDER, "embedded-tag", 1)).toEqual([...DEFAULT_PROVIDER_ORDER]);
+    expect(moveProviderInOrder(DEFAULT_PROVIDER_ORDER, "unison-plain", 1)).toEqual([...DEFAULT_PROVIDER_ORDER]);
+  });
+
+  it("survives a reload with the custom order and the removal both intact", () => {
+    const edited = removeProviderFromOrder(
+      moveProviderInOrder(DEFAULT_PROVIDER_ORDER, "blyrics-line", -1),
+      "blyrics-richsynced"
+    );
+    const reloaded = reload(edited);
+    expect(reloaded).toEqual(edited);
+    expect(activeProviderEntries(reloaded)[1]).toBe("unison-richsynced");
+    expect(activeProviderEntries(reloaded)).toContain("blyrics-line");
+  });
+});
+
 const TTML_WORD = `<?xml version="1.0" encoding="UTF-8"?>
 <tt xmlns="http://www.w3.org/ns/ttml"><body><div>
 <p begin="00:00:12.300" end="00:00:15.000"><span begin="00:00:12.300" end="00:00:12.800">First </span><span begin="00:00:12.800" end="00:00:15.000">line</span></p>
@@ -181,11 +274,18 @@ describe("LyricsService provider-order behavior", () => {
 
     const result = await service.resolve(resolveRequest, DEFAULT_PROVIDER_ORDER);
 
-    for (const key of ["blyrics-line", "qq-line"]) {
+    for (const key of ["qq-line"]) {
       const status = result.providerStatus.find(entry => entry.provider === key);
       expect(status).toMatchObject({ status: "skipped" });
       expect(status?.detail).toContain("Unavailable");
     }
+    // `blyrics-line` is a real slot now: it is served by /getLyrics through the `better-lyrics`
+    // module, so it is never reported as an unavailable slot.
+    expect(
+      result.providerStatus.some(
+        entry => entry.provider === "blyrics-line" && /Unavailable/.test(entry.detail ?? "")
+      )
+    ).toBe(false);
     // Every real request goes to a documented host; no invented endpoint for the unavailable slots.
     for (const call of fetchMock.mock.calls) {
       const url = String(call[0]);
@@ -213,13 +313,15 @@ describe("LyricsService provider-order behavior", () => {
 
     const result = await service.resolve(resolveRequest, [
       "d_blyrics-richsynced",
+      "d_blyrics-line",
       "lrclib-synced",
       "embedded-tag",
     ]);
 
     expect(result.candidates.map(c => c.source)).toEqual(["lrclib-synced"]);
-    // The disabled rich endpoint is never called; remaining enabled Better Lyrics variants (QQ/Kugou)
-    // still fan out alongside LRCLIB, so check the specific path rather than the whole host.
+    // Both /getLyrics slots are disabled, so that endpoint is never called; remaining enabled
+    // Better Lyrics variants (QQ/Kugou) still fan out alongside LRCLIB, so check the specific path
+    // rather than the whole host.
     const richCalls = fetchMock.mock.calls
       .map(call => String(call[0]))
       .filter(url => url.includes("api.betterlyrics.org") && new URL(url).pathname === "/getLyrics");

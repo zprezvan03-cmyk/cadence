@@ -90,6 +90,13 @@ interface LyricsStoreState {
 
   setActive: (trackId: number, patch: Partial<Omit<LyricsStoreState, "sessions" | "selectedSources">>) => void;
   resetActive: (trackId: number) => void;
+  /**
+   * Enters the loading state for `trackId`. Switching to a different track drops the previous
+   * result's candidates, provider identity and provider statuses first, so the selector can never
+   * show the last track's provider while the new one (which may fall back to another provider)
+   * resolves.
+   */
+  beginResolve: (trackId: number) => void;
   ensureSession: (track: Track) => SearchSession;
   getSession: (trackId: number) => SearchSession | undefined;
   patchDraft: (trackId: number, patch: Partial<SearchDraft>) => void;
@@ -175,6 +182,29 @@ export const useLyricsStore = create<LyricsStoreState>()((set, get) => ({
       translatedLanguage: null,
       detectedLanguage: null,
     });
+  },
+
+  beginResolve: trackId => {
+    set(state =>
+      state.trackId === trackId
+        ? { ...state, status: "loading", error: null, lyrics: null }
+        : {
+            ...state,
+            trackId,
+            status: "loading",
+            candidates: [],
+            activeSource: null,
+            parsed: null,
+            lyrics: null,
+            syncType: "none",
+            providerStatus: [],
+            error: null,
+            translating: false,
+            romanizing: false,
+            translatedLanguage: null,
+            detectedLanguage: null,
+          }
+    );
   },
 
   ensureSession: track => {

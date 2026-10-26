@@ -239,10 +239,16 @@ describe("Better Lyrics API provider", () => {
     expect(result.statuses[0]).toMatchObject({ provider: "better-lyrics", status: "hit" });
   });
 
-  it("classifies line-only TTML as line synced from the actual payload, not the endpoint name", async () => {
+  it("classifies line-only TTML as Better Lyrics Line from the actual payload, not the endpoint name", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => json({ ttml: TTML_LINE })));
-    const result = await fetchBetterLyrics(QUERY, new Set(["blyrics-richsynced"]));
-    expect(result.candidates[0].syncHint).toBe("synced");
+    const result = await fetchBetterLyrics(QUERY, new Set(["blyrics-richsynced", "blyrics-line"]));
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]).toMatchObject({
+      source: "blyrics-line",
+      provider: "Better Lyrics Line",
+      syncHint: "synced",
+      text: TTML_LINE,
+    });
   });
 
   it("keeps QRC word timing parseable through Cadence's parser chain", async () => {

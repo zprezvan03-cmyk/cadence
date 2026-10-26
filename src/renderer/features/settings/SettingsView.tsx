@@ -17,6 +17,12 @@ import {
   providerConfig,
   untoggleProvider,
 } from "../../../shared/upstream/better-lyrics/constants";
+import {
+  activeProviderEntries,
+  addProviderToOrder,
+  moveProviderInOrder,
+  removeProviderFromOrder,
+} from "../../../shared/providerOrder";
 import { THEMES } from "../../upstream/better-lyrics/themes";
 import { TRANSLATION_LANGUAGES } from "../lyrics/translationLanguages";
 
@@ -124,23 +130,19 @@ export function SettingsView() {
   const patchLyrics = (patch: Partial<AppSettings["lyrics"]>) => void patchSettings({ lyrics: patch });
   const patchShaders = (patch: Partial<ShaderSettings>) => void patchSettings({ shaders: patch });
 
-  const moveProvider = (index: number, direction: -1 | 1) => {
-    const order = [...settings.lyrics.providerOrder];
-    const target = index + direction;
-    if (target < 0 || target >= order.length) return;
-    [order[index], order[target]] = [order[target], order[index]];
-    patchLyrics({ providerOrder: order });
-  };
-  const removeProvider = (index: number) => {
-    patchLyrics({ providerOrder: settings.lyrics.providerOrder.filter((_, i) => i !== index) });
-  };
-  const addProvider = (key: string) => {
-    if (settings.lyrics.providerOrder.some(entry => untoggleProvider(entry) === key)) return;
-    patchLyrics({ providerOrder: [...settings.lyrics.providerOrder, key] });
-  };
+  // Provider-order edits go through the shared helpers so a removal is persisted as an upstream
+  // `d_` entry instead of being spliced out: migrateProviderOrder re-inserts missing defaults, so a
+  // spliced-out provider used to come back (enabled) on the next load.
+  const moveProvider = (key: string, direction: -1 | 1) =>
+    patchLyrics({ providerOrder: moveProviderInOrder(settings.lyrics.providerOrder, key, direction) });
+  const removeProvider = (key: string) =>
+    patchLyrics({ providerOrder: removeProviderFromOrder(settings.lyrics.providerOrder, key) });
+  const addProvider = (key: string) =>
+    patchLyrics({ providerOrder: addProviderToOrder(settings.lyrics.providerOrder, key) });
   const restoreProviderOrder = () => patchLyrics({ providerOrder: [...DEFAULT_PROVIDER_ORDER] });
-  const orderedProviderKeys = new Set(settings.lyrics.providerOrder.map(untoggleProvider));
-  const providerPool = PROVIDER_CONFIGS.filter(config => !orderedProviderKeys.has(config.key));
+  const activeProviders = activeProviderEntries(settings.lyrics.providerOrder);
+  const activeProviderKeys = new Set(activeProviders.map(untoggleProvider));
+  const providerPool = PROVIDER_CONFIGS.filter(config => !activeProviderKeys.has(config.key));
 
   return (
     <div className="view settings-view" data-testid="settings-view">
@@ -321,19 +323,19 @@ export function SettingsView() {
               without blocking the next provider.
             </p>
             <div className="provider-order-head">
-              <span className="muted">{settings.lyrics.providerOrder.length} active</span>
+              <span className="muted">{activeProviders.length} active</span>
               <button type="button" className="provider-restore" onClick={restoreProviderOrder}>
                 <RotateCcw size={14} /> Restore default order
               </button>
             </div>
             <ol className="provider-order" data-testid="provider-order">
-              {settings.lyrics.providerOrder.map((provider, index) => {
-                const config = providerConfig(untoggleProvider(provider));
-                const disabled = provider.startsWith("d_");
+              {activeProviders.map((provider, index) => {
+                const key = untoggleProvider(provider);
+                const config = providerConfig(key);
                 return (
                   <li
                     key={provider}
-                    className={!config?.available || disabled ? "is-unavailable" : undefined}
+                    className={!config?.available ? "is-unavailable" : undefined}
                     title={!config?.available ? config?.unavailableReason : undefined}
                   >
                     <span className="provider-index">{index + 1}</span>
@@ -342,7 +344,6 @@ export function SettingsView() {
                       <span className="provider-badges">
                         <span className="provider-badge">{SYNC_BADGE[config?.syncType ?? "line"] ?? config?.syncType}</span>
                         {config?.offline ? <span className="provider-badge offline">offline</span> : null}
-                        {disabled ? <span className="provider-badge disabled">disabled</span> : null}
                         {!config?.available ? (
                           <span className="provider-badge unavailable" title={config?.unavailableReason}>
                             unavailable
@@ -351,13 +352,13 @@ export function SettingsView() {
                       </span>
                     </span>
                     <span className="provider-buttons">
-                      <button type="button" className="icon-button" onClick={() => moveProvider(index, -1)} aria-label="Move up">
+                      <button type="button" className="icon-button" onClick={() => moveProvider(key, -1)} aria-label="Move up">
                         <ChevronUp size={15} />
                       </button>
-                      <button type="button" className="icon-button" onClick={() => moveProvider(index, 1)} aria-label="Move down">
+                      <button type="button" className="icon-button" onClick={() => moveProvider(key, 1)} aria-label="Move down">
                         <ChevronDown size={15} />
                       </button>
-                      <button type="button" className="icon-button" onClick={() => removeProvider(index)} aria-label="Remove from order">
+                      <button type="button" className="icon-button" onClick={() => removeProvider(key)} aria-label="Remove from order">
                         <Trash2 size={14} />
                       </button>
                     </span>

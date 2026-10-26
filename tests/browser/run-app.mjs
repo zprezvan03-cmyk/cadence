@@ -17,9 +17,10 @@
 import { createServer } from "node:http";
 import { createReadStream, existsSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import puppeteer from "puppeteer-core";
 import { PNG } from "pngjs";
-import chromium from "@sparticuz/chromium";
+import chromium, { inflate, setupLambdaEnvironment } from "@sparticuz/chromium";
 
 const root = resolve(import.meta.dirname, "../..");
 const outDir = join(root, "dist");
@@ -139,6 +140,12 @@ await new Promise(r => server.listen(4791, "0.0.0.0", r));
 const base = "http://127.0.0.1:4791";
 
 /* ------------------------------------------------------------------ browser */
+
+// `@sparticuz/chromium` only unpacks its bundled NSS/NSPR libraries on Amazon Linux; elsewhere the
+// browser dies with `libnspr4.so: cannot open shared object file`. Unpack them and point the
+// dynamic loader at them before launching.
+await inflate(join(root, "node_modules/@sparticuz/chromium/bin/al2023.tar.br"));
+setupLambdaEnvironment(join(tmpdir(), "al2023", "lib"));
 
 chromium.setGraphicsMode = true;
 const browser = await puppeteer.launch({

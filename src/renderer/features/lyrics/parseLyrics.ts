@@ -16,6 +16,7 @@ import {
   type LyricFormat,
 } from "@braccato/parsers";
 import type { LyricsSyncType } from "../../../shared/types";
+import { lineHasSyllableTiming } from "../../../shared/lyricsTiming";
 import { detectNonLatinLanguage } from "@braccato/core/text";
 
 export interface ParsedLyrics {
@@ -35,12 +36,17 @@ export interface ParseLyricsMetadata {
 /** Normalizes shorthand `<ss.xx>` enhanced-LRC word tags to `<00:ss.xx>` so `@braccato/parsers` parses word parts. */
 const SHORTHAND_ENHANCED_LRC_TAG = /<(\d+\.\d+)>/g;
 
-/** Mirrors the upstream renderer's own classification: parts make a line rich-synced. */
+/**
+ * Rich sync means the line is subdivided into independently timed parts. The shared
+ * {@link lineHasSyllableTiming} rule is used so the badge in the UI agrees with the provider
+ * identity the main process assigned: a single part repeating the whole line (common in
+ * line-synced TTML) is line sync, not word sync.
+ */
 export function detectSyncType(lyrics: readonly Lyric[]): LyricsSyncType {
   if (lyrics.length === 0) return "none";
   let timed = false;
   for (const line of lyrics) {
-    if (Array.isArray(line.parts) && line.parts.length > 0) return "richsync";
+    if (lineHasSyllableTiming(line)) return "richsync";
     if (line.startTimeMs > 0 || (line.durationMs ?? 0) > 0) timed = true;
   }
   return timed ? "synced" : "none";
