@@ -24,6 +24,7 @@
     "test:watch": "vitest",
     "test:ui": "npm run build:web && npx vite-node tests/browser/build-library.ts && node tests/browser/run-app.mjs",
     "test:renderer": "npm run build:web && node tests/browser/run-harness.mjs",
+    "test:lyrics-ui": "npm run build:web && node tests/browser/lyrics-decorations.mjs",
     "test:providers": "npm run build:web && npx vite-node tests/browser/build-library.ts && npx vite-node tests/browser/provider-identity.ts",
     "test:cache": "npm run build:web && npx vite-node tests/browser/build-library.ts && npx vite-node tests/browser/cache-clear.ts",
     "test:fixtures": "python3 tests/fixtures/generate-audio.py",

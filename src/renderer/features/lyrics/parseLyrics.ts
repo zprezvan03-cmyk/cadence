@@ -189,6 +189,29 @@ export function applyTranslations(
   });
 }
 
+/** Copies the romanization each line's own lyrics file supplied onto `lyrics`, matched by position
+ * (the association every decoration pass in this module uses). File romanization carries the
+ * file's word timing with it, so a restored line keeps its syllable-level timing instead of
+ * flattening to a plain string. Translation decorations on `lyrics` are left untouched. */
+export function applyFileRomanization(lyrics: readonly Lyric[], local: readonly Lyric[]): Lyric[] {
+  let changed = false;
+  const result = lyrics.map((line, index) => {
+    const source = local[index];
+    const fileRomanization = source?.romanization?.trim() ? source.romanization : undefined;
+    if (!fileRomanization) return line;
+    const fileTiming = source.timedRomanization;
+    if (line.romanization === fileRomanization && (line.timedRomanization ?? undefined) === (fileTiming ?? undefined)) {
+      return line;
+    }
+    changed = true;
+    const next: Lyric = { ...line, romanization: fileRomanization };
+    if (fileTiming?.length) next.timedRomanization = fileTiming;
+    else delete next.timedRomanization;
+    return next;
+  });
+  return changed ? result : (lyrics as Lyric[]);
+}
+
 export function applyRomanization(lyrics: readonly Lyric[], romanizations: readonly (string | null)[]): Lyric[] {
   return lyrics.map((line, index) => {
     // Romanization the line already carries came from the lyrics file itself (e.g. a TTML
@@ -243,34 +266,20 @@ export function stripTranslations(lyrics: readonly Lyric[]): Lyric[] {
   });
 }
 
-/** Removes only the romanization decoration. Same identity contract as {@link stripTranslations}. */
-export function stripRomanization(lyrics: readonly Lyric[]): Lyric[] {
-  if (!lyrics.some(line => line.romanization)) return lyrics as Lyric[];
-  return lyrics.map(line => {
-    if (!line.romanization) return line;
-    const { romanization: _romanization, ...rest } = line;
-    return rest as Lyric;
-  });
-}
-
 /**
- * Removes generated romanization while restoring the romanization each line's own lyrics file
- * supplied (`local`, the parsed lines `lyrics` was decorated from). The auto-romanize toggle gates
- * generation only; file-supplied romanization is not the toggle's to remove. Lines are matched by
- * position, the association every decoration pass in this module already uses. Returns the input
- * array itself when every line already matches its local state.
+ * Removes every romanization decoration, generated and file-supplied alike, together with the
+ * word timing that came with it. The auto-romanize toggle controls whether romanization is shown,
+ * so turning it off must hide the file's transliterations too; {@link applyFileRomanization}
+ * restores them without another provider request when the toggle comes back on. Same identity
+ * contract as {@link stripTranslations}.
  */
-export function stripGeneratedRomanization(lyrics: readonly Lyric[], local: readonly Lyric[]): Lyric[] {
-  let changed = false;
-  const result = lyrics.map((line, index) => {
-    const localRomanization = local[index]?.romanization?.trim() ? local[index].romanization : undefined;
-    if ((line.romanization ?? undefined) === localRomanization) return line;
-    changed = true;
-    if (localRomanization) return { ...line, romanization: localRomanization };
-    const { romanization: _romanization, ...rest } = line;
+export function stripRomanization(lyrics: readonly Lyric[]): Lyric[] {
+  if (!lyrics.some(line => line.romanization || line.timedRomanization)) return lyrics as Lyric[];
+  return lyrics.map(line => {
+    if (!line.romanization && !line.timedRomanization) return line;
+    const { romanization: _romanization, timedRomanization: _timedRomanization, ...rest } = line;
     return rest as Lyric;
   });
-  return changed ? result : (lyrics as Lyric[]);
 }
 
 export function lyricsToPlainText(lyrics: readonly Lyric[]): string {

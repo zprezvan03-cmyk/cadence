@@ -136,6 +136,7 @@ npm run typecheck    # tsc --noEmit for Node/Tauri bridge and renderer
 npm test             # 201 Vitest assertions (library, protocol, providers, search, YouTube, Tauri bridge)
 npm run smoke        # fixtures + tests + Vite production build + Tauri config/capability checks
 npm run test:renderer # 25 headless Chromium audio/Braccato/Kawarp engine checks
+npm run test:lyrics-ui # real Now Playing page: translation / romanization decorations through the dock
 npm run test:ui      # production renderer in headless Chromium: interactive UI suite
 ```
 
