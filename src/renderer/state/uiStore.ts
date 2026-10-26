@@ -10,6 +10,7 @@ export type Route =
   | { name: "artist"; artistId: string }
   | { name: "playlist"; playlistId: number }
   | { name: "lyrics" }
+  | { name: "decode-tester" }
   | { name: "settings" };
 
 interface UiState {
@@ -51,6 +52,8 @@ export function routeToHash(route: Route): string {
       return `#/playlist/${route.playlistId}`;
     case "lyrics":
       return "#/lyrics";
+    case "decode-tester":
+      return "#/decode-tester";
     case "settings":
       return "#/settings";
     default:
@@ -81,6 +84,8 @@ export function hashToRoute(hash: string): Route {
       return { name: "playlist", playlistId: Number(value) || 0 };
     case "lyrics":
       return { name: "lyrics" };
+    case "decode-tester":
+      return { name: "decode-tester" };
     case "settings":
       return { name: "settings" };
     default:

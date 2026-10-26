@@ -21,7 +21,7 @@ use crate::commands::{is_audio_extension, AppState};
 use crate::db::LibraryDb;
 
 const CLIENT_USER_AGENT: &str =
-    "Cadence Player v0.1.0 (https://github.com/zprezvan03-cmyk/betterlyrics-standalone)";
+    "Cadence Player v0.2.0 (https://github.com/zprezvan03-cmyk/betterlyrics-standalone)";
 
 fn extract_cli_audio_files(argv: &[String]) -> Vec<String> {
     argv.iter()
@@ -221,6 +221,8 @@ pub fn run() {
             commands::cmd_save_artwork,
             commands::cmd_read_sidecar_text,
             commands::cmd_write_sidecar_lrc,
+            commands::cmd_decode_delete_files,
+            commands::cmd_decode_export_list,
             commands::cmd_http_fetch,
             commands::cmd_http_abort,
             commands::cmd_shell_show_in_folder,

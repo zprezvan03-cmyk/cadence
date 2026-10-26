@@ -317,7 +317,7 @@ await page.evaluateOnNewDocument(
     window.cadence = {
       info: async () => ({
         name: "Cadence",
-        version: "0.1.0",
+        version: "0.2.0",
         platform: "browser-harness",
         tauri: "2.12 (Chromium harness)",
         electron: "",

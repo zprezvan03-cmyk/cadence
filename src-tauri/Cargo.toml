@@ -1,6 +1,6 @@
 [package]
 name = "cadence"
-version = "0.1.0"
+version = "0.2.0"
 description = "Cadence — Desktop music player with synchronized, animated lyrics"
 authors = ["Cadence Contributors"]
 license = "GPL-3.0-only"

@@ -80,12 +80,26 @@ const MIME = {
   ".opus": "audio/ogg",
 };
 
+// Decode Tester fixture: a real FLAC cut to 70% of its bytes — enough for the demuxer to open and
+// the start to decode, so the failure only shows towards the end of the stream. Served from the
+// harness work dir so the library scanner (which only walks the formats dir) never indexes it.
+const decodeAudioDir = join(harnessDir, "decode-audio");
+mkdirSync(decodeAudioDir, { recursive: true });
+{
+  const fullFlac = readFileSync(join(audioDir, "fixture.flac"));
+  writeFileSync(join(decodeAudioDir, "truncated.flac"), fullFlac.subarray(0, Math.floor(fullFlac.length * 0.7)));
+}
+
 const missing = [];
 const server = createServer((req, res) => {
   const url = new URL(req.url, "http://127.0.0.1");
   const decode = value => decodeURIComponent(value);
   let file = null;
-  if (url.pathname.startsWith("/audio/")) file = join(audioDir, decode(url.pathname.slice(7)));
+  if (url.pathname.startsWith("/audio/")) {
+    const name = decode(url.pathname.slice(7));
+    const decodeFixture = join(decodeAudioDir, name);
+    file = existsSync(decodeFixture) ? decodeFixture : join(audioDir, name);
+  }
   else if (url.pathname.startsWith("/artwork/")) file = join(harnessDir, decode(url.pathname.slice(9)));
   else {
     const path = url.pathname === "/" ? "/index.html" : url.pathname;
@@ -274,6 +288,41 @@ await page.evaluateOnNewDocument(
     let playlists = structuredClone(snapshot.playlists);
     const trackById = id => snapshot.tracks.find(track => track.id === id) ?? null;
 
+    // Decode Tester harness state: recorded native calls plus synthetic truncated/missing tracks
+    // that can be appended after every track-count-sensitive check has already run.
+    window.__decodeCalls = { delete: [], export: [] };
+    window.__openedPaths = [];
+    window.__decodeDeleteAllSucceeds = false;
+    window.__libraryChangedListeners = new Set();
+    window.__addDecodeFixtureTracks = () => {
+      if (snapshot.tracks.some(track => track.title === "Truncated FLAC")) return;
+      const base = snapshot.tracks.find(track => track.title === "Fixture FLAC");
+      const maxId = Math.max(...snapshot.tracks.map(track => track.id));
+      const dir = base.path.slice(0, Math.max(base.path.lastIndexOf("/"), base.path.lastIndexOf("\\")) + 1);
+      snapshot.tracks.push(
+        {
+          ...structuredClone(base),
+          id: maxId + 1,
+          title: "Truncated FLAC",
+          path: `${dir}truncated.flac`,
+          streamUrl: "/audio/truncated.flac",
+          codec: "FLAC",
+          duration: base.duration,
+        },
+        {
+          ...structuredClone(base),
+          id: maxId + 2,
+          title: "Missing File",
+          path: `${dir}missing-file.flac`,
+          streamUrl: "/audio/missing-file.flac",
+          codec: "FLAC",
+          duration: base.duration,
+        }
+      );
+      snapshot.counts.tracks = snapshot.tracks.length;
+      for (const listener of window.__libraryChangedListeners) listener();
+    };
+
     const resolveLyrics = request => {
       const entry = lyricsByTrack[request?.trackId];
       if (!entry) {
@@ -306,7 +355,7 @@ await page.evaluateOnNewDocument(
     window.cadence = {
       info: async () => ({
         name: "Cadence",
-        version: "0.1.0",
+        version: "0.2.0",
         platform: "browser-harness",
         tauri: "2.12 (Chromium harness)",
         electron: "",
@@ -331,7 +380,10 @@ await page.evaluateOnNewDocument(
         setFavorite: async () => undefined,
         recordPlay: async () => undefined,
         onScanProgress: () => () => {},
-        onChanged: () => () => {},
+        onChanged: listener => {
+          window.__libraryChangedListeners.add(listener);
+          return () => window.__libraryChangedListeners.delete(listener);
+        },
       },
       playlists: {
         list: async () => playlists,
@@ -385,9 +437,32 @@ await page.evaluateOnNewDocument(
         reportState: async () => undefined,
         onCommand: () => () => {},
       },
+      decodeTester: {
+        // Mirrors the Rust contract: one outcome per path; deleted tracks leave the library,
+        // failures (here: the already-missing file) are reported, never thrown for the batch.
+        deleteFiles: async paths => {
+          window.__decodeCalls.delete.push([...paths]);
+          const outcomes = paths.map(path =>
+            !window.__decodeDeleteAllSucceeds && path.includes("missing-file")
+              ? { path, deleted: false, error: "The system cannot find the file specified. (os error 2)" }
+              : { path, deleted: true, error: null }
+          );
+          const deleted = new Set(outcomes.filter(outcome => outcome.deleted).map(outcome => outcome.path));
+          snapshot.tracks = snapshot.tracks.filter(track => !deleted.has(track.path));
+          snapshot.counts.tracks = snapshot.tracks.length;
+          for (const listener of window.__libraryChangedListeners) listener();
+          return outcomes;
+        },
+        exportFileList: async paths => {
+          window.__decodeCalls.export.push([...paths]);
+          return { canceled: false, path: "/harness/cadence-decode-problems.txt" };
+        },
+      },
       app: {
         openExternal: async () => undefined,
-        openPath: async () => undefined,
+        openPath: async path => {
+          window.__openedPaths.push(path);
+        },
         chooseLyricsFile: async () => null,
         window: async action => {
           window.__cadenceWindowActions.push(action);
@@ -1816,6 +1891,234 @@ check(
     reloadedSecondary.romanization.output === "26 px",
   `translation=${JSON.stringify(reloadedSecondary.translation)} romanization=${JSON.stringify(reloadedSecondary.romanization)}`
 );
+
+/* ----------------------------------------------------------- decode tester */
+
+// Real decoding through the same Chromium pipeline as playback: the corrupt FLAC, the ALAC file,
+// a truncated FLAC (35% of the bytes) and a track whose file is gone must be reported — each with
+// the right kind — while every valid format passes. Runs last: it appends synthetic tracks and
+// deletes library entries in the stub.
+await page.evaluate(() => window.__addDecodeFixtureTracks());
+await wait(500);
+const audioSrcBeforeDecode = await page.$eval("audio", node => node.currentSrc || node.src).catch(() => "");
+
+await page.click('aside.sidebar button[title="Decode Tester"]');
+await page.waitForSelector('[data-testid="decode-tester-view"]');
+await wait(300);
+check("decode-tester-route", (await page.evaluate(() => location.hash)) === "#/decode-tester", "sidebar opens the Decode Tester");
+check("decode-tester-idle-state", Boolean(await page.$('[data-testid="decode-empty-idle"]')), "pre-scan empty state");
+check(
+  "decode-tester-library-count",
+  /10 files in your library/.test(await page.$eval('[data-testid="decode-status"]', node => node.textContent)),
+  await page.$eval('[data-testid="decode-status"]', node => node.textContent.trim())
+);
+
+const readDecodeRows = () =>
+  page.$$eval('[data-testid="decode-problem-row"]', rows =>
+    rows.map(row => ({
+      path: row.getAttribute("data-path") ?? "",
+      kind: row.getAttribute("data-kind") ?? "",
+      name: row.querySelector(".decode-row-title strong")?.textContent?.trim() ?? "",
+      text: row.textContent ?? "",
+    }))
+  );
+const waitForDecodeComplete = async () => {
+  await page.waitForFunction(
+    () => /Scan complete|Scan canceled|Scan failed/.test(document.querySelector('[data-testid="decode-status"]')?.textContent ?? ""),
+    { timeout: 120_000 }
+  );
+  return page.$eval('[data-testid="decode-status"]', node => node.textContent.trim());
+};
+
+await page.click('[data-testid="decode-scan-button"]');
+const progressSamples = [];
+{
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    const snapshot = await page.evaluate(() => ({
+      status: document.querySelector('[data-testid="decode-status"]')?.textContent ?? "",
+      progress: document.querySelector('[data-testid="decode-progress"]')?.textContent?.trim() ?? null,
+    }));
+    if (snapshot.progress) progressSamples.push(snapshot.progress);
+    if (/Scan complete|Scan canceled|Scan failed/.test(snapshot.status)) break;
+    await wait(150);
+  }
+}
+check(
+  "decode-scan-progress",
+  progressSamples.some(text => /Scanned \d+ of 10 files/.test(text)),
+  progressSamples.at(-1) ?? "no progress element sampled"
+);
+const firstScanStatus = await page.$eval('[data-testid="decode-status"]', node => node.textContent.trim());
+check("decode-scan-completes", /Scan complete — 10 files checked, 4 problematic/.test(firstScanStatus), firstScanStatus);
+
+const rows = await readDecodeRows();
+const byName = new Map(rows.map(row => [row.name, row]));
+check("decode-scan-finds-problems", rows.length === 4, rows.map(row => `${row.name}:${row.kind}`).join(", "));
+check("decode-corrupt-flac", byName.get("broken.flac")?.kind === "decode-error", JSON.stringify(byName.get("broken.flac")));
+check(
+  "decode-alac-unsupported",
+  byName.get("fixture-alac.m4a")?.kind === "unsupported-codec" && /ALAC is not decodable/.test(byName.get("fixture-alac.m4a")?.text ?? ""),
+  byName.get("fixture-alac.m4a")?.text?.slice(0, 160) ?? "row missing"
+);
+check(
+  "decode-truncated-flac",
+  ["truncated", "decode-error", "timeout"].includes(byName.get("truncated.flac")?.kind ?? ""),
+  byName.get("truncated.flac")?.text?.slice(0, 160) ?? "row missing — truncated file passed the decoder"
+);
+check(
+  "decode-missing-inaccessible",
+  byName.get("missing-file.flac")?.kind === "inaccessible" && /could not be read from disk/i.test(byName.get("missing-file.flac")?.text ?? ""),
+  byName.get("missing-file.flac")?.text?.slice(0, 160) ?? "row missing"
+);
+check(
+  "decode-valid-files-pass",
+  ["fixture.flac", "fixture.mp3", "fixture.wav", "fixture.ogg", "fixture.opus", "fixture-aac.m4a"].every(
+    name => !byName.has(name)
+  ),
+  "no false positives for FLAC/MP3/WAV/Ogg/Opus/AAC"
+);
+check(
+  "decode-scan-leaves-player-alone",
+  (await page.$$("audio")).length === 1 &&
+    (await page.$eval("audio", node => node.currentSrc || node.src).catch(() => "")) === audioSrcBeforeDecode,
+  "one shared playback element, source untouched"
+);
+await page.screenshot({ path: join(shotDir, "08-decode-tester.png") });
+
+// Keep: mark, verify it stays listed, hide only via the explicit filter, then show again.
+await page.evaluate(() => {
+  const row = [...document.querySelectorAll('[data-testid="decode-problem-row"]')].find(node =>
+    node.getAttribute("data-path")?.endsWith("broken.flac")
+  );
+  row?.querySelector(".decode-keep")?.click();
+});
+await wait(250);
+const keptState = await page.evaluate(() => ({
+  rows: document.querySelectorAll('[data-testid="decode-problem-row"]').length,
+  badge: Boolean(document.querySelector(".decode-kept-badge")),
+  stored: localStorage.getItem("cadence.decodeTester.kept.v1") ?? "",
+}));
+check(
+  "decode-keep-marks-without-hiding",
+  keptState.rows === 4 && keptState.badge && keptState.stored.includes("broken.flac"),
+  JSON.stringify(keptState)
+);
+await page.click('[data-testid="decode-hide-kept"]');
+await wait(250);
+check("decode-hide-kept-filter", (await readDecodeRows()).every(row => row.name !== "broken.flac") && (await readDecodeRows()).length === 3, "kept row hidden only by the filter");
+await page.click('[data-testid="decode-hide-kept"]');
+await wait(250);
+check("decode-show-kept-again", (await readDecodeRows()).length === 4, "filter off restores the kept row");
+
+// Export: every problematic path, kept included, goes to the native command.
+await page.click('[data-testid="decode-export-button"]');
+await wait(400);
+const exportCalls = await page.evaluate(() => window.__decodeCalls.export);
+const exportedPaths = new Set(exportCalls.at(-1) ?? []);
+check(
+  "decode-export-paths",
+  exportedPaths.size === 4 &&
+    [...exportedPaths].every(path => rows.some(row => row.path === path)) &&
+    [...exportedPaths].some(path => path.endsWith("broken.flac")),
+  JSON.stringify(exportCalls.at(-1) ?? [])
+);
+check(
+  "decode-export-message",
+  /Exported 4 problematic file paths/.test(await page.$eval('[data-testid="decode-action-message"]', node => node.textContent).catch(() => "")),
+  "export outcome is reported in the UI"
+);
+
+// Reveal in folder goes through the existing openPath bridge call.
+await page.evaluate(() => {
+  document.querySelector('button[aria-label="Show broken.flac in folder"]')?.click();
+});
+await wait(250);
+check(
+  "decode-show-in-folder",
+  (await page.evaluate(() => window.__openedPaths)).some(path => path.endsWith("broken.flac")),
+  JSON.stringify(await page.evaluate(() => window.__openedPaths))
+);
+
+// Remove: cancel leaves everything untouched; confirm deletes, per-file failure stays visible.
+await page.click('[data-testid="decode-select-all"]');
+await wait(250);
+check(
+  "decode-select-all",
+  /Remove selected \(4\)/.test(await page.$eval('[data-testid="decode-remove-selected"]', node => node.textContent)),
+  "all four selected"
+);
+await page.click('[data-testid="decode-remove-selected"]');
+await page.waitForSelector('[data-testid="decode-confirm-dialog"]');
+const confirmItems = await page.$$eval('[data-testid="decode-confirm-list"] li', nodes => nodes.length);
+check("decode-confirm-lists-files", confirmItems === 4, `${confirmItems} files listed before deletion`);
+await page.screenshot({ path: join(shotDir, "09-decode-confirm.png") });
+await page.click('[data-testid="decode-confirm-cancel"]');
+await wait(300);
+check(
+  "decode-remove-cancel-safe",
+  !(await page.$('[data-testid="decode-confirm-dialog"]')) &&
+    (await readDecodeRows()).length === 4 &&
+    (await page.evaluate(() => window.__decodeCalls.delete.length)) === 0,
+  "cancel deletes nothing"
+);
+
+await page.click('[data-testid="decode-remove-selected"]');
+await page.waitForSelector('[data-testid="decode-confirm-delete"]');
+await page.click('[data-testid="decode-confirm-delete"]');
+await page.waitForFunction(
+  () => /Deleted 3 of 4/.test(document.querySelector('[data-testid="decode-action-message"]')?.textContent ?? ""),
+  { timeout: 15_000 }
+);
+const afterDeleteRows = await readDecodeRows();
+check(
+  "decode-remove-confirmed",
+  afterDeleteRows.length === 1 &&
+    afterDeleteRows[0].name === "missing-file.flac" &&
+    /Could not delete this file/.test(afterDeleteRows[0].text),
+  JSON.stringify(afterDeleteRows)
+);
+check(
+  "decode-remove-updates-library",
+  (await page.evaluate(async () => (await window.cadence.library.snapshot()).tracks.length)) === 7,
+  "deleted tracks left the library; the failed one stayed"
+);
+check(
+  "decode-kept-cleared-for-deleted",
+  !(await page.evaluate(() => localStorage.getItem("cadence.decodeTester.kept.v1") ?? "")).includes("broken.flac"),
+  "Keep marks do not outlive deleted files"
+);
+
+// Re-scan: only the still-missing file is flagged; nothing deleted reappears.
+await page.click('[data-testid="decode-scan-button"]');
+const rescanStatus = await waitForDecodeComplete();
+const rescanRows = await readDecodeRows();
+check(
+  "decode-rescan-after-delete",
+  /7 files checked/.test(rescanStatus) && rescanRows.length === 1 && rescanRows[0].kind === "inaccessible",
+  `${rescanStatus}; rows=${rescanRows.map(row => row.name).join(",")}`
+);
+
+// Delete the last problem (stub now succeeds) and verify the clean-library empty state.
+await page.evaluate(() => {
+  window.__decodeDeleteAllSucceeds = true;
+});
+await page.click('[data-testid="decode-select-all"]');
+await page.click('[data-testid="decode-remove-selected"]');
+await page.waitForSelector('[data-testid="decode-confirm-delete"]');
+await page.click('[data-testid="decode-confirm-delete"]');
+await page.waitForFunction(
+  () => /Deleted 1 file/.test(document.querySelector('[data-testid="decode-action-message"]')?.textContent ?? ""),
+  { timeout: 15_000 }
+);
+await page.click('[data-testid="decode-scan-button"]');
+const cleanStatus = await waitForDecodeComplete();
+check(
+  "decode-no-errors-state",
+  /6 files checked, 0 problematic/.test(cleanStatus) && Boolean(await page.$('[data-testid="decode-empty-no-errors"]')),
+  cleanStatus
+);
+await page.screenshot({ path: join(shotDir, "10-decode-clean.png") });
 
 /* --------------------------------------------------------------- the end */
 

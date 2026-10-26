@@ -938,7 +938,7 @@ describe("9 & 10. Parser fidelity (TTML, QRC, enhanced LRC, translations, instru
             artworkDir: "/tmp/cadence-app/art",
             platform: "win32",
             arch: "x86_64",
-            appVersion: "0.1.0",
+            appVersion: "0.2.0",
             tauriVersion: "2.10.3",
             settingsJson: null,
             lyricsCacheJson: null,

@@ -116,6 +116,14 @@ pub struct PickedLyricsFile {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DecodeDeleteOutcome {
+    pub path: String,
+    pub deleted: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HttpFetchResponse {
     pub status: u16,
     pub headers: HashMap<String, String>,
@@ -612,6 +620,101 @@ pub async fn cmd_write_sidecar_lrc(
     .map_err(|e| e.to_string())??;
 
     Ok(returned)
+}
+
+/// Decode Tester: deletes explicitly confirmed library audio files.
+///
+/// Every path must resolve inside the media allowlist and carry an audio extension; anything else
+/// is reported per file instead of failing the batch. Only regular files are removed, never
+/// directories, and scanning itself never calls this command — the renderer invokes it solely from
+/// the Decode Tester's confirmation dialog.
+#[tauri::command]
+pub async fn cmd_decode_delete_files(
+    paths: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<DecodeDeleteOutcome>, String> {
+    let allowlist = Arc::clone(&state.allowlist);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut seen = HashSet::new();
+        let mut outcomes = Vec::new();
+        for raw in paths {
+            if !seen.insert(raw.clone()) {
+                continue;
+            }
+            let result = (|| -> Result<(), String> {
+                let resolved = allowlist
+                    .resolve_allowed_media(&raw)
+                    .ok_or_else(|| "Path is outside library allowlist".to_string())?;
+                if !is_audio_extension(&resolved) {
+                    return Err("Target is not an audio file".to_string());
+                }
+                let metadata = std::fs::metadata(&resolved).map_err(|e| e.to_string())?;
+                if !metadata.is_file() {
+                    return Err("Target is not a file".to_string());
+                }
+                std::fs::remove_file(&resolved).map_err(|e| e.to_string())
+            })();
+            outcomes.push(match result {
+                Ok(()) => DecodeDeleteOutcome {
+                    path: raw,
+                    deleted: true,
+                    error: None,
+                },
+                Err(error) => DecodeDeleteOutcome {
+                    path: raw,
+                    deleted: false,
+                    error: Some(error),
+                },
+            });
+        }
+        Ok(outcomes)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Decode Tester: exports problematic file paths to a UTF-8 `.txt` file, one path per line.
+///
+/// The destination comes from the native save dialog (which asks before overwriting an existing
+/// file). Only paths that resolve inside the media allowlist are written, de-duplicated in input
+/// order, so a successful scan result can never smuggle arbitrary text to disk.
+#[tauri::command]
+pub async fn cmd_decode_export_list(
+    paths: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let allowlist = Arc::clone(&state.allowlist);
+    tauri::async_runtime::spawn_blocking(move || -> Result<Option<String>, String> {
+        let mut seen = HashSet::new();
+        let mut lines: Vec<String> = Vec::new();
+        for raw in &paths {
+            if !seen.insert(raw.clone()) {
+                continue;
+            }
+            if allowlist.resolve_allowed_media(raw).is_some() {
+                lines.push(raw.clone());
+            }
+        }
+        if lines.is_empty() {
+            return Err("No library files to export".to_string());
+        }
+
+        let picked = rfd::FileDialog::new()
+            .set_title("Export problematic file list")
+            .add_filter("Text files", &["txt"])
+            .set_file_name("cadence-decode-problems.txt")
+            .save_file();
+        let Some(raw_path) = picked else {
+            return Ok(None);
+        };
+        let path = crate::allowlist::strip_verbatim_prefix(raw_path);
+        let mut content = lines.join("\n");
+        content.push('\n');
+        std::fs::write(&path, content.as_bytes()).map_err(|e| e.to_string())?;
+        Ok(Some(path.to_string_lossy().into_owned()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

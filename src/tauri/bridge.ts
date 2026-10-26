@@ -12,6 +12,7 @@ import { listen, TauriEvent, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppInfo,
   CadenceApi,
+  DecodeDeleteOutcome,
   LibraryScanResult,
   LibrarySnapshot,
   MediaCommand,
@@ -724,6 +725,26 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         return () => {
           commandListeners.delete(listener);
         };
+      },
+    },
+
+    decodeTester: {
+      async deleteFiles(paths: string[]): Promise<DecodeDeleteOutcome[]> {
+        // The Rust command re-validates every path against the media allowlist and reports a
+        // per-file outcome; only files it actually deleted leave the library store.
+        const outcomes = await invoke<DecodeDeleteOutcome[]>("cmd_decode_delete_files", { paths });
+        const deletedPaths = new Set(outcomes.filter(outcome => outcome.deleted).map(outcome => outcome.path));
+        if (deletedPaths.size > 0) {
+          store.removeTracks(deletedPaths);
+          await flushDbQueue();
+          emitLibraryChanged();
+        }
+        return outcomes;
+      },
+
+      async exportFileList(paths: string[]) {
+        const savedPath = await invoke<string | null>("cmd_decode_export_list", { paths });
+        return savedPath ? { canceled: false, path: savedPath } : { canceled: true };
       },
     },
 

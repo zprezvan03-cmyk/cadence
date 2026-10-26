@@ -294,6 +294,36 @@ export interface LibraryScanResult {
   durationMs: number;
 }
 
+/**
+ * How a file failed the Decode Tester. File-access problems stay distinct from decoder problems,
+ * and a codec Chromium simply has no decoder for is never reported as corruption.
+ */
+export type DecodeProblemKind =
+  | "decode-error"
+  | "unsupported-codec"
+  | "truncated"
+  | "inaccessible"
+  | "timeout";
+
+/** One file the Decode Tester could not decode through the same Chromium pipeline used for playback. */
+export interface DecodeProblem {
+  trackId: number | null;
+  path: string;
+  fileName: string;
+  kind: DecodeProblemKind;
+  /** Human-readable decoding error, phrased like the playback error banners. */
+  message: string;
+  /** Codec reported by the library scanner, when known (may be a bare extension for unreadable tags). */
+  codec: string;
+}
+
+/** Per-file outcome of a confirmed Decode Tester deletion; failures never abort the batch. */
+export interface DecodeDeleteOutcome {
+  path: string;
+  deleted: boolean;
+  error: string | null;
+}
+
 export interface AppInfo {
   name: string;
   version: string;
@@ -347,6 +377,18 @@ export interface CadenceApi {
   player: {
     reportState(state: PlayerSnapshot): Promise<void>;
     onCommand(listener: (command: MediaCommand) => void): () => void;
+  };
+  decodeTester: {
+    /**
+     * Deletes only the listed library audio files (after the UI's explicit confirmation) and drops
+     * the successfully deleted ones from the library. Each file reports its own outcome.
+     */
+    deleteFiles(paths: string[]): Promise<DecodeDeleteOutcome[]>;
+    /**
+     * Opens a native save dialog and writes the listed paths as UTF-8 text, one path per line.
+     * Resolves with `canceled: true` when the user dismisses the dialog.
+     */
+    exportFileList(paths: string[]): Promise<{ canceled: boolean; path?: string }>;
   };
   app: {
     openExternal(url: string): Promise<void>;
