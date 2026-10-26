@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::UNIX_EPOCH;
 
-use symphonia::core::audio::{SampleBuffer, Signal};
+use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::{
     CodecParameters, DecoderOptions, CODEC_TYPE_ALAC,
 };
@@ -56,10 +56,12 @@ fn open_alac_format(
         .map_err(|error| format!("Could not read the audio container: {error}"))?;
     let format = probed.format;
 
-    let Some(track) = format
+    // Copy the fields needed later so the track borrow ends before `format` is moved.
+    let Some((track_id, codec_params)) = format
         .tracks()
         .iter()
         .find(|track| track.codec_params.codec == CODEC_TYPE_ALAC)
+        .map(|track| (track.id, track.codec_params.clone()))
     else {
         return Err(
             "This file does not contain an ALAC audio stream; AAC/M4A files are not treated as ALAC."
@@ -67,7 +69,7 @@ fn open_alac_format(
         );
     };
 
-    Ok((format, track.id, track.codec_params.clone()))
+    Ok((format, track_id, codec_params))
 }
 
 /// Decode a confirmed ALAC track to a seekable lossless PCM WAV file.
