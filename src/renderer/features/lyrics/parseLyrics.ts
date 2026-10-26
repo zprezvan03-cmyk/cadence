@@ -6,7 +6,15 @@
  * package (the same parser set Better Lyrics uses). Written for Cadence.
  */
 
-import { detectFormat, detectParser, lrcFixers, type Lyric, type LyricFormat } from "@braccato/parsers";
+import {
+  detectFormat,
+  detectParser,
+  lrcFixers,
+  parseQRC,
+  parseTTMLContent,
+  type Lyric,
+  type LyricFormat,
+} from "@braccato/parsers";
 import type { LyricsSyncType } from "../../../shared/types";
 import { detectNonLatinLanguage } from "@braccato/core/text";
 
@@ -19,6 +27,14 @@ export interface ParsedLyrics {
   instrumentalOnly: boolean;
 }
 
+export interface ParseLyricsMetadata {
+  title?: string;
+  artist?: string;
+}
+
+/** Normalizes shorthand `<ss.xx>` enhanced-LRC word tags to `<00:ss.xx>` so `@braccato/parsers` parses word parts. */
+const SHORTHAND_ENHANCED_LRC_TAG = /<(\d+\.\d+)>/g;
+
 /** Mirrors the upstream renderer's own classification: parts make a line rich-synced. */
 export function detectSyncType(lyrics: readonly Lyric[]): LyricsSyncType {
   if (lyrics.length === 0) return "none";
@@ -30,19 +46,49 @@ export function detectSyncType(lyrics: readonly Lyric[]): LyricsSyncType {
   return timed ? "synced" : "none";
 }
 
-export function parseLyricsText(text: string, durationMs: number): ParsedLyrics {
+export function parseLyricsText(
+  text: string,
+  durationMs: number,
+  metadata?: ParseLyricsMetadata
+): ParsedLyrics {
   // An empty provider payload must read as "no lyrics", not as a single blank line.
   if (!text || text.trim().length === 0) {
-    return { lyrics: [], syncType: "none", songwriters: [], format: "plain", language: null, instrumentalOnly: false };
+    return {
+      lyrics: [],
+      syncType: "none",
+      songwriters: [],
+      format: "plain",
+      language: null,
+      instrumentalOnly: false,
+    };
   }
+  const safeDurationMs = Math.max(0, durationMs);
   const format = detectFormat(text);
   const parser = detectParser(text);
-  let lyrics = parser.parse(text, Math.max(0, durationMs));
+  let lyrics: Lyric[];
+  let ttmlLanguage: string | null = null;
 
-  // `parse()` runs the fixers for LRC already; other formats are left as written.
-  if (format === "lrc" && lyrics.length === 0) {
-    lyrics = parser.parse(text, Math.max(0, durationMs));
-    lrcFixers(lyrics);
+  if (format === "ttml") {
+    const parsedTtml = parseTTMLContent(text);
+    lyrics = parsedTtml.lyrics;
+    ttmlLanguage = parsedTtml.language ?? null;
+  } else if (format === "qrc") {
+    const qrcMeta =
+      metadata?.title || metadata?.artist
+        ? { title: metadata.title, artist: metadata.artist }
+        : undefined;
+    lyrics = parseQRC(text, safeDurationMs, qrcMeta);
+  } else if (format === "lrc") {
+    const normalizedLrc = SHORTHAND_ENHANCED_LRC_TAG.test(text)
+      ? text.replace(SHORTHAND_ENHANCED_LRC_TAG, "<00:$1>")
+      : text;
+    lyrics = parser.parse(normalizedLrc, safeDurationMs);
+    if (lyrics.length === 0) {
+      lyrics = parser.parse(normalizedLrc, safeDurationMs);
+      lrcFixers(lyrics);
+    }
+  } else {
+    lyrics = parser.parse(text, safeDurationMs);
   }
 
   const songwriters = parser.metadata(text)?.songwriters?.filter(Boolean) ?? [];
@@ -53,6 +99,8 @@ export function parseLyricsText(text: string, durationMs: number): ParsedLyrics 
   let language: string | null = null;
   if (instrumentalOnly) {
     language = null;
+  } else if (ttmlLanguage) {
+    language = ttmlLanguage;
   } else {
     const sample = lyrics
       .map(line => line.words)
@@ -75,6 +123,47 @@ function normalizeLine(words: string): string {
   // the provider's line alignment.
   if (/^[♪\s]*$/.test(words) || /^\[?instrumental/i.test(words.trim())) return "";
   return words.replace(/\s+/g, " ").trim();
+}
+
+function languageMatches(candidateLang: string, targetLang: string): boolean {
+  const left = candidateLang.trim().toLowerCase();
+  const right = targetLang.trim().toLowerCase();
+  if (!left || !right) return false;
+  if (left === right) return true;
+  return left.split("-")[0] === right.split("-")[0] && !right.includes("-");
+}
+
+/**
+ * Extracts embedded file-supplied translations (e.g. TTML `<translations>`) matching `language`
+ * so native translations in the source file are preserved instead of overwritten by machine translation.
+ */
+export function embeddedTranslationsForLanguage(
+  lyrics: readonly Lyric[],
+  language: string
+): (string | null)[] {
+  if (!language) return lyrics.map(() => null);
+  return lyrics.map(line => {
+    if (line.translations) {
+      for (const [lang, text] of Object.entries(line.translations)) {
+        if (languageMatches(lang, language) && text?.trim()) return text;
+      }
+    }
+    if (line.translation?.lang && languageMatches(line.translation.lang, language) && line.translation.text?.trim()) {
+      return line.translation.text;
+    }
+    return null;
+  });
+}
+
+/** Sung line indexes lacking an embedded translation for `language`. */
+export function translationGaps(lyrics: readonly Lyric[], language: string): number[] {
+  const embedded = embeddedTranslationsForLanguage(lyrics, language);
+  const gaps: number[] = [];
+  lyrics.forEach((line, index) => {
+    if (line.isInstrumental || !normalizeLine(line.words)) return;
+    if (!embedded[index]) gaps.push(index);
+  });
+  return gaps;
 }
 
 /** Matches the shape `@braccato/core` reads when decorating a built line. */

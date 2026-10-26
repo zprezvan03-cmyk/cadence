@@ -138,7 +138,7 @@ function createTauriRuntimeFetch(): RuntimeFetch {
         throw new DOMException("Aborted", "AbortError");
       }
       if (msg.includes("TIMEOUT")) {
-        throw new DOMException("Request timed out", "AbortError");
+        throw new DOMException("Request timed out", "TimeoutError");
       }
       throw new TypeError(msg.replace(/^NETWORK:\s*/, "") || "Network request failed");
     } finally {

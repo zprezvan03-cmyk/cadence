@@ -61,17 +61,17 @@ a public contract.
 
 Cadence's network clients are independent implementations written against the providers' documented
 public HTTP APIs. No backend/extension source is copied; only the public request/response contracts
-and the extension's source-key taxonomy are reused. All traffic runs in the Electron main process,
-carries no credentials, and every provider is keyed on the local file's metadata — a YouTube video
-ID is never invented.
+and the extension's source-key taxonomy are reused. All traffic runs through Tauri's native Rust
+`reqwest` HTTP command (`cmd_http_fetch`), carries no credentials, and every provider is keyed on
+the local file's metadata — a YouTube video ID is never invented.
 
 | Cadence module | Endpoint(s) | Source keys |
 | --- | --- | --- |
 | `src/main/lyrics/betterLyrics.ts` | `GET https://api.betterlyrics.org/getLyrics` (`{ ttml }`), `/qq/getLyrics` (QRC), `/kugou/getLyrics` (LRC) — params `s`, `a`, `al`, `d` | `blyrics-richsynced`, `blyrics-wordsynced`, `blyrics-synced` |
 | `src/main/lyrics/unison.ts` | `GET https://unison.betterlyrics.org/lyrics?song&artist&album&duration`, then `GET /lyrics/search?…&limit=5` on a clean 404; manual search uses `/lyrics/search?…&limit=10` | `unison-richsynced`, `unison-wordsynced`, `unison-synced`, `unison-plain` |
 | `src/main/lyrics/binimum.ts` | `GET https://lyrics-api.binimum.org/?track&artist&album&duration` (metadata index, no key), then `GET` each record's `lyricsUrl` for the TTML document | `binimum-richsynced`, `binimum-synced` |
-| `src/main/lyrics/lrclib.ts` | `GET https://lrclib.net/api/get` and `/search` | `lrclib-synced`, `lrclib-plain` |
-| `src/main/lyrics/http.ts`, `matching.ts` | — | Shared timeout/error-classification layer and conservative Unicode metadata matching |
+| `src/main/lyrics/lrclib.ts` | `GET https://lrclib.net/api/get` (`track_name` + `artist_name` required, `duration` 1..3600) and `/search` | `lrclib-synced`, `lrclib-plain` |
+| `src/main/lyrics/http.ts`, `matching.ts`, `syncInspection.ts` | — | Shared timeout/error-classification layer, conservative Unicode metadata matching, and `@braccato/parsers`-backed synchronization-precision verification |
 
 Every network module also exposes a manual-search variant (`searchBetterLyrics`, `searchUnison`,
 `searchBinimum`, `searchLrclib`) behind `LyricsService.searchLyrics` and the `lyrics:search` IPC

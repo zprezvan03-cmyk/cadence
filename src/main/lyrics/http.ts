@@ -1,10 +1,10 @@
 /**
  * Small HTTP layer for the network lyrics providers.
  *
- * All lyrics traffic runs in the Electron main process (never the renderer), uses no credentials
- * and carries a client identifier instead of an API key. Each request gets its own timeout,
- * combined with the caller's abort signal so track changes can cancel in-flight work. Written for
- * Cadence.
+ * In Tauri desktop builds, `runtimeFetch` delegates to the native Rust `reqwest` command so
+ * external APIs receive proper `User-Agent` / `Lrclib-Client` headers without WebView2 CORS limits;
+ * in unit tests it defaults to `globalThis.fetch`. Uses no credentials or private keys, and gives
+ * each request a bounded timeout combined with the caller's abort signal for track-change cancels.
  */
 
 import type { LyricsCandidate } from "../../shared/types";
@@ -22,6 +22,7 @@ export interface ProviderStatus {
   provider: string;
   status: ProviderStatusKind;
   detail?: string;
+  retryAfterSeconds?: number;
 }
 
 export interface ProviderOutcome {
@@ -73,18 +74,24 @@ export interface JsonResponse {
  * them to misses/errors themselves); transport failures, timeouts and malformed JSON become
  * {@link LyricsHttpError} with a classified `kind`.
  */
-export async function getJson(url: string, timeoutMs: number, signal?: AbortSignal): Promise<JsonResponse> {
+export async function getJson(
+  url: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+  extraHeaders?: Record<string, string>
+): Promise<JsonResponse> {
   const timeout = AbortSignal.timeout(timeoutMs);
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
   let response: Response;
   try {
     response = await runtimeFetch(url, {
-      headers: { Accept: "application/json", "User-Agent": CLIENT_NAME },
+      headers: { Accept: "application/json", "User-Agent": CLIENT_NAME, ...extraHeaders },
       signal: combined,
     });
   } catch (error) {
-    if ((error as Error).name === "AbortError") {
-      if (signal?.aborted) throw new LyricsHttpError("Request aborted", "aborted");
+    if (signal?.aborted) throw new LyricsHttpError("Request aborted", "aborted");
+    const name = (error as Error)?.name;
+    if (name === "TimeoutError" || name === "AbortError" || timeout.aborted) {
       throw new LyricsHttpError("Request timed out", "timeout");
     }
     throw new LyricsHttpError((error as Error).message || "Network request failed", "network");
@@ -107,7 +114,11 @@ export async function getJson(url: string, timeoutMs: number, signal?: AbortSign
 }
 
 /** GET a plain-text document (e.g. a TTML file behind a storage URL), with the same error model. */
-export async function getText(url: string, timeoutMs: number, signal?: AbortSignal): Promise<{ status: number; ok: boolean; text: string }> {
+export async function getText(
+  url: string,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<{ status: number; ok: boolean; headers: Headers; text: string }> {
   const target = new URL(url);
   if (target.protocol !== "http:" && target.protocol !== "https:") {
     throw new LyricsHttpError("Refusing to fetch a non-http(s) URL", "malformed");
@@ -120,10 +131,11 @@ export async function getText(url: string, timeoutMs: number, signal?: AbortSign
       signal: combined,
     });
     const text = await response.text();
-    return { status: response.status, ok: response.ok, text };
+    return { status: response.status, ok: response.ok, headers: response.headers, text };
   } catch (error) {
-    if ((error as Error).name === "AbortError") {
-      if (signal?.aborted) throw new LyricsHttpError("Request aborted", "aborted");
+    if (signal?.aborted) throw new LyricsHttpError("Request aborted", "aborted");
+    const name = (error as Error)?.name;
+    if (name === "TimeoutError" || name === "AbortError" || timeout.aborted) {
       throw new LyricsHttpError("Request timed out", "timeout");
     }
     throw new LyricsHttpError((error as Error).message || "Network request failed", "network");
@@ -131,14 +143,23 @@ export async function getText(url: string, timeoutMs: number, signal?: AbortSign
 }
 
 export function retryAfter(headers: Headers): number | undefined {
-  const raw = headers.get("Retry-After");
+  const raw = headers.get("Retry-After")?.trim();
   if (!raw) return undefined;
   const seconds = Number(raw);
-  return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds);
+  const parsedDate = Date.parse(raw);
+  if (Number.isFinite(parsedDate)) {
+    return Math.max(0, Math.ceil((parsedDate - Date.now()) / 1000));
+  }
+  return undefined;
 }
 
 /** Maps an HTTP error to a user-facing status detail, keeping rate limits distinct from misses. */
-export function describeHttpError(error: unknown): { status: ProviderStatusKind; detail: string } {
+export function describeHttpError(error: unknown): {
+  status: ProviderStatusKind;
+  detail: string;
+  retryAfterSeconds?: number;
+} {
   if (error instanceof LyricsHttpError) {
     switch (error.kind) {
       case "rate-limit":
@@ -147,6 +168,7 @@ export function describeHttpError(error: unknown): { status: ProviderStatusKind;
           detail: error.retryAfterSeconds
             ? `Rate limited; retry after ${error.retryAfterSeconds}s`
             : "Rate limited",
+          retryAfterSeconds: error.retryAfterSeconds,
         };
       case "timeout":
         return { status: "error", detail: "Request timed out" };

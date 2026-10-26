@@ -15,7 +15,7 @@ import {
   DEFAULT_PROVIDER_ORDER,
   migrateProviderOrder,
   providerConfig,
-  providerPriority,
+  providerOrderRank,
   untoggleProvider,
 } from "../../shared/upstream/better-lyrics/constants";
 import { LyricsCacheCore } from "./cacheCore";
@@ -24,7 +24,8 @@ import { fetchBetterLyrics, searchBetterLyrics } from "./betterLyrics";
 import { fetchUnison, searchUnison } from "./unison";
 import { fetchBinimum, searchBinimum } from "./binimum";
 import type { LocalLyricsReader } from "./localLyricsCore";
-import type { ProviderOutcome, ProviderQuery, ProviderStatus } from "./http";
+import { isAbort, type ProviderOutcome, type ProviderQuery, type ProviderStatus } from "./http";
+import { inspectLyricsPayload } from "./syncInspection";
 
 interface NetworkModule {
   id: string;
@@ -32,8 +33,12 @@ interface NetworkModule {
   run(query: ProviderQuery, enabledKeys: ReadonlySet<string>, signal?: AbortSignal): Promise<ProviderOutcome>;
 }
 
-async function runLrclib(query: ProviderQuery, enabledKeys: ReadonlySet<string>, signal?: AbortSignal): Promise<ProviderOutcome> {
-  const result = await fetchLrclib(query, signal);
+async function runLrclib(
+  query: ProviderQuery,
+  enabledKeys: ReadonlySet<string>,
+  signal?: AbortSignal
+): Promise<ProviderOutcome> {
+  const result = await fetchLrclib(query, signal, enabledKeys);
   return {
     candidates: result.candidates.filter(candidate => enabledKeys.has(candidate.source)),
     statuses: result.statuses,
@@ -59,11 +64,7 @@ const NETWORK_MODULES: readonly NetworkModule[] = [
   { id: "lrclib", keys: ["lrclib-synced", "lrclib-plain"], run: runLrclib },
 ];
 
-const SEARCH_MODULES: readonly {
-  id: string;
-  keys: readonly string[];
-  run: (query: ProviderQuery, enabledKeys: ReadonlySet<string>, signal?: AbortSignal) => Promise<ProviderOutcome>;
-}[] = [
+const SEARCH_MODULES: readonly NetworkModule[] = [
   {
     id: "better-lyrics",
     keys: ["blyrics-richsynced", "blyrics-wordsynced", "blyrics-synced"],
@@ -79,6 +80,7 @@ const SEARCH_MODULES: readonly {
 ];
 
 const MAX_SEARCH_RESULTS = 30;
+const MAX_RETRY_AFTER_CAP_SECONDS = 300;
 
 interface NetworkResult {
   candidates: LyricsCandidate[];
@@ -86,16 +88,89 @@ interface NetworkResult {
   definitive: boolean;
 }
 
-function rejectWhenAborted(signal: AbortSignal): Promise<never> {
-  return new Promise((_resolve, reject) => {
+interface InFlightEntry<T> {
+  controller: AbortController;
+  promise: Promise<T>;
+  waiters: number;
+}
+
+function makeAbortError(): DOMException {
+  return new DOMException("Aborted", "AbortError");
+}
+
+function shareInFlight<T>(
+  map: Map<string, InFlightEntry<T>>,
+  key: string,
+  signal: AbortSignal | undefined,
+  factory: (sharedSignal: AbortSignal) => Promise<T>
+): Promise<T> {
+  if (signal?.aborted) {
+    return Promise.reject(makeAbortError());
+  }
+
+  let entry = map.get(key);
+  if (!entry) {
+    const controller = new AbortController();
+    const currentEntry: InFlightEntry<T> = {
+      controller,
+      promise: Promise.resolve() as unknown as Promise<T>,
+      waiters: 0,
+    };
+    const promise = factory(controller.signal).finally(() => {
+      if (map.get(key) === currentEntry) {
+        map.delete(key);
+      }
+    });
+    // Prevent unhandled rejection warnings if all callers abort before `promise` settles.
+    promise.catch(() => undefined);
+    currentEntry.promise = promise;
+    entry = currentEntry;
+    map.set(key, entry);
+  }
+
+  const activeEntry = entry;
+  activeEntry.waiters += 1;
+
+  if (!signal) {
+    return activeEntry.promise.finally(() => {
+      activeEntry.waiters = Math.max(0, activeEntry.waiters - 1);
+    });
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      activeEntry.waiters = Math.max(0, activeEntry.waiters - 1);
+      if (activeEntry.waiters === 0) {
+        if (map.get(key) === activeEntry) map.delete(key);
+        activeEntry.controller.abort();
+      }
+      reject(makeAbortError());
+    };
+
     if (signal.aborted) {
-      reject(new DOMException("Aborted", "AbortError"));
+      onAbort();
       return;
     }
-    signal.addEventListener(
-      "abort",
-      () => reject(new DOMException("Aborted", "AbortError")),
-      { once: true }
+    signal.addEventListener("abort", onAbort, { once: true });
+
+    activeEntry.promise.then(
+      value => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        activeEntry.waiters = Math.max(0, activeEntry.waiters - 1);
+        resolve(value);
+      },
+      error => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        activeEntry.waiters = Math.max(0, activeEntry.waiters - 1);
+        reject(error);
+      }
     );
   });
 }
@@ -103,8 +178,9 @@ function rejectWhenAborted(signal: AbortSignal): Promise<never> {
 export type LyricsLibraryLookup = Pick<LibraryStoreCore, "getTrack" | "getLyrics">;
 
 export class LyricsServiceCore {
-  private readonly inFlight = new Map<string, Promise<NetworkResult>>();
-  private readonly searchInFlight = new Map<string, Promise<LyricsSearchResponse>>();
+  private readonly inFlight = new Map<string, InFlightEntry<NetworkResult>>();
+  private readonly searchInFlight = new Map<string, InFlightEntry<LyricsSearchResponse>>();
+  private readonly rateLimitedUntil = new Map<string, number>();
 
   constructor(
     private readonly store: LyricsLibraryLookup,
@@ -122,6 +198,8 @@ export class LyricsServiceCore {
     providerOrder?: string[],
     signal?: AbortSignal
   ): Promise<LyricsResolveResult> {
+    if (signal?.aborted) throw makeAbortError();
+
     const order = this.orderFor(providerOrder);
     const candidates: LyricsCandidate[] = [];
     const providerStatus: LyricsResolveResult["providerStatus"] = [];
@@ -131,7 +209,12 @@ export class LyricsServiceCore {
     const enabledKeys = new Set<string>(order.filter(key => !key.startsWith("d_")));
     const hasSlot = (key: string): boolean => order.some(entry => untoggleProvider(entry) === key);
 
-    const pushLocal = (candidate: LyricsCandidate | null, provider: string, label: string, unavailable?: string) => {
+    const pushLocal = (
+      candidate: LyricsCandidate | null,
+      provider: string,
+      label: string,
+      unavailable?: string
+    ) => {
       if (!candidate) {
         if (unavailable) providerStatus.push({ provider, status: "skipped", detail: unavailable });
         else providerStatus.push({ provider, status: "miss" });
@@ -144,9 +227,20 @@ export class LyricsServiceCore {
     if (trackPath && (hasSlot("local-rich") || hasSlot("local-lrc"))) {
       const sidecar =
         (await this.localReader.readSidecarLyrics(trackPath)) ??
-        (await this.localReader.readLyricsFolder(trackPath, track?.trackNo ?? null, track?.title ?? request.title));
+        (await this.localReader.readLyricsFolder(
+          trackPath,
+          track?.trackNo ?? null,
+          track?.title ?? request.title
+        ));
       const richFormat = sidecar?.format === "ttml" || sidecar?.format === "qrc";
       const presentKey = sidecar ? (richFormat ? "local-rich" : "local-lrc") : null;
+      const inspected = sidecar
+        ? inspectLyricsPayload(sidecar.text, {
+            durationSeconds: request.duration,
+            title: request.title,
+            artist: request.artist,
+          })
+        : null;
 
       for (const key of ["local-rich", "local-lrc"] as const) {
         if (!hasSlot(key)) continue;
@@ -154,7 +248,7 @@ export class LyricsServiceCore {
           providerStatus.push({ provider: key, status: "skipped", detail: "Provider disabled" });
           continue;
         }
-        if (!sidecar) {
+        if (!sidecar || !inspected?.usable) {
           providerStatus.push({ provider: key, status: "miss" });
           continue;
         }
@@ -167,9 +261,9 @@ export class LyricsServiceCore {
             source: key,
             provider: richFormat ? "Local TTML/QRC" : "Local LRC",
             text: sidecar.text,
-            syncHint: richFormat ? "richsync" : "synced",
-            language: null,
-            songwriters: [],
+            syncHint: inspected.syncType,
+            language: inspected.language,
+            songwriters: inspected.songwriters,
             sourceHref: sidecar.path,
             cached: true,
           },
@@ -188,15 +282,22 @@ export class LyricsServiceCore {
         providerStatus.push({ provider: "embedded-tag", status: "skipped", detail: "Provider disabled" });
       } else {
         const embedded = this.store.getLyrics(request.trackId);
+        const inspected = embedded
+          ? inspectLyricsPayload(embedded.text, {
+              durationSeconds: request.duration,
+              title: request.title,
+              artist: request.artist,
+            })
+          : null;
         pushLocal(
-          embedded
+          embedded && inspected?.usable
             ? {
                 source: "embedded-tag",
                 provider: "Embedded tag",
                 text: embedded.text,
-                syncHint: embedded.kind === "lrc" ? "synced" : "none",
-                language: null,
-                songwriters: [],
+                syncHint: inspected.syncType,
+                language: inspected.language,
+                songwriters: inspected.songwriters,
                 sourceHref: trackPath,
                 cached: true,
               }
@@ -225,7 +326,7 @@ export class LyricsServiceCore {
       }
     }
 
-    candidates.sort((a, b) => providerPriority(a.source) - providerPriority(b.source));
+    candidates.sort((a, b) => providerOrderRank(a.source, order) - providerOrderRank(b.source, order));
 
     return { candidates, providerStatus };
   }
@@ -260,15 +361,15 @@ export class LyricsServiceCore {
       return {
         candidates: wanted,
         definitive: true,
-        status: activeModules.map(module => this.cachedStatus(module, wanted)),
+        status: NETWORK_MODULES.map(module =>
+          module.keys.some(key => enabledKeys.has(key))
+            ? this.cachedStatus(module, wanted)
+            : { provider: module.id, status: "skipped" as const, detail: "Provider disabled" }
+        ),
       };
     }
 
-    const lookup = this.sharedLookup(cacheKey, query, enabledKeys);
-    if (signal) {
-      return Promise.race([lookup, rejectWhenAborted(signal)]);
-    }
-    return lookup;
+    return this.sharedLookup(cacheKey, query, enabledKeys, signal);
   }
 
   private inFlightKey(cacheKey: string, enabledKeys: ReadonlySet<string>): string {
@@ -280,6 +381,8 @@ export class LyricsServiceCore {
     providerOrder?: string[],
     signal?: AbortSignal
   ): Promise<LyricsSearchResponse> {
+    if (signal?.aborted) throw makeAbortError();
+
     const order = this.orderFor(providerOrder);
     const enabledKeys = new Set<string>(order.filter(key => !key.startsWith("d_")));
     const title = request.title.trim();
@@ -293,7 +396,9 @@ export class LyricsServiceCore {
 
     const cached = this.cache.get(cacheKey);
     if (cached !== null) {
-      const rows = cached.filter(candidate => enabledKeys.has(candidate.source));
+      const rows = cached
+        .filter(candidate => enabledKeys.has(candidate.source))
+        .sort((a, b) => providerOrderRank(a.source, order) - providerOrderRank(b.source, order));
       return {
         results: rows,
         cached: true,
@@ -305,37 +410,95 @@ export class LyricsServiceCore {
       return {
         results: [],
         cached: true,
-        providerStatus: activeModules.map(module => ({ provider: module.id, status: "skipped" as const, detail: "Offline mode" })),
+        providerStatus: activeModules.map(module => ({
+          provider: module.id,
+          status: "skipped" as const,
+          detail: "Offline mode",
+        })),
       };
     }
     if (!title) {
       return {
         results: [],
         cached: false,
-        providerStatus: activeModules.map(module => ({ provider: module.id, status: "skipped" as const, detail: "Title required" })),
+        providerStatus: activeModules.map(module => ({
+          provider: module.id,
+          status: "skipped" as const,
+          detail: "Title required",
+        })),
       };
     }
 
     const flightKey = `${cacheKey}::${[...enabledKeys].sort().join(",")}`;
-    const existing = this.searchInFlight.get(flightKey);
-    if (existing) return existing;
+    const response = await shareInFlight(this.searchInFlight, flightKey, signal, sharedSignal =>
+      this.runSearch(query, activeModules, enabledKeys, cacheKey, sharedSignal)
+    );
+    return {
+      ...response,
+      results: [...response.results].sort(
+        (a, b) => providerOrderRank(a.source, order) - providerOrderRank(b.source, order)
+      ),
+    };
+  }
 
-    const promise = this.runSearch(query, activeModules, enabledKeys, cacheKey, signal).finally(() => {
-      this.searchInFlight.delete(flightKey);
-    });
-    this.searchInFlight.set(flightKey, promise);
-    if (signal) return Promise.race([promise, rejectWhenAborted(signal)]);
-    return promise;
+  private checkRateLimit(moduleId: string): ProviderOutcome | null {
+    const until = this.rateLimitedUntil.get(moduleId);
+    if (until === undefined) return null;
+    const now = Date.now();
+    if (now >= until) {
+      this.rateLimitedUntil.delete(moduleId);
+      return null;
+    }
+    const remaining = Math.max(1, Math.ceil((until - now) / 1000));
+    return {
+      candidates: [],
+      statuses: [
+        {
+          provider: moduleId,
+          status: "error",
+          detail: `Rate limited; retry after ${remaining}s`,
+          retryAfterSeconds: remaining,
+        },
+      ],
+    };
+  }
+
+  private recordRateLimits(moduleId: string, statuses: readonly ProviderStatus[]): void {
+    for (const entry of statuses) {
+      if (entry.status === "error" && entry.retryAfterSeconds && entry.retryAfterSeconds > 0) {
+        const capped = Math.min(entry.retryAfterSeconds, MAX_RETRY_AFTER_CAP_SECONDS);
+        this.rateLimitedUntil.set(moduleId, Date.now() + capped * 1000);
+      }
+    }
+  }
+
+  private runModule(
+    module: NetworkModule,
+    query: ProviderQuery,
+    enabledKeys: ReadonlySet<string>,
+    signal?: AbortSignal
+  ): Promise<ProviderOutcome> {
+    if (!module.keys.some(key => enabledKeys.has(key))) {
+      return Promise.resolve({
+        candidates: [],
+        statuses: [{ provider: module.id, status: "skipped", detail: "Provider disabled" }],
+      });
+    }
+    const blocked = this.checkRateLimit(module.id);
+    if (blocked) return Promise.resolve(blocked);
+    return module.run(query, enabledKeys, signal);
   }
 
   private async runSearch(
     query: ProviderQuery,
-    modules: typeof SEARCH_MODULES,
+    modules: readonly NetworkModule[],
     enabledKeys: ReadonlySet<string>,
     cacheKey: string,
     signal?: AbortSignal
   ): Promise<LyricsSearchResponse> {
-    const settled = await Promise.allSettled(modules.map(module => module.run(query, enabledKeys, signal)));
+    const settled = await Promise.allSettled(
+      modules.map(module => this.runModule(module, query, enabledKeys, signal))
+    );
 
     const gathered: LyricsCandidate[] = [];
     const providerStatus: ProviderStatus[] = [];
@@ -344,14 +507,19 @@ export class LyricsServiceCore {
     settled.forEach((outcome, index) => {
       const module = modules[index];
       if (outcome.status === "fulfilled") {
+        this.recordRateLimits(module.id, outcome.value.statuses);
         gathered.push(...outcome.value.candidates);
         providerStatus.push(...outcome.value.statuses);
         if (outcome.value.statuses.some(entry => entry.status === "error")) definitive = false;
         return;
       }
-      if ((outcome.reason as Error)?.name === "AbortError") throw outcome.reason;
+      if (isAbort(outcome.reason)) throw outcome.reason;
       definitive = false;
-      providerStatus.push({ provider: module.id, status: "error", detail: (outcome.reason as Error)?.message ?? "Request failed" });
+      providerStatus.push({
+        provider: module.id,
+        status: "error",
+        detail: (outcome.reason as Error)?.message ?? "Request failed",
+      });
     });
 
     const seen = new Set<string>();
@@ -363,40 +531,44 @@ export class LyricsServiceCore {
       results.push(candidate);
       if (results.length >= MAX_SEARCH_RESULTS) break;
     }
-    results.sort((a, b) => providerPriority(a.source) - providerPriority(b.source));
 
     if (definitive && results.length > 0) this.cache.set(cacheKey, results);
 
     return { results, providerStatus, cached: false };
   }
 
-  private cachedStatus(module: { id: string; keys: readonly string[] }, cached: readonly LyricsCandidate[]): ProviderStatus {
+  private cachedStatus(
+    module: { id: string; keys: readonly string[] },
+    cached: readonly LyricsCandidate[]
+  ): ProviderStatus {
     const hit = cached.some(candidate => module.keys.includes(candidate.source));
     return hit
       ? { provider: module.id, status: "hit", detail: "Cached lyrics" }
       : { provider: module.id, status: "miss", detail: "Cached negative result" };
   }
 
-  private sharedLookup(cacheKey: string, query: ProviderQuery, enabledKeys: ReadonlySet<string>): Promise<NetworkResult> {
+  private sharedLookup(
+    cacheKey: string,
+    query: ProviderQuery,
+    enabledKeys: ReadonlySet<string>,
+    signal?: AbortSignal
+  ): Promise<NetworkResult> {
     const flightKey = this.inFlightKey(cacheKey, enabledKeys);
-    const existing = this.inFlight.get(flightKey);
-    if (existing) return existing;
-
-    const promise = this.runNetworkModules(query, enabledKeys)
-      .then(result => {
+    return shareInFlight(this.inFlight, flightKey, signal, sharedSignal =>
+      this.runNetworkModules(query, enabledKeys, sharedSignal).then(result => {
         if (result.definitive) this.cache.set(cacheKey, result.candidates);
         return result;
       })
-      .finally(() => {
-        this.inFlight.delete(flightKey);
-      });
-    this.inFlight.set(flightKey, promise);
-    return promise;
+    );
   }
 
-  private async runNetworkModules(query: ProviderQuery, enabledKeys: ReadonlySet<string>): Promise<NetworkResult> {
+  private async runNetworkModules(
+    query: ProviderQuery,
+    enabledKeys: ReadonlySet<string>,
+    signal?: AbortSignal
+  ): Promise<NetworkResult> {
     const settled = await Promise.allSettled(
-      NETWORK_MODULES.map(module => module.run(query, enabledKeys))
+      NETWORK_MODULES.map(module => this.runModule(module, query, enabledKeys, signal))
     );
 
     const candidates: LyricsCandidate[] = [];
@@ -406,14 +578,19 @@ export class LyricsServiceCore {
     settled.forEach((outcome, index) => {
       const module = NETWORK_MODULES[index];
       if (outcome.status === "fulfilled") {
+        this.recordRateLimits(module.id, outcome.value.statuses);
         candidates.push(...outcome.value.candidates);
         status.push(...outcome.value.statuses);
         if (outcome.value.statuses.some(entry => entry.status === "error")) definitive = false;
         return;
       }
-      if ((outcome.reason as Error)?.name === "AbortError") throw outcome.reason;
+      if (isAbort(outcome.reason)) throw outcome.reason;
       definitive = false;
-      status.push({ provider: module.id, status: "error", detail: (outcome.reason as Error)?.message ?? "Request failed" });
+      status.push({
+        provider: module.id,
+        status: "error",
+        detail: (outcome.reason as Error)?.message ?? "Request failed",
+      });
     });
 
     return { candidates, status, definitive };
@@ -428,21 +605,36 @@ export class LyricsServiceCore {
       };
     }
     const track = this.store.getTrack(trackId);
+    const inspected = inspectLyricsPayload(file.text, {
+      durationSeconds: track?.duration,
+      title: track?.title,
+      artist: track?.artist,
+    });
+    const fallbackHint =
+      file.format === "ttml" || file.format === "qrc"
+        ? "richsync"
+        : file.format === "text"
+          ? "none"
+          : "synced";
     return {
       candidates: [
         {
           source: "user-file",
           provider: "Chosen file",
           text: file.text,
-          syncHint: file.format === "ttml" || file.format === "qrc" ? "richsync" : "synced",
-          language: null,
-          songwriters: [],
+          syncHint: inspected.usable ? inspected.syncType : fallbackHint,
+          language: inspected.language,
+          songwriters: inspected.songwriters,
           sourceHref: file.path,
           cached: true,
         },
       ],
       providerStatus: [{ provider: "user-file", status: "hit", detail: track?.title ?? file.path }],
     };
+  }
+
+  clearRateLimits(): void {
+    this.rateLimitedUntil.clear();
   }
 
   flush(): void {

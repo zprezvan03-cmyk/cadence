@@ -32,12 +32,14 @@ import {
 import {
   applyRomanization,
   applyTranslations,
+  embeddedTranslationsForLanguage,
   lyricLines,
   parseLyricsText,
   romanizationGaps,
   scatterRomanizations,
   stripGeneratedRomanization,
   stripTranslations,
+  translationGaps,
   type ParsedLyrics,
 } from "./parseLyrics";
 
@@ -91,6 +93,15 @@ export interface UseLyricsResult {
   hasLyrics: boolean;
 }
 
+function textHash(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
 export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyricsResult {
   const store = useLyricsStore();
   const [reloadTick, setReloadTick] = useState(reloadToken);
@@ -106,33 +117,45 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
 
   const session = track ? store.sessions[track.id] : undefined;
 
-  const parseCandidate = useCallback((candidate: LyricsCandidate, durationSeconds: number): ParsedLyrics => {
-    const key = `${candidate.source}:${durationSeconds.toFixed(0)}:${candidate.text.length}`;
-    const cached = parsedCache.get(key);
-    if (cached) return cached;
-    const parsed = parseLyricsText(candidate.text, durationSeconds * 1000);
-    if (parsedCache.size > 24) {
-      parsedCache.clear();
-      parsedIds.clear();
-    }
-    parsedCache.set(key, parsed);
-    parsedIds.set(parsed, `p${parsedSequence++}`);
-    return parsed;
-  }, []);
+  const parseCandidate = useCallback(
+    (candidate: LyricsCandidate, durationSeconds: number): ParsedLyrics => {
+      const key = `${track?.id ?? 0}:${candidate.source}:${durationSeconds.toFixed(0)}:${candidate.text.length}:${textHash(candidate.text)}`;
+      const cached = parsedCache.get(key);
+      if (cached) return cached;
+      const parsed = parseLyricsText(candidate.text, durationSeconds * 1000, {
+        title: track?.title,
+        artist: track?.artist,
+      });
+      if (parsedCache.size > 24) {
+        parsedCache.clear();
+        parsedIds.clear();
+      }
+      parsedCache.set(key, parsed);
+      parsedIds.set(parsed, `p${parsedSequence++}`);
+      return parsed;
+    },
+    [track?.id, track?.title, track?.artist]
+  );
 
   // Resolve candidates whenever the track or the provider configuration changes. On remount with
-  // the same request key this returns immediately: the store already holds everything.
+  // the same request key this returns immediately: the store already holds everything (or is
+  // already resolving that exact request).
   useEffect(() => {
-    if (!track) return;
-    const token = ++generations.resolve;
+    if (!track) {
+      generations.resolve += 1;
+      resolvedForKey = null;
+      return;
+    }
     const requestKey = `${track.id}:${settings.autoFetch ? "online" : "local"}:${settings.providerOrder.join(",")}:${reloadTick}`;
+    const current = lyricsStore();
     if (
       resolvedForKey === requestKey &&
-      lyricsStore().trackId === track.id &&
-      (lyricsStore().candidates.length > 0 || lyricsStore().status === "empty")
+      current.trackId === track.id &&
+      (current.status === "loading" || current.candidates.length > 0 || current.status === "empty")
     ) {
       return;
     }
+    const token = ++generations.resolve;
     resolvedForKey = requestKey;
 
     useLyricsStore.getState().setActive(track.id, { status: "loading", error: null, lyrics: null });
@@ -180,6 +203,13 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
         });
       } catch (error) {
         if (token !== generations.resolve) return;
+        if (
+          (error as Error)?.name === "AbortError" ||
+          (error as { kind?: string })?.kind === "aborted"
+        ) {
+          return;
+        }
+        resolvedForKey = null;
         useLyricsStore.getState().setActive(track.id, {
           status: "error",
           error: (error as Error).message,
@@ -187,7 +217,7 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
         });
       }
     })();
-    // parseCandidate is stable; reloadTick mirrors the module token that survives remounts.
+    // parseCandidate is stable per track; reloadTick mirrors the module token that survives remounts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [track?.id, track?.duration, settings.autoFetch, settings.providerOrder, reloadTick, parseCandidate]);
 
@@ -212,19 +242,43 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     const applyKey = `${parsedId}:${settings.translationLanguage}`;
     if (applyKey === appliedTranslationKey) return; // decorated before unmount; no redundant request
 
+    const embedded = embeddedTranslationsForLanguage(parsed.lyrics, settings.translationLanguage);
+    const gaps = translationGaps(parsed.lyrics, settings.translationLanguage);
+    if (gaps.length === 0) {
+      // Every sung line already carries an embedded translation in the requested language.
+      appliedTranslationKey = applyKey;
+      const embeddedCount = embedded.filter(Boolean).length;
+      useLyricsStore.setState(previous => {
+        const base =
+          previous.parsed === parsed ? previous.lyrics ?? parsed.lyrics : parsed.lyrics;
+        return {
+          ...previous,
+          translating: false,
+          translatedLanguage: embeddedCount > 0 ? settings.translationLanguage : null,
+          lyrics:
+            embeddedCount > 0
+              ? applyTranslations(stripTranslations(base), embedded, settings.translationLanguage)
+              : stripTranslations(base),
+        };
+      });
+      return;
+    }
+
     let cancelled = false;
     useLyricsStore.setState(current => ({ ...current, translating: true }));
     void (async () => {
       try {
         const lines = lyricLines(parsed.lyrics);
         const result = await bridge.lyrics.translate({
-          lines,
+          lines: gaps.map(index => lines[index]),
           targetLanguage: settings.translationLanguage,
           sourceLanguage: parsed.language,
         });
         if (cancelled) return;
         appliedTranslationKey = applyKey;
-        const translatedCount = result.translations.filter(Boolean).length;
+        const generated = scatterRomanizations(parsed.lyrics.length, gaps, result.translations);
+        const merged = embedded.map((localText, idx) => localText ?? generated[idx] ?? null);
+        const translatedCount = merged.filter(Boolean).length;
         useLyricsStore.setState(previous => {
           // Decorate the lines as they currently stand (same parsed set) rather than rebuilding
           // from `parsed.lyrics`, so a romanization that landed first survives this pass.
@@ -237,7 +291,7 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
             detectedLanguage: result.detectedLanguage || parsed.language,
             lyrics:
               translatedCount > 0
-                ? applyTranslations(base, result.translations, settings.translationLanguage)
+                ? applyTranslations(stripTranslations(base), merged, settings.translationLanguage)
                 : stripTranslations(base),
           };
         });
@@ -350,7 +404,10 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     if (!track) return;
     const result = await bridge.app.chooseLyricsFile(track.id);
     if (result.canceled || !result.text) return;
-    const parsed = parseLyricsText(result.text, track.duration * 1000);
+    const parsed = parseLyricsText(result.text, track.duration * 1000, {
+      title: track.title,
+      artist: track.artist,
+    });
     const candidate: LyricsCandidate = {
       source: "user-file",
       provider: "Chosen file",
