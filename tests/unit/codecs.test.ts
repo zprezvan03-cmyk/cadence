@@ -4,13 +4,18 @@ import {
   explainPlaybackFailure,
   extensionSupported,
   isDecoderOrDemuxerMessage,
+  isAlacCodec,
   probeMediaAccessStatus,
 } from "../../src/renderer/audio/codecs";
 
 describe("codecSupport & extensionSupported", () => {
-  it("keeps ALAC marked unsupported while allowing standard Chromium codecs", () => {
-    expect(codecSupport({ codec: "ALAC", path: "C:\\Music\\song.m4a" })).toBe("unsupported");
-    expect(codecSupport({ codec: "Apple Lossless (ALAC)" })).toBe("unsupported");
+  it("recognizes ALAC from codec metadata while keeping AAC/M4A on Chromium", () => {
+    expect(isAlacCodec("ALAC")).toBe(true);
+    expect(isAlacCodec("Apple Lossless (ALAC)")).toBe(true);
+    expect(codecSupport({ codec: "ALAC", path: "C:\\Music\\song.m4a" })).toBe("supported");
+    expect(codecSupport({ codec: "Apple Lossless (ALAC)" })).toBe("supported");
+    expect(isAlacCodec("MPEG-4/AAC")).toBe(false);
+    expect(codecSupport({ codec: "MPEG-4/AAC", path: "C:\\Music\\song.m4a" })).toBe("supported");
     expect(codecSupport({ codec: "FLAC" })).toBe("supported");
     expect(codecSupport({ codec: "MPEG 1 Layer 3" })).toBe("supported");
     expect(codecSupport({ codec: "MPEG-4/AAC" })).toBe("supported");
@@ -67,7 +72,7 @@ describe("file-access vs unsupported-codec playback failure separation", () => {
     expect(unconfirmedFormatErr).toMatch(/could not be read from disk/i);
   });
 
-  it("reports reachable ALAC files as unsupported codec and reachable broken files as corrupt", () => {
+  it("reports malformed ALAC as a decode error, not as an unsupported extension", () => {
     const alacMsg = "PipelineStatus::DEMUXER_ERROR_NO_SUPPORTED_STREAMS: FFmpegDemuxer: no supported streams";
     expect(isDecoderOrDemuxerMessage(alacMsg)).toBe(true);
     expect(isDecoderOrDemuxerMessage("MEDIA_ELEMENT_ERROR: Format error")).toBe(false);
@@ -77,7 +82,8 @@ describe("file-access vs unsupported-codec playback failure separation", () => {
       { codec: "ALAC" },
       { httpStatus: 206, mediaMessage: alacMsg }
     );
-    expect(alacDecode).toMatch(/ALAC is not decodable.*FLAC/s);
+    expect(alacDecode).toMatch(/could not be decoded \(ALAC\).*corrupt/i);
+    expect(alacDecode).not.toMatch(/not decodable/);
 
     const brokenFlac = explainPlaybackFailure(
       4,

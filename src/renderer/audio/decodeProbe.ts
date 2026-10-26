@@ -1,20 +1,20 @@
 /**
  * Decode Tester probing.
  *
- * Cadence has exactly one audio decoding pipeline — Chromium's media stack behind the
- * `cadence-media` Range protocol, driven by an `<audio>` element — so the tester reuses it instead
- * of shipping a second decoder. Each file is loaded into a detached, muted `<audio>` element (the
- * shared playback element in `engine.ts` is never touched) and the probe forces real demuxing and
- * decoding at several points across the stream: the first frames (`loadeddata`), then a muted
- * playback burst after seeking to sampled positions towards the middle and the end of the file.
+ * Cadence's playback authority is one `<audio>` element using Chromium's media stack and the
+ * `cadence-media` Range protocol. ALAC alone is prepared by the native Symphonia decoder as a
+ * lossless PCM WAV before it reaches that same media stack. The tester uses the same source
+ * preparation but a detached, muted `<audio>` element (the shared element in `engine.ts` is never
+ * touched), forcing real demuxing and decoding at several points across the stream.
  * A file only passes when the decoder actually produced advancing media time at every sample.
  *
- * Files are streamed by the media protocol in bounded Range chunks; nothing loads a whole file
- * (or its decoded PCM) into memory, and scanning never writes to disk.
+ * Encoded sources are streamed in bounded Range chunks. ALAC decoding writes a disposable WAV
+ * cache under the app data directory (never into the music library); the cache is cleared at the
+ * next app launch, and neither source files nor library metadata are modified by a scan.
  *
  * Failures are classified with the same distinctions playback errors use (`codecs.ts`): a file the
- * decoder cannot reach (HTTP 403/404 from the media protocol) is "inaccessible", a codec Chromium
- * has no decoder for is "unsupported-codec", a stream that decodes at the start but dies towards
+ * decoder cannot reach (HTTP 403/404 from the media protocol) is "inaccessible", an unsupported
+ * codec is "unsupported-codec", a stream that decodes at the start but dies towards
  * the end is "truncated", and only the rest are genuine "decode-error"s. A metadata (tag) reading
  * failure is never treated as a decode failure: the probe ignores tags entirely.
  */
@@ -23,9 +23,11 @@ import type { DecodeProblem, DecodeProblemKind, Track } from "../../shared/types
 import {
   codecSupport,
   explainPlaybackFailure,
+  isAlacCodec,
   probeMediaAccessStatus,
   type MediaAccessStatus,
 } from "./codecs";
+import { resolvePlaybackSource } from "./playbackSource";
 
 export type DecodeProbeTrack = Pick<Track, "id" | "path" | "streamUrl" | "codec" | "duration">;
 
@@ -139,14 +141,14 @@ export function classifyDecodeFailure(
 
   const support = codecSupport(track);
   const noSupportedStreams = /no_supported_streams/i.test(mediaMessage ?? "");
-  if (noSupportedStreams || (support === "unsupported" && (code === 3 || code === 4))) {
+  if ((noSupportedStreams && !isAlacCodec(track.codec)) || (support === "unsupported" && (code === 3 || code === 4))) {
     const codecName = track.codec?.trim() || "This file's codec";
     return {
       kind: "unsupported-codec",
       message:
         support === "unsupported"
           ? explainPlaybackFailure(4, track, { httpStatus: 206, mediaMessage: mediaMessage ?? "DEMUXER_ERROR_NO_SUPPORTED_STREAMS" })
-          : `${codecName} has no supported audio stream for Chromium's built-in media stack. Convert the file to FLAC or WAV to play it in Cadence.`,
+          : `${codecName} has no supported audio stream in Cadence's decoder pipeline. Convert the file to FLAC or WAV to play it in Cadence.`,
     };
   }
 
@@ -387,7 +389,9 @@ export async function probeTrackDecode(
     element.volume = 0;
     element.crossOrigin = "anonymous";
     element.playbackRate = options.playbackRate ?? 8;
-    element.src = track.streamUrl;
+    const playbackUrl = await resolvePlaybackSource(track);
+    if (signal?.aborted) throw abortError();
+    element.src = playbackUrl;
     element.load();
 
     const loaded = await waitForMediaEvent(element, ["loadeddata", "canplay"], loadTimeoutMs, signal);

@@ -23,7 +23,7 @@ const track = (path: string, codec = "FLAC"): DecodeProbeTrack => ({
 });
 
 describe("classifyDecodeFailure — access, unsupported and corruption stay apart", () => {
-  it("reports HTTP 404/403 as inaccessible even for an unsupported codec", () => {
+  it("reports HTTP 404/403 as inaccessible even for supported ALAC", () => {
     const missing = classifyDecodeFailure(
       { codec: "ALAC", path: "C:\\Music\\song.m4a" },
       { code: 4, httpStatus: 404, mediaMessage: "MEDIA_ELEMENT_ERROR: Format error" }
@@ -42,7 +42,7 @@ describe("classifyDecodeFailure — access, unsupported and corruption stay apar
     expect(network.kind).toBe("inaccessible");
   });
 
-  it("reports ALAC-style demuxer rejections as unsupported codec, never corruption", () => {
+  it("reports native ALAC demuxer failures as decode errors, not unsupported-codec errors", () => {
     const alac = classifyDecodeFailure(
       { codec: "ALAC", path: "C:\\Music\\song.m4a" },
       {
@@ -51,8 +51,15 @@ describe("classifyDecodeFailure — access, unsupported and corruption stay apar
         mediaMessage: "PipelineStatus::DEMUXER_ERROR_NO_SUPPORTED_STREAMS: FFmpegDemuxer: no supported streams",
       }
     );
-    expect(alac.kind).toBe("unsupported-codec");
-    expect(alac.message).toMatch(/ALAC is not decodable.*FLAC/s);
+    expect(alac.kind).toBe("decode-error");
+    expect(alac.message).toMatch(/could not be decoded \(ALAC\).*corrupt/i);
+
+    const unavailableChromiumCodec = classifyDecodeFailure(
+      { codec: "MPEG-4/AAC", path: "C:\\Music\\song.m4a" },
+      { code: 4, httpStatus: 206, mediaMessage: "DEMUXER_ERROR_NO_SUPPORTED_STREAMS" }
+    );
+    expect(unavailableChromiumCodec.kind).toBe("unsupported-codec");
+    expect(unavailableChromiumCodec.message).toMatch(/no supported audio stream/i);
 
     const unknownCodec = classifyDecodeFailure(
       { codec: "", path: "/music/song.xyz" },
@@ -148,7 +155,7 @@ describe("runDecodeScan orchestration", () => {
       if (candidate.path.endsWith("broken.flac")) {
         return { ok: false, kind: "decode-error", message: "corrupt" };
       }
-      if (candidate.path.endsWith("song.m4a")) {
+      if (candidate.path.endsWith("song.ape")) {
         return { ok: false, kind: "unsupported-codec", message: "no decoder" };
       }
       if (candidate.path.endsWith("weird.wav")) {
@@ -161,7 +168,7 @@ describe("runDecodeScan orchestration", () => {
       [
         track("C:\\Music\\ok.flac"),
         track("C:\\Music\\broken.flac"),
-        track("C:\\Music\\song.m4a", "ALAC"),
+        track("C:\\Music\\song.ape", "APE"),
         track("C:\\Music\\broken.flac"), // duplicate must not be probed or listed twice
         track("C:\\Music\\weird.wav", "WAV"),
       ],
@@ -178,7 +185,7 @@ describe("runDecodeScan orchestration", () => {
     const kinds = new Map(outcome.problems.map(problem => [problem.fileName, problem.kind]));
     expect(outcome.problems).toHaveLength(3);
     expect(kinds.get("broken.flac")).toBe("decode-error");
-    expect(kinds.get("song.m4a")).toBe("unsupported-codec");
+    expect(kinds.get("song.ape")).toBe("unsupported-codec");
     expect(kinds.get("weird.wav")).toBe("decode-error");
     expect(outcome.problems.find(p => p.fileName === "weird.wav")?.message).toMatch(/element exploded/);
     // Successful files are never reported.
@@ -244,7 +251,7 @@ describe("runDecodeScan orchestration", () => {
 describe("decode tester store — keep, remove, export", () => {
   const problems: DecodeProblem[] = [
     { trackId: 1, path: "C:\\Music\\a.flac", fileName: "a.flac", kind: "decode-error", message: "x", codec: "FLAC" },
-    { trackId: 2, path: "C:\\Music\\b.m4a", fileName: "b.m4a", kind: "unsupported-codec", message: "y", codec: "ALAC" },
+    { trackId: 2, path: "C:\\Music\\b.ape", fileName: "b.ape", kind: "unsupported-codec", message: "y", codec: "APE" },
     { trackId: 3, path: "C:\\Music\\c.mp3", fileName: "c.mp3", kind: "inaccessible", message: "z", codec: "MP3" },
   ];
 
@@ -286,7 +293,7 @@ describe("decode tester store — keep, remove, export", () => {
     expect(state.problems).toHaveLength(3);
     expect(visibleDecodeProblems(state.problems, state.keptPaths, false)).toHaveLength(3);
     expect(visibleDecodeProblems(state.problems, state.keptPaths, true).map(p => p.fileName)).toEqual([
-      "b.m4a",
+      "b.ape",
       "c.mp3",
     ]);
     useDecodeTester.getState().toggleKept("C:\\Music\\a.flac");
@@ -309,12 +316,12 @@ describe("decode tester store — keep, remove, export", () => {
   });
 
   it("exports every problematic path (kept included) and reports where it went", async () => {
-    useDecodeTester.getState().toggleKept("C:\\Music\\b.m4a");
+    useDecodeTester.getState().toggleKept("C:\\Music\\b.ape");
     await useDecodeTester.getState().exportFileList();
     const cadence = (globalThis as any).window.cadence;
     expect(cadence.decodeTester.exportFileList).toHaveBeenCalledWith([
       "C:\\Music\\a.flac",
-      "C:\\Music\\b.m4a",
+      "C:\\Music\\b.ape",
       "C:\\Music\\c.mp3",
     ]);
     expect(useDecodeTester.getState().actionMessage).toMatch(/Exported 3 problematic file paths to C:\\Users\\A\\list\.txt/);

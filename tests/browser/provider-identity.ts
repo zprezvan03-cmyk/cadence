@@ -315,7 +315,12 @@ await page.evaluateOnNewDocument(() => {
       romanize: async (request: { lines: string[] }) => ({ romanizations: request.lines.map(() => null), detectedLanguage: "en" }),
       saveSidecar: async () => ({ path: "/harness/lyrics.lrc" }),
     },
-    player: { reportState: async () => undefined, onCommand: () => () => {} },
+    player: {
+      // Native ALAC is covered by Rust tests; this browser harness uses its matching PCM fixture.
+      prepareAlacSource: async () => "/audio/fixture.wav",
+      reportState: async () => undefined,
+      onCommand: () => () => {},
+    },
     decodeTester: { deleteFiles: async () => [], exportFileList: async () => ({ canceled: true }) },
     app: {
       openExternal: async () => undefined,
@@ -743,6 +748,9 @@ await closeSources();
 
 // Fixture ALAC gets a line-level TTML *and* a Kugou LRC, so both identities are offered at once.
 await playTrack("Fixture ALAC");
+// Native ALAC now really advances the shared playback clock; pause it so a six-second fixture
+// cannot auto-advance to the next track during this provider-persistence UI check.
+await page.evaluate(() => document.querySelector("audio")?.pause());
 const bothOffered = await openSources();
 check(
   "same-track-offers-both-identities",
@@ -789,6 +797,7 @@ await page.reload({ waitUntil: "networkidle0" });
 await page.waitForSelector(".sidebar", { timeout: 30_000 });
 await wait(700);
 await playTrack("Fixture ALAC");
+await page.evaluate(() => document.querySelector("audio")?.pause());
 const afterManualRestart = await openSources();
 await shot("10-manual-selection-after-restart");
 check(

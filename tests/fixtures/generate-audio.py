@@ -7,7 +7,7 @@ browser harness can verify decoding, metadata, artwork and lyric extraction agai
 files instead of committed binaries.
 
 Requires: pip install av soundfile numpy mutagen
-Output:   .artifacts/fixtures/formats/<format>/<file>
+Output:   .artifacts/fixtures/formats/* and .artifacts/fixtures/alac/fixture-alac-96k.m4a
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import math
 import struct
+from fractions import Fraction
 import sys
 import wave
 import zlib
@@ -84,6 +85,29 @@ def cover_png(size: int = 256) -> bytes:
         + chunk(b"IDAT", zlib.compress(raw, 9))
         + chunk(b"IEND", b"")
     )
+
+
+def encode_animated_cover(path: Path) -> None:
+    """Write a tiny real VP8/WebM sidecar used to exercise animated artwork discovery."""
+    rate = 12
+    with av.open(str(path), mode="w", format="webm") as output:
+        stream = output.add_stream("libvpx", rate=rate)
+        stream.width = 64
+        stream.height = 64
+        stream.pix_fmt = "yuv420p"
+        stream.options = {"deadline": "realtime", "cpu-used": "8", "crf": "35", "b": "0"}
+        for index in range(rate):
+            pixels = np.zeros((64, 64, 3), dtype=np.uint8)
+            pixels[:, :, 0] = 30 + index * 15
+            pixels[:, :, 1] = 80 + np.arange(64, dtype=np.uint8)[None, :] * 2
+            pixels[:, :, 2] = 120
+            frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
+            frame.pts = index
+            frame.time_base = Fraction(1, rate)
+            for packet in stream.encode(frame):
+                output.mux(packet)
+        for packet in stream.encode():
+            output.mux(packet)
 
 
 def encode_with_pyav(
@@ -189,6 +213,7 @@ def main() -> int:
     # Sidecar LRC + a cover file next to the audio, which the scanner must ignore.
     (ROOT / "fixture.lrc").write_text(LRC, encoding="utf-8")
     (ROOT / "cover.png").write_bytes(cover)
+    encode_animated_cover(ROOT / "cover.webm")
 
     # FLAC (libsndfile)
     flac_path = ROOT / "fixture.flac"
@@ -223,6 +248,15 @@ def main() -> int:
     encode_with_pyav(alac, "alac", "mp4")
     tag_mp4(alac, cover, "Fixture ALAC")
     created.append(str(alac))
+
+    # Separate stereo 96 kHz ALAC sample verifies native sample-rate preservation without
+    # changing the main browser harness library's expected track count.
+    alac_fixtures = ROOT.parent / "alac"
+    alac_fixtures.mkdir(parents=True, exist_ok=True)
+    alac_96k = alac_fixtures / "fixture-alac-96k.m4a"
+    encode_with_pyav(alac_96k, "alac", "mp4", rate=96_000)
+    tag_mp4(alac_96k, cover, "Fixture ALAC 96 kHz")
+    created.append(str(alac_96k))
 
     # Deliberately broken inputs for failure handling.
     (ROOT / "broken.flac").write_bytes(b"not a flac file at all" * 8)

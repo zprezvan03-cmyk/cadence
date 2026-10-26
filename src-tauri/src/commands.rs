@@ -40,6 +40,7 @@ const SKIP_DIRECTORIES: &[&str] = &[
 pub struct AppState {
     pub app_data_dir: PathBuf,
     pub artwork_dir: PathBuf,
+    pub alac_cache_dir: PathBuf,
     pub allowlist: Arc<MediaAllowlist>,
     pub db: Arc<LibraryDb>,
     pub http_client: reqwest::Client,
@@ -573,6 +574,29 @@ pub async fn cmd_save_artwork(
     .map_err(|e| e.to_string())??;
 
     Ok(file_name)
+}
+
+/// Build a cached, seekable PCM source for an actual ALAC stream.
+///
+/// The source path is revalidated against the media allowlist here; the decoder independently
+/// inspects the MP4 codec metadata and rejects AAC even when its extension is `.m4a`.
+#[tauri::command]
+pub async fn cmd_prepare_alac_playback(
+    source_path: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let Some(source) = state.allowlist.resolve_allowed_media(&source_path) else {
+        return Err("Audio path is outside library allowlist".to_string());
+    };
+    let cache_dir = state.alac_cache_dir.clone();
+    let allowlist = Arc::clone(&state.allowlist);
+    tauri::async_runtime::spawn_blocking(move || {
+        let decoded = crate::alac::decode_alac_to_wav_cached(&source, &cache_dir)?;
+        allowlist.add_file(&decoded);
+        Ok(decoded.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

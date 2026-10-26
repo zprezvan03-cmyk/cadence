@@ -22,6 +22,8 @@ tauri-plugin-opener = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 base64 = "0.22"
+# ALAC + ISO/MP4 only: pure Rust, no FFmpeg binary or platform codec dependency.
+symphonia = { version = "0.5.5", default-features = false, features = ["alac", "isomp4"] }
 percent-encoding = "2.3"
 url = "2.5"
 tokio = { version = "1", features = ["macros", "sync", "time", "rt"] }
@@ -31,6 +33,12 @@ rfd = "0.16"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = ["Win32_UI_Shell"] }
+
+# Symphonia 0.5.5 rejects MP4 files with multiple sample entries on any track, including
+# auxiliary chapter-image tracks. Keep its isomp4 demuxer with the compatibility patch documented
+# in vendor/symphonia-format-isomp4/PATCHES.md.
+[patch.crates-io]
+symphonia-format-isomp4 = { path = "../vendor/symphonia-format-isomp4" }
 
 [profile.release]
 panic = "abort"

@@ -729,6 +729,11 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
     },
 
     player: {
+      async prepareAlacSource(path: string): Promise<string> {
+        const decodedPath = await invoke<string>("cmd_prepare_alac_playback", { sourcePath: path });
+        return toTauriMediaUrl(decodedPath, "file", pathPlatform);
+      },
+
       async reportState(state: PlayerSnapshot): Promise<void> {
         lastPlayerState = state;
       },

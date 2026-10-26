@@ -60,10 +60,11 @@ npm run build:desktop  # Full Tauri production build (frontend + Rust host + pla
 6. **Settings → Library** shows folders, rescan, the SQLite engine in use and scan errors;
    **About** lists versions and runtime information.
 7. **Decode Tester** (sidebar, or Settings → Library) health-checks your library by really decoding
-   every file — beginning, middle and end — through the same Chromium media stack playback uses,
-   streamed over the `cadence-media` Range protocol (nothing is loaded wholesale into memory, and
-   scanning never modifies files). Corrupt, truncated, inaccessible and unsupported-codec files are
-   listed separately with the decoder's error. For each you can **Keep** it (marks it intentionally
+   every file — beginning, middle and end — through the same playback path. Chromium decodes the
+   normal formats from the `cadence-media` Range protocol; ALAC is first decoded by native Symphonia
+   into a disposable PCM WAV cache, then sampled by Chromium. The cache is kept under app data and
+   cleared at the next launch; source files and library metadata are not modified. Corrupt, truncated,
+   inaccessible and unsupported-codec files are listed separately with the decoder's error. For each you can **Keep** it (marks it intentionally
    retained; it stays in results unless you enable *Hide kept files*), **Remove** selected files
    (an explicit confirmation lists them first; only confirmed deletions touch disk and leave the
    library), or **Export file list** to a UTF-8 `.txt` with one problematic path per line via a
@@ -79,17 +80,27 @@ npm run build:desktop  # Full Tauri production build (frontend + Rust host + pla
 | WAV (PCM) | yes | yes |
 | Ogg Vorbis | yes | yes |
 | Opus | yes | yes |
-| ALAC (.m4a) | **no** | yes — WebView2/Chromium's FFmpeg demuxer reports `DEMUXER_ERROR_NO_SUPPORTED_STREAMS` |
+| ALAC (.m4a) | yes — native Symphonia decode to lossless PCM WAV | generator creates real 44.1/96 kHz fixtures; native tests added, not run here |
 
-Unsupported codecs are labelled **no decoder** in the library and produce an actionable message
-(*"ALAC is not decodable by Chromium's built-in media stack. Convert the file to FLAC or WAV…"*),
-never a silent failure. `src/renderer/audio/codecs.ts` is the single source of truth for this table.
+ALAC is selected from the scanner's codec metadata, not the shared `.m4a` extension, so AAC/M4A
+stays on the existing Chromium path. The native decoder verifies the source container before using a
+cache and preserves its sample rate and channel count. The resulting PCM WAV uses the same
+`HTMLAudioElement`, seek controls, queue, transitions and `cadence-media` Range protocol as other
+formats. Cache files are disposable app data and are cleared on the next launch.
+
+Other unsupported codecs are labelled **no decoder** in the library and produce an actionable
+message instead of failing silently. `src/renderer/audio/codecs.ts` is the renderer's source of truth
+for metadata-based playback routing; the native command independently verifies the ALAC container.
+
+Regenerate the real, tagged audio fixtures (including stereo ALAC at 44.1 and 96 kHz) with
+`npm run test:fixtures`. They are written under the ignored `.artifacts/` directory. The native
+decoder tests require those fixtures: `cargo test --manifest-path src-tauri/Cargo.toml`.
 
 ## Architecture
 
 ```
-src-tauri/src       Tauri v2 Rust host: cadence-media Range protocol, path allowlist, rusqlite DB,
-                    rfd native dialogs, reqwest HTTP client + cancellation, single-instance & media keys
+src-tauri/src       Tauri v2 Rust host: Symphonia ALAC-to-PCM adapter, cadence-media Range protocol,
+                    path allowlist, rusqlite DB, rfd dialogs, reqwest client, single-instance & media keys
 src-tauri/capabilities/default.json   least-privilege window capability (no arbitrary shell or fs)
 src-tauri/tauri.windows.conf.json     Windows-only window overlay: decorations off for the integrated title bar
 src/tauri/bridge.ts WebView2 implementation of window.cadence (CadenceApi) over @tauri-apps/api

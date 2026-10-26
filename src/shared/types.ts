@@ -43,7 +43,7 @@ export interface Track {
   playCount: number;
   /** True when a sidecar `.lrc`/`.ttml`/`.qrc`/`.srt` file sits next to the audio file. */
   hasSidecarLyrics: boolean;
-  /** True when the decoder family is expected to be supported by Chromium. */
+  /** True when this file has a supported audio extension; codec support is checked separately. */
   playable: boolean;
 }
 
@@ -388,6 +388,8 @@ export interface CadenceApi {
     clearCache(): Promise<LyricsCacheClearResult>;
   };
   player: {
+    /** Decode an ALAC source to a seekable lossless PCM WAV cache and return its media URL. */
+    prepareAlacSource(path: string): Promise<string>;
     reportState(state: PlayerSnapshot): Promise<void>;
     onCommand(listener: (command: MediaCommand) => void): () => void;
   };
