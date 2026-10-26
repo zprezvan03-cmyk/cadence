@@ -623,6 +623,30 @@ pub async fn cmd_read_sidecar_text(
     .map_err(|e| e.to_string())?
 }
 
+/// Names in an allowlisted directory. Sidecar discovery uses the real spellings instead of
+/// guessing every mixed-case variant of a lyrics extension on case-sensitive filesystems.
+#[tauri::command]
+pub async fn cmd_list_directory(
+    directory: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    let Some(allowed) = state.allowlist.resolve_allowed_media(&directory) else {
+        return Ok(Vec::new());
+    };
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<String>, String> {
+        let Ok(entries) = std::fs::read_dir(&allowed) else {
+            return Ok(Vec::new());
+        };
+        let mut names = Vec::new();
+        for entry in entries.flatten() {
+            names.push(entry.file_name().to_string_lossy().into_owned());
+        }
+        Ok(names)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[tauri::command]
 pub async fn cmd_write_sidecar_lrc(
     audio_path: String,

@@ -311,7 +311,7 @@ describe("Tauri bridge — Settings -> Clear lyrics cache", () => {
                 artworkDir: "C:\\Users\\Alice\\AppData\\Roaming\\app.cadence.player\\artwork",
                 platform: "win32",
                 arch: "x86_64",
-                appVersion: "0.2.1",
+                appVersion: "0.2.2",
                 tauriVersion: "2.12.5",
                 settingsJson: null,
                 lyricsCacheJson: persistedLyricsCacheJson,

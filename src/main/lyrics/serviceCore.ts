@@ -23,7 +23,7 @@ import { fetchLrclib, searchLrclib } from "./lrclib";
 import { fetchBetterLyrics, searchBetterLyrics } from "./betterLyrics";
 import { fetchUnison, searchUnison } from "./unison";
 import { fetchBinimum, searchBinimum } from "./binimum";
-import type { LocalLyricsReader } from "./localLyricsCore";
+import type { LocalLyrics, LocalLyricsReader } from "./localLyricsCore";
 import { isAbort, type ProviderOutcome, type ProviderQuery, type ProviderStatus } from "./http";
 import { inspectLyricsPayload } from "./syncInspection";
 
@@ -227,22 +227,67 @@ export class LyricsServiceCore {
     };
 
     if (trackPath && (hasSlot("local-rich") || hasSlot("local-lrc"))) {
-      const sidecar =
-        (await this.localReader.readSidecarLyrics(trackPath)) ??
-        (await this.localReader.readLyricsFolder(
-          trackPath,
-          track?.trackNo ?? null,
-          track?.title ?? request.title
-        ));
-      const richFormat = sidecar?.format === "ttml" || sidecar?.format === "qrc";
-      const presentKey = sidecar ? (richFormat ? "local-rich" : "local-lrc") : null;
-      const inspected = sidecar
-        ? inspectLyricsPayload(sidecar.text, {
-            durationSeconds: request.duration,
-            title: request.title,
-            artist: request.artist,
-          })
-        : null;
+      // Discovery stage: collect every sidecar, not just the first extension that happens to win.
+      // The Lyrics/ folder stays the existing fallback when no file sits next to the audio.
+      const discovered: LocalLyrics[] = [];
+      if (typeof this.localReader.readAllSidecarLyrics === "function") {
+        discovered.push(...(await this.localReader.readAllSidecarLyrics(trackPath)));
+      } else {
+        const single = await this.localReader.readSidecarLyrics(trackPath);
+        if (single) discovered.push(single);
+      }
+      if (discovered.length === 0) {
+        const folderArgs = [trackPath, track?.trackNo ?? null, track?.title ?? request.title] as const;
+        if (typeof this.localReader.readAllLyricsFolder === "function") {
+          discovered.push(...(await this.localReader.readAllLyricsFolder(...folderArgs)));
+        } else {
+          const fallback = await this.localReader.readLyricsFolder(...folderArgs);
+          if (fallback) discovered.push(fallback);
+        }
+      }
+
+      // Parsing/attribution stage: inspect all files, then keep at most one candidate per local
+      // provider slot. Duplicate paths (or the same text reached twice) never become extra rows.
+      type LocalKey = "local-rich" | "local-lrc";
+      const seen = new Set<string>();
+      const chosen = new Map<LocalKey, { file: LocalLyrics; inspected: ReturnType<typeof inspectLyricsPayload> }>();
+      const usableCounts = new Map<LocalKey, number>();
+      const problems = new Map<LocalKey, string[]>();
+
+      for (const file of discovered) {
+        const dedupeKey = `${file.path.toLowerCase()}\u0000${file.text}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+        const key: LocalKey = file.format === "ttml" || file.format === "qrc" ? "local-rich" : "local-lrc";
+        if (!hasSlot(key) || !enabledKeys.has(key)) continue;
+
+        const inspected = inspectLyricsPayload(file.text, {
+          durationSeconds: request.duration,
+          title: request.title,
+          artist: request.artist,
+        });
+        // Rich sidecars must actually parse as that rich format. A broken TTML that degrades to
+        // plain text must not become a "hit" just because the plain-text parser is permissive.
+        const expectedFormat = file.format === "ttml" ? "ttml" : file.format === "qrc" ? "qrc" : null;
+        const formatMismatch = expectedFormat !== null && inspected.format !== expectedFormat;
+        if (!inspected.usable || formatMismatch) {
+          // Parsing errors are reported with the file and reason, never silently turned into a
+          // miss while a valid sibling LRC continues through its own provider slot.
+          const reason =
+            inspected.error ??
+            (formatMismatch
+              ? `expected ${expectedFormat?.toUpperCase()}, parsed as ${inspected.format}`
+              : inspected.format === "ttml"
+                ? "no usable timed lines"
+                : "no usable lines");
+          const detail = `Unusable ${file.format} lyrics in ${file.path}: ${reason}`;
+          console.warn(`[Cadence] ${detail}`);
+          problems.set(key, [...(problems.get(key) ?? []), detail]);
+          continue;
+        }
+        usableCounts.set(key, (usableCounts.get(key) ?? 0) + 1);
+        if (!chosen.has(key)) chosen.set(key, { file, inspected });
+      }
 
       for (const key of ["local-rich", "local-lrc"] as const) {
         if (!hasSlot(key)) continue;
@@ -250,28 +295,31 @@ export class LyricsServiceCore {
           providerStatus.push({ provider: key, status: "skipped", detail: "Provider disabled" });
           continue;
         }
-        if (!sidecar || !inspected?.usable) {
-          providerStatus.push({ provider: key, status: "miss" });
+        const hit = chosen.get(key);
+        if (hit) {
+          const extra = (usableCounts.get(key) ?? 1) - 1;
+          pushLocal(
+            {
+              source: key,
+              provider: providerConfig(key)?.displayName ?? (key === "local-rich" ? "Local TTML/QRC" : "Local LRC"),
+              text: hit.file.text,
+              syncHint: hit.inspected.syncType,
+              language: hit.inspected.language,
+              songwriters: hit.inspected.songwriters,
+              sourceHref: hit.file.path,
+              cached: true,
+            },
+            key,
+            `${hit.file.path}${extra > 0 ? ` (+${extra} more sidecar${extra === 1 ? "" : "s"})` : ""}`
+          );
           continue;
         }
-        if (presentKey !== key) {
+        const errors = problems.get(key);
+        if (errors?.length) {
+          providerStatus.push({ provider: key, status: "error", detail: errors.join("; ") });
+        } else {
           providerStatus.push({ provider: key, status: "miss" });
-          continue;
         }
-        pushLocal(
-          {
-            source: key,
-            provider: richFormat ? "Local TTML/QRC" : "Local LRC",
-            text: sidecar.text,
-            syncHint: inspected.syncType,
-            language: inspected.language,
-            songwriters: inspected.songwriters,
-            sourceHref: sidecar.path,
-            cached: true,
-          },
-          key,
-          sidecar.path
-        );
       }
     } else {
       for (const key of ["local-rich", "local-lrc"] as const) {
