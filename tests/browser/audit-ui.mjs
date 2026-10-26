@@ -400,6 +400,8 @@ await page.evaluateOnNewDocument(
         saveSidecar: async () => "/harness/lyrics.lrc",
       },
       player: {
+        // Stand in for the native ALAC bridge with the matching PCM fixture in this browser harness.
+        prepareAlacSource: async () => "/audio/fixture.wav",
         reportState: async () => undefined,
         onCommand: listener => {
           window.__mediaCommandListener = listener;
@@ -1219,9 +1221,26 @@ await runSection("expanded-queue-and-errors-completes", async () => {
   const positionAfterRemove = (await audioState()).currentTime;
   check("remove-current-starts-next-at-zero", positionAfterRemove < 0.75, `new track position=${positionAfterRemove}`);
   await closeQueue(); await nav("Songs"); await playTrack("Fixture ALAC"); await wait(250);
-  check("playback-error-banner", Boolean(await page.$(".error-banner")), "unsupported fixture reports error");
-  if (await page.$(".error-banner")) await clickText(".error-banner button", "Dismiss");
-  check("playback-error-dismiss", !(await page.$(".error-banner")), "banner dismissed");
+  const alacPlayback = await audioState();
+  check(
+    "alac-playback-through-bridge-handoff",
+    !alacPlayback.paused && alacPlayback.currentTime > 0.3 && !(await page.$(".error-banner")),
+    `PCM handoff playing at ${alacPlayback.currentTime.toFixed(2)}s`
+  );
+  await page.click('button[aria-label="Next track"]'); await wait(350);
+  const afterAlacNext = await audioState();
+  check(
+    "alac-next-track-transition",
+    (await playerTitle()) !== "Fixture ALAC" && !afterAlacNext.paused && afterAlacNext.currentTime > 0.2,
+    `${await playerTitle()} at ${afterAlacNext.currentTime.toFixed(2)}s`
+  );
+  await page.click('button[aria-label="Previous track"]'); await wait(350);
+  const afterAlacPrevious = await audioState();
+  check(
+    "alac-previous-track-transition",
+    (await playerTitle()) === "Fixture ALAC" && !afterAlacPrevious.paused && afterAlacPrevious.currentTime > 0.2,
+    `back to ALAC at ${afterAlacPrevious.currentTime.toFixed(2)}s`
+  );
 });
 
 await runSection("expanded-shuffle-actions-completes", async () => {

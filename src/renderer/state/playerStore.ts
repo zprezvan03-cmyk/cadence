@@ -113,8 +113,8 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     const track = getTrackById(trackId);
     if (!track) return;
     const token = ++loadToken;
-    await audioEngine.load(track);
-    if (token !== loadToken) return;
+    const loaded = await audioEngine.load(track);
+    if (!loaded || token !== loadToken) return;
     if (state.position > 0) audioEngine.seek(state.position);
     audioEngine.setVolume(state.volume);
     audioEngine.setMuted(state.muted);
@@ -186,6 +186,7 @@ export const usePlayer = create<PlayerState>()((set, get) => {
         const position = state.order.indexOf(existing);
         if (position !== -1) {
           if (position === state.orderPosition) {
+            if (state.buffering && !audioEngine.element.src) return;
             get().seek(0);
             await audioEngine.play();
             return;
@@ -297,6 +298,9 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     toggle: async () => {
       if (get().queue.length === 0) return;
       if (!audioEngine.element.src) {
+        // A metadata-identified ALAC source may still be decoding to the disposable PCM cache.
+        // Avoid starting a duplicate native decode while that load is in flight.
+        if (get().buffering) return;
         await loadCurrent(true);
         return;
       }
@@ -405,7 +409,8 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       const trackId = currentTrackId(get());
       const track = trackId === null ? null : getTrackById(trackId);
       if (!track) return;
-      await audioEngine.load(track);
+      const loaded = await audioEngine.load(track);
+      if (!loaded) return;
       audioEngine.setVolume(session.volume);
       audioEngine.setMuted(session.muted);
       audioEngine.setRate(session.rate);

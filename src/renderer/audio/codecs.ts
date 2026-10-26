@@ -1,10 +1,8 @@
 /**
- * Which containers and codecs the Chromium media stack inside Electron can actually decode.
+ * Which codec families Cadence can decode through Chromium's media stack or its native ALAC bridge.
  *
- * This is not a guess: each entry was checked by loading a real encoded file through the app's own
- * `<audio>` element in the browser harness (`tests/browser/run-app.mjs`, one `format-*` check per
- * format). Anything outside this table is reported to the user as unsupported instead of failing
- * with a bare "Playback failed".
+ * The Chromium formats are verified by loading real encoded files through the app's `<audio>`
+ * element in the browser harness. ALAC is decoded by the Tauri host and then uses that same element.
  */
 
 export type CodecSupport = "supported" | "unsupported" | "unknown";
@@ -16,9 +14,8 @@ export interface PlaybackFailureContext {
   mediaMessage?: string | null;
 }
 
-/** Codecs that Chromium's bundled FFmpeg demuxer/decoder refuses. */
+/** Codecs Cadence does not currently decode in Chromium or in a native playback adapter. */
 const UNSUPPORTED_CODECS = [
-  "alac", // Apple Lossless: FFmpegDemuxer reports "no supported streams"
   "ape", // Monkey's Audio
   "wavpack",
   "dsd",
@@ -28,6 +25,11 @@ const UNSUPPORTED_CODECS = [
 ];
 
 const SUPPORTED_EXTENSIONS = new Set([".flac", ".mp3", ".m4a", ".aac", ".mp4", ".wav", ".ogg", ".oga", ".opus", ".webm"]);
+
+/** Metadata-based ALAC detection; the shared `.m4a` extension is never used as a codec signal. */
+export function isAlacCodec(codec: string | null | undefined): boolean {
+  return /\balac\b|apple\s+lossless/i.test(codec ?? "");
+}
 
 export function codecSupport(track: { codec?: string | null; path?: string | null }): CodecSupport {
   const codec = (track.codec ?? "").toLowerCase();

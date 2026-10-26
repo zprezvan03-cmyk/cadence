@@ -6,12 +6,14 @@
  * from. A Web Audio analyser sits on the same element (through a MediaElementAudioSourceNode) and
  * drives the ported Better Lyrics Shaders beat analysis.
  *
- * Decoding is Chromium's: FLAC, MP3, AAC/M4A, WAV, Ogg Vorbis and Opus all play through the same
- * element with no native codec dependency. Written for Cadence.
+ * Chromium decodes FLAC, MP3, AAC/M4A, WAV, Ogg Vorbis and Opus through this element. For ALAC,
+ * the Tauri host creates a lossless PCM WAV source first; controls, clock, analyser and output stay
+ * on this same element. Written for Cadence.
  */
 
 import { BeatAnalyser, type AnalysisSettings } from "../upstream/shaders/beatAnalysis";
 import type { DynamicMultipliers } from "../../shared/upstream/shaders/gradientSettings";
+import { resolvePlaybackSource } from "./playbackSource";
 
 export interface AudioEngineEvents {
   time: { position: number; duration: number; buffered: number };
@@ -48,6 +50,7 @@ export class AudioEngine {
   private lastEmit = 0;
   private beatAnalyser: BeatAnalyser;
   private buffering = false;
+  private loadGeneration = 0;
 
   constructor() {
     const element = document.createElement("audio");
@@ -86,7 +89,7 @@ export class AudioEngine {
       this.emit("state", { playing: true, buffering: false, ended: false });
     });
     element.addEventListener("pause", () => {
-      this.emit("state", { playing: false, buffering: false, ended: element.ended });
+      this.emit("state", { playing: false, buffering: this.buffering, ended: element.ended });
       this.stopFrameLoop();
       this.emitTime();
     });
@@ -236,12 +239,39 @@ export class AudioEngine {
 
   // -------------------------------------------------------------- playback
 
-  async load(track: { streamUrl: string; title: string }): Promise<void> {
+  async load(track: { streamUrl: string; title: string; path?: string; codec?: string | null }): Promise<boolean> {
+    const generation = ++this.loadGeneration;
     this.buffering = true;
     this.emit("state", { playing: false, buffering: true, ended: false });
-    this.element.src = track.streamUrl;
+    // Stop the previous track immediately; native ALAC preparation can take longer than assigning a
+    // normal media URL, and old audio must not continue while the queue is changing tracks.
+    this.element.pause();
+    this.element.removeAttribute("src");
     this.element.load();
     this.emitTime();
+
+    try {
+      const streamUrl = await resolvePlaybackSource(track);
+      if (generation !== this.loadGeneration) return false;
+      this.element.src = streamUrl;
+      this.element.load();
+      this.emitTime();
+      return true;
+    } catch (error) {
+      if (generation !== this.loadGeneration) return false;
+      this.buffering = false;
+      const reason = error instanceof Error ? error.message : String(error);
+      this.emit("error", {
+        code: null,
+        message: `Could not prepare Apple Lossless audio: ${reason}`,
+        mediaMessage: null,
+        src: track.streamUrl,
+        fatal: true,
+      });
+      this.emit("state", { playing: false, buffering: false, ended: false });
+      this.emitTime();
+      return false;
+    }
   }
 
   async play(): Promise<void> {
@@ -267,6 +297,10 @@ export class AudioEngine {
   }
 
   pause(): void {
+    // Invalidate a pending native ALAC preparation so a user pause, queue clear or shutdown cannot
+    // attach its eventual result and unexpectedly start that superseded track.
+    this.loadGeneration++;
+    this.buffering = false;
     this.element.pause();
   }
 
@@ -311,6 +345,8 @@ export class AudioEngine {
   }
 
   dispose(): void {
+    this.loadGeneration++;
+    this.buffering = false;
     this.stopFrameLoop();
     this.stopAnalysis();
     this.element.pause();

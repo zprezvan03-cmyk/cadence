@@ -5,6 +5,7 @@
 //! `MediaTrackNext`, `MediaTrackPrevious`, `MediaStop`), and least-privilege IPC commands.
 
 pub mod allowlist;
+pub mod alac;
 pub mod commands;
 pub mod db;
 pub mod protocol;
@@ -169,6 +170,17 @@ pub fn run() {
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
             let artwork_dir = app_data_dir.join("artwork");
             std::fs::create_dir_all(&artwork_dir)?;
+            let alac_cache_dir = app_data_dir.join("alac-cache");
+            // Decoded WAVs are disposable playback cache, not library/user data. Remove leftovers
+            // from an interrupted previous run so high-resolution ALAC does not fill app storage.
+            if alac_cache_dir.exists() {
+                if let Err(error) = std::fs::remove_dir_all(&alac_cache_dir) {
+                    // Cache cleanup is best-effort: a locked stale file should not prevent Cadence
+                    // from launching, and the decoder still validates each source before reuse.
+                    eprintln!("[Cadence] Could not clear ALAC cache: {error}");
+                }
+            }
+            std::fs::create_dir_all(&alac_cache_dir)?;
 
             let db_path = app_data_dir.join("library.db");
             let legacy_json_path = app_data_dir.join("library.json");
@@ -193,6 +205,7 @@ pub fn run() {
             app.manage(AppState {
                 app_data_dir,
                 artwork_dir,
+                alac_cache_dir,
                 allowlist,
                 db,
                 http_client,
@@ -219,6 +232,7 @@ pub fn run() {
             commands::cmd_stat_audio_files,
             commands::cmd_read_file_chunk,
             commands::cmd_save_artwork,
+            commands::cmd_prepare_alac_playback,
             commands::cmd_read_sidecar_text,
             commands::cmd_write_sidecar_lrc,
             commands::cmd_decode_delete_files,

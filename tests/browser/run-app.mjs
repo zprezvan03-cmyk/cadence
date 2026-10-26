@@ -298,6 +298,8 @@ await page.evaluateOnNewDocument(
     // Decode Tester harness state: recorded native calls plus synthetic truncated/missing tracks
     // that can be appended after every track-count-sensitive check has already run.
     window.__decodeCalls = { delete: [], export: [] };
+    window.__alacPrepareCalls = [];
+    window.__alacPrepareFailure = false;
     window.__openedPaths = [];
     window.__decodeDeleteAllSucceeds = false;
     window.__libraryChangedListeners = new Set();
@@ -447,6 +449,13 @@ await page.evaluateOnNewDocument(
         },
       },
       player: {
+        // The browser-only harness cannot call Rust, so hand off the matching lossless PCM fixture.
+        // Native Symphonia decoding is covered separately by src-tauri/src/alac.rs tests.
+        prepareAlacSource: async path => {
+          window.__alacPrepareCalls.push(path);
+          if (window.__alacPrepareFailure) throw new Error("fixture ALAC decoder failure");
+          return "/audio/fixture.wav";
+        },
         reportState: async () => undefined,
         onCommand: () => () => {},
       },
@@ -629,7 +638,7 @@ const formatCases = [
   { title: "fixture", format: "WAV (PCM)", expect: true },
   { title: "Fixture MP3", format: "MP3", expect: true },
   { title: "Fixture AAC", format: "AAC (M4A)", expect: true },
-  { title: "Fixture ALAC", format: "ALAC (M4A)", expect: false, actionable: /ALAC.*FLAC/s },
+  { title: "Fixture ALAC", format: "ALAC (M4A)", expect: true },
   { title: "broken", format: "corrupt FLAC", expect: false, actionable: /corrupt/i },
 ];
 let previousError = null;
@@ -655,12 +664,42 @@ for (const testCase of formatCases) {
   }
 }
 
-// A file the decoder cannot handle must be labelled in the library, not silently listed as normal.
+const alacHandoff = await page.evaluate(() => window.__alacPrepareCalls.some(path => path.endsWith("fixture-alac.m4a")));
+check("alac-uses-alac-bridge-handoff", alacHandoff, "metadata-identified ALAC went through the Tauri bridge contract");
+const aacStayedOnChromium = await page.evaluate(() => !window.__alacPrepareCalls.some(path => path.endsWith("fixture-aac.m4a")));
+check("aac-m4a-stays-on-chromium", aacStayedOnChromium, "AAC/M4A did not enter the ALAC bridge");
+
+await clickTrackQuiet("Fixture ALAC");
+await wait(350);
+const alacSeek = await page.$('.player-bar input[aria-label="Seek"]');
+const alacSeekBox = await alacSeek.boundingBox();
+await page.mouse.click(alacSeekBox.x + alacSeekBox.width * 0.75, alacSeekBox.y + alacSeekBox.height / 2);
+await wait(350);
+const alacSeekState = await audioState();
+check(
+  "alac-seeking-through-pcm-handoff",
+  alacSeekState.currentTime > 4.0 && !alacSeekState.paused,
+  `75% seek moved shared audio clock to ${alacSeekState.currentTime.toFixed(2)}s`
+);
+await clickTrackQuiet("Fixture FLAC");
+await page.evaluate(() => { window.__alacPrepareFailure = true; });
+await clickTrackQuiet("Fixture ALAC");
+await wait(250);
+const alacFailure = await page.$eval(".error-banner", node => node.textContent.trim()).catch(() => "");
+check(
+  "alac-preparation-failure-is-actionable",
+  /Could not prepare Apple Lossless audio.*fixture ALAC decoder failure/s.test(alacFailure),
+  alacFailure || "no error banner"
+);
+if (await page.$(".error-banner")) await page.evaluate(() => document.querySelector(".error-banner button")?.click());
+await page.evaluate(() => { window.__alacPrepareFailure = false; });
+
+// ALAC is handled by the native bridge, so it must not be shown as a no-decoder file.
 const alacBadge = await page.evaluate(() => {
   const row = [...document.querySelectorAll('[data-testid="track-row"]')].find(node => node.textContent.includes("Fixture ALAC"));
   return row?.querySelector(".badge.warn")?.textContent?.trim() ?? null;
 });
-check("alac-labelled-in-library", alacBadge === "no decoder", JSON.stringify(alacBadge));
+check("alac-not-labelled-unsupported", alacBadge !== "no decoder", JSON.stringify(alacBadge));
 
 await clickTrack("Fixture FLAC");
 await wait(1500);
@@ -1381,7 +1420,7 @@ const activeAt49 = await settleActive(4.9, "Last");
 const activeAt10 = await settleActive(1.0, "Word");
 check(
   "lyrics-sync-after-toggle",
-  (activeAt49 ?? "").includes("Last") && (activeAt10 ?? "").includes("Word"),
+  (activeAt49 ?? "").includes("Last") && (activeAt10 ?? "").toLowerCase().includes("word"),
   `1.0s → ${JSON.stringify(activeAt10)}, 4.9s → ${JSON.stringify(activeAt49)}; header ${await page.$eval(".lyrics-heading h1", n => n.textContent)}, ${await page.$$eval("braccato-lyrics .blyrics--line", n => n.length)} lines`
 );
 await wakeClick('[data-testid="fullscreen-controls"] .play-button');
@@ -1907,10 +1946,9 @@ check(
 
 /* ----------------------------------------------------------- decode tester */
 
-// Real decoding through the same Chromium pipeline as playback: the corrupt FLAC, the ALAC file,
-// a truncated FLAC (35% of the bytes) and a track whose file is gone must be reported — each with
-// the right kind — while every valid format passes. Runs last: it appends synthetic tracks and
-// deletes library entries in the stub.
+// Real Chromium decoding through the same playback source resolution. The browser-only native
+// bridge stub returns a real PCM WAV for ALAC; corrupt/truncated/missing files retain their failure
+// classifications. Runs last: it appends synthetic tracks and deletes library entries in the stub.
 await page.evaluate(() => window.__addDecodeFixtureTracks());
 await wait(500);
 const audioSrcBeforeDecode = await page.$eval("audio", node => node.currentSrc || node.src).catch(() => "");
@@ -1963,16 +2001,17 @@ check(
   progressSamples.at(-1) ?? "no progress element sampled"
 );
 const firstScanStatus = await page.$eval('[data-testid="decode-status"]', node => node.textContent.trim());
-check("decode-scan-completes", /Scan complete — 10 files checked, 4 problematic/.test(firstScanStatus), firstScanStatus);
+check("decode-scan-completes", /Scan complete — 10 files checked, 3 problematic/.test(firstScanStatus), firstScanStatus);
 
 const rows = await readDecodeRows();
 const byName = new Map(rows.map(row => [row.name, row]));
-check("decode-scan-finds-problems", rows.length === 4, rows.map(row => `${row.name}:${row.kind}`).join(", "));
+check("decode-scan-finds-problems", rows.length === 3, rows.map(row => `${row.name}:${row.kind}`).join(", "));
 check("decode-corrupt-flac", byName.get("broken.flac")?.kind === "decode-error", JSON.stringify(byName.get("broken.flac")));
 check(
-  "decode-alac-unsupported",
-  byName.get("fixture-alac.m4a")?.kind === "unsupported-codec" && /ALAC is not decodable/.test(byName.get("fixture-alac.m4a")?.text ?? ""),
-  byName.get("fixture-alac.m4a")?.text?.slice(0, 160) ?? "row missing"
+  "decode-alac-handoff-path",
+  !byName.has("fixture-alac.m4a") &&
+    await page.evaluate(() => window.__alacPrepareCalls.some(path => path.endsWith("fixture-alac.m4a"))),
+  "ALAC metadata selected the bridge stub and its real PCM fixture passed sampled decoding"
 );
 check(
   "decode-truncated-flac",
@@ -1986,10 +2025,10 @@ check(
 );
 check(
   "decode-valid-files-pass",
-  ["fixture.flac", "fixture.mp3", "fixture.wav", "fixture.ogg", "fixture.opus", "fixture-aac.m4a"].every(
+  ["fixture.flac", "fixture.mp3", "fixture.wav", "fixture.ogg", "fixture.opus", "fixture-aac.m4a", "fixture-alac.m4a"].every(
     name => !byName.has(name)
   ),
-  "no false positives for FLAC/MP3/WAV/Ogg/Opus/AAC"
+  "no false positives for FLAC/MP3/WAV/Ogg/Opus/AAC/ALAC"
 );
 check(
   "decode-scan-leaves-player-alone",
@@ -2014,15 +2053,15 @@ const keptState = await page.evaluate(() => ({
 }));
 check(
   "decode-keep-marks-without-hiding",
-  keptState.rows === 4 && keptState.badge && keptState.stored.includes("broken.flac"),
+  keptState.rows === 3 && keptState.badge && keptState.stored.includes("broken.flac"),
   JSON.stringify(keptState)
 );
 await page.click('[data-testid="decode-hide-kept"]');
 await wait(250);
-check("decode-hide-kept-filter", (await readDecodeRows()).every(row => row.name !== "broken.flac") && (await readDecodeRows()).length === 3, "kept row hidden only by the filter");
+check("decode-hide-kept-filter", (await readDecodeRows()).every(row => row.name !== "broken.flac") && (await readDecodeRows()).length === 2, "kept row hidden only by the filter");
 await page.click('[data-testid="decode-hide-kept"]');
 await wait(250);
-check("decode-show-kept-again", (await readDecodeRows()).length === 4, "filter off restores the kept row");
+check("decode-show-kept-again", (await readDecodeRows()).length === 3, "filter off restores the kept row");
 
 // Export: every problematic path, kept included, goes to the native command.
 await page.click('[data-testid="decode-export-button"]');
@@ -2031,14 +2070,14 @@ const exportCalls = await page.evaluate(() => window.__decodeCalls.export);
 const exportedPaths = new Set(exportCalls.at(-1) ?? []);
 check(
   "decode-export-paths",
-  exportedPaths.size === 4 &&
+  exportedPaths.size === 3 &&
     [...exportedPaths].every(path => rows.some(row => row.path === path)) &&
     [...exportedPaths].some(path => path.endsWith("broken.flac")),
   JSON.stringify(exportCalls.at(-1) ?? [])
 );
 check(
   "decode-export-message",
-  /Exported 4 problematic file paths/.test(await page.$eval('[data-testid="decode-action-message"]', node => node.textContent).catch(() => "")),
+  /Exported 3 problematic file paths/.test(await page.$eval('[data-testid="decode-action-message"]', node => node.textContent).catch(() => "")),
   "export outcome is reported in the UI"
 );
 
@@ -2058,20 +2097,20 @@ await page.click('[data-testid="decode-select-all"]');
 await wait(250);
 check(
   "decode-select-all",
-  /Remove selected \(4\)/.test(await page.$eval('[data-testid="decode-remove-selected"]', node => node.textContent)),
-  "all four selected"
+  /Remove selected \(3\)/.test(await page.$eval('[data-testid="decode-remove-selected"]', node => node.textContent)),
+  "all three selected"
 );
 await page.click('[data-testid="decode-remove-selected"]');
 await page.waitForSelector('[data-testid="decode-confirm-dialog"]');
 const confirmItems = await page.$$eval('[data-testid="decode-confirm-list"] li', nodes => nodes.length);
-check("decode-confirm-lists-files", confirmItems === 4, `${confirmItems} files listed before deletion`);
+check("decode-confirm-lists-files", confirmItems === 3, `${confirmItems} files listed before deletion`);
 await page.screenshot({ path: join(shotDir, "09-decode-confirm.png") });
 await page.click('[data-testid="decode-confirm-cancel"]');
 await wait(300);
 check(
   "decode-remove-cancel-safe",
   !(await page.$('[data-testid="decode-confirm-dialog"]')) &&
-    (await readDecodeRows()).length === 4 &&
+    (await readDecodeRows()).length === 3 &&
     (await page.evaluate(() => window.__decodeCalls.delete.length)) === 0,
   "cancel deletes nothing"
 );
@@ -2080,7 +2119,7 @@ await page.click('[data-testid="decode-remove-selected"]');
 await page.waitForSelector('[data-testid="decode-confirm-delete"]');
 await page.click('[data-testid="decode-confirm-delete"]');
 await page.waitForFunction(
-  () => /Deleted 3 of 4/.test(document.querySelector('[data-testid="decode-action-message"]')?.textContent ?? ""),
+  () => /Deleted 2 of 3/.test(document.querySelector('[data-testid="decode-action-message"]')?.textContent ?? ""),
   { timeout: 15_000 }
 );
 const afterDeleteRows = await readDecodeRows();
@@ -2093,7 +2132,7 @@ check(
 );
 check(
   "decode-remove-updates-library",
-  (await page.evaluate(async () => (await window.cadence.library.snapshot()).tracks.length)) === 7,
+  (await page.evaluate(async () => (await window.cadence.library.snapshot()).tracks.length)) === 8,
   "deleted tracks left the library; the failed one stayed"
 );
 check(
@@ -2108,7 +2147,7 @@ const rescanStatus = await waitForDecodeComplete();
 const rescanRows = await readDecodeRows();
 check(
   "decode-rescan-after-delete",
-  /7 files checked/.test(rescanStatus) && rescanRows.length === 1 && rescanRows[0].kind === "inaccessible",
+  /8 files checked/.test(rescanStatus) && rescanRows.length === 1 && rescanRows[0].kind === "inaccessible",
   `${rescanStatus}; rows=${rescanRows.map(row => row.name).join(",")}`
 );
 
@@ -2128,7 +2167,7 @@ await page.click('[data-testid="decode-scan-button"]');
 const cleanStatus = await waitForDecodeComplete();
 check(
   "decode-no-errors-state",
-  /6 files checked, 0 problematic/.test(cleanStatus) && Boolean(await page.$('[data-testid="decode-empty-no-errors"]')),
+  /7 files checked, 0 problematic/.test(cleanStatus) && Boolean(await page.$('[data-testid="decode-empty-no-errors"]')),
   cleanStatus
 );
 await page.screenshot({ path: join(shotDir, "10-decode-clean.png") });

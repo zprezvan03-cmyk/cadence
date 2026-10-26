@@ -288,7 +288,11 @@ await page.evaluateOnNewDocument(() => {
       saveSidecar: async () => ({ path: "/harness/lyrics.lrc" }),
       clearCache: async () => call("/api/lyrics/clear-cache", {}),
     },
-    player: { reportState: async () => undefined, onCommand: () => () => {} },
+    player: {
+      prepareAlacSource: async () => "/audio/fixture.wav",
+      reportState: async () => undefined,
+      onCommand: () => () => {},
+    },
     decodeTester: { deleteFiles: async () => [], exportFileList: async () => ({ canceled: true }) },
     app: {
       openExternal: async () => undefined,
