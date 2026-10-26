@@ -259,6 +259,17 @@ function installLyricsHarnessBridge(): void {
       },
       saveSidecar: async () => "/harness/lyrics.lrc",
       clearCache: async () => ({ removedEntries: 0 }),
+      listCache: async () => ({
+        entries: [],
+        stats: { entryCount: 0, tracks: 0, searches: 0, bytes: 0 },
+      }),
+      getCacheEntry: async () => null,
+      removeCacheEntry: async () => ({
+        removed: false,
+        stats: { entryCount: 0, tracks: 0, searches: 0, bytes: 0 },
+      }),
+      cacheChosenFile: async () => undefined,
+      rememberSelection: async () => undefined,
     },
     app: {
       ...(existing.app as object | undefined),

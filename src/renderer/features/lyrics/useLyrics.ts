@@ -214,7 +214,11 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
         // Restore the user's explicit choice for this track (persisted across restarts), else default.
         const chosenSource = useLyricsStore.getState().selectedSources[track.id];
         const preferred =
-          result.candidates.find(candidate => candidate.source === chosenSource) ?? result.candidates[0];
+          result.candidates.find(candidate => candidate.source === chosenSource) ??
+          // A file the user loaded by hand outranks every automatic match — including after a
+          // restart, where the cached copy in the bundle is all that is left of that choice.
+          result.candidates.find(candidate => candidate.source === "user-file") ??
+          result.candidates[0];
         const parsed = parseCandidate(preferred, track.duration);
         const previous = useLyricsStore.getState();
         // A re-resolve can hand back the same cached parse (provider order / auto-fetch changed).
@@ -490,7 +494,14 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
       syncType: parsed.syncType,
       error: null,
     }));
-    // Ephemeral source: kept in memory only, not in the per-track persisted selection map.
+    // Record the pick as this track's selection too, so a later re-resolve (provider order change,
+    // auto-fetch toggle) keeps showing the file instead of falling back to an automatic match.
+    useLyricsStore.getState().setSelectedSource(track.id, "user-file");
+    // Persist the pick through the main process so it survives a restart. Failures are irrelevant
+    // to the lyrics already on screen and must never interrupt playback.
+    void bridge.lyrics
+      .cacheChosenFile({ trackId: track.id, path: result.path ?? "", text: result.text })
+      .catch(() => undefined);
   }, [track]);
 
   // Resolve the optional YouTube link through the keyless main-process lookup. Plain malformed
@@ -592,6 +603,8 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
         syncType: parsed.syncType,
         error: null,
       }));
+      // Remember the choice for this track; the cache write is best-effort and never blocks.
+      void bridge.lyrics.rememberSelection({ trackId: track.id, candidate }).catch(() => undefined);
     },
     [track, parseCandidate]
   );

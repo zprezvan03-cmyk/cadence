@@ -447,6 +447,18 @@ await page.evaluateOnNewDocument(
           window.__clearCacheCalls = (window.__clearCacheCalls ?? 0) + 1;
           return { removedEntries };
         },
+        // The in-page harness keeps lyrics in memory only; Settings -> Cache stays empty here.
+        listCache: async () => ({
+          entries: [],
+          stats: { entryCount: 0, tracks: 0, searches: 0, bytes: 0 },
+        }),
+        getCacheEntry: async () => null,
+        removeCacheEntry: async () => ({
+          removed: false,
+          stats: { entryCount: 0, tracks: 0, searches: 0, bytes: 0 },
+        }),
+        cacheChosenFile: async () => undefined,
+        rememberSelection: async () => undefined,
       },
       player: {
         // The browser-only harness cannot call Rust, so hand off the matching lossless PCM fixture.

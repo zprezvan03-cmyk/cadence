@@ -106,6 +106,9 @@ type BraccatoElement = HTMLElement & {
   status: string;
 };
 
+/** Shared identity so a cleared panel never re-triggers the assignment effect on every render. */
+const CLEARED_LYRICS: Lyric[] = [];
+
 export function BraccatoLyrics({
   lyrics,
   themeCss,
@@ -220,8 +223,10 @@ export function BraccatoLyrics({
       songwriters: songwriters ?? [],
       language: language ?? null,
     };
-    // Empty array is the renderer's way to say "cleared"; null says "never given one".
-    element.lyrics = lyrics && lyrics.length > 0 ? lyrics : lyrics ? [] : null;
+    // Empty array is the renderer's way to say "cleared"; null says "never given one", which the
+    // renderer answers by keeping what it already shows. A finished resolve that found nothing must
+    // clear, or the previous track's lines stay on screen behind the "No lyrics found" panel.
+    element.lyrics = lyrics && lyrics.length > 0 ? lyrics : lyrics || noLyrics ? CLEARED_LYRICS : null;
     // The build above is synchronous and already fired the loaded handler, which decorated the new
     // lines; this second pass covers an assignment the element took without rebuilding (it keeps the
     // injectors' own duplicate guards from ever running twice on one element).
