@@ -26,13 +26,14 @@
     "test:renderer": "npm run build:web && node tests/browser/run-harness.mjs",
     "test:lyrics-ui": "npm run build:web && node tests/browser/lyrics-decorations.mjs",
     "test:providers": "npm run build:web && npx vite-node tests/browser/build-library.ts && npx vite-node tests/browser/provider-identity.ts",
-    "test:cache": "npm run build:web && npx vite-node tests/browser/build-library.ts && npx vite-node tests/browser/cache-clear.ts",
+    "test:cache": "npm run build:web && npx vite-node tests/browser/lyrics-cache-manager.ts",
     "test:fixtures": "python3 tests/fixtures/generate-audio.py",
     "smoke": "node scripts/smoke.mjs",
     "package:dir": "tauri build --no-bundle",
     "package:linux": "tauri build --bundles appimage,deb",
     "package:win": "tauri build --bundles nsis,msi",
-    "package:win:portable": "node scripts/make-windows-portable.mjs"
+    "package:win:portable": "node scripts/make-windows-portable.mjs",
+    "test:cache:clear": "npm run build:web && npx vite-node tests/browser/build-library.ts && npx vite-node tests/browser/cache-clear.ts"
   },
   "dependencies": {
     "@braccato/core": "1.16.11",

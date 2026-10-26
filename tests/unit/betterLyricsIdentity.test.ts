@@ -433,7 +433,7 @@ describe("7. Fallbacks never inherit the previous identity", () => {
 
     service.flush();
     const onDisk = JSON.parse(readFileSync(join(dir, "lyrics.json"), "utf8"));
-    expect(onDisk.version).toBe(2);
+    expect(onDisk.version).toBe(3);
     expect(JSON.stringify(onDisk)).toContain("blyrics-line");
   });
 

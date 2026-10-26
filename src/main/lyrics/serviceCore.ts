@@ -18,7 +18,13 @@ import {
   providerOrderRank,
   untoggleProvider,
 } from "../../shared/upstream/better-lyrics/constants";
-import { LyricsCacheCore } from "./cacheCore";
+import {
+  LyricsCacheCore,
+  type CachedNetworkSection,
+  type CachedOrigin,
+  type CachedTrackIdentity,
+  type LyricsCacheEntry,
+} from "./cacheCore";
 import { fetchLrclib, searchLrclib } from "./lrclib";
 import { fetchBetterLyrics, searchBetterLyrics } from "./betterLyrics";
 import { fetchUnison, searchUnison } from "./unison";
@@ -88,6 +94,15 @@ interface NetworkResult {
   candidates: LyricsCandidate[];
   status: ProviderStatus[];
   definitive: boolean;
+  /** Where the answer came from: a fresh fan-out, the stored answer, or no lookup at all. */
+  source: "network" | "cache" | "skipped";
+}
+
+/** One locally sourced candidate plus the format and provenance it should be cached with. */
+interface LocalHit {
+  candidate: LyricsCandidate;
+  format: string;
+  origin: "local" | "manual";
 }
 
 interface InFlightEntry<T> {
@@ -98,6 +113,19 @@ interface InFlightEntry<T> {
 
 function makeAbortError(): DOMException {
   return new DOMException("Aborted", "AbortError");
+}
+
+/** Drops the cache bookkeeping fields before a candidate goes back to the renderer. */
+function stripCacheMeta(candidate: LyricsCandidate): LyricsCandidate {
+  const copy = { ...candidate } as LyricsCandidate & {
+    format?: string;
+    origin?: CachedOrigin;
+    cachedAt?: number;
+  };
+  delete copy.format;
+  delete copy.origin;
+  delete copy.cachedAt;
+  return copy;
 }
 
 function shareInFlight<T>(
@@ -211,8 +239,12 @@ export class LyricsServiceCore {
     const enabledKeys = new Set<string>(order.filter(key => !key.startsWith("d_")));
     const hasSlot = (key: string): boolean => order.some(entry => untoggleProvider(entry) === key);
 
+    // Everything the local stage found this pass, with the format it was stored in and whether it
+    // came from a file/tag ("local") or from a copy the user picked earlier ("manual").
+    const localHits: LocalHit[] = [];
     const pushLocal = (
       candidate: LyricsCandidate | null,
+      format: string,
       provider: string,
       label: string,
       unavailable?: string
@@ -222,7 +254,7 @@ export class LyricsServiceCore {
         else providerStatus.push({ provider, status: "miss" });
         return;
       }
-      candidates.push(candidate);
+      localHits.push({ candidate, format, origin: "local" });
       providerStatus.push({ provider, status: "hit", detail: label });
     };
 
@@ -309,6 +341,7 @@ export class LyricsServiceCore {
               sourceHref: hit.file.path,
               cached: true,
             },
+            hit.file.format,
             key,
             `${hit.file.path}${extra > 0 ? ` (+${extra} more sidecar${extra === 1 ? "" : "s"})` : ""}`
           );
@@ -352,6 +385,7 @@ export class LyricsServiceCore {
                 cached: true,
               }
             : null,
+          inspected?.format ?? "plain",
           "embedded-tag",
           "USLT/SYLT tag",
           trackPath ? undefined : "Track is not in the library"
@@ -359,9 +393,31 @@ export class LyricsServiceCore {
       }
     }
 
-    const cacheKey = LyricsCacheCore.key(request.artist, request.title, request.album, request.duration);
-    const networkResult = await this.resolveNetwork(request, enabledKeys, cacheKey, signal);
-    candidates.push(...networkResult.candidates);
+    // The cache is consulted before any network request. A track bundle keeps the local copies and
+    // the remote answer side by side, keyed by the library id so two same-titled songs never mix.
+    const trackKey = LyricsCacheCore.trackKey(request.trackId, request);
+    const identity = this.identityFor(request, track?.id ?? null);
+    const cachedEntry = this.cachedTrackEntry(trackKey, identity);
+    const generation = this.cache.currentGeneration();
+
+    if (cachedEntry) {
+      await this.restoreCachedLocal(cachedEntry, {
+        track,
+        trackPath,
+        enabledKeys,
+        localHits,
+        providerStatus,
+      });
+    }
+
+    const networkResult = await this.resolveNetwork(request, enabledKeys, cachedEntry?.network ?? null, signal);
+    // A result the user chose by hand wins over the automatic one for the same provider, so the
+    // selector never shows two rows with the same identity.
+    const manualSources = new Set(
+      localHits.filter(hit => hit.origin === "manual").map(hit => hit.candidate.source)
+    );
+    candidates.push(...localHits.map(hit => hit.candidate));
+    candidates.push(...networkResult.candidates.filter(candidate => !manualSources.has(candidate.source)));
     providerStatus.push(...networkResult.status);
 
     for (const entry of order) {
@@ -378,13 +434,115 @@ export class LyricsServiceCore {
 
     candidates.sort((a, b) => providerOrderRank(a.source, order) - providerOrderRank(b.source, order));
 
+    // Store what this pass actually produced. Local files are re-read on every resolve, so their
+    // copies stay current; the remote section only advances when the providers answered
+    // definitively, and an incomplete answer keeps the previous one instead of erasing it.
+    this.cache.putTrack(
+      trackKey,
+      identity,
+      localHits.map(hit => ({ candidate: hit.candidate, format: hit.format, origin: hit.origin })),
+      networkResult.source === "network" && networkResult.definitive
+        ? {
+            candidates: networkResult.candidates.map(candidate => ({
+              candidate,
+              origin: "network" as const,
+            })),
+            negative: networkResult.candidates.length === 0,
+          }
+        : null,
+      generation
+    );
+
     return { candidates, providerStatus };
+  }
+
+  /** Identity used for the per-track cache entry; the library row wins over the request fields. */
+  private identityFor(request: LyricsResolveRequest, trackId: number | null): CachedTrackIdentity {
+    const track = trackId === null ? null : this.store.getTrack(trackId);
+    return {
+      id: trackId,
+      title: track?.title ?? request.title ?? "",
+      artist: track?.artist ?? request.artist ?? "",
+      album: track?.album ?? request.album ?? "",
+      duration: Number(track?.duration ?? request.duration) || 0,
+    };
+  }
+
+  private cachedTrackEntry(key: string, identity: CachedTrackIdentity): LyricsCacheEntry | null {
+    const entry = this.cache.getEntry(key);
+    if (!entry || entry.kind !== "track") return null;
+    // The id is stable but the tags are not: a re-tagged file must never replay the old lyrics.
+    return LyricsCacheCore.sameIdentity(entry.track, identity) ? entry : null;
+  }
+
+  /**
+   * Re-adds cached local copies that the live pass could not reproduce. A sidecar that still
+   * exists is left alone (the user replaced it), while a file that is gone, an unavailable track
+   * or an explicit user choice keeps its cached copy so the lyrics survive an offline drive.
+   */
+  private async restoreCachedLocal(
+    entry: LyricsCacheEntry,
+    context: {
+      track: ReturnType<LyricsLibraryLookup["getTrack"]>;
+      trackPath: string | null;
+      enabledKeys: ReadonlySet<string>;
+      localHits: LocalHit[];
+      providerStatus: LyricsResolveResult["providerStatus"];
+    }
+  ): Promise<void> {
+    const live = new Set(context.localHits.map(hit => hit.candidate.source));
+    // When the live pass found any local lyrics at all, the local picture is current: a cached
+    // file-backed copy is only ever a fallback for a track whose sources cannot be read.
+    const hasLiveLocal = context.localHits.some(hit => hit.origin === "local");
+    for (const previous of entry.candidates) {
+      if (live.has(previous.source)) continue;
+
+      const isUserChoice = previous.origin === "manual" || previous.source === "user-file";
+      const isEmbedded = previous.source === "embedded-tag";
+      const isSidecar = previous.source === "local-rich" || previous.source === "local-lrc";
+      if (!isUserChoice && !isEmbedded && !isSidecar) continue;
+      if (!isUserChoice && !context.enabledKeys.has(previous.source)) continue;
+      if (!isUserChoice && hasLiveLocal) continue;
+
+      // An embedded tag or a sidecar is re-read on every resolve; only its disappearance justifies
+      // replaying the stored copy. A chosen file lives outside the library and is always restored.
+      if (!isUserChoice) {
+        if (isEmbedded) {
+          if (context.track) continue;
+        } else if (previous.sourceHref && typeof this.localReader.readLyricsFile === "function") {
+          const stillThere = await this.localReader.readLyricsFile(previous.sourceHref);
+          if (stillThere) continue;
+        } else if (context.trackPath) {
+          continue;
+        }
+      }
+
+      context.localHits.push({
+        candidate: stripCacheMeta(previous),
+        format: previous.format,
+        origin: isUserChoice ? "manual" : "local",
+      });
+      const detail = isUserChoice
+        ? previous.source === "user-file"
+          ? "Chosen file (cached copy)"
+          : "Chosen search result (cached copy)"
+        : isEmbedded
+          ? "Cached copy (track unavailable)"
+          : "Cached copy (source file unavailable)";
+      const status = context.providerStatus.find(item => item.provider === previous.source);
+      if (status) {
+        status.status = "hit";
+        status.detail = detail;
+      } else {
+        context.providerStatus.push({ provider: previous.source, status: "hit", detail });
+      }
+    }
   }
 
   private async resolveNetwork(
     request: LyricsResolveRequest,
     enabledKeys: ReadonlySet<string>,
-    cacheKey: string,
+    cached: CachedNetworkSection | null,
     signal?: AbortSignal
   ): Promise<NetworkResult> {
     const query: ProviderQuery = {
@@ -396,33 +554,38 @@ export class LyricsServiceCore {
 
     const activeModules = NETWORK_MODULES.filter(module => module.keys.some(key => enabledKeys.has(key)));
 
-    if (request.localOnly || activeModules.length === 0) {
+    // Offline mode only stops the *network*: a remotely fetched copy that is already on disk is
+    // local data now, so it keeps working (and a stale copy beats no lyrics on a plane).
+    const serveCached = cached !== null && (request.localOnly || LyricsCacheCore.networkIsFresh(cached));
+
+    if (!serveCached && (request.localOnly || activeModules.length === 0)) {
       const detail = request.localOnly ? "Offline mode" : "Provider disabled";
       return {
         candidates: [],
-        definitive: true,
+        definitive: false,
+        source: "skipped",
         status: NETWORK_MODULES.map(module => ({ provider: module.id, status: "skipped" as const, detail })),
       };
     }
 
-    const cached = this.cache.get(cacheKey);
-    if (cached !== null) {
-      const wanted = cached.filter(candidate => enabledKeys.has(candidate.source));
+    if (serveCached && cached) {
+      const wanted = cached.candidates.filter(candidate => enabledKeys.has(candidate.source));
       // Cached results for a slot the user has since switched off are dropped, never re-labelled
       // as an enabled sibling — and the status says so rather than claiming a cached miss.
-      const droppedByConfig = cached.filter(candidate => !enabledKeys.has(candidate.source));
+      const droppedByConfig = cached.candidates.filter(candidate => !enabledKeys.has(candidate.source));
       return {
-        candidates: wanted,
+        candidates: wanted.map(stripCacheMeta),
         definitive: true,
+        source: "cache",
         status: NETWORK_MODULES.map(module =>
           module.keys.some(key => enabledKeys.has(key))
-            ? this.cachedStatus(module, wanted, droppedByConfig)
+            ? this.cachedStatus(module, wanted, droppedByConfig, request.localOnly ? "Cached copy (offline)" : undefined)
             : { provider: module.id, status: "skipped" as const, detail: "Provider disabled" }
         ),
       };
     }
 
-    return this.sharedLookup(cacheKey, query, enabledKeys, signal);
+    return this.sharedLookup(LyricsCacheCore.key(request.artist, request.title, request.album, request.duration), query, enabledKeys, signal);
   }
 
   private inFlightKey(cacheKey: string, enabledKeys: ReadonlySet<string>): string {
@@ -451,7 +614,8 @@ export class LyricsServiceCore {
     if (cached !== null) {
       const rows = cached
         .filter(candidate => enabledKeys.has(candidate.source))
-        .sort((a, b) => providerOrderRank(a.source, order) - providerOrderRank(b.source, order));
+        .sort((a, b) => providerOrderRank(a.source, order) - providerOrderRank(b.source, order))
+        .map(stripCacheMeta);
       return {
         results: rows,
         cached: true,
@@ -587,7 +751,7 @@ export class LyricsServiceCore {
       if (results.length >= MAX_SEARCH_RESULTS) break;
     }
 
-    if (definitive && results.length > 0) this.cache.set(cacheKey, results, generation);
+    if (definitive && results.length > 0) this.cache.putSearch(cacheKey, query, results, generation);
 
     return { results, providerStatus, cached: false };
   }
@@ -595,10 +759,11 @@ export class LyricsServiceCore {
   private cachedStatus(
     module: { id: string; keys: readonly string[] },
     cached: readonly LyricsCandidate[],
-    droppedByConfig: readonly LyricsCandidate[] = []
+    droppedByConfig: readonly LyricsCandidate[] = [],
+    hitDetail = "Cached lyrics"
   ): ProviderStatus {
     const hit = cached.some(candidate => module.keys.includes(candidate.source));
-    if (hit) return { provider: module.id, status: "hit", detail: "Cached lyrics" };
+    if (hit) return { provider: module.id, status: "hit", detail: hitDetail };
     // Same wording as the live fetch path, so switching a slot off reads the same whether the
     // answer came from the API or from the cache.
     const disabled = droppedByConfig.filter(candidate => module.keys.includes(candidate.source));
@@ -618,13 +783,8 @@ export class LyricsServiceCore {
     signal?: AbortSignal
   ): Promise<NetworkResult> {
     const flightKey = this.inFlightKey(cacheKey, enabledKeys);
-    // Taken before the request: a clear that happens while it runs invalidates the write below.
-    const generation = this.cache.currentGeneration();
     return shareInFlight(this.inFlight, flightKey, signal, sharedSignal =>
-      this.runNetworkModules(query, enabledKeys, sharedSignal).then(result => {
-        if (result.definitive) this.cache.set(cacheKey, result.candidates, generation);
-        return result;
-      })
+      this.runNetworkModules(query, enabledKeys, sharedSignal)
     );
   }
 
@@ -659,7 +819,54 @@ export class LyricsServiceCore {
       });
     });
 
-    return { candidates, status, definitive };
+    return { candidates, status, definitive, source: "network" };
+  }
+
+  /**
+   * Records a file the user picked by hand (Settings/Now Playing → "Choose file"). The renderer
+   * parses and displays it itself, but the copy must reach the persistent cache too, otherwise the
+   * choice would be forgotten on the next restart.
+   */
+  rememberUserFile(trackId: number, path: string, text: string): void {
+    const track = this.store.getTrack(trackId);
+    if (!track || !text.trim()) return;
+    const identity = this.identityFor(
+      { trackId, title: track.title, artist: track.artist, album: track.album, duration: track.duration },
+      track.id
+    );
+    const inspected = inspectLyricsPayload(text, {
+      durationSeconds: track.duration,
+      title: track.title,
+      artist: track.artist,
+    });
+    this.cache.rememberCandidate(LyricsCacheCore.trackKey(trackId, identity), identity, {
+      candidate: {
+        source: "user-file",
+        provider: "Chosen file",
+        text,
+        syncHint: inspected.usable ? inspected.syncType : "none",
+        language: inspected.language,
+        songwriters: inspected.songwriters,
+        sourceHref: path,
+        cached: true,
+      },
+      format: inspected.format,
+      origin: "manual",
+    });
+  }
+
+  /** Records a manual-search result the user explicitly chose for this track. */
+  rememberSelection(trackId: number, candidate: LyricsCandidate): void {
+    const track = this.store.getTrack(trackId);
+    if (!track || !candidate?.text) return;
+    const identity = this.identityFor(
+      { trackId, title: track.title, artist: track.artist, album: track.album, duration: track.duration },
+      track.id
+    );
+    this.cache.rememberCandidate(LyricsCacheCore.trackKey(trackId, identity), identity, {
+      candidate: stripCacheMeta(candidate),
+      origin: "manual",
+    });
   }
 
   async resolveUserFile(trackId: number, path: string): Promise<LyricsResolveResult> {

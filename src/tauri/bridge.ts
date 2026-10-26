@@ -720,16 +720,91 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
       },
 
       /**
-       * Settings -> About -> "Clear lyrics cache". Empties the provider cache and waits for the
-       * emptied `lyrics-cache.json` to be written by Rust (`cmd_write_user_json` resolves only
-       * after its atomic write succeeded), so a filesystem error surfaces in the UI instead of a
-       * false success. The in-memory translation/romanization cache goes with it; the library
-       * database, settings, sidecar lyrics and artwork are user data and are left untouched.
+       * Settings -> Cache -> "Clear cache". Empties the lyrics cache and waits for the emptied
+       * `lyrics-cache.json` to be written by Rust (`cmd_write_user_json` resolves only after its
+       * atomic write succeeded), so a filesystem error surfaces in the UI instead of a false
+       * success. The in-memory translation/romanization cache goes with it; the library database,
+       * settings, sidecar lyrics, audio files and artwork are user data and are left untouched.
        */
       async clearCache() {
         const removedEntries = await lyricsService.clearCache();
         clearTranslationCache(translationCache);
         return { removedEntries };
+      },
+
+      /** Rows for Settings -> Cache, newest first, plus the exact persisted size. */
+      async listCache() {
+        await lyricsCache.persistNow().catch(() => undefined);
+        const stats = lyricsCache.stats();
+        return {
+          entries: lyricsCache.list(),
+          stats: {
+            entryCount: stats.entries,
+            tracks: stats.tracks,
+            searches: stats.searches,
+            bytes: stats.bytes,
+          },
+        };
+      },
+
+      /** The original payloads of one entry, for the cache inspector. */
+      async getCacheEntry(key: string) {
+        const entry = lyricsCache.getEntry(key);
+        if (!entry) return null;
+        return {
+          key,
+          kind: entry.kind,
+          trackId: entry.track.id,
+          title: entry.track.title,
+          artist: entry.track.artist,
+          album: entry.track.album,
+          duration: entry.track.duration,
+          savedAt: entry.savedAt,
+          candidates: [...entry.candidates, ...(entry.network?.candidates ?? [])].map(candidate => ({
+            source: candidate.source,
+            provider: candidate.provider,
+            format: candidate.format,
+            origin: candidate.origin,
+            syncHint: candidate.syncHint,
+            language: candidate.language,
+            songwriters: candidate.songwriters,
+            sourceHref: candidate.sourceHref,
+            cachedAt: candidate.cachedAt,
+            text: candidate.text,
+          })),
+        };
+      },
+
+      /**
+       * Deletes a single entry and only resolves once the new file has landed, so a failed write
+       * is reported instead of a false success. Only the cache file changes: the sidecar/audio
+       * files and the library database are never touched.
+       */
+      async removeCacheEntry(key: string) {
+        const removed = lyricsCache.remove(key);
+        if (removed) await lyricsCache.persistNow();
+        const stats = lyricsCache.stats();
+        return {
+          removed,
+          stats: {
+            entryCount: stats.entries,
+            tracks: stats.tracks,
+            searches: stats.searches,
+            bytes: stats.bytes,
+          },
+        };
+      },
+
+      /** Keeps a hand-picked lyrics file in the persistent cache (fire-and-forget from the UI). */
+      async cacheChosenFile(request) {
+        lyricsService.rememberUserFile(request.trackId, request.path, request.text);
+        lyricsCache.flush();
+      },
+
+      /** Keeps an explicitly chosen manual-search result for this track. */
+      async rememberSelection(request) {
+        lyricsService.rememberSelection(request.trackId, request.candidate);
+        lyricsCache.flush();
       },
     },
 
