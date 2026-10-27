@@ -6,7 +6,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import { parseFile } from "music-metadata";
 
@@ -92,21 +92,42 @@ export function isPlayableExtension(path: string): boolean {
 }
 
 /**
- * A sidecar lyric file named after the audio file, plus the common `<artist> - <title>.lrc`
- * variants found in the same folder.
+ * All sidecar lyric files named after the audio file. Directory entries are matched
+ * case-insensitively so `.LRC`, `.LrC`, `.TtMl`, … work on case-sensitive filesystems too; the
+ * exact stem rule still keeps files belonging to other songs out.
  */
-export function findSidecarLyrics(audioPath: string, stat?: { size: number; mtimeMs: number }): string | null {
+export function findSidecarLyricsFiles(audioPath: string): string[] {
   const dir = dirname(audioPath);
   const base = basename(audioPath, extname(audioPath));
-  for (const extension of LYRICS_SIDECAR_EXTENSIONS) {
-    for (const candidate of [join(dir, base + extension), join(dir, base + extension.toUpperCase())]) {
-      if (existsSync(candidate)) return candidate;
+  const wanted = new Map<string, number>(
+    LYRICS_SIDECAR_EXTENSIONS.map((extension, index) => [`${base}${extension}`.toLowerCase(), index])
+  );
+
+  try {
+    const matches = readdirSync(dir)
+      .filter(name => wanted.has(name.toLowerCase()))
+      .sort((left, right) =>
+        (wanted.get(left.toLowerCase()) ?? 99) - (wanted.get(right.toLowerCase()) ?? 99) || left.localeCompare(right)
+      );
+    return matches.map(name => join(dir, name));
+  } catch {
+    // Virtual filesystems (and tests that stub existsSync) may not support directory listing.
+    const found: string[] = [];
+    for (const extension of LYRICS_SIDECAR_EXTENSIONS) {
+      for (const candidate of [join(dir, base + extension), join(dir, base + extension.toUpperCase())]) {
+        if (existsSync(candidate)) found.push(candidate);
+      }
     }
+    return found;
   }
+}
+
+/** First sidecar for the library scan flag; discovery for playback uses all of them. */
+export function findSidecarLyrics(audioPath: string, stat?: { size: number; mtimeMs: number }): string | null {
   if (stat) {
     // Nothing else to check; kept for callers that already have a stat result.
   }
-  return null;
+  return findSidecarLyricsFiles(audioPath)[0] ?? null;
 }
 
 function toNumber(value: unknown): number | null {

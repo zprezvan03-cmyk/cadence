@@ -107,7 +107,7 @@ describe("LyricsCacheCore — clearing is a verified write", () => {
     release();
     await pending;
     expect(settled).toBe(true);
-    expect(JSON.parse(writes.at(-1)!)).toEqual({ version: 2, entries: {} });
+    expect(JSON.parse(writes.at(-1)!)).toEqual({ version: 3, entries: {} });
   });
 
   it("rejects when the write fails and keeps the data dirty for a later retry", async () => {
@@ -128,7 +128,7 @@ describe("LyricsCacheCore — clearing is a verified write", () => {
     // The retry still has the cleared payload to write: the failure did not drop it silently.
     failing = false;
     await cache.persistNow();
-    expect(JSON.parse(writes.at(-1)!)).toEqual({ version: 2, entries: {} });
+    expect(JSON.parse(writes.at(-1)!)).toEqual({ version: 3, entries: {} });
   });
 
   it("ignores a write from a lookup that started before the clear", async () => {
@@ -311,7 +311,7 @@ describe("Tauri bridge — Settings -> Clear lyrics cache", () => {
                 artworkDir: "C:\\Users\\Alice\\AppData\\Roaming\\app.cadence.player\\artwork",
                 platform: "win32",
                 arch: "x86_64",
-                appVersion: "0.2.1",
+                appVersion: "0.2.2",
                 tauriVersion: "2.12.5",
                 settingsJson: null,
                 lyricsCacheJson: persistedLyricsCacheJson,
@@ -355,7 +355,7 @@ describe("Tauri bridge — Settings -> Clear lyrics cache", () => {
 
     const result = await session.api.lyrics.clearCache();
     expect(result.removedEntries).toBeGreaterThan(0);
-    expect(JSON.parse(writes.at(-1)!)).toEqual({ version: 2, entries: {} });
+    expect(JSON.parse(writes.at(-1)!)).toEqual({ version: 3, entries: {} });
     expect(JSON.parse(persistedLyricsCacheJson!).entries).toEqual({});
 
     session.dispose();

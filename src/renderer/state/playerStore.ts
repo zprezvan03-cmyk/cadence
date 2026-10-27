@@ -126,8 +126,25 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       // started belongs in Home → Recently played.
       if (!audioEngine.paused && !audioEngine.element.error) {
         void useLibrary.getState().recordPlay(trackId).catch(() => undefined);
+        // Apple Lossless has to be decoded to PCM before it can play, so prepare the next track
+        // while this one is running instead of making the listener wait at the transition.
+        prewarmNext();
       }
     }
+  };
+
+  /**
+   * Decodes the next queue entry in the background (a no-op unless it is an ALAC file). Skipped
+   * for repeat-one, where the next track is the one already playing.
+   */
+  const prewarmNext = (): void => {
+    const state = get();
+    if (state.repeat === "one" || state.order.length < 2) return;
+    const nextQueueIndex = state.order[(state.orderPosition + 1) % state.order.length];
+    const nextTrackId = nextQueueIndex === undefined ? undefined : state.queue[nextQueueIndex];
+    if (nextTrackId === undefined || nextTrackId === currentTrackId(state)) return;
+    const nextTrack = getTrackById(nextTrackId);
+    if (nextTrack) audioEngine.prewarm(nextTrack);
   };
 
   const goToPosition = async (position: number, autoplay: boolean): Promise<void> => {

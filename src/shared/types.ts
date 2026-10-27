@@ -155,10 +155,82 @@ export interface LyricsSearchResponse {
   cached: boolean;
 }
 
-/** Outcome of Settings -> About -> "Clear lyrics cache", reported once the file has been written. */
+/** Outcome of Settings -> Cache -> "Clear cache", reported once the file has been written. */
 export interface LyricsCacheClearResult {
   /** Cached songs (lyrics plus manual-search rows) that were removed. */
   removedEntries: number;
+}
+
+/** Exact size of the persisted cache plus its entry breakdown, for Settings -> Cache. */
+export interface LyricsCacheStats {
+  entryCount: number;
+  /** Entries that hold a track's lyrics (local, chosen and remote variants). */
+  tracks: number;
+  /** Entries that hold manual-search rows. */
+  searches: number;
+  /** Serialized bytes as written to `lyrics-cache.json`; measured, never estimated. */
+  bytes: number;
+}
+
+/** One row of the cache manager list. */
+export interface LyricsCacheEntrySummary {
+  /** Opaque cache key, used to inspect and delete this entry. */
+  key: string;
+  kind: "track" | "search";
+  trackId: number | null;
+  title: string;
+  artist: string;
+  album: string;
+  duration: number;
+  /** Display names of the providers/sources stored for this entry. */
+  sources: string[];
+  /** Distinct payload formats stored for this entry (`ttml`, `lrc`, …). */
+  formats: string[];
+  candidateCount: number;
+  /** When the entry was last written (ms since epoch). */
+  savedAt: number;
+  /** A definitive "nothing found" answer is cached instead of lyrics. */
+  negative: boolean;
+}
+
+export interface LyricsCacheListResult {
+  entries: LyricsCacheEntrySummary[];
+  stats: LyricsCacheStats;
+}
+
+/** A stored lyrics payload as shown in the cache inspector. */
+export interface LyricsCacheCandidateView {
+  source: string;
+  provider: string;
+  /** `ttml`, `qrc`, `lrc`, `srt`, `plain`, … as recorded when the payload was cached. */
+  format: string;
+  /** `local` file/tag, `manual` user choice, or `network` provider. */
+  origin: "local" | "manual" | "network";
+  syncHint: LyricsSyncType;
+  language: string | null;
+  songwriters: string[];
+  sourceHref: string | null;
+  /** When this payload first entered the cache (ms since epoch). */
+  cachedAt: number;
+  /** The original payload, byte-for-byte (timings, translations, romanization included). */
+  text: string;
+}
+
+export interface LyricsCacheEntryDetail {
+  key: string;
+  kind: "track" | "search";
+  trackId: number | null;
+  title: string;
+  artist: string;
+  album: string;
+  duration: number;
+  savedAt: number;
+  candidates: LyricsCacheCandidateView[];
+}
+
+export interface LyricsCacheRemoveResult {
+  removed: boolean;
+  stats: LyricsCacheStats;
 }
 
 export interface YouTubeMetadataRequest {
@@ -386,6 +458,19 @@ export interface CadenceApi {
      * artwork) is untouched.
      */
     clearCache(): Promise<LyricsCacheClearResult>;
+    /** Rows for Settings -> Cache: every cached track and manual search, newest first. */
+    listCache(): Promise<LyricsCacheListResult>;
+    /** The stored payloads of one entry, including the original lyrics text. */
+    getCacheEntry(key: string): Promise<LyricsCacheEntryDetail | null>;
+    /**
+     * Deletes one entry and waits for the file write, so the UI only reports a deletion that
+     * really happened. Original lyrics files, audio files and embedded tags are never touched.
+     */
+    removeCacheEntry(key: string): Promise<LyricsCacheRemoveResult>;
+    /** Stores the lyrics file the user picked by hand so it survives restarts. */
+    cacheChosenFile(request: { trackId: number; path: string; text: string }): Promise<void>;
+    /** Stores a manual-search result the user chose, replacing any earlier choice for the track. */
+    rememberSelection(request: { trackId: number; candidate: LyricsCandidate }): Promise<void>;
   };
   player: {
     /** Decode an ALAC source to a seekable lossless PCM WAV cache and return its media URL. */

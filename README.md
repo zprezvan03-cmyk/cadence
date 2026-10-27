@@ -19,7 +19,7 @@ Requirements on a Windows build host:
 ```bash
 npm ci
 npm run package:win            # Tauri NSIS (.exe) + MSI (.msi) installers in src-tauri/target/release/bundle/
-npm run package:win:portable   # Portable ZIP from the compiled release binary → release/Cadence-0.2.1-win-x64-portable.zip
+npm run package:win:portable   # Portable ZIP from the compiled release binary → release/Cadence-0.2.2-win-x64-portable.zip
 ```
 
 The build is unsigned by default, so Windows SmartScreen will show "Unknown publisher" on first run
@@ -136,6 +136,7 @@ npm run typecheck    # tsc --noEmit for Node/Tauri bridge and renderer
 npm test             # 201 Vitest assertions (library, protocol, providers, search, YouTube, Tauri bridge)
 npm run smoke        # fixtures + tests + Vite production build + Tauri config/capability checks
 npm run test:renderer # 25 headless Chromium audio/Braccato/Kawarp engine checks
+npm run test:lyrics-ui # real Now Playing page: translation / romanization decorations through the dock
 npm run test:ui      # production renderer in headless Chromium: interactive UI suite
 ```
 

@@ -2,6 +2,7 @@
  * Navigation sidebar. Written for Cadence.
  */
 
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import {
   Album as AlbumIcon,
   Heart,
@@ -12,7 +13,6 @@ import {
   Music2,
   Plus,
   Settings,
-  Stethoscope,
   Users,
 } from "lucide-react";
 import { EMPTY_PLAYLISTS, useLibrary } from "../state/libraryStore";
@@ -26,7 +26,6 @@ const NAV: { label: string; icon: React.ReactNode; route: Parameters<ReturnType<
   { label: "Playlists", icon: <ListMusic size={18} />, route: { name: "library", tab: "playlists" } },
   { label: "Liked songs", icon: <Heart size={18} />, route: { name: "library", tab: "favorites" } },
   { label: "Now Playing", icon: <Mic2 size={18} />, route: { name: "lyrics" } },
-  { label: "Decode Tester", icon: <Stethoscope size={18} />, route: { name: "decode-tester" } },
 ];
 
 export function Sidebar() {
@@ -43,6 +42,55 @@ export function Sidebar() {
     }
     return true;
   };
+
+  const navRef = useRef<HTMLElement | null>(null);
+  const pillRef = useRef<HTMLSpanElement | null>(null);
+
+  /**
+   * One pill slides between nav items instead of each item fading its own background in. The DOM is
+   * measured here — on navigation and on resize, never per frame — and the `.active` class stays
+   * the single source of truth for which item the pill belongs to.
+   */
+  const placePill = useCallback((instant: boolean) => {
+    const nav = navRef.current;
+    const pill = pillRef.current;
+    if (!nav || !pill) return;
+    const button = nav.querySelector<HTMLButtonElement>(".nav-item.active");
+    if (!button) {
+      pill.classList.remove("is-visible");
+      return;
+    }
+    if (instant) pill.dataset.instant = "true";
+    pill.style.height = `${button.offsetHeight}px`;
+    pill.style.transform = `translateY(${button.offsetTop}px)`;
+    pill.classList.add("is-visible");
+    nav.dataset.pill = "ready";
+    if (instant) {
+      // Flush the measured position with transitions off, then let later moves animate.
+      void pill.offsetHeight;
+      delete pill.dataset.instant;
+    }
+    // Stable on purpose: rebuilding the resize observer on every navigation would fire its initial
+    // callback immediately and cancel the very transition it was about to animate.
+  }, []);
+
+  useLayoutEffect(() => {
+    placePill(navRef.current?.dataset.pill !== "ready");
+  }, [placePill, route]);
+
+  // The nav can move under the pill without a route change: a resized window, a compact sidebar, or
+  // playlists appearing above the footer. Re-place instantly instead of sliding from a stale spot.
+  useEffect(() => {
+    const replace = () => placePill(true);
+    window.addEventListener("resize", replace);
+    const nav = navRef.current;
+    const observer = nav ? new ResizeObserver(replace) : null;
+    if (nav && observer) observer.observe(nav);
+    return () => {
+      window.removeEventListener("resize", replace);
+      observer?.disconnect();
+    };
+  }, [placePill]);
 
   return (
     <aside className="sidebar">
@@ -66,7 +114,8 @@ export function Sidebar() {
         </span>
       </div>
 
-      <nav className="nav">
+      <nav className="nav" ref={navRef}>
+        <span className="nav-pill" ref={pillRef} aria-hidden="true" />
         {NAV.map(item => (
           <button
             type="button"

@@ -25,6 +25,8 @@ import {
 } from "../../../shared/providerOrder";
 import { THEMES } from "../../upstream/better-lyrics/themes";
 import { TRANSLATION_LANGUAGES } from "../lyrics/translationLanguages";
+import { LyricsCachePanel } from "./LyricsCachePanel";
+import { useSessionState } from "../../app/useSessionState";
 
 /** Tauri's `invoke` rejects with a plain string; Error instances come from the renderer itself. */
 function describeError(error: unknown): string {
@@ -114,7 +116,11 @@ export function SettingsView() {
   const rescan = useLibrary(state => state.rescan);
   const scanning = useLibrary(state => state.scanning);
   const [info, setInfo] = useState<AppInfo | null>(null);
-  const [section, setSection] = useState<"library" | "playback" | "appearance" | "about">("appearance");
+  // Reopening Settings returns to the tab you were on rather than back to Appearance.
+  const [section, setSection] = useSessionState<"library" | "playback" | "appearance" | "cache" | "about">(
+    "settings.section",
+    "appearance"
+  );
   const [unavailableFonts, setUnavailableFonts] = useState<ReadonlySet<string>>(() => new Set());
   const [clearingCache, setClearingCache] = useState(false);
   const showToast = useUi(state => state.showToast);
@@ -175,6 +181,7 @@ export function SettingsView() {
           ["appearance", "Appearance"],
           ["library", "Library"],
           ["playback", "Playback"],
+          ["cache", "Cache"],
           ["about", "About"],
         ] as const).map(([id, label]) => (
           <button
@@ -518,6 +525,8 @@ export function SettingsView() {
         </section>
       ) : null}
 
+      {section === "cache" ? <LyricsCachePanel /> : null}
+
       {section === "about" ? (
         <section className="settings-section about" data-testid="settings-about">
           <h2>About Cadence</h2>
@@ -557,7 +566,12 @@ export function SettingsView() {
             className="danger"
             disabled={clearingCache}
             onClick={async () => {
-              if (!confirm("Clear cached remote lyrics?")) return;
+              if (
+                !confirm(
+                  "Clear the whole lyrics cache? Songs will be looked up again. Your audio files, lyrics files and library are not touched."
+                )
+              )
+                return;
               setClearingCache(true);
               try {
                 // Resolves only once the emptied cache file has been written to disk; a

@@ -584,6 +584,17 @@ async function installAuditBridge() {
     if (state.failClearCache) throw "Access is denied. (os error 5)";
     return { removedEntries: state.clearCacheRemovedEntries ?? 2 };
   };
+  window.cadence.lyrics.listCache = async () => ({
+    entries: [],
+    stats: { entryCount: 0, tracks: 0, searches: 0, bytes: 0 },
+  });
+  window.cadence.lyrics.getCacheEntry = async () => null;
+  window.cadence.lyrics.removeCacheEntry = async () => ({
+    removed: false,
+    stats: { entryCount: 0, tracks: 0, searches: 0, bytes: 0 },
+  });
+  window.cadence.lyrics.cacheChosenFile = async () => undefined;
+  window.cadence.lyrics.rememberSelection = async () => undefined;
   window.cadence.app.chooseLyricsFile = async trackId => { state.calls.push(["choose-lyrics", trackId]); return structuredClone(state.chooseLyricsResult); };
   window.cadence.app.openExternal = async url => { state.calls.push(["open-external", url]); };
 }

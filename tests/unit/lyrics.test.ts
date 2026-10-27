@@ -189,7 +189,8 @@ describe("LyricsService", () => {
     const second = await service.resolve(request);
     expect(second.candidates[0].cached).toBe(true);
     expect(fetchMock.mock.calls.length).toBe(callsAfterFirst);
-    expect(cache.get(LyricsCache.key("Harness Artist", "Harness Song", "Test Bench", 180))).toHaveLength(1);
+    // The bundle is keyed by the library track id, so two songs with the same metadata never mix.
+    expect(cache.get(LyricsCache.trackKey(5))).toHaveLength(1);
   });
 
   it("honours a custom provider order, dropping disabled providers", async () => {

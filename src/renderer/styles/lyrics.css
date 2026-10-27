@@ -13,6 +13,14 @@
   display: block;
   width: 100%;
   height: 100%;
+  /* Paired with the fallback's fade-out: the two layers cross over, so the background is never a
+     bright pop on black. */
+  opacity: 0;
+  transition: opacity var(--dur-3) var(--ease-out);
+}
+
+.kawarp-canvas.is-visible {
+  opacity: 1;
 }
 
 .kawarp-fallback {
@@ -23,6 +31,16 @@
   filter: blur(64px) saturate(1.15);
   opacity: 0.6;
   transform: scale(1.08);
+  /* The shader's first artwork frame arrives without a crossfade of its own, so the blurred layer
+     dissolves out over it rather than disappearing in the same frame. */
+  transition: opacity var(--dur-3) var(--ease-out);
+}
+
+/* Hidden only after the dissolve finished; the reverse (an engine restart) brings it straight back. */
+.kawarp-fallback.is-hidden {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--dur-3) var(--ease-out), visibility 0s var(--dur-3);
 }
 
 .kawarp-scrim {
@@ -35,6 +53,7 @@
 
 .lyrics-view {
   position: relative;
+  animation: view-in var(--dur-3) var(--ease-out);
   /* A definite height, not min-height: the flex column must bound the scrolling lyric body so the
      dock stays pinned above the player bar instead of being pushed below the fold. */
   height: calc(100vh - var(--window-chrome-top) - var(--player-height) - var(--topbar-height));
@@ -48,6 +67,9 @@
   inset: 0;
   height: 100vh;
   z-index: 55;
+  /* A different animation name restarts on the class change, so fullscreen opens with a fade and
+     a hair of scale instead of a hard cut from the page layout. */
+  animation: fs-in var(--dur-3) var(--ease-out);
   /* Artwork in the left column, lyrics in the right. The artwork's size follows the window height and
      its top sits at the header's bottom edge, so no offsets are hardcoded. The body runs to the bottom
      edge of the viewport in the right column; the footer overlays it as before. */
@@ -332,6 +354,11 @@
   padding: 26px 40px 6px;
 }
 
+.lyrics-heading {
+  /* Keyed by track in LyricsView, so the title and artist settle in when the song changes. */
+  animation: meta-in var(--dur-2) var(--ease-out);
+}
+
 .lyrics-heading h1 {
   font-size: clamp(20px, 2.4vw, 30px);
   text-shadow: 0 2px 24px rgba(0, 0, 0, 0.5);
@@ -422,7 +449,25 @@ braccato-lyrics {
   line-height: 1.6;
 }
 
+/* When there are no lyrics to show, the empty/error card *is* the lyrics area: the body centres it
+   in the space the lines would use, rather than scrolling it below a full-height empty host. */
+.lyrics-body.has-status-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  /* The body's fade would wash out the top and bottom of the card. */
+  mask-image: none;
+}
+
+/* The renderer stays mounted (its clock and scroll position survive), but it must not reserve the
+   whole body while a status card is shown. */
+.lyrics-body.has-status-panel braccato-lyrics {
+  display: none;
+}
+
 .lyrics-empty-panel {
+  animation: fade-in var(--dur-2) var(--ease-out);
   max-width: 560px;
   margin: 20px auto 40px;
   padding: 22px 24px;
@@ -437,6 +482,27 @@ braccato-lyrics {
   gap: 10px;
 }
 
+/* One width for both status cards, so "no lyrics" and "could not load" are the same object. */
+.lyrics-body.has-status-panel .lyrics-empty-panel {
+  margin: 0;
+  width: min(520px, 100%);
+  max-width: 100%;
+}
+
+/* A quiet mark above the copy, so the card reads as a deliberate empty state. */
+.lyrics-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  margin-bottom: 2px;
+  border-radius: 12px;
+  color: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
 .lyrics-empty-panel h2 {
   font-size: 18px;
 }
@@ -449,6 +515,19 @@ braccato-lyrics {
 
 .lyrics-empty-panel.error {
   border-color: rgba(255, 93, 93, 0.4);
+}
+
+/* Loading reads as a quiet placeholder, not an alarm: no card chrome, just the mark and copy. */
+.lyrics-empty-panel.loading {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+  backdrop-filter: none;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.lyrics-empty-panel.loading h2 {
+  color: rgba(255, 255, 255, 0.82);
 }
 
 .empty-actions {
@@ -562,10 +641,14 @@ braccato-lyrics {
 }
 
 /* Fullscreen hover visibility: opacity only. The hidden state also removes the controls from hit-testing and
-   the focus order; layout and position never change. Reduced motion is handled by the global rule. */
+   the focus order, and the footer is measured for the lyric scroll padding — a transform here would move the
+   controls and shift that measurement, so nothing but opacity and visibility animates.
+   Reduced motion is handled by the global rule. */
 .fs-controls,
 .lyrics-dock {
-  transition: opacity 250ms ease, visibility 250ms ease;
+  transition:
+    opacity 250ms var(--ease-out),
+    visibility 250ms var(--ease-out);
 }
 
 .fs-controls.is-concealed,
@@ -680,6 +763,7 @@ braccato-lyrics {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  animation: pop-in var(--dur-2) var(--ease-out);
 }
 
 .dock-languages {

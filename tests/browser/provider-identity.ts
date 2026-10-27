@@ -17,7 +17,16 @@
  */
 
 import { createServer } from "node:http";
-import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync } from "node:fs";
+import {
+  copyFileSync,
+  createReadStream,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import puppeteer from "puppeteer-core";
@@ -74,6 +83,14 @@ const TTML_LINE_ALT = `<?xml version="1.0" encoding="UTF-8"?>
 
 const KUGOU_LRC = "[00:00.30]Kugou line one\n[00:01.70]Kugou line two\n[00:03.20]Kugou line three";
 
+/** Two real sidecar files for the WAV fixture, used by the multi-sidecar UI checks below. */
+const SIDECAR_LRC = "[00:00.30]Sidecar LRC line one\n[00:01.70]Sidecar LRC line two\n[00:03.20]Sidecar LRC line three";
+const SIDECAR_TTML = `<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="en"><body><div>
+<p begin="00:00:00.300" end="00:00:01.600"><span begin="00:00:00.300" end="00:00:00.900">Side</span><span begin="00:00:00.900" end="00:00:01.600">car</span></p>
+<p begin="00:00:01.700" end="00:00:03.100"><span begin="00:00:01.700" end="00:00:02.300">TTML</span><span begin="00:00:02.300" end="00:00:03.100">line</span></p>
+</div></body></tt>`;
+
 const byTitle = (title: string) => snapshot.tracks.find((track: { title: string }) => track.title === title);
 /** Which Better Lyrics payload each fixture song gets, keyed by the title sent as `?s=`. */
 const PAYLOADS: Record<string, { getLyrics?: string; getLyricsStatus?: number; kugou?: string }> = {
@@ -91,9 +108,19 @@ const PAYLOADS: Record<string, { getLyrics?: string; getLyricsStatus?: number; k
 const stateDir = mkdtempSync(join(tmpdir(), "cadence-provider-identity-"));
 const settingsFile = join(stateDir, "settings.json");
 const cacheFile = join(stateDir, "lyrics.json");
-// The lyrics service only touches the library for local sidecars and embedded tags; this harness
-// isolates the network providers, so it exposes no local lyrics at all.
-const fakeStore = { getTrack: () => undefined, getLyrics: () => null } as unknown as LibraryStore;
+// Actual files on disk for the WAV track: the real LyricsService discovers both sidecars through
+// its Node filesystem adapter. Every other track in this harness stays network-only.
+const sidecarDir = mkdtempSync(join(tmpdir(), "cadence-provider-identity-sidecars-"));
+const sidecarAudioPath = join(sidecarDir, "Song.wav");
+copyFileSync(join(audioDir, "fixture.wav"), sidecarAudioPath);
+writeFileSync(join(sidecarDir, "Song.lrc"), SIDECAR_LRC, "utf8");
+writeFileSync(join(sidecarDir, "Song.ttml"), SIDECAR_TTML, "utf8");
+const sidecarTrackId = byTitle("fixture")?.id;
+const fakeStore = {
+  getTrack: (id: number) =>
+    id === sidecarTrackId ? { path: sidecarAudioPath, title: "fixture", trackNo: 1 } : undefined,
+  getLyrics: () => null,
+} as unknown as LibraryStore;
 
 let settings = new SettingsStore(settingsFile);
 let lyricsCache = new LyricsCache(cacheFile);
@@ -445,6 +472,33 @@ const selectSourceRow = async (name: string) => {
     }
   }
   throw new Error(`No source row ${name}`);
+};
+
+/** Clicks a row in the already-open source popover, without navigating (which would close it). */
+const clickOpenSourceRow = async (name: string) => {
+  const rows = await page.$$(".dock-sources .source-row");
+  for (const row of rows) {
+    const text = await row.evaluate(node => node.querySelector("strong")?.textContent?.trim() ?? "");
+    if (text === name) {
+      await row.click();
+      await wait(350);
+      return;
+    }
+  }
+  throw new Error(
+    `No open source row ${name}; saw ${JSON.stringify(
+      await page.$$eval(".dock-sources .source-row strong", nodes => nodes.map(node => node.textContent?.trim()))
+    )}; state ${JSON.stringify(
+      await page.evaluate(() => ({
+        providers: [...document.querySelectorAll(".dock-sources .provider-row")].map(row =>
+          row.textContent?.replace(/\s+/g, " ").trim()
+        ),
+        empty: Boolean(document.querySelector(".lyrics-empty-panel")),
+        body: document.querySelector(".lyrics-body")?.textContent?.slice(0, 120) ?? null,
+        panel: document.querySelector(".dock-sources") ? "open" : "closed",
+      }))
+    )}`
+  );
 };
 
 /** The Settings → Appearance → Lyrics Provider Order list, as rendered. */
@@ -816,6 +870,81 @@ check(
   "manual-selection-can-switch-back",
   afterSwitchBack.sources.find(source => source.active)?.name === "Better Lyrics Line",
   JSON.stringify(afterSwitchBack.sources)
+);
+await closeSources();
+
+/* ------------------------- multi-sidecar discovery in the real Now Playing UI */
+
+await playTrack("fixture");
+// Keep the six-second fixture from auto-advancing while the checks below run.
+await page.evaluate(() => document.querySelector("audio")?.pause());
+const bothSidecars = await openSources();
+await shot("11-both-sidecars");
+const localNames = bothSidecars.sources.map(source => source.name);
+check(
+  "both-sidecars-offered-exactly-once",
+  localNames.filter(name => name === "Local TTML/QRC").length === 1 &&
+    localNames.filter(name => name === "Local LRC").length === 1,
+  JSON.stringify(bothSidecars.sources)
+);
+check(
+  "both-sidecar-files-reported",
+  bothSidecars.providers.some(row => row.includes("Song.ttml")) &&
+    bothSidecars.providers.some(row => row.includes("Song.lrc")),
+  JSON.stringify(bothSidecars.providers)
+);
+check(
+  "local-rich-active-by-configured-priority",
+  bothSidecars.sources[0]?.name === "Local TTML/QRC" &&
+    bothSidecars.sources[0]?.active === true &&
+    bothSidecars.syncLabel === "Word synced",
+  `${JSON.stringify(bothSidecars.sources)} | ${bothSidecars.syncLabel}`
+);
+check(
+  "local-ttml-not-labeled-as-better-lyrics",
+  localNames.every(name => name !== "Better Lyrics" && name !== "Better Lyrics Line"),
+  localNames.join(" | ")
+);
+
+// The source popover is still open from openSources(); select from it directly.
+await clickOpenSourceRow("Local LRC");
+const selectedLrc = await openSources();
+const lrcRendered = await page.evaluate(() =>
+  document.querySelector(".lyrics-body")?.textContent?.includes("Sidecar LRC line one") ?? false
+);
+check(
+  "local-lrc-selectable-and-rendered",
+  selectedLrc.sources.find(source => source.active)?.name === "Local LRC" && lrcRendered,
+  `${JSON.stringify(selectedLrc.sources)} | rendered=${lrcRendered}`
+);
+await closeSources();
+
+// Leaving Now Playing unmounts the view; returning must restore both candidates and the choice.
+await nav("Songs");
+const afterRemount = await openSources();
+const remountNames = afterRemount.sources.map(source => source.name);
+check(
+  "both-sidecars-survive-now-playing-remount",
+  remountNames.filter(name => name === "Local TTML/QRC").length === 1 &&
+    remountNames.filter(name => name === "Local LRC").length === 1 &&
+    afterRemount.sources.find(source => source.active)?.name === "Local LRC",
+  JSON.stringify(afterRemount.sources)
+);
+await closeSources();
+
+// A different track must not leak its provider identity back into the sidecar track.
+await playTrack("Fixture MP3");
+await playTrack("fixture");
+await page.evaluate(() => document.querySelector("audio")?.pause());
+const afterTrackSwitch = await openSources();
+const switchedNames = afterTrackSwitch.sources.map(source => source.name);
+check(
+  "both-sidecars-survive-track-switch",
+  switchedNames.filter(name => name === "Local TTML/QRC").length === 1 &&
+    switchedNames.filter(name => name === "Local LRC").length === 1 &&
+    switchedNames.every(name => name !== "Better Lyrics Line") &&
+    afterTrackSwitch.sources.find(source => source.active)?.name === "Local LRC",
+  JSON.stringify(afterTrackSwitch.sources)
 );
 await closeSources();
 
