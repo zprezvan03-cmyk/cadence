@@ -13,6 +13,14 @@
   display: block;
   width: 100%;
   height: 100%;
+  /* Paired with the fallback's fade-out: the two layers cross over, so the background is never a
+     bright pop on black. */
+  opacity: 0;
+  transition: opacity var(--dur-3) var(--ease-out);
+}
+
+.kawarp-canvas.is-visible {
+  opacity: 1;
 }
 
 .kawarp-fallback {
@@ -23,6 +31,16 @@
   filter: blur(64px) saturate(1.15);
   opacity: 0.6;
   transform: scale(1.08);
+  /* The shader's first artwork frame arrives without a crossfade of its own, so the blurred layer
+     dissolves out over it rather than disappearing in the same frame. */
+  transition: opacity var(--dur-3) var(--ease-out);
+}
+
+/* Hidden only after the dissolve finished; the reverse (an engine restart) brings it straight back. */
+.kawarp-fallback.is-hidden {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--dur-3) var(--ease-out), visibility 0s var(--dur-3);
 }
 
 .kawarp-scrim {
