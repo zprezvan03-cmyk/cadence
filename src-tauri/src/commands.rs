@@ -411,9 +411,18 @@ pub async fn cmd_history_add(
 #[tauri::command]
 pub async fn cmd_history_list(state: State<'_, AppState>) -> Result<Vec<HistoryEntry>, String> {
     let db = Arc::clone(&state.db);
-    tauri::async_runtime::spawn_blocking(move || db.list_history(1000))
+    let rows = tauri::async_runtime::spawn_blocking(move || db.list_history(1000))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(|row| HistoryEntry {
+            id: row.id,
+            track_id: row.track_id,
+            played_at: row.played_at,
+            payload: row.payload,
+        })
+        .collect())
 }
 
 /// Clears every listening history entry. Cannot be undone.
