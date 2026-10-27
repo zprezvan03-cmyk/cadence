@@ -7,6 +7,7 @@ import {
   Album as AlbumIcon,
   Heart,
   Home,
+  History,
   Library,
   ListMusic,
   Mic2,
@@ -20,6 +21,7 @@ import { useUi, type LibraryTab } from "../state/uiStore";
 
 const NAV: { label: string; icon: React.ReactNode; route: Parameters<ReturnType<typeof useUi.getState>["navigate"]>[0] }[] = [
   { label: "Home", icon: <Home size={18} />, route: { name: "home" } },
+  { label: "History", icon: <History size={18} />, route: { name: "history" } },
   { label: "Songs", icon: <Music2 size={18} />, route: { name: "library", tab: "songs" } },
   { label: "Albums", icon: <AlbumIcon size={18} />, route: { name: "library", tab: "albums" } },
   { label: "Artists", icon: <Users size={18} />, route: { name: "library", tab: "artists" } },

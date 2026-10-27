@@ -4,6 +4,7 @@ export type LibraryTab = "songs" | "albums" | "artists" | "playlists" | "favorit
 
 export type Route =
   | { name: "home" }
+  | { name: "history" }
   | { name: "library"; tab: LibraryTab }
   | { name: "search"; query: string }
   | { name: "album"; albumId: string }
@@ -40,6 +41,8 @@ export function routeToHash(route: Route): string {
   switch (route.name) {
     case "home":
       return "#/";
+    case "history":
+      return "#/history";
     case "library":
       return `#/library/${route.tab}`;
     case "search":
@@ -88,6 +91,8 @@ export function hashToRoute(hash: string): Route {
       return { name: "decode-tester" };
     case "settings":
       return { name: "settings" };
+    case "history":
+      return { name: "history" };
     default:
       return { name: "home" };
   }

@@ -350,6 +350,28 @@ export interface AppSettings {
   advanced: { showLogs: boolean };
 }
 
+/** One completed listening session, newest first when listed. */
+export interface HistoryEntry {
+  id: number;
+  trackId: number;
+  /** When playback started, ms since epoch. */
+  playedAt: number;
+  /** Track metadata snapshot as it was when playback started; survives file removal. */
+  payload: HistoryPayload;
+}
+
+/** Stored snapshot of a played track, kept small so history rows stay cheap. */
+export interface HistoryPayload {
+  trackId: number;
+  path: string;
+  title: string;
+  artist: string;
+  albumArtist: string;
+  album: string;
+  artworkUrl: string | null;
+  duration: number;
+}
+
 export interface PlayerSnapshot {
   trackId: number | null;
   position: number;
@@ -417,6 +439,15 @@ export interface AppInfo {
 /** The API exposed on `window.cadence` by the desktop runtime bridge. */
 export interface CadenceApi {
   info(): Promise<AppInfo>;
+  history: {
+    add(args: {
+      trackId: number;
+      playedAt: number;
+      payload: HistoryPayload;
+    }): Promise<void>;
+    list(): Promise<HistoryEntry[]>;
+    clear(): Promise<void>;
+  };
   library: {
     snapshot(): Promise<LibrarySnapshot>;
     addFolder(): Promise<{ canceled: boolean; folders: string[]; result?: LibraryScanResult }>;
@@ -537,6 +568,9 @@ export const IPC = {
   librarySearch: "library:search",
   libraryGetTrack: "library:get-track",
   librarySetFavorite: "library:set-favorite",
+  historyAdd: "history:add",
+  historyList: "history:list",
+  historyClear: "history:clear",
   libraryRecordPlay: "library:record-play",
   libraryProgress: "library:progress",
   libraryChanged: "library:changed",

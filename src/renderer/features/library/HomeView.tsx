@@ -11,6 +11,7 @@ import { formatTime } from "../../player/queue";
 import { TrackList } from "../../components/TrackList";
 import { AlbumCard } from "../../components/Cards";
 import { Artwork } from "../../components/Artwork";
+import { shuffle } from "../../player/queue";
 
 function greeting(): string {
   const hour = new Date().getHours();
@@ -51,7 +52,9 @@ export function HomeView() {
       seen.add(album.name);
       unique.push(album);
     }
-    return unique.slice(0, 10);
+    // Shuffled once per homepage initialization: stable across re-renders, randomized again when
+    // the library snapshot changes or the view is (re)mounted.
+    return shuffle(unique).slice(0, 10);
   }, [snapshot?.albums]);
 
   const favorites = useMemo(() => (snapshot?.tracks ?? []).filter(track => track.favorite), [snapshot?.tracks]);
@@ -171,7 +174,7 @@ export function HomeView() {
       {albums.length > 0 ? (
         <section className="shelf">
           <div className="shelf-heading">
-            <h2>Your albums</h2>
+            <h2>Random albums</h2>
             <button type="button" className="link" onClick={() => navigate({ name: "library", tab: "albums" })}>
               Show all
             </button>

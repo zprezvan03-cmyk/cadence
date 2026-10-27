@@ -13,6 +13,7 @@ import { DecodeTesterView } from "./features/decode-tester/DecodeTesterView";
 import { AlbumView, ArtistView, PlaylistView, SearchView } from "./features/library/DetailViews";
 import { HomeView } from "./features/library/HomeView";
 import { LibraryView } from "./features/library/LibraryView";
+import { HistoryView } from "./features/history/HistoryView";
 import { LyricsView } from "./features/lyrics/LyricsView";
 import { PlayerBar } from "./features/player/PlayerBar";
 import { QueuePanel } from "./features/player/QueuePanel";
@@ -31,6 +32,8 @@ function RouteContent() {
   switch (route.name) {
     case "home":
       return <HomeView />;
+    case "history":
+      return <HistoryView />;
     case "library":
       return <LibraryView tab={route.tab} />;
     case "search":
