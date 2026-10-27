@@ -87,6 +87,12 @@ export function KawarpBackground({
     failed: false,
   });
   const [ready, setReady] = useState(false);
+  // The engine applies its *first* artwork in one step, with no transition of its own, and its canvas
+  // is empty (black) until that image has been decoded, uploaded and blurred. `artworkShown` is the
+  // point where a frame with the artwork has actually been composited, so the blurred CSS fallback can
+  // hand over to it instead of leaving a black stage that the shader later pops back from.
+  const [artworkShown, setArtworkShown] = useState(false);
+  const artworkShownRef = useRef(false);
   const [artworkFailed, setArtworkFailed] = useState(false);
   const multipliersRef = useRef<DynamicMultipliers>({ isBeat: false, speedMultiplier: 1, scaleMultiplier: 1 });
   const settingsRef = useRef(settings);
@@ -141,6 +147,17 @@ export function KawarpBackground({
     const isHidden = container.style.opacity === "0";
     container.style.transition = `opacity 0.5s ease-out, filter ${isHidden ? 0 : filterTransitionMs}ms ${KAWARP_CROSSFADE_EASING}`;
     container.style.filter = brightness < 1 ? `brightness(${brightness})` : "";
+  };
+
+  /**
+   * The first artwork frame is the only one the engine swaps in without a crossfade. Waiting two
+   * frames after the texture lands means the blurred CSS fallback is only dropped once the artwork is
+   * really on the canvas, so the handover never passes through an empty black stage.
+   */
+  const markArtworkShown = () => {
+    if (artworkShownRef.current) return;
+    artworkShownRef.current = true;
+    requestAnimationFrame(() => requestAnimationFrame(() => setArtworkShown(true)));
   };
 
   const resolveSize = (canvas: HTMLCanvasElement): { width: number; height: number } => {
@@ -255,6 +272,7 @@ export function KawarpBackground({
         state.currentImageUrl = url;
         state.failed = false;
         setArtworkFailed(false);
+        markArtworkShown();
         applyArtworkBrightness(undefined, state.videoMode);
       } catch (error) {
         // A missing or undecodable cover must not leave an empty black stage behind the lyrics.
@@ -302,6 +320,7 @@ export function KawarpBackground({
             onError: error => console.warn("[Cadence] Animated artwork frame failed:", error),
           });
           state.videoMode = true;
+          video.addEventListener("loadeddata", markArtworkShown, { once: true });
         }
       } catch (error) {
         console.warn("[Cadence] Animated artwork unavailable:", error);
@@ -384,6 +403,9 @@ export function KawarpBackground({
   }, [playing, settings.pauseOnInactive, settings.enabled, settings.performanceMode, animatedArtUrl, settings.enableAnimatedArt]);
 
   const disabled = !settings.enabled || settings.performanceMode === "off";
+  // Kept mounted (and simply faded out) once the shader owns the artwork: a hard unmount on the same
+  // frame the first artwork frame lands is exactly the cut that read as a flash.
+  const fallbackVisible = !disabled && Boolean(artworkUrl) && (!ready || !artworkShown || artworkFailed);
 
   return (
     <div
@@ -404,9 +426,18 @@ export function KawarpBackground({
         />
       ) : (
         <>
-          <canvas ref={canvasRef} className="kawarp-canvas" data-testid="kawarp-canvas" />
-          {(!ready || artworkFailed) && artworkUrl ? (
-            <div className="kawarp-fallback" style={{ backgroundImage: `url("${artworkUrl}")` }} />
+          {/* Faded in with the fallback's fade-out: a translucent fallback over a black canvas would
+              otherwise step brighter in the single frame the shader's first artwork lands. */}
+          <canvas
+            ref={canvasRef}
+            className={`kawarp-canvas${fallbackVisible ? "" : " is-visible"}`}
+            data-testid="kawarp-canvas"
+          />
+          {artworkUrl ? (
+            <div
+              className={`kawarp-fallback${fallbackVisible ? "" : " is-hidden"}`}
+              style={{ backgroundImage: `url("${artworkUrl}")` }}
+            />
           ) : null}
         </>
       )}
