@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { advancePosition, buildOrder, formatTime, nextShuffledPosition } from "../../src/renderer/player/queue";
+import {
+  advancePosition,
+  buildOrder,
+  formatTime,
+  nextShuffledPosition,
+  shuffle,
+} from "../../src/renderer/player/queue";
 
 const seeded = (values: number[]) => {
   let index = 0;
@@ -61,6 +67,31 @@ describe("nextShuffledPosition", () => {
 
   it("stops at the end with repeat off", () => {
     expect(nextShuffledPosition([2, 0, 1], 2, "off")).toEqual({ position: 2, exhausted: true, restart: false });
+  });
+});
+
+describe("shuffle", () => {
+  it("returns every element exactly once in a new order", () => {
+    const array = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    const result = shuffle(array, seeded([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]));
+    expect([...result].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(result).not.toEqual(array);
+  });
+
+  it("does not mutate the input array", () => {
+    const array = [1, 2, 3];
+    shuffle(array);
+    expect(array).toEqual([1, 2, 3]);
+  });
+
+  it("handles empty and single-element arrays", () => {
+    expect(shuffle([])).toEqual([]);
+    expect(shuffle([42])).toEqual([42]);
+  });
+
+  it("falls back to Math.random when no rng is given", () => {
+    const result = shuffle([1, 2, 3]);
+    expect([...result].sort((a, b) => a - b)).toEqual([1, 2, 3]);
   });
 });
 

@@ -279,6 +279,11 @@ function installLyricsHarnessBridge(): void {
         return text ? { canceled: false, text, path: "/harness/chosen.ttml" } : { canceled: true };
       },
     },
+    history: {
+      add: async () => undefined,
+      list: async () => [],
+      clear: async () => undefined,
+    },
   };
   window.cadence = bridge as unknown as CadenceApi;
 }

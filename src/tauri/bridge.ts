@@ -13,6 +13,8 @@ import type {
   AppInfo,
   CadenceApi,
   DecodeDeleteOutcome,
+  HistoryEntry,
+  HistoryPayload,
   LibraryScanResult,
   LibrarySnapshot,
   MediaCommand,
@@ -72,6 +74,14 @@ interface HttpFetchResponse {
   headers: Record<string, string>;
   body: string;
 }
+
+/** The shape Rust returns from `cmd_history_list` (camelCase keys). */
+type HistoryRow = {
+  id: number;
+  trackId: number;
+  playedAt: number;
+  payload: HistoryPayload;
+};
 
 type DbMutation =
   | { op: "upsertTrack"; id: number; path: string; payload: string }
@@ -554,6 +564,34 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         return () => {
           changedListeners.delete(listener);
         };
+      },
+    },
+
+    history: {
+      async add(args: {
+        trackId: number;
+        playedAt: number;
+        payload: HistoryPayload;
+      }): Promise<void> {
+        await invoke<void>("cmd_history_add", {
+          trackId: args.trackId,
+          playedAt: args.playedAt,
+          payload: JSON.stringify(args.payload),
+        });
+      },
+
+      async list(): Promise<HistoryEntry[]> {
+        const rows = await invoke<HistoryRow[]>("cmd_history_list");
+        return (rows ?? []).map(row => ({
+          id: row.id,
+          trackId: row.trackId,
+          playedAt: row.playedAt,
+          payload: row.payload,
+        }));
+      },
+
+      async clear(): Promise<void> {
+        await invoke<void>("cmd_history_clear");
       },
     },
 
