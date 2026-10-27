@@ -399,7 +399,10 @@ pub async fn cmd_history_add(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let db = Arc::clone(&state.db);
-    tauri::async_runtime::spawn_blocking(move || {
+    // Persistence is fire-and-forget: playback must never wait on disk I/O, and failures are
+    // logged by the store's caller. Bind the Result to suppress the must_use warning while still
+    // propagating persistence errors up to the bridge caller.
+    let _ = tauri::async_runtime::spawn_blocking(move || {
         db.add_history_entry(args.track_id, args.played_at, &args.payload)
     })
     .await
