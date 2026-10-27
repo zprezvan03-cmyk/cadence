@@ -10,6 +10,7 @@ import { usePlayer } from "../../state/playerStore";
 import { useUi } from "../../state/uiStore";
 import { TrackList } from "../../components/TrackList";
 import { AlbumCard, ArtistCard, PlaylistCard } from "../../components/Cards";
+import { useSessionState } from "../../app/useSessionState";
 
 type SortKey = "title" | "artist" | "album" | "added" | "duration";
 
@@ -31,8 +32,10 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
   const playQueue = usePlayer(state => state.playQueue);
   const playShuffled = usePlayer(state => state.playShuffled);
   const navigate = useUi(state => state.navigate);
-  const [sort, setSort] = useState<SortKey>("title");
-  const [filter, setFilter] = useState("");
+  // Sort and filter belong to the list, not to the mount: coming back to Songs should show the
+  // list the user left, not the default order.
+  const [sort, setSort] = useSessionState<SortKey>("library.sort", "title");
+  const [filter, setFilter] = useSessionState("library.filter", "");
   const deferredFilter = useDeferredValue(filter);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
