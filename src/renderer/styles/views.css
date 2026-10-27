@@ -241,7 +241,7 @@
   height: 58px;
   border-radius: 10px;
   cursor: default;
-  transition: background 120ms ease;
+  transition: background var(--dur-1) var(--ease-out);
 }
 
 .track-row:hover {
@@ -337,7 +337,7 @@
   justify-content: flex-end;
   gap: 2px;
   opacity: 0;
-  transition: opacity 120ms ease;
+  transition: opacity var(--dur-1) var(--ease-out);
 }
 
 .track-row:hover .col-actions,
@@ -421,6 +421,18 @@
   border-radius: var(--radius);
   background: var(--surface);
   border: 1px solid var(--border);
+  animation: form-in var(--dur-2) var(--ease-out);
+}
+
+@keyframes form-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .inline-create input {
@@ -514,6 +526,9 @@
   font-weight: 600;
   border-bottom: 2px solid transparent;
   white-space: nowrap;
+  transition:
+    color var(--dur-1) var(--ease-out),
+    border-color var(--dur-2) var(--ease-out);
 }
 
 .settings-tabs button.active {
@@ -525,6 +540,9 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  /* One animation for the whole panel when a tab is picked; the rows inside never animate
+     individually, which is what keeps a long settings page calm. */
+  animation: view-in var(--dur-2) var(--ease-out);
 }
 
 .settings-section > h2 {
@@ -605,7 +623,9 @@
   position: relative;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background 160ms ease;
+  transition:
+    background var(--dur-2) var(--ease-out),
+    border-color var(--dur-2) var(--ease-out);
 }
 
 .setting-row input[type="checkbox"]::after {
@@ -617,7 +637,11 @@
   height: 18px;
   border-radius: 999px;
   background: #fff;
-  transition: transform 160ms ease;
+  transition: transform var(--dur-2) var(--ease-spring);
+}
+
+.setting-row input[type="checkbox"]:active::after {
+  transform: scale(0.92);
 }
 
 .setting-row input[type="checkbox"]:checked {
@@ -678,6 +702,16 @@
   margin-top: -4.5px;
   border: 0;
   cursor: pointer;
+  transition: transform var(--dur-1) var(--ease-spring);
+}
+
+.range-row input[type="range"]:hover::-webkit-slider-thumb,
+.range-row input[type="range"]:focus-visible::-webkit-slider-thumb {
+  transform: scale(1.2);
+}
+
+.range-row input[type="range"]:active::-webkit-slider-thumb {
+  transform: scale(1.35);
 }
 
 .range-row output {
@@ -848,6 +882,11 @@
   margin: 10px 0;
   font-size: 12.5px;
   color: var(--text-dim);
+}
+
+/* Advanced settings open in place: the content fades in instead of appearing between two frames. */
+.scan-errors[open] > *:not(summary) {
+  animation: fade-in var(--dur-2) var(--ease-out);
 }
 
 .scan-errors ul {

@@ -34,7 +34,9 @@ export function TransportButtons({ trailing }: { trailing?: ReactNode } = {}) {
         onClick={() => void toggle()}
         data-testid="play-toggle"
       >
-        {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
+        <span className="play-icon" key={isPlaying ? "pause" : "play"} aria-hidden="true">
+          {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
+        </span>
       </button>
       <button type="button" className="icon-button" aria-label="Next track" onClick={() => void next(false)}>
         <SkipForward size={19} />

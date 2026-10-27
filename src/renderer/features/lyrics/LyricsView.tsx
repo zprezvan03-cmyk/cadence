@@ -138,7 +138,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   // The title block: in fullscreen it sits under the artwork in the left column; on the normal page it
   // is the header's heading.
   const heading = (
-    <div className="lyrics-heading">
+    <div className="lyrics-heading" key={track?.id ?? "none"}>
       <h1>{track?.title ?? "Nothing playing"}</h1>
       <p>{track ? [track.artist, track.album].filter(Boolean).join(" · ") : "Pick a song from your library"}</p>
     </div>

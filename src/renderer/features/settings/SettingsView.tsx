@@ -26,6 +26,7 @@ import {
 import { THEMES } from "../../upstream/better-lyrics/themes";
 import { TRANSLATION_LANGUAGES } from "../lyrics/translationLanguages";
 import { LyricsCachePanel } from "./LyricsCachePanel";
+import { useSessionState } from "../../app/useSessionState";
 
 /** Tauri's `invoke` rejects with a plain string; Error instances come from the renderer itself. */
 function describeError(error: unknown): string {
@@ -115,7 +116,9 @@ export function SettingsView() {
   const rescan = useLibrary(state => state.rescan);
   const scanning = useLibrary(state => state.scanning);
   const [info, setInfo] = useState<AppInfo | null>(null);
-  const [section, setSection] = useState<"library" | "playback" | "appearance" | "cache" | "about">(
+  // Reopening Settings returns to the tab you were on rather than back to Appearance.
+  const [section, setSection] = useSessionState<"library" | "playback" | "appearance" | "cache" | "about">(
+    "settings.section",
     "appearance"
   );
   const [unavailableFonts, setUnavailableFonts] = useState<ReadonlySet<string>>(() => new Set());

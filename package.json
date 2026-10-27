@@ -35,7 +35,8 @@
     "package:win:portable": "node scripts/make-windows-portable.mjs",
     "test:cache:clear": "npm run build:web && npx vite-node tests/browser/build-library.ts && npx vite-node tests/browser/cache-clear.ts",
     "test:alac": "npm run build:web && npx vite-node tests/browser/alac-startup.ts",
-    "test:now-playing": "npm run build:web && npx vite-node tests/browser/now-playing-layout.ts"
+    "test:now-playing": "npm run build:web && npx vite-node tests/browser/now-playing-layout.ts",
+    "test:animation": "npm run build:web && npx vite-node tests/browser/animation-audit.ts"
   },
   "dependencies": {
     "@braccato/core": "1.16.11",

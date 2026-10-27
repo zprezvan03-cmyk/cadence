@@ -35,6 +35,7 @@
 
 .lyrics-view {
   position: relative;
+  animation: view-in var(--dur-3) var(--ease-out);
   /* A definite height, not min-height: the flex column must bound the scrolling lyric body so the
      dock stays pinned above the player bar instead of being pushed below the fold. */
   height: calc(100vh - var(--window-chrome-top) - var(--player-height) - var(--topbar-height));
@@ -48,6 +49,9 @@
   inset: 0;
   height: 100vh;
   z-index: 55;
+  /* A different animation name restarts on the class change, so fullscreen opens with a fade and
+     a hair of scale instead of a hard cut from the page layout. */
+  animation: fs-in var(--dur-3) var(--ease-out);
   /* Artwork in the left column, lyrics in the right. The artwork's size follows the window height and
      its top sits at the header's bottom edge, so no offsets are hardcoded. The body runs to the bottom
      edge of the viewport in the right column; the footer overlays it as before. */
@@ -332,6 +336,11 @@
   padding: 26px 40px 6px;
 }
 
+.lyrics-heading {
+  /* Keyed by track in LyricsView, so the title and artist settle in when the song changes. */
+  animation: meta-in var(--dur-2) var(--ease-out);
+}
+
 .lyrics-heading h1 {
   font-size: clamp(20px, 2.4vw, 30px);
   text-shadow: 0 2px 24px rgba(0, 0, 0, 0.5);
@@ -440,6 +449,7 @@ braccato-lyrics {
 }
 
 .lyrics-empty-panel {
+  animation: fade-in var(--dur-2) var(--ease-out);
   max-width: 560px;
   margin: 20px auto 40px;
   padding: 22px 24px;
@@ -613,10 +623,14 @@ braccato-lyrics {
 }
 
 /* Fullscreen hover visibility: opacity only. The hidden state also removes the controls from hit-testing and
-   the focus order; layout and position never change. Reduced motion is handled by the global rule. */
+   the focus order, and the footer is measured for the lyric scroll padding — a transform here would move the
+   controls and shift that measurement, so nothing but opacity and visibility animates.
+   Reduced motion is handled by the global rule. */
 .fs-controls,
 .lyrics-dock {
-  transition: opacity 250ms ease, visibility 250ms ease;
+  transition:
+    opacity 250ms var(--ease-out),
+    visibility 250ms var(--ease-out);
 }
 
 .fs-controls.is-concealed,
@@ -731,6 +745,7 @@ braccato-lyrics {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  animation: pop-in var(--dur-2) var(--ease-out);
 }
 
 .dock-languages {

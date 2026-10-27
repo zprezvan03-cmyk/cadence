@@ -2,6 +2,7 @@
  * Application shell. Written for Cadence.
  */
 
+import { useLayoutEffect, useRef } from "react";
 import { useCurrentTrack } from "./app/hooks";
 import { PlaylistPicker } from "./app/PlaylistPicker";
 import { Sidebar } from "./app/Sidebar";
@@ -74,12 +75,36 @@ function AppToast() {
   );
 }
 
+/**
+ * Scroll offsets per view, kept for the session. Views remount on navigation (that is what gives
+ * each one its entering animation), so without this the list you were halfway down would throw you
+ * back to the top every time you looked at an album and came back.
+ */
+const scrollMemory = new Map<string, number>();
+
 export function App() {
   useBootstrap();
   const fullscreenLyrics = useUi(state => state.fullscreenLyrics);
   const route = useUi(state => state.route);
   const error = usePlayer(state => state.error);
   const chrome = useWindowChrome();
+
+  // One key per view instance. The search query is deliberately not part of it: typing in the
+  // global search is not a page change, and remounting the results on every keystroke made them
+  // flicker. Library tabs keep separate keys so switching Songs → Albums still animates.
+  const viewKey = route.name === "search" ? "search" : `${route.name}-${JSON.stringify(route)}`;
+  const contentRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    const node = contentRef.current;
+    if (!node) return;
+    const saved = scrollMemory.get(viewKey) ?? 0;
+    if (!saved) return;
+    // `scroll-behavior: smooth` is for user scrolling; a restored position must be immediate.
+    node.style.scrollBehavior = "auto";
+    node.scrollTop = saved;
+    node.style.scrollBehavior = "";
+  }, [viewKey]);
 
   const immersive = fullscreenLyrics && route.name === "lyrics";
   // The title bar is only drawn when the OS frame is off (Windows); immersive and native fullscreen
@@ -100,7 +125,12 @@ export function App() {
             </button>
           </div>
         ) : null}
-        <div className="content-scroll" key={`${route.name}-${JSON.stringify(route)}`}>
+        <div
+          className="content-scroll"
+          key={viewKey}
+          ref={contentRef}
+          onScroll={event => scrollMemory.set(viewKey, event.currentTarget.scrollTop)}
+        >
           <RouteContent />
         </div>
         {!immersive ? <PlayerBar /> : null}
