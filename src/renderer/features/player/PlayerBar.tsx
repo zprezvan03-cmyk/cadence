@@ -2,9 +2,11 @@
  * Persistent bottom playback bar. Written for Cadence.
  */
 
+import { useEffect, useState } from "react";
 import { Heart, ListMusic, Maximize2, Mic2 } from "lucide-react";
 import { useCurrentTrack } from "../../app/hooks";
 import { useLibrary } from "../../state/libraryStore";
+import { usePlayer } from "../../state/playerStore";
 import { useUi } from "../../state/uiStore";
 import { Artwork } from "../../components/Artwork";
 import { SeekRow, TransportButtons, VolumeControl } from "./PlaybackControls";
@@ -16,6 +18,19 @@ export function PlayerBar() {
   const navigate = useUi(state => state.navigate);
   const setFavorite = useLibrary(state => state.setFavorite);
   const toggleFullscreenLyrics = useUi(state => state.toggleFullscreenLyrics);
+  const buffering = usePlayer(state => state.buffering);
+  const isPlaying = usePlayer(state => state.isPlaying);
+  // Apple Lossless is decoded before it can play, which can take a moment. Show that work only
+  // once it is clearly not instant, so ordinary formats never flash a label.
+  const [slowStart, setSlowStart] = useState(false);
+  useEffect(() => {
+    if (!buffering || isPlaying) {
+      setSlowStart(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setSlowStart(true), 260);
+    return () => window.clearTimeout(timer);
+  }, [buffering, isPlaying]);
 
   return (
     <footer
@@ -32,6 +47,11 @@ export function PlayerBar() {
           <div className="player-artist" title={track?.artist}>
             {track?.artist ?? "Choose a song to begin"}
           </div>
+          {slowStart ? (
+            <div className="player-preparing" role="status" data-testid="player-preparing">
+              Preparing audio…
+            </div>
+          ) : null}
         </div>
         {track ? (
           <button
