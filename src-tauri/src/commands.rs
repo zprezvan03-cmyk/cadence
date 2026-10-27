@@ -413,7 +413,7 @@ pub async fn cmd_history_list(state: State<'_, AppState>) -> Result<Vec<HistoryE
     let db = Arc::clone(&state.db);
     let rows = tauri::async_runtime::spawn_blocking(move || db.list_history(1000))
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())??;
     Ok(rows
         .into_iter()
         .map(|row| HistoryEntry {
