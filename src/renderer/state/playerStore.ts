@@ -4,6 +4,7 @@ import { audioEngine } from "../audio/engine";
 import { advancePosition, buildOrder } from "../player/queue";
 import { getTrackById } from "./trackRegistry";
 import { useLibrary } from "./libraryStore";
+import { useHistory } from "./historyStore";
 
 const SESSION_KEY = "cadence.session.v1";
 
@@ -123,9 +124,10 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       await audioEngine.play();
       if (token !== loadToken) return;
       // The engine reports decoder/play() failures through its own state; only a track that really
-      // started belongs in Home → Recently played.
+      // started belongs in Home → Recently played and in listening history.
       if (!audioEngine.paused && !audioEngine.element.error) {
         void useLibrary.getState().recordPlay(trackId).catch(() => undefined);
+        void useHistory.getState().add(track).catch(() => undefined);
         // Apple Lossless has to be decoded to PCM before it can play, so prepare the next track
         // while this one is running instead of making the listener wait at the transition.
         prewarmNext();
@@ -206,6 +208,11 @@ export const usePlayer = create<PlayerState>()((set, get) => {
             if (state.buffering && !audioEngine.element.src) return;
             get().seek(0);
             await audioEngine.play();
+            // Restarting the current track is a genuine replay: a new listening session.
+            if (!audioEngine.paused && !audioEngine.element.error) {
+              const track = getTrackById(trackId);
+              if (track) void useHistory.getState().add(track).catch(() => undefined);
+            }
             return;
           }
           await goToPosition(position, true);

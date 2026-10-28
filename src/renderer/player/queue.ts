@@ -6,6 +6,17 @@ import type { RepeatMode } from "../../shared/types";
 
 export type Rng = () => number;
 
+/** Fisher–Yates over a copy of the array; `rng` defaults to Math.random so a single draw stays
+ *  stable for the lifetime of one component instance. */
+export function shuffle<T>(array: readonly T[], rng: Rng = Math.random): T[] {
+  const copy = Array.from(array);
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
 /** Fisher–Yates over positions, with the current position first so playback continues seamlessly. */
 export function buildOrder(length: number, shuffle: boolean, current: number, rng: Rng = Math.random): number[] {
   const order = Array.from({ length }, (_, index) => index);

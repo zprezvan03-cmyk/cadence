@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tauri::ipc::{InvokeBody, Response as IpcResponse};
 use tauri::{State, WebviewWindow};
 use tokio::sync::oneshot;
@@ -368,6 +369,70 @@ pub async fn cmd_db_mutate(
 ) -> Result<(), String> {
     let db = Arc::clone(&state.db);
     tauri::async_runtime::spawn_blocking(move || db.apply_batch(&ops))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryAddArgs {
+    pub track_id: i64,
+    pub played_at: i64,
+    pub payload: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryEntry {
+    pub id: i64,
+    pub track_id: i64,
+    pub played_at: i64,
+    pub payload: Value,
+}
+
+/// Records one completed listening session: the track that genuinely started playing, when it
+/// started, and a snapshot of its metadata at that moment. Fires once per play start, never on
+/// pause/resume or position ticks.
+#[tauri::command]
+pub async fn cmd_history_add(
+    args: HistoryAddArgs,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let db = Arc::clone(&state.db);
+    // Persistence is fire-and-forget: playback must never wait on disk I/O, and failures are
+    // logged by the store's caller. Bind the Result to suppress the must_use warning while still
+    // propagating persistence errors up to the bridge caller.
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        db.add_history_entry(args.track_id, args.played_at, &args.payload)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Returns the most recent listening history entries, newest first. Bounded by `HISTORY_CAP`.
+#[tauri::command]
+pub async fn cmd_history_list(state: State<'_, AppState>) -> Result<Vec<HistoryEntry>, String> {
+    let db = Arc::clone(&state.db);
+    let rows = tauri::async_runtime::spawn_blocking(move || db.list_history(1000))
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(rows
+        .into_iter()
+        .map(|row| HistoryEntry {
+            id: row.id,
+            track_id: row.track_id,
+            played_at: row.played_at,
+            payload: row.payload,
+        })
+        .collect())
+}
+
+/// Clears every listening history entry. Cannot be undone.
+#[tauri::command]
+pub async fn cmd_history_clear(state: State<'_, AppState>) -> Result<(), String> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || db.clear_history())
         .await
         .map_err(|e| e.to_string())?
 }

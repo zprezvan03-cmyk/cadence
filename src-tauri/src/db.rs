@@ -1,6 +1,7 @@
 //! SQLite persistence for the Cadence library (`library.db`).
 //!
-//! Uses the exact 5-table schema (`tracks`, `lyrics`, `playlists`, `folders`, `meta`) established
+//! Uses the exact 6-table schema (`tracks`, `lyrics`, `playlists`, `folders`, `meta`,
+//! `listening_history`) established
 //! by `src/main/library/store.ts`, so existing user libraries migrate seamlessly without data loss.
 
 use std::collections::HashMap;
@@ -32,6 +33,21 @@ impl Default for DbSnapshot {
         }
     }
 }
+
+/// One completed listening session: the track that played, when it started, and a snapshot of its
+/// metadata so the history row stays readable even after the file is removed from the library.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryEntry {
+    pub id: i64,
+    pub track_id: i64,
+    pub played_at: i64,
+    pub payload: Value,
+}
+
+/// The most history rows to keep. Played tracks are append-only, so growth is bounded by dropping
+/// the oldest plays once the cap is reached.
+const HISTORY_CAP: usize = 1000;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase")]
@@ -103,6 +119,14 @@ impl LibraryDb {
               key TEXT PRIMARY KEY,
               value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS listening_history (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              track_id INTEGER NOT NULL,
+              played_at INTEGER NOT NULL,
+              payload TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_listening_history_played_at
+              ON listening_history(played_at DESC, id DESC);
             ",
         )
         .map_err(|e| e.to_string())?;
@@ -240,6 +264,65 @@ impl LibraryDb {
         payload
             .map(|raw| serde_json::from_str::<Value>(&raw).map_err(|e| e.to_string()))
             .transpose()
+    }
+
+    pub fn add_history_entry(&self, track_id: i64, played_at: i64, payload: &str) -> Result<i64, String> {
+        let mut conn = self.conn.lock().map_err(|_| "DB mutex poisoned")?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        tx.execute(
+            "INSERT INTO listening_history (track_id, played_at, payload) VALUES (?1, ?2, ?3)",
+            params![track_id, played_at, payload],
+        )
+        .map_err(|e| e.to_string())?;
+        // Bound growth: keep the most recent plays, drop the rest.
+        tx.execute(
+            "DELETE FROM listening_history WHERE id NOT IN (
+                SELECT id FROM listening_history ORDER BY played_at DESC, id DESC LIMIT ?1
+            )",
+            params![HISTORY_CAP as i64],
+        )
+        .map_err(|e| e.to_string())?;
+        let id: i64 = tx.query_row("SELECT last_insert_rowid()", [], |row| row.get(0)).map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    pub fn list_history(&self, limit: usize) -> Result<Vec<HistoryEntry>, String> {
+        let conn = self.conn.lock().map_err(|_| "DB mutex poisoned")?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, track_id, played_at, payload FROM listening_history
+                 ORDER BY played_at DESC, id DESC LIMIT ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![limit as i64], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        for row in rows.flatten() {
+            let (id, track_id, played_at, payload) = row;
+            out.push(HistoryEntry {
+                id,
+                track_id,
+                played_at,
+                payload: serde_json::from_str(&payload).map_err(|e| e.to_string())?,
+            });
+        }
+        Ok(out)
+    }
+
+    pub fn clear_history(&self) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|_| "DB mutex poisoned")?;
+        conn.execute("DELETE FROM listening_history", [])
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     pub fn apply_batch(&self, ops: &[DbMutation]) -> Result<(), String> {

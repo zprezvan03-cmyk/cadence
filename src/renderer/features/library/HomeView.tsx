@@ -2,15 +2,18 @@
  * Home: recent activity, quick access and library shortcuts. Written for Cadence.
  */
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { Clock3, FolderPlus, Heart, Mic2, Play, Shuffle } from "lucide-react";
+import type { HistoryPayload } from "../../../shared/types";
 import { useLibrary } from "../../state/libraryStore";
+import { useHistory } from "../../state/historyStore";
 import { usePlayer } from "../../state/playerStore";
 import { useUi } from "../../state/uiStore";
 import { formatTime } from "../../player/queue";
 import { TrackList } from "../../components/TrackList";
 import { AlbumCard } from "../../components/Cards";
 import { Artwork } from "../../components/Artwork";
+import { shuffle } from "../../player/queue";
 
 function greeting(): string {
   const hour = new Date().getHours();
@@ -27,19 +30,33 @@ export function HomeView() {
   const navigate = useUi(state => state.navigate);
   const playQueue = usePlayer(state => state.playQueue);
   const playShuffled = usePlayer(state => state.playShuffled);
+  const playTrack = usePlayer(state => state.playTrack);
+  const { entries: historyEntries, load: loadHistory } = useHistory(state => state);
 
-  const recentlyPlayed = useMemo(
-    () =>
-      [...(snapshot?.tracks ?? [])]
-        .filter(track => track.lastPlayedAt)
-        .sort((a, b) => (b.lastPlayedAt ?? 0) - (a.lastPlayedAt ?? 0))
-        .slice(0, 6),
-    [snapshot?.tracks]
-  );
+  // Recently played is a read-only view of the same persistent listening history the History tab
+  // uses. Both views share the useHistory store, so a new play start or a clear-history updates
+  // both automatically without a reload.
+  useEffect(() => {
+    void loadHistory();
+  }, [loadHistory]);
+
+  const recentlyPlayed = useMemo(() => {
+    const seen = new Set<number>();
+    const result: HistoryPayload[] = [];
+    for (const entry of [...historyEntries].sort(
+      (a, b) => b.playedAt - a.playedAt || b.id - a.id,
+    )) {
+      if (seen.has(entry.trackId)) continue;
+      seen.add(entry.trackId);
+      result.push(entry.payload);
+      if (result.length >= 6) break;
+    }
+    return result;
+  }, [historyEntries]);
 
   const recentlyAdded = useMemo(
     () => [...(snapshot?.tracks ?? [])].sort((a, b) => b.addedAt - a.addedAt).slice(0, 10),
-    [snapshot?.tracks]
+    [snapshot?.tracks],
   );
 
   const albums = useMemo(() => {
@@ -51,7 +68,9 @@ export function HomeView() {
       seen.add(album.name);
       unique.push(album);
     }
-    return unique.slice(0, 10);
+    // Shuffled once per homepage initialization: stable across re-renders, randomized again when
+    // the library snapshot changes or the view is (re)mounted.
+    return shuffle(unique).slice(0, 10);
   }, [snapshot?.albums]);
 
   const favorites = useMemo(() => (snapshot?.tracks ?? []).filter(track => track.favorite), [snapshot?.tracks]);
@@ -145,19 +164,17 @@ export function HomeView() {
         <section className="shelf">
           <div className="shelf-heading">
             <h2>Recently played</h2>
-            <button type="button" className="link" onClick={() => navigate({ name: "library", tab: "songs" })}>
-              Show all
-            </button>
+            <button type="button" className="link" onClick={() => navigate({ name: "history" })}>Show all</button>
           </div>
           <div className="quick-grid">
             {recentlyPlayed.map(track => (
               <button
                 type="button"
-                key={track.id}
+                key={track.trackId}
                 className="quick-track"
-                onClick={() => void playQueue([track.id], 0)}
+                onClick={() => void playTrack(track.trackId)}
               >
-                <Artwork src={track.artworkUrl} alt={track.album} size="xs" />
+                <Artwork src={track.artworkUrl ?? null} alt={track.album || track.title} size="xs" />
                 <span>
                   <strong>{track.title}</strong>
                   <em>{track.artist}</em>
@@ -171,10 +188,8 @@ export function HomeView() {
       {albums.length > 0 ? (
         <section className="shelf">
           <div className="shelf-heading">
-            <h2>Your albums</h2>
-            <button type="button" className="link" onClick={() => navigate({ name: "library", tab: "albums" })}>
-              Show all
-            </button>
+            <h2>Random albums</h2>
+            <button type="button" className="link" onClick={() => navigate({ name: "library", tab: "albums" })}>Show all</button>
           </div>
           <div className="card-grid">
             {albums.map(album => (
