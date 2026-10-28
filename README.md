@@ -9,6 +9,8 @@ GPL-3.0. Upstream attribution and pinned commits: [`UPSTREAM.md`](UPSTREAM.md).
 
 ## Install
 
+Releases here: [`https://github.com/zprezvan03-cmyk/cadence/releases`](Releases)
+
 ### Windows production build & installers
 
 Requirements on a Windows build host:
