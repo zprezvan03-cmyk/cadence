@@ -63,7 +63,7 @@ function installBridge(seed: Array<{ trackId: number; playedAt: number; payload:
 }
 
 afterEach(() => {
-  useHistory.setState({ entries: [], loading: false, error: null });
+  useHistory.setState({ entries: [], loading: false, error: null, loaded: false });
   (globalThis as { window?: unknown }).window = undefined;
 });
 
@@ -109,6 +109,36 @@ describe("history store", () => {
     expect(useHistory.getState().entries).toHaveLength(1);
     await useHistory.getState().clear();
     expect(useHistory.getState().entries).toHaveLength(0);
+  });
+
+  it("restores history from persisted storage across a simulated restart", async () => {
+    const now = Date.now();
+    // First "session": load persisted entries into the store.
+    installBridge([
+      { trackId: 1, playedAt: now - 2000, payload: { title: "Track A" } },
+      { trackId: 2, playedAt: now - 1000, payload: { title: "Track B" } },
+    ]);
+    await useHistory.getState().load();
+    expect(useHistory.getState().entries.map(e => e.payload.title)).toEqual([
+      "Track B",
+      "Track A",
+    ]);
+    expect(useHistory.getState().loaded).toBe(true);
+
+    // Simulate app restart: store state resets, but the bridge (SQLite) still has the data.
+    useHistory.setState({ entries: [], loading: false, error: null, loaded: false });
+    installBridge([
+      { trackId: 1, playedAt: now - 2000, payload: { title: "Track A" } },
+      { trackId: 2, playedAt: now - 1000, payload: { title: "Track B" } },
+    ]);
+
+    // Second "session": load should restore from the bridge.
+    await useHistory.getState().load();
+    expect(useHistory.getState().entries.map(e => e.payload.title)).toEqual([
+      "Track B",
+      "Track A",
+    ]);
+    expect(useHistory.getState().loaded).toBe(true);
   });
 
   it("plays the same track twice without collapsing sessions", async () => {

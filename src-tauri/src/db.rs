@@ -288,7 +288,7 @@ impl LibraryDb {
     }
 
     pub fn list_history(&self, limit: usize) -> Result<Vec<HistoryEntry>, String> {
-        let mut conn = self.conn.lock().map_err(|_| "DB mutex poisoned")?;
+        let conn = self.conn.lock().map_err(|_| "DB mutex poisoned")?;
         let mut stmt = conn
             .prepare(
                 "SELECT id, track_id, played_at, payload FROM listening_history
@@ -319,7 +319,7 @@ impl LibraryDb {
     }
 
     pub fn clear_history(&self) -> Result<(), String> {
-        let mut conn = self.conn.lock().map_err(|_| "DB mutex poisoned")?;
+        let conn = self.conn.lock().map_err(|_| "DB mutex poisoned")?;
         conn.execute("DELETE FROM listening_history", [])
             .map_err(|e| e.to_string())?;
         Ok(())

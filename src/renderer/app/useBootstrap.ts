@@ -13,6 +13,7 @@ import { useLibrary } from "../state/libraryStore";
 import { readSession, usePlayer, currentTrackId } from "../state/playerStore";
 import { useSettings } from "../state/settingsStore";
 import { useUi } from "../state/uiStore";
+import { useHistory } from "../state/historyStore";
 import { formatTime } from "../player/queue";
 import {
   explainPlaybackFailure,
@@ -42,6 +43,10 @@ export function useBootstrap(): void {
     void (async () => {
       await useSettings.getState().load();
       await useLibrary.getState().refresh();
+      // Restore persistent listening history so both the History tab and the homepage's Recently
+      // Played section reconstruct from SQLite on every launch. Idempotent: safe to call again
+      // from view mounts; the store ignores duplicate loads once loaded is true.
+      await useHistory.getState().load();
       if (disposed) return;
 
       const settings = useSettings.getState().settings;
