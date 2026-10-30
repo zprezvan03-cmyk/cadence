@@ -259,6 +259,11 @@ a {
   min-height: 0;
   overflow-y: auto;
   scroll-behavior: smooth;
+  /* The route viewport is the responsive reference for Now Playing. In windowed mode this
+     is exactly the area between the sidebar/top bar/player; in immersive mode the same box
+     expands to the whole window, so one set of container rules serves both. */
+  container-type: size;
+  container-name: app-content;
 }
 
 .view {

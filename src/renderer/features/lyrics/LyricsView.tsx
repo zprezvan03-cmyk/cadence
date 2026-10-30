@@ -5,7 +5,7 @@
  * and lyrics on/off toggle along the bottom. Written for Cadence.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Minimize2, Music4, RefreshCw, Search } from "lucide-react";
 import type { AppSettings, Track } from "../../../shared/types";
 import { DEFAULT_PROVIDER_ORDER } from "../../../shared/upstream/better-lyrics/constants";
@@ -27,6 +27,10 @@ export interface LyricsViewProps {
   fullscreen: boolean;
   onToggleFullscreen: () => void;
   onOpenSearch?: () => void;
+}
+
+function clampFinite(value: number | undefined, fallback: number, min: number, max: number): number {
+  return Number.isFinite(value) ? Math.min(max, Math.max(min, value as number)) : fallback;
 }
 
 export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onOpenSearch }: LyricsViewProps) {
@@ -102,6 +106,35 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
 
   const themeCss = useMemo(() => (lyricsSettings ? buildThemeCss(lyricsSettings) : ""), [lyricsSettings]);
 
+  // Legacy typography settings were authored against a 48px (3rem) main lyric. Their
+  // ratios now multiply the container-derived fluid base in `lyrics.css`, so at the
+  // reference size the rendered result matches the old fixed values while larger
+  // app-content areas scale proportionally instead of stopping at a laptop-sized cap.
+  const nowPlayingScaleStyle = useMemo<CSSProperties>(() => {
+    const fontSizeRem = clampFinite(lyricsSettings?.fontSizeRem, 3, 1.4, 6);
+    const translationFontSizePx = clampFinite(
+      lyricsSettings?.translationFontSizePx,
+      32,
+      10,
+      48
+    );
+    const romanizationFontSizePx = clampFinite(
+      lyricsSettings?.romanizationFontSizePx,
+      26,
+      10,
+      48
+    );
+    return {
+      "--np-lyrics-font-scale": fontSizeRem / 3,
+      "--np-translation-font-ratio": translationFontSizePx / 48,
+      "--np-romanization-font-ratio": romanizationFontSizePx / 48,
+    } as CSSProperties;
+  }, [
+    lyricsSettings?.fontSizeRem,
+    lyricsSettings?.translationFontSizePx,
+    lyricsSettings?.romanizationFontSizePx,
+  ]);
+
   const patchLyrics = useCallback(
     (patch: Partial<NonNullable<AppSettings["lyrics"]>>) => {
       void patchSettings({ lyrics: patch });
@@ -173,6 +206,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
     <div
       ref={viewRef}
       className={`lyrics-view ${fullscreen ? "is-fullscreen" : ""} ${panelMode ? "is-lyrics-off" : ""}`}
+      style={nowPlayingScaleStyle}
       data-testid="lyrics-view"
     >
       <KawarpBackground

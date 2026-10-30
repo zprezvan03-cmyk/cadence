@@ -258,6 +258,59 @@ export function BraccatoLyrics({
     ref.current?.renderer?.relayout();
   }, [fontFamily]);
 
+  // A resize re-measures the renderer and arms a rescroll, but its media frame loop is
+  // stopped while paused. Without a tick, the active line can therefore keep the old
+  // size's scroll position until playback or a seek happens. Ask for the renderer's
+  // existing position update after the scrollport settles on a new size; this neither
+  // moves the audio clock nor replaces the renderer's own scroll calculation.
+  useEffect(() => {
+    const element = ref.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const scrollport = element.parentElement ?? element;
+    let lastSize: { width: number; height: number } | null = null;
+    let frame: number | undefined;
+
+    const observer = new ResizeObserver(entries => {
+      const rect = entries[entries.length - 1]?.contentRect;
+      if (!rect) return;
+      if (
+        lastSize &&
+        Math.abs(rect.width - lastSize.width) < 1 &&
+        Math.abs(rect.height - lastSize.height) < 1
+      ) {
+        return;
+      }
+      const firstObservation = lastSize === null;
+      lastSize = { width: rect.width, height: rect.height };
+      if (firstObservation) return;
+
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = undefined;
+        const renderer = element.renderer;
+        if (!renderer || !element.isConnected) return;
+        const { offsetMs: offset, passiveScroll: passive } = latest.current;
+        renderer.scheduleLyricPositionUpdate(
+          () => element.isConnected,
+          () => {
+            renderer.retickFromPlaybackClock((eventCreationTime, isPlaying) => ({
+              eventCreationTime,
+              isPlaying,
+              smoothScroll: false,
+              globalLyricOffset: offset / 1000,
+              passiveScrollEnabled: passive,
+            }));
+          }
+        );
+      });
+    });
+    observer.observe(scrollport);
+    return () => {
+      observer.disconnect();
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+    };
+  }, []);
+
   useEffect(() => {
     const element = ref.current;
     if (!element) return;

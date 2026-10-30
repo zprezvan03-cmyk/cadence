@@ -1007,12 +1007,19 @@ const decoFontSizes = () =>
       const node = document.querySelector(selector);
       return node ? parseFloat(getComputedStyle(node).fontSize) : null;
     };
+    // Legacy lyric sizes are reference values at a 48px fluid base. The rendered
+    // size is that reference multiplied by clamp(30px, 6cqh, 84px) / 48, where
+    // cqh is the actual route-content height in windowed or fullscreen mode.
+    const contentHeight = document.querySelector(".content-scroll")?.clientHeight ?? 0;
+    const fluidBase = Math.min(84, Math.max(30, contentHeight * 0.06));
     return {
       main: px(".blyrics--line .blyrics-line-main"),
       translated: px("braccato-lyrics .blyrics--translated"),
       romanized: px("braccato-lyrics .blyrics--romanized"),
+      responsiveScale: fluidBase / 48,
     };
   });
+const nearPx = (actual, expected) => actual !== null && Math.abs(actual - expected) < 0.05;
 const setRange = (selector, value) =>
   page.$eval(
     selector,
@@ -1055,7 +1062,9 @@ await page.waitForFunction(() => document.querySelectorAll("braccato-lyrics .bly
 const defaultSizes = await decoFontSizes();
 check(
   "secondary-font-size-defaults",
-  defaultSizes.translated === 32 && defaultSizes.romanized === 26,
+  nearPx(defaultSizes.main, 25.6 * defaultSizes.responsiveScale) &&
+    nearPx(defaultSizes.translated, 32 * defaultSizes.responsiveScale) &&
+    nearPx(defaultSizes.romanized, 26 * defaultSizes.responsiveScale),
   JSON.stringify(defaultSizes)
 );
 
@@ -1066,7 +1075,7 @@ await wait(400);
 const translationSized = await decoFontSizes();
 check(
   "translation-font-size-live-and-independent",
-  translationSized.translated === 18 &&
+  nearPx(translationSized.translated, 18 * translationSized.responsiveScale) &&
     translationSized.romanized === defaultSizes.romanized &&
     translationSized.main === defaultSizes.main,
   `before=${JSON.stringify(defaultSizes)} after=${JSON.stringify(translationSized)}`
@@ -1076,7 +1085,9 @@ await wait(400);
 const romanizationSized = await decoFontSizes();
 check(
   "romanization-font-size-live-and-independent",
-  romanizationSized.romanized === 14 && romanizationSized.translated === 18 && romanizationSized.main === defaultSizes.main,
+  nearPx(romanizationSized.romanized, 14 * romanizationSized.responsiveScale) &&
+    nearPx(romanizationSized.translated, 18 * romanizationSized.responsiveScale) &&
+    romanizationSized.main === defaultSizes.main,
   JSON.stringify(romanizationSized)
 );
 const persistedSizes = await page.evaluate(
@@ -1088,14 +1099,17 @@ check(
   JSON.stringify(persistedSizes)
 );
 
-// Fullscreen renders through the same theme, so the configured sizes hold there too.
+// Fullscreen renders through the same theme and settings; its larger content height
+// therefore rescales the same reference sizes instead of replacing them.
 await page.click('button[aria-label="Fullscreen lyrics"]');
 await page.waitForSelector(".lyrics-view.is-fullscreen", { timeout: 5000 }).catch(() => null);
 await wait(600);
 const fullscreenSizes = await decoFontSizes();
 check(
   "secondary-font-sizes-in-fullscreen",
-  fullscreenSizes.translated === 18 && fullscreenSizes.romanized === 14,
+  nearPx(fullscreenSizes.main, 25.6 * fullscreenSizes.responsiveScale) &&
+    nearPx(fullscreenSizes.translated, 18 * fullscreenSizes.responsiveScale) &&
+    nearPx(fullscreenSizes.romanized, 14 * fullscreenSizes.responsiveScale),
   JSON.stringify(fullscreenSizes)
 );
 await page.keyboard.press("Escape");
@@ -1129,7 +1143,8 @@ await wait(600);
 const settingsDriven = await decoFontSizes();
 check(
   "settings-font-size-drives-lyrics",
-  settingsDriven.translated === 22 && settingsDriven.romanized === 14,
+  nearPx(settingsDriven.translated, 22 * settingsDriven.responsiveScale) &&
+    nearPx(settingsDriven.romanized, 14 * settingsDriven.responsiveScale),
   JSON.stringify(settingsDriven)
 );
 
@@ -1510,7 +1525,12 @@ check(
 );
 
 // Roaming over the lyrics, including the point just above the controls' top edge, does not reveal them.
-for (const [x, y] of [[300, 250], [640, 420], [900, 600], [640, 700]]) {
+// Derive that edge from the rendered footer: its height is intentionally fluid now, so a fixed
+// y-coordinate from the old laptop-sized control stack can land inside the controls themselves.
+const roamControlsTop = await page.$eval('[data-testid="fullscreen-controls"]', node =>
+  node.getBoundingClientRect().top
+);
+for (const [x, y] of [[300, 250], [640, 420], [900, 600], [640, Math.max(0, roamControlsTop - 8)]]) {
   await page.mouse.move(x, y);
   await wait(40);
 }

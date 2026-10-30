@@ -392,6 +392,89 @@ const centeredIn = (panel: { centerX: number } | null, body: { centerX: number }
 const verticallyCenteredIn = (panel: { centerY: number } | null, body: { centerY: number } | null, tolerance = 40) =>
   Boolean(panel && body && Math.abs(panel.centerY - body.centerY) <= tolerance);
 
+/**
+ * Responsive probes for the container-based scale. Unlike `geometry()`, these record the
+ * actual app-content box (`.content-scroll`), computed type sizes and both horizontal
+ * edges, so a test can prove that large displays grow the useful pieces without letting
+ * the lyric measure or controls stretch without limit.
+ */
+const responsiveGeometry = () =>
+  page.evaluate(() => {
+    const rect = (selector: string) => {
+      const node = document.querySelector(selector);
+      if (!node) return null;
+      const box = node.getBoundingClientRect();
+      const style = getComputedStyle(node);
+      return {
+        x: Math.round(box.x),
+        y: Math.round(box.y),
+        right: Math.round(box.right),
+        bottom: Math.round(box.bottom),
+        width: Math.round(box.width),
+        height: Math.round(box.height),
+        centerX: Math.round(box.x + box.width / 2),
+        centerY: Math.round(box.y + box.height / 2),
+        display: style.display,
+        visibility: style.visibility,
+      };
+    };
+    const fontSize = (selector: string) => {
+      const node = document.querySelector(selector);
+      return node ? Number.parseFloat(getComputedStyle(node).fontSize) || 0 : 0;
+    };
+    const content = document.querySelector(".content-scroll");
+    const view = document.querySelector(".lyrics-view");
+    const controlsRow = document.querySelector(".fs-controls-row");
+    const audio = document.querySelector("audio");
+    return {
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      content: content ? { width: content.clientWidth, height: content.clientHeight } : null,
+      view: rect(".lyrics-view"),
+      body: rect(".lyrics-body"),
+      artwork: rect(".fs-artwork .artwork-hero"),
+      host: rect("braccato-lyrics"),
+      controls: rect(".fs-controls"),
+      dock: rect(".lyrics-dock"),
+      play: rect(".fs-controls .play-button"),
+      icon: rect(".fs-controls .icon-button"),
+      titleFontPx: Math.round(fontSize(".lyrics-heading h1") * 10) / 10,
+      metaFontPx: Math.round(fontSize(".lyrics-heading p") * 10) / 10,
+      lyricFontPx: Math.round(fontSize(".blyrics--line") * 10) / 10,
+      lineCount: document.querySelectorAll(".blyrics--line").length,
+      titleText: document.querySelector(".lyrics-heading h1")?.textContent?.trim() ?? "",
+      fullscreen: view?.classList.contains("is-fullscreen") ?? false,
+      controlsColumns: controlsRow ? getComputedStyle(controlsRow).gridTemplateColumns : "",
+      horizontalOverflow:
+        Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth ?? 0) >
+        window.innerWidth + 1,
+      audio: audio
+        ? { currentTime: audio.currentTime, paused: audio.paused, src: audio.currentSrc }
+        : null,
+    };
+  });
+
+const setViewport = async (width: number, height: number) => {
+  await page.setViewport({ width, height });
+  await wait(700);
+};
+const enterFullscreen = async () => {
+  if (await page.$(".lyrics-view.is-fullscreen")) return;
+  await page.click('button[aria-label="Fullscreen lyrics"]');
+  await page.waitForSelector(".lyrics-view.is-fullscreen", { timeout: 10_000 });
+  await wait(800);
+};
+const exitFullscreen = async () => {
+  if (!(await page.$(".lyrics-view.is-fullscreen"))) return;
+  await page.click("button.fs-exit");
+  await page.waitForSelector(".lyrics-view:not(.is-fullscreen)", { timeout: 10_000 });
+  await wait(600);
+};
+const between = (value: number, min: number, max: number) => value >= min && value <= max;
+const separatedHorizontally = (
+  left: { right: number; width: number } | null,
+  right: { x: number; width: number } | null
+) => Boolean(!left || !right || left.width === 0 || right.width === 0 || left.right <= right.x + 1);
+
 /* ------------------------------------------------------------------- script */
 
 await page.goto(`${base}/index.html`, { waitUntil: "domcontentloaded" });
@@ -480,9 +563,80 @@ const fullscreen = await geometry();
 await page.click("button.fs-exit");
 await wait(600);
 
+/* 7. Responsive container scale. The same synced track stays loaded while only the
+   viewport and windowed/fullscreen presentation change, which also proves those
+   transitions do not replace the track or rewind the shared audio element. */
+mode = "synced";
+await playTrackId(ids.synced);
+await nav("Now Playing");
+await page.waitForSelector(".blyrics--line", { timeout: 20_000 });
+await wait(600);
+const playbackBeforeResponsive = await page.evaluate(() => {
+  const audio = document.querySelector("audio");
+  return audio ? { currentTime: audio.currentTime, paused: audio.paused, src: audio.currentSrc } : null;
+});
+
+await setViewport(1366, 768);
+await shot("07-responsive-windowed-1366x768");
+const responsive1366Windowed = await responsiveGeometry();
+
+await setViewport(1920, 1080);
+await shot("08-responsive-windowed-1920x1080");
+const responsive1920Windowed = await responsiveGeometry();
+
+await enterFullscreen();
+await shot("09-responsive-fullscreen-1920x1080");
+const responsive1920Fullscreen = await responsiveGeometry();
+
+await setViewport(2560, 1440);
+await shot("10-responsive-fullscreen-2560x1440");
+const responsive2560Fullscreen = await responsiveGeometry();
+
+await setViewport(3440, 1440);
+await shot("11-responsive-fullscreen-ultrawide");
+const responsiveUltrawideFullscreen = await responsiveGeometry();
+
+await setViewport(1080, 1920);
+await shot("12-responsive-fullscreen-portrait");
+const responsivePortraitFullscreen = await responsiveGeometry();
+
+await setViewport(800, 1000);
+await shot("13-responsive-fullscreen-narrow");
+const responsiveNarrowFullscreen = await responsiveGeometry();
+
+const playbackAfterResponsive = await page.evaluate(() => {
+  const audio = document.querySelector("audio");
+  return audio ? { currentTime: audio.currentTime, paused: audio.paused, src: audio.currentSrc } : null;
+});
+await exitFullscreen();
+await setViewport(1440, 900);
+
 /* ------------------------------------------------------------------ report */
 
-console.log(JSON.stringify({ synced, unsynced, empty, loading, afterLoad, error, fullscreen }, null, 1));
+console.log(
+  JSON.stringify(
+    {
+      synced,
+      unsynced,
+      empty,
+      loading,
+      afterLoad,
+      error,
+      fullscreen,
+      responsive1366Windowed,
+      responsive1920Windowed,
+      responsive1920Fullscreen,
+      responsive2560Fullscreen,
+      responsiveUltrawideFullscreen,
+      responsivePortraitFullscreen,
+      responsiveNarrowFullscreen,
+      playbackBeforeResponsive,
+      playbackAfterResponsive,
+    },
+    null,
+    1
+  )
+);
 
 check("empty-panel-inside-lyrics-area", inBody(empty.panel, empty.body), `${JSON.stringify(empty.panel)} vs ${JSON.stringify(empty.body)}`);
 check("empty-panel-centered", centeredIn(empty.panel, empty.body), `${empty.panel?.centerX} vs ${empty.body?.centerX}`);
@@ -522,6 +676,116 @@ check(
   "fullscreen-panel-above-controls",
   Boolean(fullscreen.panel && fullscreen.footer && fullscreen.panel.bottom <= fullscreen.footer.y + 1),
   `panel bottom ${fullscreen.panel?.bottom} footer top ${fullscreen.footer?.y}`
+);
+
+check(
+  "responsive-windowed-uses-app-content",
+  Boolean(
+    responsive1366Windowed.content &&
+      responsive1366Windowed.view &&
+      responsive1366Windowed.content.width < responsive1366Windowed.viewport.width &&
+      Math.abs(responsive1366Windowed.view.height - responsive1366Windowed.content.height) <= 2
+  ),
+  `content ${JSON.stringify(responsive1366Windowed.content)} viewport ${JSON.stringify(responsive1366Windowed.viewport)} view ${JSON.stringify(responsive1366Windowed.view)}`
+);
+check(
+  "responsive-windowed-large-scales",
+  Boolean(
+    (responsive1920Windowed.host?.width ?? 0) > (responsive1366Windowed.host?.width ?? 0) + 250 &&
+      responsive1920Windowed.lyricFontPx > responsive1366Windowed.lyricFontPx + 12 &&
+      responsive1920Windowed.titleFontPx > responsive1366Windowed.titleFontPx + 8
+  ),
+  `1366 host/font/title ${responsive1366Windowed.host?.width}/${responsive1366Windowed.lyricFontPx}/${responsive1366Windowed.titleFontPx} vs 1920 ${responsive1920Windowed.host?.width}/${responsive1920Windowed.lyricFontPx}/${responsive1920Windowed.titleFontPx}`
+);
+check(
+  "responsive-fullscreen-1080p-scales",
+  Boolean(
+    between(responsive1920Fullscreen.artwork?.width ?? 0, 400, 530) &&
+      between(responsive1920Fullscreen.host?.width ?? 0, 980, 1120) &&
+      between(responsive1920Fullscreen.lyricFontPx, 58, 70) &&
+      between(responsive1920Fullscreen.titleFontPx, 38, 48) &&
+      between(responsive1920Fullscreen.controls?.width ?? 0, 1150, 1260) &&
+      between(responsive1920Fullscreen.play?.width ?? 0, 58, 68)
+  ),
+  `art ${responsive1920Fullscreen.artwork?.width} host ${responsive1920Fullscreen.host?.width} lyric/title ${responsive1920Fullscreen.lyricFontPx}/${responsive1920Fullscreen.titleFontPx} controls/play ${responsive1920Fullscreen.controls?.width}/${responsive1920Fullscreen.play?.width}`
+);
+check(
+  "responsive-1440p-uses-caps-without-overstretch",
+  Boolean(
+    between(responsive2560Fullscreen.artwork?.width ?? 0, 580, 625) &&
+      between(responsive2560Fullscreen.host?.width ?? 0, 980, 1120) &&
+      between(responsive2560Fullscreen.lyricFontPx, 78, 86) &&
+      between(responsive2560Fullscreen.controls?.width ?? 0, 1200, 1250) &&
+      between(responsive2560Fullscreen.play?.width ?? 0, 70, 80)
+  ),
+  `art ${responsive2560Fullscreen.artwork?.width} host ${responsive2560Fullscreen.host?.width} lyric ${responsive2560Fullscreen.lyricFontPx} controls/play ${responsive2560Fullscreen.controls?.width}/${responsive2560Fullscreen.play?.width}`
+);
+check(
+  "responsive-ultrawide-keeps-readable-measure",
+  Boolean(
+    between(responsiveUltrawideFullscreen.artwork?.width ?? 0, 580, 625) &&
+      (responsiveUltrawideFullscreen.host?.width ?? 0) <= 1120 &&
+      (responsiveUltrawideFullscreen.controls?.width ?? 0) <= 1250 &&
+      separatedHorizontally(
+        responsiveUltrawideFullscreen.artwork,
+        responsiveUltrawideFullscreen.body
+      )
+  ),
+  `art ${responsiveUltrawideFullscreen.artwork?.width} host ${responsiveUltrawideFullscreen.host?.width} controls ${responsiveUltrawideFullscreen.controls?.width}`
+);
+check(
+  "responsive-portrait-keeps-artwork-and-lyrics-separated",
+  Boolean(
+    between(responsivePortraitFullscreen.artwork?.width ?? 0, 290, 350) &&
+      between(responsivePortraitFullscreen.host?.width ?? 0, 560, 720) &&
+      separatedHorizontally(responsivePortraitFullscreen.artwork, responsivePortraitFullscreen.body)
+  ),
+  `art ${responsivePortraitFullscreen.artwork?.width} host ${responsivePortraitFullscreen.host?.width} body ${JSON.stringify(responsivePortraitFullscreen.body)}`
+);
+check(
+  "responsive-narrow-hides-artwork-and-stacks-controls",
+  Boolean(
+    (responsiveNarrowFullscreen.artwork?.width ?? 0) === 0 &&
+      (responsiveNarrowFullscreen.host?.width ?? 0) <= 720 &&
+      responsiveNarrowFullscreen.controlsColumns.trim().split(/\s+/).length === 1
+  ),
+  `art ${responsiveNarrowFullscreen.artwork?.width} host ${responsiveNarrowFullscreen.host?.width} columns ${responsiveNarrowFullscreen.controlsColumns}`
+);
+check(
+  "responsive-fullscreen-no-artwork-lyrics-overlap",
+  [
+    responsive1920Fullscreen,
+    responsive2560Fullscreen,
+    responsiveUltrawideFullscreen,
+    responsivePortraitFullscreen,
+    responsiveNarrowFullscreen,
+  ].every(snapshot => separatedHorizontally(snapshot.artwork, snapshot.body)),
+  ""
+);
+check(
+  "responsive-no-horizontal-overflow",
+  [
+    responsive1366Windowed,
+    responsive1920Windowed,
+    responsive1920Fullscreen,
+    responsive2560Fullscreen,
+    responsiveUltrawideFullscreen,
+    responsivePortraitFullscreen,
+    responsiveNarrowFullscreen,
+  ].every(snapshot => !snapshot.horizontalOverflow && snapshot.lineCount > 0),
+  ""
+);
+check(
+  "responsive-resizing-preserves-playback",
+  Boolean(
+    playbackBeforeResponsive &&
+      playbackAfterResponsive &&
+      playbackAfterResponsive.src === playbackBeforeResponsive.src &&
+      playbackAfterResponsive.paused === playbackBeforeResponsive.paused &&
+      playbackAfterResponsive.currentTime + 0.05 >= playbackBeforeResponsive.currentTime &&
+      responsiveNarrowFullscreen.titleText === responsive1366Windowed.titleText
+  ),
+  `before ${JSON.stringify(playbackBeforeResponsive)} after ${JSON.stringify(playbackAfterResponsive)} titles ${responsive1366Windowed.titleText}/${responsiveNarrowFullscreen.titleText}`
 );
 
 const failures = Object.entries(results).filter(([, entry]) => !entry.value);

@@ -102,15 +102,15 @@ ${base}
 ${settings.hideInstrumentalOnly ? "/* blyrics-hide-instrumental-only = true; */" : ""}
 ${settings.showCredits ? "" : "/* blyrics-hide-credits = true; */"}
 .blyrics-container {
-  --blyrics-font-size: ${fontSize}rem;
+  --blyrics-font-size: var(--np-lyrics-font-size, ${fontSize}rem);
   --blyrics-font-weight: ${fontWeight};
   --blyrics-line-height: ${lineHeight};
   --blyrics-active-opacity: ${activeOpacity};
   --blyrics-inactive-opacity: ${inactiveOpacity};
-  --blyrics-translated-font-size: ${translationFontSizePx}px;
+  --blyrics-translated-font-size: var(--np-translation-font-size, ${translationFontSizePx}px);
 }
 .blyrics-container .blyrics--romanized {
-  font-size: ${romanizationFontSizePx}px;
+  font-size: var(--np-romanization-font-size, ${romanizationFontSizePx}px);
 }
 `.trim();
 }

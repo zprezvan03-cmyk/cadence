@@ -54,9 +54,34 @@
 .lyrics-view {
   position: relative;
   animation: view-in var(--dur-3) var(--ease-out);
+  /* Fluid Now Playing scale. These are deliberately not a single zoom factor: artwork is
+     bounded mainly by height, lyric measure by readable width, metadata by both axes, and
+     controls by height. `cqi`/`cqh` resolve against `.content-scroll` (see global.css), i.e.
+     the actual route viewport in windowed mode and the whole window in immersive mode. */
+  --np-gutter: clamp(20px, 3cqi, 64px);
+  --np-gap: clamp(24px, 3.2cqi, 72px);
+  --np-lyrics-max-width: clamp(720px, 62cqi, 1120px);
+  --np-lyrics-fluid-base: clamp(30px, 6cqh, 84px);
+  --np-lyrics-font-size: calc(var(--np-lyrics-fluid-base) * var(--np-lyrics-font-scale, 1));
+  --np-translation-font-size: calc(
+    var(--np-lyrics-fluid-base) * var(--np-translation-font-ratio, 0.6667)
+  );
+  --np-romanization-font-size: calc(
+    var(--np-lyrics-fluid-base) * var(--np-romanization-font-ratio, 0.5417)
+  );
+  --np-title-size: clamp(22px, calc(1.65cqi + 1cqh), 54px);
+  --np-meta-size: clamp(13px, calc(0.55cqi + 0.55cqh), 22px);
+  --np-controls-width: min(
+    clamp(680px, 64cqi, 1240px),
+    calc(100% - (2 * var(--np-gutter)))
+  );
+  --np-control-button-size: clamp(36px, 4.2cqh, 56px);
+  --np-play-button-size: clamp(48px, 5.8cqh, 76px);
   /* A definite height, not min-height: the flex column must bound the scrolling lyric body so the
-     dock stays pinned above the player bar instead of being pushed below the fold. */
+     dock stays pinned above the player bar instead of being pushed below the fold. The legacy
+     viewport calculation remains the fallback; container height is the exact route area. */
   height: calc(100vh - var(--window-chrome-top) - var(--player-height) - var(--topbar-height));
+  height: 100cqh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -66,6 +91,7 @@
   position: fixed;
   inset: 0;
   height: 100vh;
+  height: 100cqh;
   z-index: 55;
   /* A different animation name restarts on the class change, so fullscreen opens with a fade and
      a hair of scale instead of a hard cut from the page layout. */
@@ -73,14 +99,28 @@
   /* Artwork in the left column, lyrics in the right. The artwork's size follows the window height and
      its top sits at the header's bottom edge, so no offsets are hardcoded. The body runs to the bottom
      edge of the viewport in the right column; the footer overlays it as before. */
-  /* The artwork grows with the window, but stays clear of the controls at short heights. */
-  --fs-art-size: clamp(160px, min(36vh, 360px, calc(100vh - 2 * var(--fs-footer-height, 0px) - 100px)), 360px);
-  /* The artwork column and the lyrics column form one group, centred horizontally in the window. The
-     lyrics column is at most 860 px wide and keeps 48 px clear of each window edge. */
-  --fs-side-col: calc(var(--fs-art-size) + 48px);
-  --fs-lyrics-width: min(860px, calc(100vw - var(--fs-side-col) - 96px));
+  /* The artwork grows with both available axes on large displays, while short windows keep
+     it clear of the header/footer. The old 360px ceiling was the main reason fullscreen
+     still read as a small laptop layout at 1080p and above. */
+  --fs-art-size: clamp(
+    160px,
+    min(
+      44cqh,
+      30cqi,
+      calc(100cqh - (2 * var(--fs-footer-height, 0px)) - 180px)
+    ),
+    620px
+  );
+  /* Artwork and lyrics remain one centred group. The measure can now use a large desktop
+     properly, but the profile-configurable cap still stops lines stretching across an
+     ultrawide window. */
+  --fs-side-col: calc(var(--fs-art-size) + var(--np-gap));
+  --fs-lyrics-width: min(
+    var(--np-lyrics-max-width),
+    calc(100cqi - var(--fs-side-col) - (2 * var(--np-gutter)))
+  );
   /* The bottom fade ends this far above the bottom edge. */
-  --fs-edge: 7vh;
+  --fs-edge: 7cqh;
   display: grid;
   grid-template-columns: var(--fs-side-col) var(--fs-lyrics-width);
   grid-template-rows: auto minmax(0, 1fr);
@@ -95,7 +135,7 @@
 .lyrics-view.is-fullscreen .lyrics-body {
   grid-column: 2;
   grid-row: 2;
-  padding-left: 40px;
+  padding-left: clamp(20px, 2.4cqi, 52px);
   /* No right inset: the active line (at full scale) ends on the body's right edge, the same distance from
      the window's right edge as the artwork's left margin. */
   padding-right: 0;
@@ -105,7 +145,7 @@
     180deg,
     transparent 0%,
     #000 14%,
-    #000 calc(100% - var(--fs-edge) - 14vh),
+    #000 calc(100% - var(--fs-edge) - 14cqh),
     transparent calc(100% - var(--fs-edge))
   );
 }
@@ -132,15 +172,15 @@
 }
 
 .fs-side .lyrics-heading {
-  margin-top: 22px;
+  margin-top: clamp(18px, 2.8cqh, 34px);
 }
 
 /* The exit button sits in the header's top-right corner and takes no space in the header's flow. */
 .lyrics-view.is-fullscreen .fs-exit {
   /* Fixed to the window, not to the header: the header only spans the centred group in wide layouts. */
   position: fixed;
-  top: 26px;
-  right: 40px;
+  top: clamp(18px, 3cqh, 36px);
+  right: var(--np-gutter);
   z-index: 3;
   pointer-events: auto;
 }
@@ -152,9 +192,10 @@
   pointer-events: none;
 }
 
-/* Narrow windows: the lyrics take the full width and the artwork is left out, but the title stays at the
-   top. The heading block takes the first row, so it does not overlap the lyrics. */
-@media (max-width: 900px) {
+/* Narrow app-content areas: the lyrics take the full width and the artwork is left out, but the title stays
+   at the top. The heading block takes the first row, so it does not overlap the lyrics. This is keyed to
+   the route container, so shrinking the Cadence window and entering fullscreen agree on “narrow”. */
+@container app-content (max-width: 900px) {
   .lyrics-view.is-fullscreen {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -199,7 +240,7 @@
   grid-row: 1;
   align-items: center;
   justify-content: center;
-  padding: 22px 28px 6px;
+  padding: clamp(18px, 3cqh, 32px) var(--np-gutter) 6px;
 }
 
 .lyrics-view.is-fullscreen.is-lyrics-off .lyrics-body {
@@ -220,8 +261,8 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   align-items: center;
-  gap: 5vw;
-  padding: 0 6vw 6vh;
+  gap: var(--np-gap);
+  padding: 0 var(--np-gutter) clamp(32px, 7cqh, 84px);
 }
 
 .fs-panel-art {
@@ -229,26 +270,26 @@
 }
 
 .fs-panel-art .artwork-hero {
-  width: min(44vh, 420px);
-  height: min(44vh, 420px);
+  width: var(--fs-art-size);
+  height: var(--fs-art-size);
   box-shadow: 0 40px 90px rgba(0, 0, 0, 0.65);
 }
 
 .fs-panel {
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: clamp(18px, 3cqh, 32px);
   width: 100%;
-  max-width: 560px;
+  max-width: clamp(520px, 38cqi, 820px);
   min-width: 0;
 }
 
 .fs-panel .lyrics-heading h1 {
-  font-size: clamp(26px, 3.2vw, 44px);
+  font-size: var(--np-title-size);
 }
 
 .fs-panel .lyrics-heading p {
-  font-size: 16px;
+  font-size: var(--np-meta-size);
 }
 
 .fs-controls.is-panel {
@@ -265,8 +306,8 @@
 }
 
 .fs-controls.is-panel .play-button {
-  width: 64px;
-  height: 64px;
+  width: var(--np-play-button-size);
+  height: var(--np-play-button-size);
 }
 
 .fs-panel-transport {
@@ -282,14 +323,14 @@
 }
 
 .fs-controls.is-panel .volume-group {
-  width: 200px;
+  width: clamp(180px, 16cqi, 260px);
 }
 
 .fs-controls.is-panel .volume-group input[type="range"].volume {
-  width: 150px;
+  width: clamp(130px, 11cqi, 190px);
 }
 
-@media (max-width: 900px) {
+@container app-content (max-width: 900px) {
   .lyrics-view.is-fullscreen.is-lyrics-off {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -299,7 +340,7 @@
   }
   .fs-panel-layout {
     grid-template-columns: minmax(0, 1fr);
-    padding: 0 20px 6vh;
+    padding: 0 20px 6cqh;
   }
   .fs-panel-art {
     display: none;
@@ -350,8 +391,8 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 20px;
-  padding: 26px 40px 6px;
+  gap: clamp(16px, 2cqi, 32px);
+  padding: clamp(20px, 3.4cqh, 40px) var(--np-gutter) 6px;
 }
 
 .lyrics-heading {
@@ -360,14 +401,14 @@
 }
 
 .lyrics-heading h1 {
-  font-size: clamp(20px, 2.4vw, 30px);
+  font-size: var(--np-title-size);
   text-shadow: 0 2px 24px rgba(0, 0, 0, 0.5);
 }
 
 .lyrics-heading p {
-  margin-top: 5px;
+  margin-top: clamp(4px, 0.8cqh, 10px);
   color: rgba(255, 255, 255, 0.62);
-  font-size: 13.5px;
+  font-size: var(--np-meta-size);
 }
 
 .dock-status {
@@ -393,7 +434,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 40px 40px;
+  padding: 0 var(--np-gutter) clamp(28px, 5cqh, 56px);
   /* The lyrics engine owns scrolling: on each line change it moves scrollTop in one step and
      animates the lines themselves to match. A native smooth scroll here animates that step too,
      so the compensation is applied twice and every line change jumps and then settles. */
@@ -417,7 +458,8 @@
 
 braccato-lyrics {
   display: block;
-  max-width: 940px;
+  width: 100%;
+  max-width: var(--np-lyrics-max-width);
   margin: 0 auto;
   min-height: 100%;
   text-shadow: 0 2px 26px rgba(0, 0, 0, 0.45);
@@ -458,7 +500,7 @@ braccato-lyrics[data-upgrading="true"] {
   align-items: center;
   justify-content: center;
   gap: 12px;
-  min-height: 46vh;
+  min-height: 46cqh;
   color: rgba(255, 255, 255, 0.7);
   text-align: center;
 }
@@ -586,12 +628,12 @@ braccato-lyrics[data-upgrading="true"] {
   z-index: 3;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: clamp(8px, 1cqi, 14px);
   flex-wrap: wrap;
-  padding: 10px 22px;
-  margin: 0 auto 18px;
+  padding: clamp(8px, 1.4cqh, 14px) clamp(16px, 2cqi, 30px);
+  margin: 0 auto clamp(12px, 2.4cqh, 24px);
   width: fit-content;
-  max-width: calc(100% - 40px);
+  max-width: calc(100% - (2 * var(--np-gutter)));
   border-radius: 999px;
   /* Shader-backed: the dock shows the live Kawarp background through its blur, not a black fill. */
   background: rgba(14, 14, 22, 0.26);
@@ -604,12 +646,12 @@ braccato-lyrics[data-upgrading="true"] {
 .fs-controls {
   position: relative;
   z-index: 3;
-  width: min(940px, calc(100% - 40px));
-  margin: 0 auto 12px;
-  padding: 10px 22px 8px;
+  width: var(--np-controls-width);
+  margin: 0 auto clamp(10px, 1.8cqh, 18px);
+  padding: clamp(9px, 1.6cqh, 16px) clamp(16px, 2cqi, 30px) clamp(7px, 1.3cqh, 13px);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: clamp(3px, 0.8cqh, 8px);
   border-radius: 22px;
   background: rgba(14, 14, 22, 0.26);
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -618,24 +660,25 @@ braccato-lyrics[data-upgrading="true"] {
 }
 
 .fs-controls .seek-row {
-  gap: 10px;
+  gap: clamp(8px, 1.2cqi, 16px);
 }
 
 .fs-controls .time {
   color: rgba(255, 255, 255, 0.7);
+  font-size: clamp(11px, calc(0.4cqi + 0.55cqh), 16px);
 }
 
 .fs-controls-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  gap: 12px;
+  gap: clamp(10px, 1.4cqi, 20px);
 }
 
 .fs-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: clamp(6px, 0.9cqi, 12px);
   min-width: 0;
 }
 
@@ -644,7 +687,14 @@ braccato-lyrics[data-upgrading="true"] {
 }
 
 .fs-controls .icon-button {
+  width: var(--np-control-button-size);
+  height: var(--np-control-button-size);
   color: rgba(255, 255, 255, 0.75);
+}
+
+.fs-controls .play-button {
+  width: var(--np-play-button-size);
+  height: var(--np-play-button-size);
 }
 
 .fs-controls .icon-button:hover {
@@ -658,11 +708,11 @@ braccato-lyrics[data-upgrading="true"] {
 }
 
 .fs-controls .volume-group {
-  width: 120px;
+  width: clamp(120px, 12cqi, 190px);
 }
 
 .fs-controls .volume-group input[type="range"].volume {
-  width: 80px;
+  width: clamp(80px, 8cqi, 140px);
 }
 
 /* Fullscreen hover visibility: opacity only. The hidden state also removes the controls from hit-testing and
@@ -686,10 +736,11 @@ braccato-lyrics[data-upgrading="true"] {
 .fs-lyrics-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 11px;
+  gap: clamp(5px, 0.7cqi, 9px);
+  min-height: calc(var(--np-control-button-size) * 0.78);
+  padding: clamp(5px, 0.9cqh, 9px) clamp(10px, 1.2cqi, 16px);
   border-radius: 999px;
-  font-size: 12px;
+  font-size: clamp(12px, calc(0.45cqi + 0.6cqh), 16px);
   font-weight: 550;
   color: rgba(255, 255, 255, 0.75);
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -731,10 +782,11 @@ braccato-lyrics[data-upgrading="true"] {
 .dock-button {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 11px;
+  gap: clamp(5px, 0.7cqi, 9px);
+  min-height: var(--np-control-button-size);
+  padding: clamp(6px, 1cqh, 10px) clamp(10px, 1.2cqi, 16px);
   border-radius: 999px;
-  font-size: 12px;
+  font-size: clamp(12px, calc(0.45cqi + 0.65cqh), 16px);
   font-weight: 550;
   color: rgba(255, 255, 255, 0.82);
 }
@@ -750,8 +802,8 @@ braccato-lyrics[data-upgrading="true"] {
 }
 
 .dock-icon {
-  width: 30px;
-  height: 30px;
+  width: calc(var(--np-control-button-size) * 0.82);
+  height: calc(var(--np-control-button-size) * 0.82);
   display: grid;
   place-items: center;
   border-radius: 999px;
@@ -805,7 +857,7 @@ braccato-lyrics[data-upgrading="true"] {
 
 .dock-search {
   width: 320px;
-  max-width: calc(100vw - 32px);
+  max-width: calc(100cqi - 32px);
   gap: 8px;
 }
 
@@ -962,9 +1014,9 @@ braccato-lyrics[data-upgrading="true"] {
   text-transform: uppercase;
 }
 
-@media (max-width: 560px) {
+@container app-content (max-width: 560px) {
   .dock-search {
-    width: min(320px, calc(100vw - 24px));
+    width: min(320px, calc(100cqi - 24px));
   }
 }
 
@@ -1218,7 +1270,7 @@ braccato-lyrics[data-upgrading="true"] {
   --blyrics-text-color: #fff;
 }
 
-@media (max-width: 900px) {
+@container app-content (max-width: 900px) {
   .lyrics-header {
     padding: 18px 20px 4px;
   }
