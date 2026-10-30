@@ -42,3 +42,26 @@ describe("secondary font size settings", () => {
     expect(reopened.lyrics.romanizationFontSizePx).toBe(14);
   });
 });
+
+describe("compact sidebar hover expansion setting", () => {
+  it("defaults on, independently from compact mode itself", () => {
+    expect(DEFAULT_SETTINGS.appearance.compactSidebar).toBe(false);
+    expect(DEFAULT_SETTINGS.appearance.compactSidebarHoverExpand).toBe(true);
+  });
+
+  it("migrates settings written before the toggle existed", () => {
+    const file = join(workDir, "legacy-appearance.json");
+    writeFileSync(file, JSON.stringify({ appearance: { compactSidebar: true } }), "utf8");
+    const settings = new SettingsStore(file).get();
+    expect(settings.appearance.compactSidebar).toBe(true);
+    expect(settings.appearance.compactSidebarHoverExpand).toBe(true);
+  });
+
+  it("persists an explicit off across a restart", () => {
+    const file = join(workDir, "hover-expand.json");
+    const first = new SettingsStore(file);
+    first.patch({ appearance: { compactSidebarHoverExpand: false } });
+    expect(JSON.parse(readFileSync(file, "utf8")).appearance.compactSidebarHoverExpand).toBe(false);
+    expect(new SettingsStore(file).get().appearance.compactSidebarHoverExpand).toBe(false);
+  });
+});

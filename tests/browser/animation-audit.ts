@@ -897,14 +897,37 @@ check("setting-collapses-motion", reducedSetting.flag === "true" && reducedSetti
 await toggleReduceMotion();
 await wait(300);
 
-// Compact sidebar hides the labels and changes the nav's width; the pill has to follow.
+// Compact sidebar: the explicit toggle must interpolate the column width (not swap it), labels
+// fade/collapse instead of popping, hover/focus expansion overlays without moving the content,
+// and the pill follows through all of it.
 const toggleCompact = () =>
   page.evaluate(() => {
     const label = [...document.querySelectorAll(".setting-row")].find(row => row.textContent?.includes("Compact sidebar"));
     (label?.querySelector('input[type="checkbox"]') as HTMLInputElement | null)?.click();
   });
-await toggleCompact();
-await wait(400);
+await page.mouse.move(900, 300);
+const compactWidthSamples = await page.evaluate(async () => {
+  const sidebar = document.querySelector(".sidebar")!;
+  const label = [...document.querySelectorAll(".setting-row")].find(row => row.textContent?.includes("Compact sidebar"));
+  (label?.querySelector('input[type="checkbox"]') as HTMLInputElement | null)?.click();
+  const samples: number[] = [];
+  const start = performance.now();
+  await new Promise<void>(done => {
+    const tick = () => {
+      samples.push(Math.round(sidebar.getBoundingClientRect().width));
+      if (performance.now() - start < 460) requestAnimationFrame(tick);
+      else done();
+    };
+    requestAnimationFrame(tick);
+  });
+  return samples;
+});
+const distinctCompactWidths = new Set(compactWidthSamples).size;
+check(
+  "compact-sidebar-width-animates",
+  distinctCompactWidths >= 4 && compactWidthSamples[0] > 200 && compactWidthSamples.at(-1) === 76,
+  `${distinctCompactWidths} distinct widths, ${compactWidthSamples[0]} -> ${compactWidthSamples.at(-1)}`
+);
 await navItem("Songs");
 await wait(340);
 const compactPill = await page.evaluate(() => {
@@ -912,7 +935,58 @@ const compactPill = await page.evaluate(() => {
   const active = document.querySelector(".nav .nav-item.active")!.getBoundingClientRect();
   return { deltaTop: Math.abs(pill.top - active.top), deltaHeight: Math.abs(pill.height - active.height), compact: document.documentElement.dataset.compactSidebar };
 });
+await page.mouse.move(900, 300);
+await wait(460);
 await shot("09-compact-sidebar");
+
+const sidebarProbe = () =>
+  page.evaluate(() => {
+    const sidebar = document.querySelector(".sidebar")!.getBoundingClientRect();
+    const main = document.querySelector(".app-main")!.getBoundingClientRect();
+    const label = document.querySelector(".nav .nav-item.active span")!;
+    const labelStyle = getComputedStyle(label);
+    const pill = document.querySelector(".nav-pill")!.getBoundingClientRect();
+    const active = document.querySelector(".nav .nav-item.active")!.getBoundingClientRect();
+    return {
+      sidebarWidth: Math.round(sidebar.width),
+      mainLeft: Math.round(main.left),
+      labelOpacity: labelStyle.opacity,
+      labelVisibility: labelStyle.visibility,
+      pillAligned: Math.abs(pill.top - active.top) < 1 && Math.abs(pill.height - active.height) < 1,
+    };
+  });
+await page.mouse.move(900, 300);
+await wait(460);
+const beforeHover = await sidebarProbe();
+await page.mouse.move(38, 300);
+await wait(560);
+await shot("09-compact-hover-expanded");
+const hoverState = await sidebarProbe();
+check(
+  "compact-hover-expands-overlay",
+  beforeHover.sidebarWidth === 76 &&
+    hoverState.sidebarWidth === 248 &&
+    hoverState.mainLeft === beforeHover.mainLeft &&
+    hoverState.labelOpacity === "1" &&
+    hoverState.labelVisibility === "visible" &&
+    hoverState.pillAligned,
+  JSON.stringify({ beforeHover, hoverState })
+);
+await page.mouse.move(900, 300);
+await wait(460);
+const afterHover = await sidebarProbe();
+check(
+  "compact-hover-collapses",
+  afterHover.sidebarWidth === 76 && afterHover.labelOpacity === "0" && afterHover.labelVisibility === "hidden",
+  JSON.stringify(afterHover)
+);
+await page.keyboard.press("Tab");
+await wait(560);
+const focusState = await sidebarProbe();
+check("compact-focus-expands-overlay", focusState.sidebarWidth === 248 && focusState.mainLeft === beforeHover.mainLeft, JSON.stringify(focusState));
+await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+await wait(460);
+
 await sidebarItem("Settings");
 await wait(320);
 await toggleCompact();

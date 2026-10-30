@@ -100,6 +100,7 @@ export function Sidebar() {
         className="brand"
         onClick={() => navigate({ name: "home" })}
         role="button"
+        aria-label="Cadence home"
         tabIndex={0}
         onKeyDown={event => {
           if (event.key !== "Enter" && event.key !== " ") return;
@@ -125,6 +126,7 @@ export function Sidebar() {
             className={`nav-item ${isActive(item.route) ? "active" : ""}`}
             onClick={() => navigate(item.route)}
             title={item.label}
+            aria-label={item.label}
           >
             {item.icon}
             <span>{item.label}</span>
@@ -164,6 +166,7 @@ export function Sidebar() {
           className={`nav-item ${route.name === "settings" ? "active" : ""}`}
           onClick={() => navigate({ name: "settings" })}
           title="Settings"
+          aria-label="Settings"
         >
           <Settings size={18} />
           <span>Settings</span>

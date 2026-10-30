@@ -22,6 +22,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     accent: "#ff3d71",
     reduceMotion: false,
     compactSidebar: false,
+    compactSidebarHoverExpand: true,
     blurArtwork: true,
     fontFamily: DEFAULT_FONT_ID,
   },

@@ -381,6 +381,8 @@ export interface AppearanceSettings {
   accent: string;
   reduceMotion: boolean;
   compactSidebar: boolean;
+  /** When the sidebar is compact, hovering (or keyboard-focusing) it temporarily expands it as an overlay. */
+  compactSidebarHoverExpand: boolean;
   blurArtwork: boolean;
   /** Font id from the shared font list; applied to the whole UI and the lyrics view. */
   fontFamily: string;

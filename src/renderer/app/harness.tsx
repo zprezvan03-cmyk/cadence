@@ -174,7 +174,7 @@ function harnessAppSettings(lyrics?: Partial<LyricsSettings>): AppSettings {
   return {
     version: 1,
     playback: { volume: 0.85, muted: false, shuffle: false, repeat: "off", playbackRate: 1, resumeOnLaunch: false },
-    appearance: { accent: "#ff3d71", reduceMotion: false, compactSidebar: false, blurArtwork: true, fontFamily: "inter" },
+    appearance: { accent: "#ff3d71", reduceMotion: false, compactSidebar: false, compactSidebarHoverExpand: true, blurArtwork: true, fontFamily: "inter" },
     lyrics: { ...defaultLyricsSettings, ...lyrics },
     shaders: { ...shaderSettings, enabled: false },
     advanced: { showLogs: false },

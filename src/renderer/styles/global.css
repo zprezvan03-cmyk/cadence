@@ -1,5 +1,13 @@
 /* Cadence shell styles. Written for Cadence. */
 
+/* Registered so the explicit compact/expanded toggle can interpolate the sidebar column instead
+   of swapping between two layout widths in one frame. */
+@property --sidebar-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 248px;
+}
+
 :root {
   color-scheme: dark;
   --bg: #08080b;
@@ -19,7 +27,9 @@
   --danger: #ff5d5d;
   --radius: 14px;
   --radius-sm: 9px;
-  --sidebar-width: 248px;
+  --sidebar-expanded-width: 248px;
+  --sidebar-compact-width: 76px;
+  --sidebar-width: var(--sidebar-expanded-width);
   --player-height: 92px;
   --topbar-height: 68px;
   --titlebar-height: 36px;
@@ -47,6 +57,28 @@
   --ease-in: cubic-bezier(0.55, 0.06, 0.68, 0.19);
   --ease-in-out: cubic-bezier(0.45, 0.05, 0.55, 0.95);
   --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+}
+
+/* Enabled after first paint by useBootstrap, so a restored compact sidebar does not animate on
+   launch. The root value itself flips instantly; each consumer interpolates it locally in
+   parallel (shell track, sidebar, title-bar segment) — transitioning the root property instead
+   made consumers chase its animated output and doubled the toggle duration. */
+:root[data-motion-ready="true"] .app-shell:not(.is-immersive) {
+  transition: grid-template-columns var(--dur-4) var(--ease-in-out);
+}
+
+:root[data-motion-ready="true"] .sidebar {
+  transition:
+    --sidebar-width var(--dur-4) var(--ease-in-out),
+    padding-inline var(--dur-4) var(--ease-in-out),
+    box-shadow var(--dur-2) var(--ease-out);
+}
+
+:root[data-motion-ready="true"] .title-bar-brand {
+  transition:
+    --sidebar-width var(--dur-4) var(--ease-in-out),
+    gap var(--dur-3) var(--ease-in-out),
+    padding-inline var(--dur-3) var(--ease-in-out);
 }
 
 * {
@@ -274,6 +306,10 @@ a {
 /* --------------------------------------------------------------- sidebar */
 
 .sidebar {
+  position: relative;
+  z-index: 30;
+  justify-self: start;
+  width: var(--sidebar-width);
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -282,6 +318,13 @@ a {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 40%), var(--bg-elevated);
   min-height: 0;
   overflow: hidden;
+  /* Width is structural, so it is the one sanctioned layout transition. After first paint the
+     motion-ready rule above adds a local --sidebar-width transition here — never `width` —
+     so hover expansion (a local override of that property, below) widens only this element as
+     an overlay while the shell columns, which read the root value, never move. */
+  transition:
+    padding-inline var(--dur-4) var(--ease-in-out),
+    box-shadow var(--dur-2) var(--ease-out);
   /* Opacity only: the chrome around the page fades back in when leaving fullscreen Now Playing,
      and a transform here would move the window layout during that fade. */
   animation: chrome-in var(--dur-2) var(--ease-out);
@@ -294,6 +337,9 @@ a {
   padding: 6px 8px 12px;
   border-radius: var(--radius-sm);
   cursor: pointer;
+  transition:
+    gap var(--dur-3) var(--ease-in-out),
+    padding-inline var(--dur-3) var(--ease-in-out);
 }
 
 .brand-mark {
@@ -311,6 +357,15 @@ a {
   display: flex;
   flex-direction: column;
   line-height: 1.2;
+  min-width: 0;
+  max-width: 180px;
+  overflow: hidden;
+  white-space: nowrap;
+  transition:
+    max-width var(--dur-3) var(--ease-in-out),
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out),
+    visibility var(--dur-2) var(--ease-out);
 }
 
 .brand-text strong {
@@ -375,9 +430,30 @@ a {
   border-radius: 10px;
   color: var(--text-dim);
   font-weight: 550;
-  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    gap var(--dur-3) var(--ease-in-out),
+    padding-inline var(--dur-3) var(--ease-in-out);
   text-align: left;
   width: 100%;
+}
+
+.nav-item > svg {
+  flex: 0 0 auto;
+}
+
+.nav-item span {
+  display: block;
+  min-width: 0;
+  max-width: 180px;
+  overflow: hidden;
+  white-space: nowrap;
+  transition:
+    max-width var(--dur-3) var(--ease-in-out),
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out),
+    visibility var(--dur-2) var(--ease-out);
 }
 
 .nav-item:hover {
@@ -414,12 +490,27 @@ a {
   color: var(--text-faint);
 }
 
+.sidebar-heading > span {
+  min-width: 0;
+  max-width: 140px;
+  overflow: hidden;
+  white-space: nowrap;
+  transition:
+    max-width var(--dur-3) var(--ease-in-out),
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out),
+    visibility var(--dur-2) var(--ease-out);
+}
+
 .sidebar-playlists {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 1px;
   padding-bottom: 10px;
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    visibility var(--dur-2) var(--ease-out);
 }
 
 .sidebar-link {
@@ -463,11 +554,19 @@ a {
   font-size: 11.5px;
   color: var(--text-faint);
   padding: 0 12px 4px;
+  white-space: nowrap;
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    visibility var(--dur-2) var(--ease-out);
 }
 
-/* Compact mode keeps every destination and the playlist-create action available as icon buttons. */
+/* Compact mode keeps every destination and the playlist-create action available as icon buttons.
+   Labels no longer pop out with `display: none`: they collapse horizontally and fade as the
+   registered --sidebar-width interpolates, so icons glide to centre instead of jumping. The
+   vertical rhythm is preserved (playlists/footer keep their space) to avoid a sideways-plus-
+   vertical double jump during the toggle. */
 [data-compact-sidebar="true"] {
-  --sidebar-width: 76px;
+  --sidebar-width: var(--sidebar-compact-width);
 }
 
 [data-compact-sidebar="true"] .sidebar {
@@ -482,24 +581,89 @@ a {
 }
 
 [data-compact-sidebar="true"] .brand {
+  gap: 0;
+  padding-inline: 0;
+}
+
+[data-compact-sidebar="true"] .nav-item {
+  gap: 0;
+  padding-inline: 0;
+}
+
+[data-compact-sidebar="true"] .title-bar-brand {
+  gap: 0;
   padding-inline: 0;
 }
 
 [data-compact-sidebar="true"] .brand-text,
 [data-compact-sidebar="true"] .nav-item span,
-[data-compact-sidebar="true"] .sidebar-stats,
 [data-compact-sidebar="true"] .sidebar-heading > span,
-[data-compact-sidebar="true"] .sidebar-playlists,
 [data-compact-sidebar="true"] .title-bar-text {
-  display: none;
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(-4px);
+  visibility: hidden;
 }
 
-[data-compact-sidebar="true"] .nav-item {
-  padding-inline: 0;
+[data-compact-sidebar="true"] .sidebar-stats,
+[data-compact-sidebar="true"] .sidebar-playlists {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
-[data-compact-sidebar="true"] .title-bar-brand {
-  padding-inline: 0;
+/* Hover expansion (separate setting, default on) is an overlay, not a layout mode: the shell
+   column stays 76px and the content never reflows while the sidebar itself widens above it.
+   The dur-0 delay is hover intent — a pointer merely crossing the rail does not expand it,
+   while collapse on leave is immediate. Keyboard focus expands it the same way. */
+[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) {
+  --sidebar-width: var(--sidebar-expanded-width);
+  padding-inline: 14px;
+  box-shadow: 24px 0 60px rgba(0, 0, 0, 0.38);
+  transition-delay: var(--dur-0);
+}
+
+[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .brand {
+  justify-content: flex-start;
+  gap: 11px;
+  padding-inline: 8px;
+  transition-delay: var(--dur-0);
+}
+
+[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .nav-item {
+  justify-content: flex-start;
+  gap: 12px;
+  padding-inline: 12px;
+  transition-delay: 0s, 0s, var(--dur-0), var(--dur-0);
+}
+
+[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .sidebar-heading {
+  justify-content: space-between;
+}
+
+[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .brand-text,
+[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .nav-item span {
+  max-width: 180px;
+  opacity: 1;
+  transform: none;
+  visibility: visible;
+  transition-delay: var(--dur-0);
+}
+
+[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .sidebar-heading > span {
+  max-width: 140px;
+  opacity: 1;
+  transform: none;
+  visibility: visible;
+  transition-delay: var(--dur-0);
+}
+
+[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .sidebar-stats,
+[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .sidebar-playlists {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: var(--dur-0);
 }
 
 /* -------------------------------------------------------------- title bar */
@@ -530,6 +694,9 @@ a {
   background: var(--bg-elevated);
   color: var(--text-faint);
   overflow: hidden;
+  transition:
+    gap var(--dur-3) var(--ease-in-out),
+    padding-inline var(--dur-3) var(--ease-in-out);
 }
 
 .title-bar-mark {
@@ -548,6 +715,14 @@ a {
   font-weight: 600;
   letter-spacing: 0.01em;
   white-space: nowrap;
+  min-width: 0;
+  max-width: 140px;
+  overflow: hidden;
+  transition:
+    max-width var(--dur-3) var(--ease-in-out),
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out),
+    visibility var(--dur-2) var(--ease-out);
 }
 
 .title-bar-drag {
@@ -1519,6 +1694,7 @@ kbd {
   font-family: inherit;
 }
 
+[data-reduce-motion="true"],
 [data-reduce-motion="true"] *,
 [data-reduce-motion="true"] *::before,
 [data-reduce-motion="true"] *::after {

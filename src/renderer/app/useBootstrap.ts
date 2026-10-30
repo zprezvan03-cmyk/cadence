@@ -528,8 +528,16 @@ export function useBootstrap(): void {
       root.style.setProperty("--accent", settings.appearance.accent);
       root.dataset.reduceMotion = settings.appearance.reduceMotion ? "true" : "false";
       root.dataset.compactSidebar = settings.appearance.compactSidebar ? "true" : "false";
+      root.dataset.compactSidebarHoverExpand = settings.appearance.compactSidebarHoverExpand ? "true" : "false";
       root.dataset.blurArtwork = settings.appearance.blurArtwork ? "true" : "false";
       applyFontFamily(settings.appearance.fontFamily, root);
+      // Enable the sidebar-width transition only after the restored layout has painted, so a
+      // saved compact sidebar starts compact instead of visibly shrinking on every launch.
+      if (root.dataset.motionReady !== "true") {
+        requestAnimationFrame(() => {
+          root.dataset.motionReady = "true";
+        });
+      }
     };
     // Settings that loaded before this effect ran (a remount, StrictMode) still reach the root.
     apply(useSettings.getState().settings);

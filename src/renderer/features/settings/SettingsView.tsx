@@ -244,6 +244,7 @@ export function SettingsView() {
             </p>
             <Toggle label="Reduce motion" checked={settings.appearance.reduceMotion} onChange={value => void patchSettings({ appearance: { reduceMotion: value } })} />
             <Toggle label="Compact sidebar" checked={settings.appearance.compactSidebar} onChange={value => void patchSettings({ appearance: { compactSidebar: value } })} />
+            <Toggle label="Expand compact sidebar on hover" checked={settings.appearance.compactSidebarHoverExpand} onChange={value => void patchSettings({ appearance: { compactSidebarHoverExpand: value } })} />
             <Toggle label="Blur artwork behind the player" checked={settings.appearance.blurArtwork} onChange={value => void patchSettings({ appearance: { blurArtwork: value } })} />
             <Toggle label="Verbose shader logs" checked={settings.advanced.showLogs} onChange={value => void patchSettings({ advanced: { showLogs: value } })} />
             <div className="setting-row">
