@@ -1,0 +1,54 @@
+name: Build Windows exe
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "Stage number used in the output filename (Cadence-<stage>.exe)"
+        required: true
+        default: "2"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Tauri release binary (no installer bundles)
+        run: npx tauri build --no-bundle
+
+      - name: Stage named exe
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path src-tauri/target/release -Filter *.exe |
+            Where-Object { $_.Name -notlike "*setup*" } |
+            Sort-Object Length -Descending |
+            Select-Object -First 1
+          if (-not $exe) { throw "No release .exe found under src-tauri/target/release" }
+          New-Item -ItemType Directory -Force -Path stage-build | Out-Null
+          $target = "stage-build/Cadence-${{ inputs.stage }}.exe"
+          Copy-Item $exe.FullName $target
+          Write-Host "Staged $target from $($exe.FullName) ($($exe.Length) bytes)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Cadence-${{ inputs.stage }}
+          path: stage-build/Cadence-${{ inputs.stage }}.exe
+          if-no-files-found: error
