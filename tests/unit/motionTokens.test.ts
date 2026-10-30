@@ -77,4 +77,24 @@ describe("motion tokens", () => {
     }
     expect(offenders).toEqual([]);
   });
+
+  it("gives every dismissed surface a coordinated fast exit", () => {
+    // Stage 3 presence contract: the shared exit keyframes exist and every
+    // `.is-exiting` rule runs inside the `--dur-1` (120ms) exit budget with input
+    // released immediately, so no surface can linger or block the next click.
+    for (const keyframes of ["fade-out", "modal-out", "pop-out", "slide-out", "toast-out"]) {
+      expect(globalCss).toContain(`@keyframes ${keyframes}`);
+    }
+    const viewsCss = readFileSync(new URL("../../src/renderer/styles/views.css", import.meta.url), "utf8");
+    const lyricsCss = readFileSync(new URL("../../src/renderer/styles/lyrics.css", import.meta.url), "utf8");
+    const exitingRules = [globalCss, viewsCss, lyricsCss].flatMap(css =>
+      [...css.matchAll(/\.is-exiting[^{]*\{([^}]+)\}/g)].map(match => match[1])
+    );
+    expect(exitingRules.length).toBeGreaterThanOrEqual(5);
+    for (const rule of exitingRules) {
+      if (rule.includes("animation:")) expect(rule).toContain("var(--dur-1)");
+    }
+    expect(globalCss).toMatch(/\.modal-backdrop\.is-exiting\s*\{[^}]*pointer-events: none/);
+    expect(globalCss).toMatch(/\.context-menu\.is-exiting\s*\{[^}]*pointer-events: none/);
+  });
 });

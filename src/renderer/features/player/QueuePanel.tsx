@@ -5,6 +5,7 @@
 import { useEffect } from "react";
 import { ListMusic, Trash2, X } from "lucide-react";
 import { useQueueTracks } from "../../app/hooks";
+import { usePresence } from "../../app/usePresence";
 import { usePlayer } from "../../state/playerStore";
 import { useUi } from "../../state/uiStore";
 import { Artwork } from "../../components/Artwork";
@@ -20,9 +21,12 @@ export function QueuePanel() {
   const jumpTo = usePlayer(state => state.jumpTo);
   const removeFromQueue = usePlayer(state => state.removeFromQueue);
   const clearQueue = usePlayer(state => state.clearQueue);
+  // Closing flips `open` immediately; presence keeps the drawer mounted for its fast
+  // slide-out (and it keeps owning Escape until it is actually gone).
+  const presence = usePresence(open);
 
   useEffect(() => {
-    if (!open) return;
+    if (!presence.mounted) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         // This overlay owns Escape. Do not let the immersive-view shortcut also handle the same key.
@@ -33,16 +37,16 @@ export function QueuePanel() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, toggleQueue]);
+  }, [presence.mounted, toggleQueue]);
 
-  if (!open) return null;
+  if (!presence.mounted) return null;
 
   const ordered = order
     .map((queueIndex, position) => ({ track: tracks[queueIndex], position }))
     .filter(entry => entry.track);
 
   return (
-    <aside className="queue-panel" data-testid="queue-panel">
+    <aside className={`queue-panel ${presence.phaseClass}`} data-presence={presence.phase} data-testid="queue-panel">
       <header className="queue-header">
         <div>
           <h2>Queue</h2>

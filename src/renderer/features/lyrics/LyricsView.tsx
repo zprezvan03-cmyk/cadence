@@ -19,6 +19,7 @@ import { useControlsHover } from "./useControlsHover";
 import { KawarpBackground } from "../shaders/KawarpBackground";
 import { useLyrics } from "./useLyrics";
 import { buildThemeCss } from "../../upstream/better-lyrics/themes";
+import { useLastNonNull, usePresence } from "../../app/usePresence";
 
 export interface LyricsViewProps {
   track: Track | null;
@@ -32,6 +33,8 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   const settings = useSettings(state => state.settings);
   const patchSettings = useSettings(state => state.patch);
   const [toast, setToast] = useState<string | null>(null);
+  const toastPresence = usePresence(toast !== null);
+  const renderedToast = useLastNonNull(toast);
   // Local files resolve almost instantly; only a wait the listener can notice earns a loading card.
   const [slowLoading, setSlowLoading] = useState(false);
   const [syncLabel, setSyncLabel] = useState("No lyrics");
@@ -340,9 +343,9 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
       </div>
       )}
 
-      {toast ? (
-        <div className="toast" role="status" data-testid="toast">
-          {toast}
+      {toastPresence.mounted && renderedToast ? (
+        <div className={`toast ${toastPresence.phaseClass}`} data-presence={toastPresence.phase} role="status" data-testid="toast">
+          {renderedToast}
         </div>
       ) : null}
     </div>

@@ -14,6 +14,7 @@ import { Sidebar } from "./app/Sidebar";
 import { TopBar } from "./app/TopBar";
 import { useWindowChrome, WindowTitleBar } from "./app/WindowTitleBar";
 import { useBootstrap } from "./app/useBootstrap";
+import { useLastNonNull, usePresence } from "./app/usePresence";
 import { DecodeTesterView } from "./features/decode-tester/DecodeTesterView";
 import { AlbumView, ArtistView, PlaylistView, SearchView } from "./features/library/DetailViews";
 import { HomeView } from "./features/library/HomeView";
@@ -75,10 +76,14 @@ function RouteContent() {
  */
 function AppToast() {
   const toast = useUi(state => state.toast);
-  if (!toast) return null;
+  // The store clears the message on its own lifetime timer; presence adds only the fast
+  // fade-out, rendering the last message so the toast never blanks before it leaves.
+  const presence = usePresence(Boolean(toast));
+  const renderedToast = useLastNonNull(toast);
+  if (!presence.mounted || !renderedToast) return null;
   return (
-    <div className="toast" role="status" data-testid="app-toast">
-      {toast}
+    <div className={`toast ${presence.phaseClass}`} data-presence={presence.phase} role="status" data-testid="app-toast">
+      {renderedToast}
     </div>
   );
 }

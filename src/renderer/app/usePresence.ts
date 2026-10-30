@@ -131,3 +131,18 @@ export function usePresence(visible: boolean, options: UsePresenceOptions = {}):
     phaseClass: `is-${phase}`,
   };
 }
+
+/**
+ * The most recent non-null value, for surfaces whose content is driven by a nullable state
+ * (a context-menu target, a toast message, a picker selection). `usePresence` keeps the
+ * surface mounted through its exit, but the driving state has already flipped to null by
+ * then; rendering `value ?? lastValue` lets the exiting frame show the same content it had
+ * while open instead of blanking out for the final 120ms.
+ */
+export function useLastNonNull<T>(value: T | null | undefined): T | null {
+  const lastRef = useRef<T | null>(value ?? null);
+  useEffect(() => {
+    if (value !== null && value !== undefined) lastRef.current = value;
+  }, [value]);
+  return value ?? lastRef.current;
+}

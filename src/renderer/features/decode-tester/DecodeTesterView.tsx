@@ -23,6 +23,7 @@ import { DECODE_PROBLEM_KIND_LABELS } from "../../audio/decodeProbe";
 import { bridge } from "../../state/bridge";
 import { useDecodeTester, visibleDecodeProblems } from "../../state/decodeTesterStore";
 import { useLibrary } from "../../state/libraryStore";
+import { useLastNonNull, usePresence } from "../../app/usePresence";
 
 const EMPTY_TRACKS: readonly Track[] = [];
 
@@ -116,26 +117,34 @@ function ConfirmDeleteDialog({
   onCancel,
   onConfirm,
 }: {
-  paths: string[];
+  paths: string[] | null;
   problems: DecodeProblem[];
   deleting: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  // Cancel/confirm clear the pending paths instantly (deletion itself is never delayed);
+  // presence only keeps the dialog mounted for its fast exit, showing the last file list.
+  const openPaths = paths && paths.length > 0 ? paths : null;
+  const presence = usePresence(openPaths !== null);
+  const renderedPaths = useLastNonNull(openPaths);
   const byPath = useMemo(() => new Map(problems.map(problem => [problem.path, problem])), [problems]);
   const confirmRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
+    if (!openPaths) return;
     confirmRef.current?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onCancel();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel]);
+  }, [openPaths, onCancel]);
+
+  if (!presence.mounted || !renderedPaths) return null;
 
   return (
-    <div className="modal-backdrop" onClick={onCancel}>
+    <div className={`modal-backdrop ${presence.phaseClass}`} data-presence={presence.phase} onClick={onCancel}>
       <div
         className="modal decode-confirm"
         role="alertdialog"
@@ -146,7 +155,7 @@ function ConfirmDeleteDialog({
       >
         <header className="modal-header">
           <h2 id="decode-confirm-title">
-            Delete {paths.length} file{paths.length === 1 ? "" : "s"}?
+            Delete {renderedPaths.length} file{renderedPaths.length === 1 ? "" : "s"}?
           </h2>
           <button type="button" className="icon-button" onClick={onCancel} aria-label="Cancel deletion">
             <X size={16} />
@@ -157,7 +166,7 @@ function ConfirmDeleteDialog({
           your Cadence library. This cannot be undone.
         </p>
         <ul className="decode-confirm-list" data-testid="decode-confirm-list">
-          {paths.map(path => (
+          {renderedPaths.map(path => (
             <li key={path}>
               <strong>{byPath.get(path)?.fileName ?? path}</strong>
               <span title={path}>{path}</span>
@@ -176,7 +185,7 @@ function ConfirmDeleteDialog({
             data-testid="decode-confirm-delete"
             disabled={deleting}
           >
-            <Trash2 size={15} /> {deleting ? "Deleting…" : `Delete ${paths.length} file${paths.length === 1 ? "" : "s"}`}
+            <Trash2 size={15} /> {deleting ? "Deleting…" : `Delete ${renderedPaths.length} file${renderedPaths.length === 1 ? "" : "s"}`}
           </button>
         </footer>
       </div>
@@ -485,15 +494,13 @@ export function DecodeTesterView() {
         </div>
       ) : null}
 
-      {confirmPaths && confirmPaths.length > 0 ? (
-        <ConfirmDeleteDialog
-          paths={confirmPaths}
-          problems={problems}
-          deleting={deleting}
-          onCancel={() => setConfirmPaths(null)}
-          onConfirm={confirmDelete}
-        />
-      ) : null}
+      <ConfirmDeleteDialog
+        paths={confirmPaths}
+        problems={problems}
+        deleting={deleting}
+        onCancel={() => setConfirmPaths(null)}
+        onConfirm={confirmDelete}
+      />
     </div>
   );
 }

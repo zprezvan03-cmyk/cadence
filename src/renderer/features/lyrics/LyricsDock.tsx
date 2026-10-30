@@ -31,6 +31,7 @@ import { formatDurationSeconds, resolveSearchFields, type ManualSearchInput } fr
 import type { SearchDraft } from "../../state/lyricsStore";
 import type { ManualSearchState, YouTubeResolveState } from "./useLyrics";
 import { TRANSLATION_LANGUAGES } from "./translationLanguages";
+import { usePresence } from "../../app/usePresence";
 
 interface LyricsDockProps {
   settings: LyricsSettings;
@@ -98,6 +99,12 @@ export function LyricsDock({
 }: LyricsDockProps) {
   const [panel, setPanel] = useState<"none" | "sources" | "appearance" | "search">("none");
   const [languageOpen, setLanguageOpen] = useState(false);
+  // Popovers close the instant their state flips; presence only keeps each mounted for
+  // its fast pop-out. Switching panels crossfades for one 120ms beat instead of cutting.
+  const sourcesPresence = usePresence(panel === "sources");
+  const searchPresence = usePresence(panel === "search");
+  const appearancePresence = usePresence(panel === "appearance");
+  const languagesPresence = usePresence(languageOpen);
   const { title: searchTitle, artist: searchArtist, album: searchAlbum, youtubeUrl } = searchDraft;
 
   useEffect(() => {
@@ -201,8 +208,8 @@ export function LyricsDock({
         </button>
       </div>
 
-      {panel === "sources" ? (
-        <div className="dock-popover dock-sources">
+      {sourcesPresence.mounted ? (
+        <div className={`dock-popover dock-sources ${sourcesPresence.phaseClass}`} data-presence={sourcesPresence.phase}>
           <div className="popover-title">Lyrics source</div>
           {candidates.length === 0 ? <div className="muted">No lyrics found for this track.</div> : null}
           {candidates.map(candidate => (
@@ -243,8 +250,8 @@ export function LyricsDock({
         </div>
       ) : null}
 
-      {panel === "search" ? (
-        <div className="dock-popover dock-search" data-testid="manual-search">
+      {searchPresence.mounted ? (
+        <div className={`dock-popover dock-search ${searchPresence.phaseClass}`} data-presence={searchPresence.phase} data-testid="manual-search">
           <div className="search-panel-head">
             <button type="button" className="dock-icon" title="Back to sources" onClick={() => setPanel("sources")}>
               <ArrowLeft size={15} />
@@ -446,8 +453,8 @@ export function LyricsDock({
         </div>
       ) : null}
 
-      {panel === "appearance" ? (
-        <div className="dock-popover dock-appearance">
+      {appearancePresence.mounted ? (
+        <div className={`dock-popover dock-appearance ${appearancePresence.phaseClass}`} data-presence={appearancePresence.phase}>
           <label className="slider-row">
             <span>Font size</span>
             <input
@@ -553,8 +560,8 @@ export function LyricsDock({
         </div>
       ) : null}
 
-      {languageOpen ? (
-        <div className="dock-popover dock-languages">
+      {languagesPresence.mounted ? (
+        <div className={`dock-popover dock-languages ${languagesPresence.phaseClass}`} data-presence={languagesPresence.phase}>
           <div className="popover-title">Translate to</div>
           <button
             type="button"

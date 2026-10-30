@@ -311,6 +311,24 @@ const animationsFor = (selector: string) =>
     }));
   }, selector);
 
+/** Wait until a presence surface reports its exiting phase, then snapshot its animations. */
+const waitForExit = async (selector: string) => {
+  await page
+    .waitForFunction(
+      (sel: string) => document.querySelector(sel)?.getAttribute("data-presence") === "exiting",
+      { timeout: 2000 },
+      selector
+    )
+    .catch(() => null);
+  return animationsFor(selector);
+};
+
+const waitForGone = (selector: string) =>
+  page
+    .waitForFunction((sel: string) => !document.querySelector(sel), { timeout: 2000 }, selector)
+    .then(() => true)
+    .catch(() => false);
+
 /** Hold the running animations at `at` ms so a screenshot captures a true intermediate frame. */
 const freezeAt = (at = 110) =>
   page.evaluate((time: number) => {
@@ -698,8 +716,13 @@ await wait(260);
 await shot("03-queue-settled");
 check("queue-mid-frame-differs", heldQueue.count > 0 && frameDelta("03-queue-mid", "03-queue-settled") > 0.002, `${heldQueue.count} held`);
 await page.keyboard.press("q");
-await wait(200);
-check("queue-closes-instantly", !(await page.$('[data-testid="queue-panel"]')), "no panel after toggle");
+const queueExit = await waitForExit('[data-testid="queue-panel"]');
+check(
+  "queue-slides-out",
+  Boolean(queueExit?.some(animation => animation.name === "slide-out" && Number(animation.duration) === 120)),
+  JSON.stringify(queueExit)
+);
+check("queue-dismisses-after-exit", await waitForGone('[data-testid="queue-panel"]'), "panel unmounted after its 120ms exit");
 
 // A quick double toggle must not leave a panel behind or a transition stuck.
 await page.keyboard.press("q");
@@ -716,8 +739,13 @@ await page.waitForSelector(".context-menu", { timeout: 5000 });
 const menuAnimation = await animationsFor(".context-menu");
 check("context-menu-pops-in", Boolean(menuAnimation?.some(animation => animation.name === "pop-in" && Number(animation.duration) === 180)), JSON.stringify(menuAnimation));
 await page.keyboard.press("Escape");
-await wait(150);
-check("context-menu-dismisses-inside-150ms", !(await page.$(".context-menu")), "menu gone");
+const menuExit = await waitForExit(".context-menu");
+check(
+  "context-menu-pops-out",
+  Boolean(menuExit?.some(animation => animation.name === "pop-out" && Number(animation.duration) === 120)),
+  JSON.stringify(menuExit)
+);
+check("context-menu-dismisses-after-exit", await waitForGone(".context-menu"), "menu unmounted after its 120ms exit");
 
 await page.evaluate(() => {
   const row = document.querySelector(".track-row") as HTMLElement;
@@ -737,8 +765,28 @@ await wait(260);
 await shot("04-modal-settled");
 check("modal-mid-frame-differs", heldModal.count > 0 && frameDelta("04-modal-mid", "04-modal-settled") > 0.0005, `${heldModal.count} held`);
 await page.keyboard.press("Escape");
-await wait(120);
-check("modal-dismisses-inside-120ms", !(await page.$(".modal-backdrop")), "backdrop gone");
+const backdropExit = await waitForExit(".modal-backdrop");
+const modalExit = await animationsFor(".modal");
+check(
+  "modal-backdrop-fades-out",
+  Boolean(backdropExit?.some(animation => animation.name === "fade-out" && Number(animation.duration) === 120)),
+  JSON.stringify(backdropExit)
+);
+check(
+  "modal-scales-out",
+  Boolean(modalExit?.some(animation => animation.name === "modal-out" && Number(animation.duration) === 120)),
+  JSON.stringify(modalExit)
+);
+await freezeAt(60);
+await shot("04-modal-exit-mid");
+await resumeAll();
+check("modal-dismisses-after-exit", await waitForGone(".modal-backdrop"), "backdrop unmounted after its 120ms exit");
+await shot("04-modal-exit-settled");
+check(
+  "modal-exit-mid-frame-differs",
+  frameDelta("04-modal-exit-mid", "04-modal-exit-settled") > 0.0005,
+  `${(frameDelta("04-modal-exit-mid", "04-modal-exit-settled") * 100).toFixed(2)}% changed`
+);
 
 /* --------------------------------------------------------- 5. fullscreen */
 
@@ -803,6 +851,26 @@ const controlsBack = await page
   .catch(() => page.evaluate(() => getComputedStyle(document.querySelector(".fs-controls")!).opacity));
 check("fs-controls-return", controlsBack === "1", `opacity ${controlsBack}`);
 
+// Dock popovers share the presence language: pop-in on open, fast pop-out on close.
+await page.evaluate(() => document.querySelector<HTMLButtonElement>('button[title="Lyrics source"]')?.click());
+await page.waitForSelector(".dock-popover.dock-sources", { timeout: 5000 });
+const dockIn = await animationsFor(".dock-popover.dock-sources");
+check(
+  "dock-popover-pops-in",
+  Boolean(dockIn?.some(animation => animation.name === "pop-in" && Number(animation.duration) === 180)),
+  JSON.stringify(dockIn)
+);
+await wait(240);
+await shot("05-dock-popover");
+await page.evaluate(() => document.querySelector<HTMLButtonElement>('button[title="Lyrics source"]')?.click());
+const dockOut = await waitForExit(".dock-popover.dock-sources");
+check(
+  "dock-popover-pops-out",
+  Boolean(dockOut?.some(animation => animation.name === "pop-out" && Number(animation.duration) === 120)),
+  JSON.stringify(dockOut)
+);
+check("dock-popover-dismisses-after-exit", await waitForGone(".dock-popover.dock-sources"), "popover unmounted after its 120ms exit");
+
 await page.keyboard.press("Escape");
 await wait(120);
 const exitState = await page.evaluate(() => ({
@@ -821,13 +889,41 @@ await sidebarItem("Settings");
 await wait(300);
 await clickText(".settings-tabs button", "About");
 await wait(250);
+// Polling can miss a 120ms exit window (and a screenshot can outlast the toast's lifetime in
+// this harness), so record the exit with an in-page observer installed before it appears.
+await page.evaluate(() => {
+  const host = window as unknown as { __toastExit: unknown; __toastLog: string[] };
+  host.__toastExit = null;
+  host.__toastLog = [];
+  const observer = new MutationObserver(() => {
+    const toast = document.querySelector(".toast");
+    if (toast) host.__toastLog.push(`${toast.getAttribute("data-testid")}:${toast.getAttribute("data-presence")}`);
+    if (toast?.getAttribute("data-presence") === "exiting") {
+      host.__toastExit = toast.getAnimations().map(animation => ({
+        name: (animation as CSSAnimation).animationName ?? "",
+        duration: animation.effect?.getTiming().duration ?? null,
+      }));
+      observer.disconnect();
+    }
+  });
+  observer.observe(document.body, { subtree: true, attributes: true, childList: true, attributeFilter: ["data-presence"] });
+});
 await clickText("button", "Reset all");
 await page.waitForSelector(".toast", { timeout: 5000 });
 const toastState = await animationsFor(".toast");
 check("toast-slides-in", Boolean(toastState?.some(animation => animation.name === "toast-in")), JSON.stringify(toastState));
 await shot("06-toast");
-await page.waitForFunction(() => !document.querySelector(".toast"), { timeout: 6000 });
-check("toast-dismisses-on-its-own", !(await page.$(".toast")), "toast removed after its lifetime");
+const toastExit = await page
+  .waitForFunction(() => (window as unknown as { __toastExit: unknown }).__toastExit, { timeout: 6000 })
+  .then(handle => handle?.jsonValue() as Promise<{ name: string; duration: number | string | null }[] | null>)
+  .catch(() => null);
+const toastLog = await page.evaluate(() => (window as unknown as { __toastLog: string[] }).__toastLog.slice(-12).join(" ; "));
+check(
+  "toast-fades-out",
+  Boolean(toastExit?.some(animation => animation.name === "toast-out" && Number(animation.duration) === 120)),
+  `${JSON.stringify(toastExit)} | ${toastLog}`
+);
+check("toast-dismisses-on-its-own", await waitForGone(".toast"), "toast removed after its lifetime + exit");
 
 /* --------------------------------------------------- 7. rapid interaction */
 

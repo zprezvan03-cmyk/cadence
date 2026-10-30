@@ -1564,14 +1564,15 @@ check(
   JSON.stringify(leftState)
 );
 
-// The fade is opacity and visibility only, 250 ms: no transform, scale or layout transition.
+// The fade is opacity and visibility only, 240 ms (`--dur-3` since the Stage 1 token
+// normalization): no transform, scale or layout transition.
 const fade = await page.evaluate(() => {
   const style = getComputedStyle(document.querySelector('[data-testid="fullscreen-controls"]'));
   return { properties: style.transitionProperty, durations: style.transitionDuration };
 });
 check(
   "hover-fade-is-opacity-only",
-  fade.properties === "opacity, visibility" && fade.durations === "0.25s, 0.25s",
+  fade.properties === "opacity, visibility" && fade.durations === "0.24s, 0.24s",
   JSON.stringify(fade)
 );
 

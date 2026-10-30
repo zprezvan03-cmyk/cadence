@@ -766,6 +766,12 @@ braccato-lyrics {
   animation: pop-in var(--dur-2) var(--ease-out);
 }
 
+/* Presence exit (see `app/usePresence.ts`): same fast pop-out as the context menu. */
+.dock-popover.is-exiting {
+  animation: pop-out var(--dur-1) var(--ease-in) forwards;
+  pointer-events: none;
+}
+
 .dock-languages {
   left: 0;
   right: auto;

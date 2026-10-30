@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Loader2, Pause, Play, RotateCcw, X } from "lucide-react";
 import { useFetchAll } from "../../state/fetchAllStore";
+import { usePresence } from "../../app/usePresence";
 
 const COMPLETED_LINGER_MS = 4000;
 
@@ -20,6 +21,7 @@ export function FetchAllIndicator() {
   const [open, setOpen] = useState(false);
   const [lingerDone, setLingerDone] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const panelPresence = usePresence(open);
 
   useEffect(() => {
     init();
@@ -76,13 +78,19 @@ export function FetchAllIndicator() {
         </span>
         {state !== "completed" ? (
           <span className="fetch-indicator-bar" aria-hidden="true">
-            <span style={{ width: `${percent}%` }} />
+            <span style={{ transform: `scaleX(${percent / 100})` }} />
           </span>
         ) : null}
       </button>
 
-      {open ? (
-        <div className="fetch-panel" data-testid="fetch-all-panel" role="dialog" aria-label="Fetch All Lyrics">
+      {panelPresence.mounted ? (
+        <div
+          className={`fetch-panel ${panelPresence.phaseClass}`}
+          data-presence={panelPresence.phase}
+          data-testid="fetch-all-panel"
+          role="dialog"
+          aria-label="Fetch All Lyrics"
+        >
           <div className="fetch-panel-head">
             <strong>✨ Fetch All Lyrics</strong>
             <button type="button" className="icon-button" aria-label="Close" onClick={() => setOpen(false)}>
@@ -94,7 +102,7 @@ export function FetchAllIndicator() {
               {processed} of {total} tracks · {percent}%
             </span>
             <span className="fetch-panel-bar" aria-hidden="true">
-              <span style={{ width: `${percent}%` }} />
+              <span style={{ transform: `scaleX(${percent / 100})` }} />
             </span>
           </div>
           <dl className="fetch-panel-counts">
@@ -144,7 +152,15 @@ export function FetchAllIndicator() {
               </button>
             ) : null}
             {running || paused ? (
-              <button type="button" className="danger" data-testid="fetch-cancel" onClick={() => void cancel()}>
+              <button
+                type="button"
+                className="danger"
+                data-testid="fetch-cancel"
+                onClick={() => {
+                  void cancel();
+                  setOpen(false);
+                }}
+              >
                 <X size={14} /> Cancel
               </button>
             ) : null}

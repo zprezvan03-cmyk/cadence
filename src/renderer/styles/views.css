@@ -1705,6 +1705,11 @@
   border-color: var(--accent);
 }
 
+/* One restrained spring pop when the spinner becomes the completion check. */
+.fetch-indicator.is-complete > svg {
+  animation: icon-in var(--dur-2) var(--ease-spring);
+}
+
 .fetch-indicator-bar {
   display: inline-block;
   width: 44px;
@@ -1717,9 +1722,11 @@
 .fetch-indicator-bar > span {
   display: block;
   height: 100%;
+  width: 100%;
   background: var(--accent);
   border-radius: 999px;
-  transition: width var(--dur-2) var(--ease-out);
+  transform-origin: left center;
+  transition: transform var(--dur-2) var(--ease-out);
 }
 
 .fetch-panel {
@@ -1736,6 +1743,15 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  /* Opens from the top-bar indicator it is anchored to: subtle scale + fade,
+     and the matching fast pop-out while presence exits. */
+  transform-origin: top right;
+  animation: pop-in var(--dur-2) var(--ease-out);
+}
+
+.fetch-panel.is-exiting {
+  animation: pop-out var(--dur-1) var(--ease-in) forwards;
+  pointer-events: none;
 }
 
 .fetch-panel-head {
@@ -1764,8 +1780,10 @@
 .fetch-panel-bar > span {
   display: block;
   height: 100%;
+  width: 100%;
   background: var(--accent);
-  transition: width var(--dur-2) var(--ease-out);
+  transform-origin: left center;
+  transition: transform var(--dur-2) var(--ease-out);
 }
 
 .fetch-panel-counts {

@@ -1407,6 +1407,22 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   }
 }
 
+.queue-panel.is-exiting {
+  animation: slide-out var(--dur-1) var(--ease-in) forwards;
+  pointer-events: none;
+}
+
+@keyframes slide-out {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+
 .queue-header {
   display: flex;
   align-items: center;
@@ -1486,6 +1502,15 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   }
 }
 
+@keyframes fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 /* ----------------------------------------------------------------- modal */
 
 .modal-backdrop {
@@ -1520,6 +1545,29 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+/* Presence exits (see `app/usePresence.ts`): every dismissed surface leaves through the same
+   fast `--dur-1` fade/settle instead of a hard cut, and stops intercepting input immediately
+   so the exit can never block the click that follows the close. */
+.modal-backdrop.is-exiting {
+  animation: fade-out var(--dur-1) var(--ease-in) forwards;
+  pointer-events: none;
+}
+
+.modal-backdrop.is-exiting .modal {
+  animation: modal-out var(--dur-1) var(--ease-in) forwards;
+}
+
+@keyframes modal-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
   }
 }
 
@@ -1610,6 +1658,22 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   }
 }
 
+.context-menu.is-exiting {
+  animation: pop-out var(--dur-1) var(--ease-in) forwards;
+  pointer-events: none;
+}
+
+@keyframes pop-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.98);
+  }
+}
+
 .context-menu button {
   display: flex;
   align-items: center;
@@ -1656,6 +1720,21 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   to {
     opacity: 1;
     transform: translate(-50%, 0);
+  }
+}
+
+.toast.is-exiting {
+  animation: toast-out var(--dur-1) var(--ease-in) forwards;
+}
+
+@keyframes toast-out {
+  from {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, 8px);
   }
 }
 

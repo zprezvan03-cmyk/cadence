@@ -10,6 +10,7 @@ import { usePlayer } from "../../state/playerStore";
 import { useUi } from "../../state/uiStore";
 import { formatTime } from "../../player/queue";
 import { TrackList } from "../../components/TrackList";
+import { usePresence } from "../../app/usePresence";
 import { AlbumCard, ArtistCard } from "../../components/Cards";
 import { Artwork } from "../../components/Artwork";
 
@@ -242,6 +243,7 @@ export function PlaylistView({ playlistId }: { playlistId: number }) {
   const playShuffled = usePlayer(state => state.playShuffled);
   const [tracks, setTracks] = useState<Track[]>([]);
   const [adding, setAdding] = useState(false);
+  const addingPresence = usePresence(adding);
   const [addQuery, setAddQuery] = useState("");
   const [editing, setEditing] = useState(false);
   const playlist = snapshot?.playlists.find((entry: Playlist) => entry.id === playlistId);
@@ -317,9 +319,10 @@ export function PlaylistView({ playlistId }: { playlistId: number }) {
         testId="playlist-track-list"
       />
 
-      {adding ? (
+      {addingPresence.mounted ? (
         <div
-          className="modal-backdrop"
+          className={`modal-backdrop ${addingPresence.phaseClass}`}
+          data-presence={addingPresence.phase}
           onClick={() => setAdding(false)}
           onKeyDown={event => {
             if (event.key === "Escape") {
