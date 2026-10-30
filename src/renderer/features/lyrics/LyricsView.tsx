@@ -42,6 +42,8 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   const queueOpen = useUi(state => state.queueOpen);
   const viewRef = useRef<HTMLDivElement | null>(null);
   const footerRef = useRef<HTMLDivElement | null>(null);
+  const fsArtworkRef = useRef<HTMLDivElement | null>(null);
+  const fsPanelArtRef = useRef<HTMLDivElement | null>(null);
   // Fullscreen only: the controls show while the pointer is over them and fade out when it leaves,
   // unless a popover or the queue is open.
   // Fullscreen with lyrics on: the footer (controls and dock) is shown over the lyrics. Fullscreen with
@@ -68,6 +70,18 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
       view.style.removeProperty("--fs-footer-height");
     };
   }, [footerPresent]);
+
+  // Restart only the artwork wrapper's entrance on a real track change. The Artwork component
+  // itself stays mounted, so its decode/fallback state and layout do not jump.
+  useLayoutEffect(() => {
+    if (track?.id === undefined || track?.id === null) return;
+    for (const node of [fsArtworkRef.current, fsPanelArtRef.current]) {
+      if (!node) continue;
+      node.classList.remove("is-swapping");
+      void node.offsetWidth;
+      node.classList.add("is-swapping");
+    }
+  }, [track?.id]);
 
   const lyricsSettings = settings?.lyrics;
   const shaderSettings = settings?.shaders;
@@ -171,7 +185,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
 
       {fullscreen && showLyricsSetting ? (
         <div className="fs-side">
-          <div className="fs-artwork">
+          <div className="fs-artwork" ref={fsArtworkRef}>
             <Artwork src={track?.artworkUrl} alt={track?.album ?? "Artwork"} size="hero" />
           </div>
           {heading}
@@ -197,7 +211,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
 
       {panelMode ? (
         <div className="fs-panel-layout">
-          <div className="fs-panel-art">
+          <div className="fs-panel-art" ref={fsPanelArtRef}>
             <Artwork src={track?.artworkUrl} alt={track?.album ?? "Artwork"} size="hero" />
           </div>
           <div className="fs-panel">
@@ -220,6 +234,8 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
         {track ? (
           <BraccatoLyrics
             lyrics={lyricsSettings?.hideInstrumentalOnly && lyrics.parsed?.instrumentalOnly ? [] : lyrics.lyrics}
+            trackId={track.id}
+            sourceKey={lyrics.activeSource}
             themeCss={themeCss}
             offsetMs={lyricsSettings?.offsetMs ?? 0}
             passiveScroll={lyricsSettings?.passiveScroll ?? true}
@@ -228,7 +244,6 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
             language={lyrics.parsed?.language ?? null}
             noLyrics={lyrics.status === "empty"}
             loaderVisible={lyrics.status === "loading" && !lyrics.hasLyrics}
-            className={lyrics.refreshing ? "is-upgrading" : undefined}
             onError={handleError}
           />
         ) : (

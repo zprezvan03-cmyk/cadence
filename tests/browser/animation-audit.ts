@@ -116,7 +116,26 @@ const server = createServer(async (req, res) => {
     if (url.pathname === "/api/settings") return sendJson(settings.get());
     if (url.pathname === "/api/settings/patch") return sendJson(settings.patch(body));
     if (url.pathname === "/api/settings/reset") return sendJson(settings.reset());
-    if (url.pathname === "/api/lyrics/resolve") return sendJson({ candidates: [], providerStatus: [] });
+    if (url.pathname === "/api/lyrics/resolve") {
+      // The audit exercises the real synced-lyrics surface (including its upgrade dip), so
+      // resolve the fixture's local LRC instead of leaving the host in its hidden empty state.
+      return sendJson({
+        candidates: [
+          {
+            source: "local-lrc",
+            provider: "Local LRC",
+            text: "[00:00.30]First line of the alpha song\n[00:01.60]Second line arrives later\n[00:03.20]Third line keeps the pace\n[00:04.60]Fourth line carries the motion",
+            syncHint: "synced",
+            language: "en",
+            songwriters: ["Harness Artist"],
+            sourceHref: null,
+            cached: true,
+          },
+        ],
+        providerStatus: [{ provider: "local-lrc", status: "hit", detail: "Local LRC" }],
+        definitive: true,
+      });
+    }
     if (url.pathname === "/api/lyrics/search") return sendJson({ results: [], providerStatus: [], cached: false });
     if (url.pathname === "/api/lyrics/translate") return sendJson({ translations: [], detectedLanguage: "en" });
     if (url.pathname === "/api/lyrics/romanize") return sendJson({ romanizations: [], detectedLanguage: "en" });
@@ -870,6 +889,62 @@ check(
   JSON.stringify(dockOut)
 );
 check("dock-popover-dismisses-after-exit", await waitForGone(".dock-popover.dock-sources"), "popover unmounted after its 120ms exit");
+
+// The audit fixture resolves to one source, so drive the exact host attribute the
+// same-track upgrade path sets and verify the real CSS beat: 180ms, opacity-only, and
+// visibly below full opacity at its midpoint without unmounting or blanking the host.
+await page.evaluate(() => {
+  document.querySelector("braccato-lyrics")?.setAttribute("data-upgrading", "true");
+});
+const lyricsUpgrade = await animationsFor("braccato-lyrics");
+check(
+  "lyrics-upgrade-dip-runs",
+  Boolean(lyricsUpgrade?.some(animation => animation.name === "lyrics-upgrade" && Number(animation.duration) === 180)),
+  JSON.stringify(lyricsUpgrade)
+);
+await freezeAt(63);
+const lyricsUpgradeOpacity = await page.evaluate(() => {
+  const host = document.querySelector("braccato-lyrics");
+  return host ? Number(getComputedStyle(host).opacity) : null;
+});
+await shot("05-lyrics-upgrade-mid");
+await page.evaluate(() => {
+  document.querySelector("braccato-lyrics")?.removeAttribute("data-upgrading");
+});
+await resumeAll();
+check(
+  "lyrics-upgrade-dip-mid-opacity",
+  lyricsUpgradeOpacity !== null && lyricsUpgradeOpacity > 0.35 && lyricsUpgradeOpacity < 0.6,
+  `opacity ${lyricsUpgradeOpacity}`
+);
+
+// A real Next action restarts only the fullscreen artwork entrance.
+await page.evaluate(() => document.querySelector<HTMLButtonElement>('button[aria-label="Next track"]')?.click());
+const fsArtworkSwap = await page
+  .waitForFunction(
+    () => {
+      const art = document.querySelector(".fs-artwork");
+      const animation = art
+        ?.getAnimations()
+        .find(candidate => (candidate as CSSAnimation).animationName === "artwork-in");
+      return animation
+        ? {
+            duration: animation.effect?.getTiming().duration ?? null,
+            currentTime: animation.currentTime,
+            swapping: art?.classList.contains("is-swapping") ?? false,
+          }
+        : false;
+    },
+    { timeout: 3000 }
+  )
+  .then(handle => handle?.jsonValue() as Promise<{ duration: number | string | null; currentTime: number | null; swapping: boolean } | null>)
+  .catch(() => null);
+check(
+  "fullscreen-artwork-track-swap",
+  Boolean(fsArtworkSwap?.swapping && Number(fsArtworkSwap.duration) === 240),
+  JSON.stringify(fsArtworkSwap)
+);
+await wait(300);
 
 await page.keyboard.press("Escape");
 await wait(120);

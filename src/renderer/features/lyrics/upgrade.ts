@@ -61,3 +61,32 @@ export function shouldApplyUpgrade(args: {
     providerOrderRank(args.currentSource, args.providerOrder)
   );
 }
+
+/** Identity of the lyrics payload currently rendered by the Now Playing host. */
+export interface LyricsRenderIdentity {
+  trackId: string | number | null;
+  source: string | null;
+  hasLyrics: boolean;
+}
+
+/**
+ * Whether changing the rendered payload deserves the short opacity dip. This is deliberately
+ * narrower than "the lyrics array changed": only a same-track switch from one visible source
+ * to another is an Autofetch/source-selector upgrade. Track changes, first loads, clears, and
+ * translation/romanization refreshes (same source) must not inherit this treatment.
+ */
+export function shouldCrossfadeUpgrade(
+  previous: LyricsRenderIdentity | null,
+  next: LyricsRenderIdentity | null
+): boolean {
+  if (!previous || !next) return false;
+  return (
+    previous.trackId !== null &&
+    previous.trackId === next.trackId &&
+    previous.hasLyrics &&
+    next.hasLyrics &&
+    previous.source !== null &&
+    next.source !== null &&
+    previous.source !== next.source
+  );
+}

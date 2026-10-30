@@ -18,6 +18,7 @@ import {
   isManualSelection,
   pickPreferredCandidate,
   shouldApplyUpgrade,
+  shouldCrossfadeUpgrade,
 } from "../../src/renderer/features/lyrics/upgrade";
 import type { LyricsCandidate } from "../../src/shared/types";
 
@@ -345,6 +346,17 @@ describe("seamless upgrade decisions (renderer)", () => {
     expect(isManualSelection("user-file", undefined)).toBe(true);
     expect(isManualSelection("lrclib-synced", "lrclib-synced")).toBe(true);
     expect(isManualSelection("lrclib-synced", undefined)).toBe(false);
+  });
+
+  it("crossfades only a same-track switch between two visible lyric sources", () => {
+    const visible = { trackId: 7, source: "lrclib-synced", hasLyrics: true };
+    expect(shouldCrossfadeUpgrade(visible, { ...visible, source: "blyrics-richsynced" })).toBe(true);
+    expect(shouldCrossfadeUpgrade(visible, { ...visible, trackId: 8, source: "blyrics-richsynced" })).toBe(false);
+    expect(shouldCrossfadeUpgrade({ ...visible, hasLyrics: false }, { ...visible, source: "blyrics-richsynced" })).toBe(false);
+    expect(shouldCrossfadeUpgrade(visible, { ...visible, hasLyrics: false, source: "blyrics-richsynced" })).toBe(false);
+    expect(shouldCrossfadeUpgrade(visible, visible)).toBe(false);
+    expect(shouldCrossfadeUpgrade(null, visible)).toBe(false);
+    expect(shouldCrossfadeUpgrade({ ...visible, source: null }, { ...visible, source: "blyrics-richsynced" })).toBe(false);
   });
 });
 

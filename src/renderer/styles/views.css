@@ -1831,12 +1831,6 @@
   gap: 8px;
 }
 
-/* Seamless Autofetch upgrade: only the lyrics host cross-fades, nothing else moves. */
-.braccato-host.is-upgrading,
-.is-upgrading {
-  transition: opacity var(--dur-2) var(--ease-in-out);
-}
-
 /* ------------------------------------------------------------- onboarding */
 
 .onboarding-overlay {

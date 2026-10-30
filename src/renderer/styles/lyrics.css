@@ -423,6 +423,31 @@ braccato-lyrics {
   text-shadow: 0 2px 26px rgba(0, 0, 0, 0.45);
 }
 
+/* A same-track source upgrade is the only lyrics replacement that dips. The attribute is
+   present for exactly one 180ms surface beat; the renderer remains mounted throughout, so
+   its playback clock, active line, decorations and scroll position are never reset. */
+braccato-lyrics[data-upgrading="true"] {
+  animation: lyrics-upgrade var(--dur-2) var(--ease-in-out);
+}
+
+@keyframes lyrics-upgrade {
+  0% {
+    opacity: 1;
+  }
+  35% {
+    opacity: 0.45;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* Track changes restart the existing artwork entrance on the wrapper only. */
+.fs-artwork.is-swapping,
+.fs-panel-art.is-swapping {
+  animation: artwork-in var(--dur-3) var(--ease-out);
+}
+
 .braccato-lyrics-host {
   display: block;
 }

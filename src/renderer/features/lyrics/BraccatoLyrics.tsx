@@ -8,7 +8,7 @@
  * Written for Cadence.
  */
 
-import { createElement, useEffect, useRef } from "react";
+import { createElement, useEffect, useLayoutEffect, useRef } from "react";
 import "@braccato/core/element";
 import "@braccato/core/styles/variables.css";
 import "@braccato/core/styles/lyrics.css";
@@ -16,9 +16,15 @@ import "@braccato/core/styles/instrumental.css";
 import { injectRomanization, injectTranslation, type Lyric, type LyricsRenderer } from "@braccato/core";
 import type { LyricsSyncType } from "../../../shared/types";
 import { audioEngine } from "../../audio/engine";
+import { MOTION_DURATION_MS } from "../../app/motion";
+import { shouldCrossfadeUpgrade, type LyricsRenderIdentity } from "./upgrade";
 
 export interface BraccatoLyricsProps {
   lyrics: Lyric[] | null;
+  /** Identity used only to distinguish a track change from a same-track source upgrade. */
+  trackId?: LyricsRenderIdentity["trackId"];
+  /** Provider/source identity for the payload, used to time the upgrade crossfade. */
+  sourceKey?: string | null;
   themeCss: string;
   offsetMs: number;
   passiveScroll: boolean;
@@ -111,6 +117,8 @@ const CLEARED_LYRICS: Lyric[] = [];
 
 export function BraccatoLyrics({
   lyrics,
+  trackId = null,
+  sourceKey = null,
   themeCss,
   offsetMs,
   passiveScroll,
@@ -140,6 +148,42 @@ export function BraccatoLyrics({
     const { lyrics: current, offsetMs: offset, passiveScroll: passive } = latest.current;
     applyLineDecorations(element, current, { offsetMs: offset, passiveScroll: passive });
   });
+  const renderedIdentity = useRef<LyricsRenderIdentity | null>(null);
+  const renderedLyrics = useRef<Lyric[] | null>(null);
+  const upgradeTimer = useRef<number | undefined>(undefined);
+
+  // Same-track source upgrades get one short opacity dip. This must be a layout effect: it
+  // runs after React commits the new props but before the passive effect below assigns the
+  // new payload to the upstream element, so the old lines start the dip and the replacement
+  // lands inside it. Neither the renderer's clock nor its scroll state is touched.
+  useLayoutEffect(() => {
+    const next: LyricsRenderIdentity = {
+      trackId,
+      source: sourceKey,
+      hasLyrics: Boolean(lyrics?.length),
+    };
+    const element = ref.current;
+    const payloadChanged = renderedLyrics.current !== lyrics;
+    if (element && payloadChanged && shouldCrossfadeUpgrade(renderedIdentity.current, next)) {
+      if (upgradeTimer.current !== undefined) window.clearTimeout(upgradeTimer.current);
+      delete element.dataset.upgrading;
+      void element.offsetWidth;
+      element.dataset.upgrading = "true";
+      upgradeTimer.current = window.setTimeout(() => {
+        delete element.dataset.upgrading;
+        upgradeTimer.current = undefined;
+      }, MOTION_DURATION_MS.surface);
+    }
+    renderedIdentity.current = next;
+    renderedLyrics.current = lyrics;
+  }, [lyrics, sourceKey, trackId]);
+
+  useEffect(
+    () => () => {
+      if (upgradeTimer.current !== undefined) window.clearTimeout(upgradeTimer.current);
+    },
+    []
+  );
 
   // Bind once: the element, not React, owns the per-frame clock while a media element is bound.
   useEffect(() => {
