@@ -365,6 +365,52 @@ await shot("00-boot");
 check("app-boots", (await page.$$(".nav-item")).length >= 6, `${(await page.$$(".nav-item")).length} nav items`);
 check("boot-no-console-errors", !logs.some(line => line.startsWith("[pageerror]")), logs.filter(line => line.startsWith("[pageerror]")).join(" | "));
 
+// Motion foundation: the live stylesheet must expose the shared token scale, and the
+// normalized consumers must compute to token durations rather than leftover literals.
+const motionTokens = await page.evaluate(() => {
+  const rootStyle = getComputedStyle(document.documentElement);
+  const token = (name: string) => rootStyle.getPropertyValue(name).trim();
+  const timeToMs = (value: string | undefined) => {
+    if (!value) return null;
+    const first = value.split(",")[0]?.trim() ?? "";
+    if (first.endsWith("ms")) return Math.round(Number.parseFloat(first));
+    if (first.endsWith("s")) return Math.round(Number.parseFloat(first) * 1000);
+    return null;
+  };
+  const seekBuffer = document.querySelector(".seek-buffer");
+  return {
+    // Chromium serializes some custom-property times as fractional seconds (".12s"), so the
+    // scale is compared as parsed milliseconds rather than raw stylesheet text.
+    dur0: timeToMs(token("--dur-0")),
+    dur1: timeToMs(token("--dur-1")),
+    dur2: timeToMs(token("--dur-2")),
+    dur3: timeToMs(token("--dur-3")),
+    dur4: timeToMs(token("--dur-4")),
+    stagger: timeToMs(token("--stagger-step")),
+    easeOut: token("--ease-out"),
+    easeIn: token("--ease-in"),
+    easeInOut: token("--ease-in-out"),
+    easeSpring: token("--ease-spring"),
+    seekBufferMs: seekBuffer ? timeToMs(getComputedStyle(seekBuffer).transitionDuration) : null,
+  };
+});
+check(
+  "motion-token-scale",
+  motionTokens.dur0 === 70 &&
+    motionTokens.dur1 === 120 &&
+    motionTokens.dur2 === 180 &&
+    motionTokens.dur3 === 240 &&
+    motionTokens.dur4 === 320 &&
+    motionTokens.stagger === 24,
+  JSON.stringify(motionTokens)
+);
+check(
+  "motion-token-easings",
+  [motionTokens.easeOut, motionTokens.easeIn, motionTokens.easeInOut, motionTokens.easeSpring].every(value => value.startsWith("cubic-bezier(")),
+  JSON.stringify(motionTokens)
+);
+check("motion-token-consumers-normalized", motionTokens.seekBufferMs === 320, JSON.stringify(motionTokens));
+
 // Home is the boot route, so the pill starts on it — measured, visible, not animating in.
 const pillAtBoot = await page.evaluate(() => {
   const pill = document.querySelector(".nav-pill")!;

@@ -390,6 +390,12 @@ const populated = cacheFileEntries();
 check("cache-file-populated", populated.length >= 2 && linesBefore > 0, `${populated.length} entries, ${linesBefore} lines`);
 const callsAfterPopulate = apiCalls.length;
 
+// Pause playback for the clear/restart assertions below: the fixtures are six seconds long, and
+// with Autofetch a track that auto-advances during these steps legitimately resolves in the
+// background (adding an entry and provider calls). Pausing isolates what these checks are
+// about — that clearing/restarting itself neither fetches nor writes.
+await page.evaluate(() => document.querySelector("audio")?.pause());
+
 /* 2. A cancelled confirmation must not touch anything. */
 await openAbout();
 await shot("01-settings-about");
@@ -438,6 +444,10 @@ check(
 );
 await wait(400);
 check("cache-repopulates-normally", cacheFileEntries().length > 0, JSON.stringify(cacheFileEntries()));
+
+// Same isolation as above: keep the six-second fixture from auto-advancing (and Autofetch from
+// adding entries) while the disk-failure checks compare entry counts.
+await page.evaluate(() => document.querySelector("audio")?.pause());
 
 /* 7. A failing disk write must be reported, not swallowed as success. */
 await wait(2800);

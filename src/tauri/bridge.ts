@@ -17,6 +17,7 @@ import type {
   HistoryPayload,
   LibraryScanResult,
   LibrarySnapshot,
+  LyricsFetchJobSnapshot,
   MediaCommand,
   PlayerSnapshot,
   ScanProgress,
@@ -29,6 +30,8 @@ import { SettingsCore } from "../main/settingsCore";
 import { LyricsCacheCore } from "../main/lyrics/cacheCore";
 import { createLocalLyricsReader } from "../main/lyrics/localLyricsCore";
 import { LyricsServiceCore } from "../main/lyrics/serviceCore";
+import { LyricsFetchAllCore, type FetchTrackInfo } from "../main/lyrics/fetchAllCore";
+import { FETCH_CONCURRENCY_PRESETS } from "../main/lyrics/http";
 import { setRuntimeFetch, type RuntimeFetch } from "../main/lyrics/http";
 import { fetchYouTubeMetadata } from "../main/lyrics/youtube";
 import {
@@ -64,6 +67,7 @@ export interface BootstrapPayload {
   tauriVersion: string;
   settingsJson: string | null;
   lyricsCacheJson: string | null;
+  lyricsFetchJobJson: string | null;
   dbSnapshot: DatabaseShape;
   startupFiles: string[];
   undecorated: boolean;
@@ -286,6 +290,96 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
   const lyricsService = new LyricsServiceCore(store, lyricsCache, localLyricsReader);
   const translationCache = createTranslationCache();
 
+  // Fetch-automation settings feed the shared service directly: the central provider limiter
+  // (Autofetch, Fetch All and manual search alike) and the cache's Not Found cooldown.
+  const applyLyricsFetchSettings = (): void => {
+    const lyrics = settings.get().lyrics;
+    lyricsService.setProviderConcurrency(
+      FETCH_CONCURRENCY_PRESETS[lyrics.fetchConcurrency].providerRequests
+    );
+    lyricsCache.setNegativeTtlMs(lyrics.notFoundCooldownDays * 24 * 60 * 60 * 1000);
+  };
+  applyLyricsFetchSettings();
+
+  const fetchAllListeners = new Set<(snapshot: LyricsFetchJobSnapshot) => void>();
+
+  /**
+   * Superseded resolve/search calls are routinely abandoned by the UI after a track switch.
+   * Attach a handled branch so their AbortError never surfaces as an unhandled rejection;
+   * callers that await the returned promise still observe the rejection exactly as before.
+   */
+  const abandonSafe = <T,>(promise: Promise<T>): Promise<T> => {
+    promise.catch(() => undefined);
+    return promise;
+  };
+  const toFetchInfo = (track: StoredTrack): FetchTrackInfo => ({
+    id: track.id,
+    title: track.title,
+    artist: track.artist,
+    album: track.album,
+    duration: track.duration,
+    hasSidecarLyrics: track.hasSidecarLyrics,
+    hasEmbeddedLyrics: track.hasEmbeddedLyrics,
+    lastPlayedAt: track.lastPlayedAt,
+  });
+
+  // Persistent Fetch All job. It calls the service directly with its own per-track abort
+  // controllers — never the UI's track-scoped resolve controller — so bulk work and Now Playing
+  // lookups share in-flight provider requests instead of aborting each other.
+  const fetchAll = new LyricsFetchAllCore(
+    {
+      tracksPage: (offset, limit) => {
+        const tracks = store.getTracks();
+        return { tracks: tracks.slice(offset, offset + limit).map(toFetchInfo), total: tracks.length };
+      },
+      getTrack: trackId => {
+        const track = store.getTrack(trackId);
+        return track ? toFetchInfo(track) : null;
+      },
+      assess: track => lyricsService.assessTrack(track, settings.get().lyrics.providerOrder),
+      resolveTrack: async (track, { force, signal }) => {
+        await store.ensureLyrics(track.id);
+        try {
+          return await lyricsService.resolve(
+            {
+              trackId: track.id,
+              title: track.title,
+              artist: track.artist,
+              album: track.album,
+              duration: track.duration,
+              forceRefresh: force,
+            },
+            settings.get().lyrics.providerOrder,
+            signal
+          );
+        } finally {
+          store.releaseLyrics(track.id);
+          lyricsCache.flush();
+        }
+      },
+      shareResult: (fromTrackId, toTrack) => lyricsService.shareRecordingResult(fromTrackId, toTrack),
+      getPriority: async () => {
+        let historyTrackIds: number[] = [];
+        try {
+          const rows = await invoke<HistoryRow[]>("cmd_history_list");
+          historyTrackIds = (rows ?? []).map(row => row.trackId);
+        } catch {
+          historyTrackIds = [];
+        }
+        return { currentTrackId: lastPlayerState?.trackId ?? null, historyTrackIds };
+      },
+      getParallelTracks: () =>
+        FETCH_CONCURRENCY_PRESETS[settings.get().lyrics.fetchConcurrency].parallelTracks,
+      onProgress: snapshot => {
+        for (const listener of fetchAllListeners) listener(snapshot);
+      },
+    },
+    {
+      initialJson: bootstrap.lyricsFetchJobJson,
+      persist: json => invoke("cmd_write_user_json", { kind: "lyricsFetchJob", content: json }),
+    }
+  );
+
   // Scanner host I/O backed by binary `cmd_read_file_chunk` + `RangeTokenizer`
   const parseWalkedAudioFile = (file: WalkedAudioFile) =>
     readTrackMetadataCore(file.path, {
@@ -466,8 +560,13 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
 
   const onPageHide = () => {
     lyricsService.flush();
+    void fetchAll.flush();
     void flushDbQueue();
   };
+
+  // A Fetch All job that was running when the app closed resumes automatically; paused,
+  // completed and canceled jobs are left exactly as the user left them.
+  fetchAll.restore();
   if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
     window.addEventListener("pagehide", onPageHide);
   }
@@ -644,47 +743,59 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         return settings.get();
       },
       async patch(patch) {
-        return settings.patch(patch);
+        const next = settings.patch(patch);
+        applyLyricsFetchSettings();
+        return next;
       },
       async reset() {
-        return settings.reset();
+        const next = settings.reset();
+        applyLyricsFetchSettings();
+        return next;
       },
     },
 
     lyrics: {
-      async resolve(request) {
-        resolveController?.abort();
-        const controller = new AbortController();
-        resolveController = controller;
-        try {
-          await store.ensureLyrics(request.trackId);
-          if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
-          return await lyricsService.resolve(
-            request,
-            settings.get().lyrics.providerOrder,
-            controller.signal
-          );
-        } finally {
-          if (resolveController === controller) resolveController = null;
-          store.releaseLyrics(request.trackId);
-          lyricsCache.flush();
-        }
+      resolve(request) {
+        return abandonSafe(
+          (async () => {
+            resolveController?.abort();
+            const controller = new AbortController();
+            resolveController = controller;
+            try {
+              await store.ensureLyrics(request.trackId);
+              if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
+              return await lyricsService.resolve(
+                request,
+                settings.get().lyrics.providerOrder,
+                controller.signal
+              );
+            } finally {
+              if (resolveController === controller) resolveController = null;
+              store.releaseLyrics(request.trackId);
+              lyricsCache.flush();
+            }
+          })()
+        );
       },
 
-      async search(request) {
-        searchController?.abort();
-        const controller = new AbortController();
-        searchController = controller;
-        try {
-          return await lyricsService.searchLyrics(
-            request,
-            settings.get().lyrics.providerOrder,
-            controller.signal
-          );
-        } finally {
-          if (searchController === controller) searchController = null;
-          lyricsCache.flush();
-        }
+      search(request) {
+        return abandonSafe(
+          (async () => {
+            searchController?.abort();
+            const controller = new AbortController();
+            searchController = controller;
+            try {
+              return await lyricsService.searchLyrics(
+                request,
+                settings.get().lyrics.providerOrder,
+                controller.signal
+              );
+            } finally {
+              if (searchController === controller) searchController = null;
+              lyricsCache.flush();
+            }
+          })()
+        );
       },
 
       async youtubeMetadata(request) {
@@ -844,6 +955,39 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         lyricsService.rememberSelection(request.trackId, request.candidate);
         lyricsCache.flush();
       },
+
+      fetchAll: {
+        async getState() {
+          return fetchAll.snapshot();
+        },
+        async start() {
+          return fetchAll.start();
+        },
+        async pause() {
+          return fetchAll.pause();
+        },
+        async resume() {
+          return fetchAll.resume();
+        },
+        async cancel() {
+          return fetchAll.cancel();
+        },
+        async retryFailed() {
+          return fetchAll.retryFailed();
+        },
+        async stats() {
+          return fetchAll.stats();
+        },
+        async promote(trackId: number) {
+          fetchAll.promote(trackId);
+        },
+        onProgress(listener: (snapshot: LyricsFetchJobSnapshot) => void): () => void {
+          fetchAllListeners.add(listener);
+          return () => {
+            fetchAllListeners.delete(listener);
+          };
+        },
+      },
     },
 
     player: {
@@ -974,6 +1118,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
       youtubeController?.abort();
       translateController?.abort();
       romanizeController?.abort();
+      void fetchAll.flush();
       lyricsCache.flush();
       store.close();
     },

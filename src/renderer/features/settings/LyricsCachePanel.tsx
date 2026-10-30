@@ -21,6 +21,7 @@ import type {
 import { bridge } from "../../state/bridge";
 import { useUi } from "../../state/uiStore";
 import { parseLyricsText, type ParsedLyrics } from "../lyrics/parseLyrics";
+import { invalidateLyricsResolution } from "../lyrics/useLyrics";
 
 /** Exact, human-sized rendering of a measured byte count. */
 function formatBytes(bytes: number): string {
@@ -132,6 +133,7 @@ export function LyricsCachePanel() {
     setBusyKey(entry.key);
     try {
       const result = await bridge.lyrics.removeCacheEntry(entry.key);
+      if (result.removed) invalidateLyricsResolution();
       showToast(
         result.removed
           ? `Removed “${entryTitle(entry)}” from the lyrics cache`
@@ -153,6 +155,7 @@ export function LyricsCachePanel() {
     setClearing(true);
     try {
       const { removedEntries } = await bridge.lyrics.clearCache();
+      if (removedEntries > 0) invalidateLyricsResolution();
       showToast(
         removedEntries > 0
           ? `Lyrics cache cleared (${removedEntries} cached ${removedEntries === 1 ? "song" : "songs"} removed)`

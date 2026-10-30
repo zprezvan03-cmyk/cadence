@@ -93,7 +93,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   );
 
   useEffect(() => {
-    if (lyrics.status === "loading") setSyncLabel("Loading…");
+    if (lyrics.status === "loading" && !lyrics.hasLyrics) setSyncLabel("Loading…");
     else if (lyrics.status === "empty") setSyncLabel("Not found");
     else if (lyrics.status === "error") setSyncLabel("Error");
     else if (lyrics.syncType === "richsync") setSyncLabel("Word synced");
@@ -146,9 +146,11 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
 
   // "Loading", "no lyrics" and "could not load" all replace the lyric lines, so the body centres
   // that card instead of scrolling it below a full-height lyric host (or, worse, leaving the
-  // previous track's lines on screen while the new track resolves).
+  // previous track's lines on screen while the new track resolves). A same-track Autofetch
+  // upgrade pass is *not* a status panel: fallback lyrics stay on screen while it runs.
   const statusPanel =
-    track !== null && (slowLoading || lyrics.status === "empty" || lyrics.status === "error");
+    track !== null &&
+    ((slowLoading && !lyrics.hasLyrics) || lyrics.status === "empty" || lyrics.status === "error");
 
   return (
     <div
@@ -222,7 +224,8 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
             songwriters={lyrics.parsed?.songwriters ?? []}
             language={lyrics.parsed?.language ?? null}
             noLyrics={lyrics.status === "empty"}
-            loaderVisible={lyrics.status === "loading"}
+            loaderVisible={lyrics.status === "loading" && !lyrics.hasLyrics}
+            className={lyrics.refreshing ? "is-upgrading" : undefined}
             onError={handleError}
           />
         ) : (
@@ -233,7 +236,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
           </div>
         )}
 
-        {track && lyrics.status === "loading" && slowLoading ? (
+        {track && lyrics.status === "loading" && slowLoading && !lyrics.hasLyrics ? (
           <div className="lyrics-empty-panel loading" role="status" data-testid="lyrics-loading-panel">
             <div className="lyrics-empty-icon" aria-hidden="true">
               <RefreshCw size={20} className="spin" />
@@ -349,6 +352,8 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
 const fallbackLyricsSettings: AppSettings["lyrics"] = {
   providerOrder: [...DEFAULT_PROVIDER_ORDER],
   autoFetch: true,
+  notFoundCooldownDays: 7,
+  fetchConcurrency: "balanced",
   offsetMs: 0,
   translationLanguage: "",
   romanization: false,

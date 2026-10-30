@@ -1908,7 +1908,12 @@ await page.evaluate(() => {
 });
 await wait(400);
 const persisted = await page.evaluate(async () => {
-  const slider = document.querySelector('[data-testid="settings-lyrics"] input[type="range"]');
+  // Select by label, not "first range in the section": the Not-Found cooldown slider now sits
+  // ahead of Font size in the Lyrics settings, and grabbing it would silently set days not rem.
+  const row = [...document.querySelectorAll('[data-testid="settings-lyrics"] .range-row')].find(
+    node => node.querySelector("strong")?.textContent === "Font size"
+  );
+  const slider = row?.querySelector('input[type="range"]');
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
   setter.call(slider, "2.4");
   slider.dispatchEvent(new Event("input", { bubbles: true }));
@@ -1936,15 +1941,16 @@ await page.waitForSelector(".sidebar", { timeout: 15_000 }).catch(async () => {
 await page.click('aside.sidebar button[title="Settings"]');
 await page.waitForSelector('[data-testid="settings-view"]');
 await wait(600);
-const fontSize = await page.evaluate(() => {
-  const section = document.querySelector('[data-testid="settings-lyrics"]');
-  const slider = section?.querySelector('input[type="range"]');
-  return {
-    stored: JSON.parse(localStorage.getItem("cadence.harness.settings.v1") ?? "{}")?.lyrics?.fontSizeRem,
-    slider: slider?.value ?? null,
-    output: section?.querySelector("output")?.textContent ?? null,
-  };
-});
+// Same by-label selection as above: the first range/output in the Lyrics section is now the
+// Not-Found cooldown control, so reading positionally would check days instead of rem.
+const fontSizeRange = await readSettingsRange("Font size");
+const fontSize = {
+  stored: await page.evaluate(
+    () => JSON.parse(localStorage.getItem("cadence.harness.settings.v1") ?? "{}")?.lyrics?.fontSizeRem ?? null
+  ),
+  slider: fontSizeRange.value,
+  output: fontSizeRange.output,
+};
 check("settings-survive-reload", fontSize.stored === 2.4 && fontSize.slider === "2.4", `stored=${fontSize.stored}, slider=${fontSize.slider}, shown=${fontSize.output}`);
 const reloadedSecondary = {
   translation: await readSettingsRange("Translation Font Size"),

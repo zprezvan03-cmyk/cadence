@@ -2,8 +2,13 @@
  * Application shell. Written for Cadence.
  */
 
-import { useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { useCurrentTrack } from "./app/hooks";
+import { useAutofetchLyrics } from "./features/lyrics/useAutofetch";
+import { Onboarding } from "./features/onboarding/Onboarding";
+import { useLibrary } from "./state/libraryStore";
+import { useOnboarding } from "./state/onboardingStore";
+import { useSettings } from "./state/settingsStore";
 import { PlaylistPicker } from "./app/PlaylistPicker";
 import { Sidebar } from "./app/Sidebar";
 import { TopBar } from "./app/TopBar";
@@ -87,6 +92,19 @@ const scrollMemory = new Map<string, number>();
 
 export function App() {
   useBootstrap();
+  // Autofetch: lyrics lookup begins on every track change, whichever tab is open.
+  useAutofetchLyrics();
+
+  const settingsLoaded = useSettings(state => state.loaded);
+  const folderCount = useLibrary(state => state.snapshot?.folders.length ?? null);
+  const trackCount = useLibrary(state => state.snapshot?.tracks.length ?? null);
+  const maybeAutoShowOnboarding = useOnboarding(state => state.maybeAutoShow);
+  useEffect(() => {
+    // First launch only (no folders yet, onboarding never completed); latched in the store.
+    if (settingsLoaded && folderCount !== null && trackCount !== null) {
+      maybeAutoShowOnboarding(folderCount, trackCount);
+    }
+  }, [settingsLoaded, folderCount, trackCount, maybeAutoShowOnboarding]);
   const fullscreenLyrics = useUi(state => state.fullscreenLyrics);
   const route = useUi(state => state.route);
   const error = usePlayer(state => state.error);
@@ -141,6 +159,7 @@ export function App() {
       <QueuePanel />
       <PlaylistPicker />
       <AppToast />
+      <Onboarding />
     </div>
   );
 }

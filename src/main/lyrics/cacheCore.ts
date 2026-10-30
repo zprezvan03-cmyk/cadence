@@ -48,6 +48,14 @@ export interface CachedNetworkSection {
   /** Definitive answer with no candidates: nothing found anywhere. */
   negative: boolean;
   candidates: CachedLyricsCandidate[];
+  /**
+   * Provider module ids (`better-lyrics`, `unison`, `binimum`, `lrclib`) that completed normally
+   * for this answer, so later passes search only never/newly-enabled providers. Absent on
+   * entries written before this field existed; those are treated as fully covered.
+   */
+  queriedModules?: string[];
+  /** Provider-order slot keys that were enabled when this answer was produced. */
+  enabledKeys?: string[];
 }
 
 export interface LyricsCacheEntry {
@@ -175,6 +183,10 @@ function normalizeEntry(value: unknown): LyricsCacheEntry | null {
   if (raw.network && typeof raw.network === "object") {
     const section = raw.network as Partial<CachedNetworkSection>;
     if (Number.isFinite(Number(section.savedAt))) {
+      const stringList = (value: unknown): string[] | undefined =>
+        Array.isArray(value)
+          ? value.filter((entry): entry is string => typeof entry === "string")
+          : undefined;
       network = {
         savedAt: Number(section.savedAt),
         negative: Boolean(section.negative),
@@ -183,6 +195,10 @@ function normalizeEntry(value: unknown): LyricsCacheEntry | null {
               .map(candidate => normalizeStoredCandidate(candidate, "network"))
               .filter((candidate): candidate is CachedLyricsCandidate => candidate !== null)
           : [],
+        ...(stringList(section.queriedModules)
+          ? { queriedModules: stringList(section.queriedModules) }
+          : {}),
+        ...(stringList(section.enabledKeys) ? { enabledKeys: stringList(section.enabledKeys) } : {}),
       };
     }
   }
@@ -287,11 +303,39 @@ export class LyricsCacheCore {
     return true;
   }
 
-  /** Whether a stored remote answer is still inside its positive or negative TTL. */
-  static networkIsFresh(section: CachedNetworkSection | undefined, now = Date.now()): boolean {
+  /**
+   * Whether a stored remote answer is still inside its positive or negative TTL. The negative
+   * TTL is the user-configurable Not Found cooldown; only `savedAt` (the last definitive
+   * attempt) is stored, so changing the cooldown re-evaluates every entry immediately.
+   */
+  static networkIsFresh(
+    section: CachedNetworkSection | undefined,
+    now = Date.now(),
+    negativeTtlMs: number = LYRICS_NEGATIVE_CACHE_TTL_MS
+  ): boolean {
     if (!section) return false;
-    const ttl = section.negative ? LYRICS_NEGATIVE_CACHE_TTL_MS : LYRICS_CACHE_TTL_MS;
+    const ttl = section.negative ? negativeTtlMs : LYRICS_CACHE_TTL_MS;
     return now - section.savedAt <= ttl;
+  }
+
+  /**
+   * Negative-answer TTL in effect for this cache instance. The bridge wires it to
+   * `settings.lyrics.notFoundCooldownDays`; cores constructed without settings (Node tests)
+   * keep the legacy 12-hour interpretation.
+   */
+  private negativeTtlMs: number = LYRICS_NEGATIVE_CACHE_TTL_MS;
+
+  setNegativeTtlMs(ms: number): void {
+    if (Number.isFinite(ms) && ms > 0) this.negativeTtlMs = ms;
+  }
+
+  getNegativeTtlMs(): number {
+    return this.negativeTtlMs;
+  }
+
+  /** Instance freshness check honouring the configured Not Found cooldown. */
+  networkFresh(section: CachedNetworkSection | undefined, now = Date.now()): boolean {
+    return LyricsCacheCore.networkIsFresh(section, now, this.negativeTtlMs);
   }
 
   /* --------------------------------------------------------------- lookups */
@@ -317,7 +361,7 @@ export class LyricsCacheCore {
     if (!entry) return null;
     const expired = Date.now() - entry.savedAt > LYRICS_CACHE_TTL_MS;
     const networkExpired =
-      entry.candidates.length === 0 && !LyricsCacheCore.networkIsFresh(entry.network);
+      entry.candidates.length === 0 && !this.networkFresh(entry.network);
     if (expired || networkExpired) {
       delete this.data.entries[key];
       this.markDirty();
@@ -391,7 +435,12 @@ export class LyricsCacheCore {
     key: string,
     identity: CachedTrackIdentity,
     local: CachedCandidateInput[],
-    network: { candidates: CachedCandidateInput[]; negative: boolean } | null,
+    network: {
+      candidates: CachedCandidateInput[];
+      negative: boolean;
+      queriedModules?: string[];
+      enabledKeys?: string[];
+    } | null,
     generation: number = this.generation
   ): void {
     if (generation !== this.generation) return;
@@ -405,8 +454,10 @@ export class LyricsCacheCore {
         savedAt: Date.now(),
         negative: network.negative,
         candidates: this.mergeCandidates(sameTrack ? previous?.network?.candidates ?? [] : [], network.candidates),
+        ...(network.queriedModules ? { queriedModules: [...network.queriedModules] } : {}),
+        ...(network.enabledKeys ? { enabledKeys: [...network.enabledKeys] } : {}),
       };
-    } else if (sameTrack && previous?.network && LyricsCacheCore.networkIsFresh(previous.network)) {
+    } else if (sameTrack && previous?.network && this.networkFresh(previous.network)) {
       nextNetwork = previous.network;
     }
 
@@ -478,7 +529,7 @@ export class LyricsCacheCore {
       kind: "track",
       track: { ...identity },
       candidates: this.mergeCandidates(replaced, [input]),
-      ...(sameTrack && previous?.network && LyricsCacheCore.networkIsFresh(previous.network)
+      ...(sameTrack && previous?.network && this.networkFresh(previous.network)
         ? { network: previous.network }
         : {}),
     });

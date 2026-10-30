@@ -28,6 +28,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lyrics: {
     providerOrder: [...DEFAULT_PROVIDER_ORDER],
     autoFetch: true,
+    notFoundCooldownDays: 7,
+    fetchConcurrency: "balanced",
     offsetMs: 0,
     translationLanguage: "",
     romanization: false,
@@ -54,6 +56,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   advanced: {
     showLogs: false,
   },
+  general: {
+    onboardingCompleted: false,
+    onboardingStep: 0,
+  },
 };
 
 type AnyRecord = Record<string, unknown>;
@@ -74,6 +80,24 @@ export function mergeSettings<T>(base: T, patch: unknown): T {
   return result as T;
 }
 
+/** Clamps fetch-automation + onboarding fields; applied on load and on every patch. */
+function normalizeSettings(settings: AppSettings): AppSettings {
+  settings.lyrics.providerOrder = migrateProviderOrder(settings.lyrics.providerOrder);
+  const cooldown = Number(settings.lyrics.notFoundCooldownDays);
+  settings.lyrics.notFoundCooldownDays = Number.isFinite(cooldown)
+    ? Math.min(30, Math.max(1, Math.round(cooldown)))
+    : DEFAULT_SETTINGS.lyrics.notFoundCooldownDays;
+  if (!["low", "balanced", "high"].includes(settings.lyrics.fetchConcurrency)) {
+    settings.lyrics.fetchConcurrency = DEFAULT_SETTINGS.lyrics.fetchConcurrency;
+  }
+  const step = Number(settings.general?.onboardingStep);
+  settings.general = {
+    onboardingCompleted: Boolean(settings.general?.onboardingCompleted),
+    onboardingStep: Number.isFinite(step) ? Math.min(4, Math.max(0, Math.round(step))) : 0,
+  };
+  return settings;
+}
+
 export function parseSettingsJson(rawJson: string | null | undefined): AppSettings {
   let settings: AppSettings;
   if (!rawJson) {
@@ -87,8 +111,7 @@ export function parseSettingsJson(rawJson: string | null | undefined): AppSettin
       return structuredClone(DEFAULT_SETTINGS);
     }
   }
-  settings.lyrics.providerOrder = migrateProviderOrder(settings.lyrics.providerOrder);
-  return settings;
+  return normalizeSettings(settings);
 }
 
 export interface SettingsPersistence {
@@ -108,7 +131,7 @@ export class SettingsCore {
   }
 
   patch(patch: DeepPartial<AppSettings>): AppSettings {
-    this.settings = mergeSettings(this.settings, patch);
+    this.settings = normalizeSettings(mergeSettings(this.settings, patch));
     this.save();
     return this.settings;
   }

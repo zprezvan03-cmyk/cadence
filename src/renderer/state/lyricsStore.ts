@@ -71,6 +71,12 @@ interface LyricsStoreState {
   // Active lyrics for the current/last-played track.
   trackId: number | null;
   status: LyricsStatus;
+  /**
+   * True while a same-track re-resolve (Autofetch upgrade pass, provider-order change, manual
+   * reload) is running behind lyrics that are already on screen. The current lines stay visible
+   * and are only swapped when the upgrade actually lands.
+   */
+  refreshing: boolean;
   candidates: LyricsCandidate[];
   activeSource: string | null;
   parsed: ParsedLyrics | null;
@@ -148,6 +154,7 @@ const persisted = typeof localStorage !== "undefined" ? loadPersisted() : { draf
 export const useLyricsStore = create<LyricsStoreState>()((set, get) => ({
   trackId: null,
   status: "idle",
+  refreshing: false,
   candidates: [],
   activeSource: null,
   parsed: null,
@@ -170,6 +177,7 @@ export const useLyricsStore = create<LyricsStoreState>()((set, get) => ({
     set({
       trackId,
       status: "idle",
+      refreshing: false,
       candidates: [],
       activeSource: null,
       parsed: null,
@@ -187,11 +195,14 @@ export const useLyricsStore = create<LyricsStoreState>()((set, get) => ({
   beginResolve: trackId => {
     set(state =>
       state.trackId === trackId
-        ? { ...state, status: "loading", error: null, lyrics: null }
+        ? // Same track: keep the lyrics on screen while the re-resolve runs (seamless upgrade).
+          // Only a genuinely different track blanks the previous song's lines.
+          { ...state, status: "loading", error: null, refreshing: Boolean(state.lyrics?.length) }
         : {
             ...state,
             trackId,
             status: "loading",
+            refreshing: false,
             candidates: [],
             activeSource: null,
             parsed: null,

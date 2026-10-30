@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, FolderPlus, Loader2, Search, X } from "lucide-react";
 import { useLibrary } from "../state/libraryStore";
 import { useUi } from "../state/uiStore";
+import { FetchAllIndicator } from "../features/lyrics-fetch/FetchAllIndicator";
 
 export function TopBar() {
   const navigate = useUi(state => state.navigate);
@@ -69,6 +70,7 @@ export function TopBar() {
       </form>
 
       <div className="top-actions">
+        <FetchAllIndicator />
         {scanning || scan?.running ? (
           <span className="scan-indicator" title={scan?.message}>
             <Loader2 size={15} className="spin" />

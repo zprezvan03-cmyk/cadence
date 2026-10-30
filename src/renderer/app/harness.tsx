@@ -148,6 +148,8 @@ function makeHarnessTrack(spec: HarnessTrackSpec): Track {
 const defaultLyricsSettings: LyricsSettings = {
   providerOrder: [...DEFAULT_PROVIDER_ORDER],
   autoFetch: true,
+  notFoundCooldownDays: 7,
+  fetchConcurrency: "balanced",
   offsetMs: 0,
   translationLanguage: "",
   romanization: false,
@@ -176,6 +178,7 @@ function harnessAppSettings(lyrics?: Partial<LyricsSettings>): AppSettings {
     lyrics: { ...defaultLyricsSettings, ...lyrics },
     shaders: { ...shaderSettings, enabled: false },
     advanced: { showLogs: false },
+    general: { onboardingCompleted: true, onboardingStep: 0 },
   };
 }
 
@@ -270,6 +273,29 @@ function installLyricsHarnessBridge(): void {
       }),
       cacheChosenFile: async () => undefined,
       rememberSelection: async () => undefined,
+      fetchAll: {
+        getState: async () => ({
+          jobId: null,
+          state: "idle",
+          total: 0,
+          processed: 0,
+          found: 0,
+          notFound: 0,
+          failed: 0,
+          skipped: 0,
+          currentTrack: null,
+          startedAt: null,
+          finishedAt: null,
+        }),
+        start: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
+        pause: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
+        resume: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
+        cancel: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
+        retryFailed: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
+        stats: async () => ({ totalTracks: 0, withLyrics: 0, needsSearch: 0, fullyProcessed: 0 }),
+        promote: async () => undefined,
+        onProgress: () => () => undefined,
+      },
     },
     app: {
       ...(existing.app as object | undefined),

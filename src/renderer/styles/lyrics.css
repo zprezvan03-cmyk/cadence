@@ -647,8 +647,8 @@ braccato-lyrics {
 .fs-controls,
 .lyrics-dock {
   transition:
-    opacity 250ms var(--ease-out),
-    visibility 250ms var(--ease-out);
+    opacity var(--dur-3) var(--ease-out),
+    visibility var(--dur-3) var(--ease-out);
 }
 
 .fs-controls.is-concealed,

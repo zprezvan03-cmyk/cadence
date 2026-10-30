@@ -25,7 +25,11 @@ import {
 } from "../../../shared/providerOrder";
 import { THEMES } from "../../upstream/better-lyrics/themes";
 import { TRANSLATION_LANGUAGES } from "../lyrics/translationLanguages";
+import { invalidateLyricsResolution } from "../lyrics/useLyrics";
 import { LyricsCachePanel } from "./LyricsCachePanel";
+import { FetchAllSettings } from "../lyrics-fetch/FetchAllSettings";
+import { useOnboarding } from "../../state/onboardingStore";
+import type { LyricsFetchConcurrency } from "../../../shared/types";
 import { useSessionState } from "../../app/useSessionState";
 
 /** Tauri's `invoke` rejects with a plain string; Error instances come from the renderer itself. */
@@ -242,15 +246,59 @@ export function SettingsView() {
             <Toggle label="Compact sidebar" checked={settings.appearance.compactSidebar} onChange={value => void patchSettings({ appearance: { compactSidebar: value } })} />
             <Toggle label="Blur artwork behind the player" checked={settings.appearance.blurArtwork} onChange={value => void patchSettings({ appearance: { blurArtwork: value } })} />
             <Toggle label="Verbose shader logs" checked={settings.advanced.showLogs} onChange={value => void patchSettings({ advanced: { showLogs: value } })} />
+            <div className="setting-row">
+              <span>
+                <strong>Replay Onboarding</strong>
+                <em>Run the first-launch setup again (library, ✨ Fetch All Lyrics ✨, preferences).</em>
+              </span>
+              <button
+                type="button"
+                data-testid="replay-onboarding"
+                onClick={() => useOnboarding.getState().replay()}
+              >
+                Replay Onboarding
+              </button>
+            </div>
           </div>
           <div className="settings-subsection" data-testid="settings-lyrics">
             <h3>Lyrics</h3>
             <Toggle
               label="Fetch lyrics online"
-              hint="When off, Cadence only uses sidecar files and embedded tags. Playback never needs the network."
+              hint="Autofetch: when on, lyrics are looked up automatically the moment a track starts playing. When off, Cadence only uses sidecar files, embedded tags and the cache. Playback never needs the network."
               checked={settings.lyrics.autoFetch}
               onChange={value => patchLyrics({ autoFetch: value })}
             />
+            <FetchAllSettings />
+            <Range
+              label="Not Found cooldown"
+              hint="Days before a track no provider had lyrics for is searched again automatically. Manual retries in Now Playing always search immediately."
+              value={settings.lyrics.notFoundCooldownDays}
+              min={1}
+              max={30}
+              step={1}
+              onChange={value => patchLyrics({ notFoundCooldownDays: value })}
+              format={value => `${Math.round(value)} ${Math.round(value) === 1 ? "day" : "days"}`}
+            />
+            <div className="setting-row">
+              <span>
+                <strong>Lyrics Fetch Concurrency</strong>
+                <em>
+                  One global limit for provider requests across Autofetch, Fetch All and manual
+                  search. Lower is gentler on slow connections and low-memory systems.
+                </em>
+              </span>
+              <select
+                data-testid="fetch-concurrency-select"
+                value={settings.lyrics.fetchConcurrency}
+                onChange={event =>
+                  patchLyrics({ fetchConcurrency: event.target.value as LyricsFetchConcurrency })
+                }
+              >
+                <option value="low">Low</option>
+                <option value="balanced">Balanced</option>
+                <option value="high">High</option>
+              </select>
+            </div>
             <Toggle
               label="Romanize non-Latin lyrics"
               hint="Uses the same Google romanization path as Better Lyrics."
@@ -577,6 +625,7 @@ export function SettingsView() {
                 // Resolves only once the emptied cache file has been written to disk; a
                 // filesystem error rejects here instead of being reported as a success.
                 const { removedEntries } = await window.cadence.lyrics.clearCache();
+                if (removedEntries > 0) invalidateLyricsResolution();
                 showToast(
                   removedEntries > 0
                     ? `Lyrics cache cleared (${removedEntries} cached ${removedEntries === 1 ? "song" : "songs"} removed)`
