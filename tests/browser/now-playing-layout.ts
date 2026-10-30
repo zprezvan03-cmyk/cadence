@@ -442,6 +442,8 @@ const responsiveGeometry = () =>
       lyricFontPx: Math.round(fontSize(".blyrics--line") * 10) / 10,
       lineCount: document.querySelectorAll(".blyrics--line").length,
       titleText: document.querySelector(".lyrics-heading h1")?.textContent?.trim() ?? "",
+      profileId: (view as HTMLElement | null)?.dataset.nowPlayingProfile ?? "",
+      profileMode: (view as HTMLElement | null)?.dataset.profileMode ?? "",
       fullscreen: view?.classList.contains("is-fullscreen") ?? false,
       controlsColumns: controlsRow ? getComputedStyle(controlsRow).gridTemplateColumns : "",
       horizontalOverflow:
@@ -452,6 +454,86 @@ const responsiveGeometry = () =>
         : null,
     };
   });
+
+/**
+ * Profile-switch probes. These exercise the actual dock button and popover rather than
+ * patching settings behind the UI, and record the audio element/active line so a switch
+ * cannot silently pass by remounting playback or resetting lyric synchronization.
+ */
+const profileProbe = () =>
+  page.evaluate(() => {
+    const fontSize = (selector: string) => {
+      const node = document.querySelector(selector);
+      return node ? Number.parseFloat(getComputedStyle(node).fontSize) || 0 : 0;
+    };
+    const width = (selector: string) => {
+      const node = document.querySelector(selector);
+      return node ? Math.round(node.getBoundingClientRect().width) : 0;
+    };
+    const view = document.querySelector<HTMLElement>(".lyrics-view");
+    const button = document.querySelector<HTMLButtonElement>(
+      '[data-testid="now-playing-profile-button"]'
+    );
+    const audio = document.querySelector("audio");
+    return {
+      profileId: view?.dataset.nowPlayingProfile ?? "",
+      profileMode: view?.dataset.profileMode ?? "",
+      profileButtonTitle: button?.title ?? "",
+      profileButtonExpanded: button?.getAttribute("aria-expanded") ?? "",
+      switcherPresent: Boolean(
+        document.querySelector('[data-testid="now-playing-profile-switcher"]')
+      ),
+      rows: [...document.querySelectorAll<HTMLButtonElement>(".profile-row")].map(row => ({
+        id: row.dataset.profileId ?? "",
+        text: row.textContent?.replace(/\s+/g, " ").trim() ?? "",
+        pressed: row.getAttribute("aria-pressed"),
+        active: row.classList.contains("active"),
+        hasThumbnail: Boolean(row.querySelector(".profile-thumb-art")),
+        hasCheck: Boolean(row.querySelector("svg")),
+      })),
+      lyricFontPx: Math.round(fontSize(".blyrics--line") * 10) / 10,
+      titleFontPx: Math.round(fontSize(".lyrics-heading h1") * 10) / 10,
+      hostWidth: width("braccato-lyrics"),
+      artworkWidth: width(".fs-artwork .artwork-hero"),
+      controlsWidth: width(".fs-controls"),
+      playWidth: width(".fs-controls .play-button"),
+      activeLineText:
+        document
+          .querySelector("braccato-lyrics .blyrics--active")
+          ?.textContent?.replace(/\s+/g, " ")
+          .trim() ?? "",
+      lineCount: document.querySelectorAll(".blyrics--line").length,
+      audio: audio
+        ? { currentTime: audio.currentTime, paused: audio.paused, src: audio.currentSrc }
+        : null,
+    };
+  });
+
+const openProfileSwitcher = async () => {
+  const center = await page.$eval('[data-testid="now-playing-profile-button"]', node => {
+    const rect = node.getBoundingClientRect();
+    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+  });
+  await page.mouse.move(center.x, center.y);
+  await wait(550);
+  await page.mouse.click(center.x, center.y);
+  await page.waitForSelector('[data-testid="now-playing-profile-switcher"]', {
+    timeout: 10_000,
+  });
+  await wait(300);
+};
+
+const selectNowPlayingProfile = async (profileId: string) => {
+  await openProfileSwitcher();
+  await page.click(`[data-profile-id="${profileId}"]`);
+  await page.waitForFunction(
+    (expected: string) =>
+      document.querySelector<HTMLElement>(".lyrics-view")?.dataset.nowPlayingProfile === expected,
+    { timeout: 10_000 },
+    profileId
+  );
+  await wait(900);
+};
 
 const setViewport = async (width: number, height: number) => {
   await page.setViewport({ width, height });
@@ -604,6 +686,35 @@ await setViewport(800, 1000);
 await shot("13-responsive-fullscreen-narrow");
 const responsiveNarrowFullscreen = await responsiveGeometry();
 
+/* 8. Now Playing profiles. Starting from the same paused synced track in fullscreen,
+   use the dock's quick switcher itself. The profile changes should be visible in the
+   shared tree's proportions while the audio element and active line stay put. */
+await setViewport(1920, 1080);
+const profileBefore = await profileProbe();
+await openProfileSwitcher();
+await shot("14-profile-switcher-fullscreen");
+const profileSwitcherOpen = await profileProbe();
+
+await page.click('[data-profile-id="lyrics-focus"]');
+await page.waitForFunction(
+  () =>
+    document.querySelector<HTMLElement>(".lyrics-view")?.dataset.nowPlayingProfile ===
+    "lyrics-focus",
+  { timeout: 10_000 }
+);
+await wait(900);
+await shot("15-profile-lyrics-focus-fullscreen");
+const profileLyricsFocus = await profileProbe();
+
+await selectNowPlayingProfile("artwork-focus");
+await shot("16-profile-artwork-focus-fullscreen");
+const profileArtworkFocus = await profileProbe();
+
+await exitFullscreen();
+const profileArtworkWindowed = await profileProbe();
+await selectNowPlayingProfile("balanced");
+const profileBalancedRestored = await profileProbe();
+
 const playbackAfterResponsive = await page.evaluate(() => {
   const audio = document.querySelector("audio");
   return audio ? { currentTime: audio.currentTime, paused: audio.paused, src: audio.currentSrc } : null;
@@ -630,6 +741,12 @@ console.log(
       responsiveUltrawideFullscreen,
       responsivePortraitFullscreen,
       responsiveNarrowFullscreen,
+      profileBefore,
+      profileSwitcherOpen,
+      profileLyricsFocus,
+      profileArtworkFocus,
+      profileArtworkWindowed,
+      profileBalancedRestored,
       playbackBeforeResponsive,
       playbackAfterResponsive,
     },
@@ -786,6 +903,110 @@ check(
       responsiveNarrowFullscreen.titleText === responsive1366Windowed.titleText
   ),
   `before ${JSON.stringify(playbackBeforeResponsive)} after ${JSON.stringify(playbackAfterResponsive)} titles ${responsive1366Windowed.titleText}/${responsiveNarrowFullscreen.titleText}`
+);
+
+const balancedProfileRow = profileSwitcherOpen.rows.find(row => row.id === "balanced");
+check(
+  "profile-default-balanced-fullscreen",
+  Boolean(
+    profileBefore.profileId === "balanced" &&
+      profileBefore.profileMode === "fullscreen" &&
+      profileBefore.profileButtonTitle.includes("Balanced") &&
+      profileBefore.lineCount > 0
+  ),
+  `profile ${profileBefore.profileId}/${profileBefore.profileMode} button ${JSON.stringify(profileBefore.profileButtonTitle)} lines ${profileBefore.lineCount}`
+);
+check(
+  "profile-switcher-lists-built-ins-with-thumbnails",
+  Boolean(
+    profileSwitcherOpen.switcherPresent &&
+      profileSwitcherOpen.profileButtonExpanded === "true" &&
+      profileSwitcherOpen.rows.map(row => row.id).join(",") ===
+        "balanced,lyrics-focus,artwork-focus,immersive,minimal" &&
+      profileSwitcherOpen.rows.every(row => row.hasThumbnail && row.text.length > 0)
+  ),
+  `rows ${JSON.stringify(profileSwitcherOpen.rows)}`
+);
+check(
+  "profile-switcher-marks-active-profile",
+  Boolean(
+    balancedProfileRow?.active &&
+      balancedProfileRow.pressed === "true" &&
+      balancedProfileRow.hasCheck &&
+      profileSwitcherOpen.rows.filter(row => row.active).length === 1 &&
+      profileSwitcherOpen.rows
+        .filter(row => row.id !== "balanced")
+        .every(row => row.pressed === "false" && !row.active)
+  ),
+  `balanced row ${JSON.stringify(balancedProfileRow)}`
+);
+check(
+  "profile-lyrics-focus-scales-shared-tree",
+  Boolean(
+    profileLyricsFocus.profileId === "lyrics-focus" &&
+      profileLyricsFocus.profileMode === "fullscreen" &&
+      profileLyricsFocus.lyricFontPx > profileBefore.lyricFontPx + 5 &&
+      profileLyricsFocus.artworkWidth < profileBefore.artworkWidth - 50 &&
+      profileLyricsFocus.titleFontPx < profileBefore.titleFontPx - 2 &&
+      profileLyricsFocus.hostWidth > profileBefore.hostWidth + 40
+  ),
+  `before lyric/art/title/host ${profileBefore.lyricFontPx}/${profileBefore.artworkWidth}/${profileBefore.titleFontPx}/${profileBefore.hostWidth} after ${profileLyricsFocus.lyricFontPx}/${profileLyricsFocus.artworkWidth}/${profileLyricsFocus.titleFontPx}/${profileLyricsFocus.hostWidth}`
+);
+check(
+  "profile-artwork-focus-rebalances-layout",
+  Boolean(
+    profileArtworkFocus.profileId === "artwork-focus" &&
+      profileArtworkFocus.profileMode === "fullscreen" &&
+      profileArtworkFocus.lyricFontPx < profileBefore.lyricFontPx - 4 &&
+      profileArtworkFocus.titleFontPx > profileBefore.titleFontPx + 2 &&
+      profileArtworkFocus.hostWidth < profileBefore.hostWidth - 80
+  ),
+  `before lyric/title/host ${profileBefore.lyricFontPx}/${profileBefore.titleFontPx}/${profileBefore.hostWidth} after ${profileArtworkFocus.lyricFontPx}/${profileArtworkFocus.titleFontPx}/${profileArtworkFocus.hostWidth}`
+);
+check(
+  "profile-switching-preserves-playback-and-active-line",
+  Boolean(
+    profileBefore.audio &&
+      profileBefore.activeLineText &&
+      [
+        profileLyricsFocus,
+        profileArtworkFocus,
+        profileArtworkWindowed,
+        profileBalancedRestored,
+      ].every(
+        snapshot =>
+          snapshot.audio?.src === profileBefore.audio?.src &&
+          snapshot.audio?.paused === profileBefore.audio?.paused &&
+          (snapshot.audio?.currentTime ?? -1) + 0.05 >=
+            (profileBefore.audio?.currentTime ?? 0) &&
+          snapshot.activeLineText === profileBefore.activeLineText &&
+          snapshot.lineCount === profileBefore.lineCount
+      )
+  ),
+  `before ${JSON.stringify(profileBefore.audio)} active ${JSON.stringify(profileBefore.activeLineText)} restored ${JSON.stringify(profileBalancedRestored.audio)} active ${JSON.stringify(profileBalancedRestored.activeLineText)}`
+);
+check(
+  "profile-windowed-mode-uses-windowed-config",
+  Boolean(
+    profileArtworkWindowed.profileId === "artwork-focus" &&
+      profileArtworkWindowed.profileMode === "windowed" &&
+      profileBalancedRestored.lyricFontPx > profileArtworkWindowed.lyricFontPx + 2 &&
+      profileBalancedRestored.titleFontPx < profileArtworkWindowed.titleFontPx - 1
+  ),
+  `artwork windowed lyric/title ${profileArtworkWindowed.lyricFontPx}/${profileArtworkWindowed.titleFontPx} balanced ${profileBalancedRestored.lyricFontPx}/${profileBalancedRestored.titleFontPx}`
+);
+check(
+  "profile-balanced-restores-reference-proportions",
+  Boolean(
+    profileBalancedRestored.profileId === "balanced" &&
+      profileBalancedRestored.profileMode === "windowed" &&
+      Math.abs(profileBalancedRestored.lyricFontPx - responsive1920Windowed.lyricFontPx) <= 0.2 &&
+      Math.abs(profileBalancedRestored.titleFontPx - responsive1920Windowed.titleFontPx) <= 0.2 &&
+      Math.abs(
+        profileBalancedRestored.hostWidth - (responsive1920Windowed.host?.width ?? 0)
+      ) <= 2
+  ),
+  `restored lyric/title/host ${profileBalancedRestored.lyricFontPx}/${profileBalancedRestored.titleFontPx}/${profileBalancedRestored.hostWidth} reference ${responsive1920Windowed.lyricFontPx}/${responsive1920Windowed.titleFontPx}/${responsive1920Windowed.host?.width}`
 );
 
 const failures = Object.entries(results).filter(([, entry]) => !entry.value);

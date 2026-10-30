@@ -396,11 +396,62 @@ export interface ShaderSettings extends GradientSettings {
   performanceMode: "high" | "balanced" | "low" | "off";
 }
 
+/** The two Now Playing surfaces a profile can describe independently. */
+export type NowPlayingProfileMode = "windowed" | "fullscreen";
+
+/**
+ * Visual proportions for one Now Playing surface. These values deliberately layer on the
+ * existing global lyrics typography settings: a profile changes the balance of artwork,
+ * lyrics, metadata and controls without silently replacing the sizes chosen in Settings.
+ * Later customization stages add independently editable appearance fields to this shape.
+ */
+export interface NowPlayingProfileConfig {
+  /** Whether the profile asks fullscreen layouts to show artwork. Narrow layouts may still hide it. */
+  artworkVisible: boolean;
+  /** Multiplier for the responsive artwork size (0.6–1.25 after normalization). */
+  artworkScale: number;
+  /** Multiplier for the main lyric size (0.7–1.35). */
+  lyricsScale: number;
+  /** Multiplier for translated lyric lines (0.7–1.35). */
+  translationScale: number;
+  /** Multiplier for romanized lyric lines (0.7–1.35). */
+  romanizationScale: number;
+  /** Multiplier for the track title (0.75–1.25). */
+  titleScale: number;
+  /** Multiplier for artist/album metadata (0.75–1.25). */
+  metadataScale: number;
+  /** Multiplier for playback-control and dock hit sizes (0.8–1.2). */
+  controlsScale: number;
+  /** Maximum readable lyric measure in CSS pixels (640–1280). */
+  lyricsMaxWidth: number;
+  /** Multiplier for Now Playing gutters and major gaps (0.8–1.25). */
+  spacingScale: number;
+}
+
+/** One named Now Playing profile, with distinct windowed and fullscreen proportions. */
+export interface NowPlayingProfile {
+  id: string;
+  name: string;
+  description: string;
+  /** Built-in profiles are shipped by Cadence and cannot be edited or deleted in place. */
+  builtIn: boolean;
+  windowed: NowPlayingProfileConfig;
+  fullscreen: NowPlayingProfileConfig;
+}
+
+/** Persisted profile selection plus user-authored profiles. Built-ins live in code, not settings. */
+export interface NowPlayingProfilesSettings {
+  version: 1;
+  activeProfileId: string;
+  customProfiles: NowPlayingProfile[];
+}
+
 export interface AppSettings {
   version: number;
   playback: PlaybackSettings;
   appearance: AppearanceSettings;
   lyrics: LyricsSettings;
+  nowPlayingProfiles: NowPlayingProfilesSettings;
   shaders: ShaderSettings;
   advanced: { showLogs: boolean };
   general: {

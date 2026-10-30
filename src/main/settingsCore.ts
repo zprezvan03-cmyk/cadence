@@ -7,6 +7,10 @@ import type { AppSettings, DeepPartial } from "../shared/types";
 import { DEFAULT_FONT_ID } from "../shared/fonts";
 import { DEFAULT_PROVIDER_ORDER, migrateProviderOrder } from "../shared/upstream/better-lyrics/constants";
 import { DEFAULT_GRADIENT_SETTINGS } from "../shared/upstream/shaders/gradientSettings";
+import {
+  createDefaultNowPlayingProfilesSettings,
+  normalizeNowPlayingProfilesSettings,
+} from "../shared/nowPlayingProfiles";
 
 export const DEFAULT_SETTINGS: AppSettings = {
   version: 1,
@@ -50,6 +54,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     fullscreenOnOpen: false,
     showLyricsInFullscreen: true,
   },
+  nowPlayingProfiles: createDefaultNowPlayingProfilesSettings(),
   shaders: {
     ...DEFAULT_GRADIENT_SETTINGS,
     performanceMode: "balanced",
@@ -96,6 +101,7 @@ function normalizeSettings(settings: AppSettings): AppSettings {
     onboardingCompleted: Boolean(settings.general?.onboardingCompleted),
     onboardingStep: Number.isFinite(step) ? Math.min(4, Math.max(0, Math.round(step))) : 0,
   };
+  settings.nowPlayingProfiles = normalizeNowPlayingProfilesSettings(settings.nowPlayingProfiles);
   return settings;
 }
 

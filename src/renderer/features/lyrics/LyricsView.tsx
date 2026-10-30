@@ -9,6 +9,11 @@ import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, u
 import { Minimize2, Music4, RefreshCw, Search } from "lucide-react";
 import type { AppSettings, Track } from "../../../shared/types";
 import { DEFAULT_PROVIDER_ORDER } from "../../../shared/upstream/better-lyrics/constants";
+import {
+  getActiveNowPlayingProfile,
+  listNowPlayingProfiles,
+  resolveNowPlayingProfileConfig,
+} from "../../../shared/nowPlayingProfiles";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
 import { BraccatoLyrics } from "./BraccatoLyrics";
@@ -89,6 +94,19 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
 
   const lyricsSettings = settings?.lyrics;
   const shaderSettings = settings?.shaders;
+  const nowPlayingProfilesSettings = settings?.nowPlayingProfiles;
+  const activeNowPlayingProfile = useMemo(
+    () => getActiveNowPlayingProfile(nowPlayingProfilesSettings),
+    [nowPlayingProfilesSettings]
+  );
+  const availableNowPlayingProfiles = useMemo(
+    () => listNowPlayingProfiles(nowPlayingProfilesSettings),
+    [nowPlayingProfilesSettings]
+  );
+  const nowPlayingProfileConfig = useMemo(
+    () => resolveNowPlayingProfileConfig(nowPlayingProfilesSettings, fullscreen),
+    [fullscreen, nowPlayingProfilesSettings]
+  );
   const showLyrics = lyricsSettings?.showLyricsInFullscreen ?? true;
   // The toggle only applies in fullscreen; the normal page always shows lyrics.
   const lyricsVisible = !fullscreen || showLyrics;
@@ -107,9 +125,9 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   const themeCss = useMemo(() => (lyricsSettings ? buildThemeCss(lyricsSettings) : ""), [lyricsSettings]);
 
   // Legacy typography settings were authored against a 48px (3rem) main lyric. Their
-  // ratios now multiply the container-derived fluid base in `lyrics.css`, so at the
-  // reference size the rendered result matches the old fixed values while larger
-  // app-content areas scale proportionally instead of stopping at a laptop-sized cap.
+  // ratios multiply the container-derived fluid base in `lyrics.css`; the active
+  // profile's mode-specific proportions then layer on that user-chosen base. Balanced
+  // uses 1× throughout, so the reference rendering remains the pre-profile result.
   const nowPlayingScaleStyle = useMemo<CSSProperties>(() => {
     const fontSizeRem = clampFinite(lyricsSettings?.fontSizeRem, 3, 1.4, 6);
     const translationFontSizePx = clampFinite(
@@ -125,19 +143,35 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
       48
     );
     return {
-      "--np-lyrics-font-scale": fontSizeRem / 3,
-      "--np-translation-font-ratio": translationFontSizePx / 48,
-      "--np-romanization-font-ratio": romanizationFontSizePx / 48,
+      "--np-lyrics-font-scale": (fontSizeRem / 3) * nowPlayingProfileConfig.lyricsScale,
+      "--np-translation-font-ratio":
+        (translationFontSizePx / 48) * nowPlayingProfileConfig.translationScale,
+      "--np-romanization-font-ratio":
+        (romanizationFontSizePx / 48) * nowPlayingProfileConfig.romanizationScale,
+      "--np-profile-artwork-scale": nowPlayingProfileConfig.artworkScale,
+      "--np-profile-title-scale": nowPlayingProfileConfig.titleScale,
+      "--np-profile-metadata-scale": nowPlayingProfileConfig.metadataScale,
+      "--np-profile-controls-scale": nowPlayingProfileConfig.controlsScale,
+      "--np-profile-spacing-scale": nowPlayingProfileConfig.spacingScale,
+      "--np-profile-lyrics-max-width": `${nowPlayingProfileConfig.lyricsMaxWidth}px`,
     } as CSSProperties;
   }, [
     lyricsSettings?.fontSizeRem,
     lyricsSettings?.translationFontSizePx,
     lyricsSettings?.romanizationFontSizePx,
+    nowPlayingProfileConfig,
   ]);
 
   const patchLyrics = useCallback(
     (patch: Partial<NonNullable<AppSettings["lyrics"]>>) => {
       void patchSettings({ lyrics: patch });
+    },
+    [patchSettings]
+  );
+
+  const handleSelectNowPlayingProfile = useCallback(
+    (profileId: string) => {
+      void patchSettings({ nowPlayingProfiles: { activeProfileId: profileId } });
     },
     [patchSettings]
   );
@@ -208,6 +242,9 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
       className={`lyrics-view ${fullscreen ? "is-fullscreen" : ""} ${panelMode ? "is-lyrics-off" : ""}`}
       style={nowPlayingScaleStyle}
       data-testid="lyrics-view"
+      data-now-playing-profile={activeNowPlayingProfile.id}
+      data-profile-mode={fullscreen ? "fullscreen" : "windowed"}
+      data-profile-artwork={nowPlayingProfileConfig.artworkVisible ? "visible" : "hidden"}
     >
       <KawarpBackground
         artworkUrl={track?.artworkUrl ?? null}
@@ -367,6 +404,9 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
           <LyricsDock
             settings={lyricsSettings ?? fallbackLyricsSettings}
             onPatch={patchLyrics}
+            nowPlayingProfiles={availableNowPlayingProfiles}
+            activeNowPlayingProfileId={activeNowPlayingProfile.id}
+            onSelectNowPlayingProfile={handleSelectNowPlayingProfile}
             candidates={lyrics.candidates}
             activeSource={lyrics.activeSource}
             onSelectSource={lyrics.selectSource}

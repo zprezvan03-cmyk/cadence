@@ -58,9 +58,17 @@
      bounded mainly by height, lyric measure by readable width, metadata by both axes, and
      controls by height. `cqi`/`cqh` resolve against `.content-scroll` (see global.css), i.e.
      the actual route viewport in windowed mode and the whole window in immersive mode. */
-  --np-gutter: clamp(20px, 3cqi, 64px);
-  --np-gap: clamp(24px, 3.2cqi, 72px);
-  --np-lyrics-max-width: clamp(720px, 62cqi, 1120px);
+  --np-gutter: calc(
+    clamp(20px, 3cqi, 64px) * var(--np-profile-spacing-scale, 1)
+  );
+  --np-gap: calc(
+    clamp(24px, 3.2cqi, 72px) * var(--np-profile-spacing-scale, 1)
+  );
+  --np-lyrics-max-width: clamp(
+    720px,
+    62cqi,
+    var(--np-profile-lyrics-max-width, 1120px)
+  );
   --np-lyrics-fluid-base: clamp(30px, 6cqh, 84px);
   --np-lyrics-font-size: calc(var(--np-lyrics-fluid-base) * var(--np-lyrics-font-scale, 1));
   --np-translation-font-size: calc(
@@ -69,14 +77,25 @@
   --np-romanization-font-size: calc(
     var(--np-lyrics-fluid-base) * var(--np-romanization-font-ratio, 0.5417)
   );
-  --np-title-size: clamp(22px, calc(1.65cqi + 1cqh), 54px);
-  --np-meta-size: clamp(13px, calc(0.55cqi + 0.55cqh), 22px);
+  --np-title-size: calc(
+    clamp(22px, calc(1.65cqi + 1cqh), 54px) * var(--np-profile-title-scale, 1)
+  );
+  --np-meta-size: calc(
+    clamp(13px, calc(0.55cqi + 0.55cqh), 22px) *
+      var(--np-profile-metadata-scale, 1)
+  );
   --np-controls-width: min(
-    clamp(680px, 64cqi, 1240px),
+    calc(
+      clamp(680px, 64cqi, 1240px) * var(--np-profile-controls-scale, 1)
+    ),
     calc(100% - (2 * var(--np-gutter)))
   );
-  --np-control-button-size: clamp(36px, 4.2cqh, 56px);
-  --np-play-button-size: clamp(48px, 5.8cqh, 76px);
+  --np-control-button-size: calc(
+    clamp(36px, 4.2cqh, 56px) * var(--np-profile-controls-scale, 1)
+  );
+  --np-play-button-size: calc(
+    clamp(48px, 5.8cqh, 76px) * var(--np-profile-controls-scale, 1)
+  );
   /* A definite height, not min-height: the flex column must bound the scrolling lyric body so the
      dock stays pinned above the player bar instead of being pushed below the fold. The legacy
      viewport calculation remains the fallback; container height is the exact route area. */
@@ -103,13 +122,13 @@
      it clear of the header/footer. The old 360px ceiling was the main reason fullscreen
      still read as a small laptop layout at 1080p and above. */
   --fs-art-size: clamp(
-    160px,
+    calc(160px * var(--np-profile-artwork-scale, 1)),
     min(
-      44cqh,
-      30cqi,
+      calc(44cqh * var(--np-profile-artwork-scale, 1)),
+      calc(30cqi * var(--np-profile-artwork-scale, 1)),
       calc(100cqh - (2 * var(--fs-footer-height, 0px)) - 180px)
     ),
-    620px
+    calc(620px * var(--np-profile-artwork-scale, 1))
   );
   /* Artwork and lyrics remain one centred group. The measure can now use a large desktop
      properly, but the profile-configurable cap still stops lines stretching across an
@@ -173,6 +192,15 @@
 
 .fs-side .lyrics-heading {
   margin-top: clamp(18px, 2.8cqh, 34px);
+}
+
+.lyrics-view[data-profile-artwork="hidden"] .fs-artwork,
+.lyrics-view[data-profile-artwork="hidden"] .fs-panel-art {
+  display: none;
+}
+
+.lyrics-view[data-profile-artwork="hidden"] .fs-side .lyrics-heading {
+  margin-top: 0;
 }
 
 /* The exit button sits in the header's top-right corner and takes no space in the header's flow. */
@@ -1175,6 +1203,111 @@ braccato-lyrics[data-upgrading="true"] {
   font-size: 11px;
   color: var(--text-dim);
   margin-top: 1px;
+}
+
+.lyrics-dock:has(.dock-profiles) {
+  z-index: 5;
+}
+
+.dock-profiles {
+  width: min(360px, calc(100cqi - 32px));
+  /* This five-row popover extends across the fullscreen controls when it opens upward.
+     Unlike the shorter glass dock panels, it uses an opaque menu fill so seek/volume
+     lines cannot cross the last profile rows or the note beneath them. */
+  background: #0b0b14;
+  backdrop-filter: none;
+  z-index: 4;
+}
+
+.profile-row {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.profile-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.profile-row.active {
+  background: var(--accent-soft);
+}
+
+.profile-row-copy {
+  min-width: 0;
+}
+
+.profile-row-copy strong {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.profile-row-copy em {
+  display: block;
+  margin-top: 1px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.profile-thumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 58px;
+  height: 40px;
+  padding: 6px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.profile-thumb-art {
+  flex: 0 0 auto;
+  border-radius: 5px;
+  background: linear-gradient(135deg, var(--accent-strong), rgba(255, 255, 255, 0.55));
+}
+
+.profile-thumb-lines {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.profile-thumb-lines span {
+  display: block;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.profile-thumb-lines span:nth-child(2) {
+  opacity: 0.55;
+}
+
+.profile-thumb-lines span:nth-child(3) {
+  opacity: 0.35;
+}
+
+.profile-switcher-note {
+  margin: 6px 6px 2px;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .language-list {

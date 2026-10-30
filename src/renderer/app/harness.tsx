@@ -25,6 +25,7 @@ import { KawarpBackground } from "../features/shaders/KawarpBackground";
 import { useSettings } from "../state/settingsStore";
 import { useLyricsStore } from "../state/lyricsStore";
 import { DEFAULT_PROVIDER_ORDER } from "../../shared/upstream/better-lyrics/constants";
+import { createDefaultNowPlayingProfilesSettings } from "../../shared/nowPlayingProfiles";
 import type {
   AppSettings,
   CadenceApi,
@@ -176,6 +177,7 @@ function harnessAppSettings(lyrics?: Partial<LyricsSettings>): AppSettings {
     playback: { volume: 0.85, muted: false, shuffle: false, repeat: "off", playbackRate: 1, resumeOnLaunch: false },
     appearance: { accent: "#ff3d71", reduceMotion: false, compactSidebar: false, compactSidebarHoverExpand: true, blurArtwork: true, fontFamily: "inter" },
     lyrics: { ...defaultLyricsSettings, ...lyrics },
+    nowPlayingProfiles: createDefaultNowPlayingProfilesSettings(),
     shaders: { ...shaderSettings, enabled: false },
     advanced: { showLogs: false },
     general: { onboardingCompleted: true, onboardingStep: 0 },

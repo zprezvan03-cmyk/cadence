@@ -15,6 +15,7 @@ import {
   Download,
   FolderOpen,
   Languages,
+  LayoutGrid,
   Minus,
   Plus,
   RefreshCw,
@@ -25,7 +26,7 @@ import {
   XCircle,
   Youtube,
 } from "lucide-react";
-import type { LyricsCandidate, LyricsSettings } from "../../../shared/types";
+import type { LyricsCandidate, LyricsSettings, NowPlayingProfile } from "../../../shared/types";
 import { providerConfig } from "../../../shared/upstream/better-lyrics/constants";
 import { formatDurationSeconds, resolveSearchFields, type ManualSearchInput } from "../../../shared/youtube";
 import type { SearchDraft } from "../../state/lyricsStore";
@@ -36,6 +37,9 @@ import { usePresence } from "../../app/usePresence";
 interface LyricsDockProps {
   settings: LyricsSettings;
   onPatch: (patch: Partial<LyricsSettings>) => void;
+  nowPlayingProfiles: readonly NowPlayingProfile[];
+  activeNowPlayingProfileId: string;
+  onSelectNowPlayingProfile: (profileId: string) => void;
   candidates: LyricsCandidate[];
   activeSource: string | null;
   onSelectSource: (source: string) => void;
@@ -76,6 +80,9 @@ function providerLabel(candidate: LyricsCandidate): string {
 export function LyricsDock({
   settings,
   onPatch,
+  nowPlayingProfiles,
+  activeNowPlayingProfileId,
+  onSelectNowPlayingProfile,
   candidates,
   activeSource,
   onSelectSource,
@@ -97,14 +104,20 @@ export function LyricsDock({
   concealed = false,
   onPopoverChange,
 }: LyricsDockProps) {
-  const [panel, setPanel] = useState<"none" | "sources" | "appearance" | "search">("none");
+  const [panel, setPanel] = useState<"none" | "sources" | "appearance" | "profiles" | "search">(
+    "none"
+  );
   const [languageOpen, setLanguageOpen] = useState(false);
   // Popovers close the instant their state flips; presence only keeps each mounted for
   // its fast pop-out. Switching panels crossfades for one 120ms beat instead of cutting.
   const sourcesPresence = usePresence(panel === "sources");
   const searchPresence = usePresence(panel === "search");
   const appearancePresence = usePresence(panel === "appearance");
+  const profilesPresence = usePresence(panel === "profiles");
   const languagesPresence = usePresence(languageOpen);
+  const activeNowPlayingProfile =
+    nowPlayingProfiles.find(profile => profile.id === activeNowPlayingProfileId) ??
+    nowPlayingProfiles[0];
   const { title: searchTitle, artist: searchArtist, album: searchAlbum, youtubeUrl } = searchDraft;
 
   useEffect(() => {
@@ -166,6 +179,17 @@ export function LyricsDock({
           aria-expanded={panel === "appearance"}
         >
           <Settings2 size={16} /> Style
+        </button>
+        <button
+          type="button"
+          className="dock-button"
+          onClick={() => setPanel(panel === "profiles" ? "none" : "profiles")}
+          title={`Now Playing profile: ${activeNowPlayingProfile?.name ?? "Balanced"}`}
+          aria-expanded={panel === "profiles"}
+          aria-haspopup="true"
+          data-testid="now-playing-profile-button"
+        >
+          <LayoutGrid size={16} /> Profile
         </button>
         <button
           type="button"
@@ -247,6 +271,51 @@ export function LyricsDock({
             </span>
             <ChevronDown size={14} className="chev-right" />
           </button>
+        </div>
+      ) : null}
+
+      {profilesPresence.mounted ? (
+        <div
+          className={`dock-popover dock-profiles ${profilesPresence.phaseClass}`}
+          data-presence={profilesPresence.phase}
+          data-testid="now-playing-profile-switcher"
+          role="menu"
+          aria-label="Now Playing profiles"
+        >
+          <div className="popover-title">Now Playing profile</div>
+          {nowPlayingProfiles.map(profile => {
+            const active = profile.id === activeNowPlayingProfile?.id;
+            return (
+              <button
+                type="button"
+                key={profile.id}
+                className={`profile-row ${active ? "active" : ""}`}
+                onClick={() => {
+                  onSelectNowPlayingProfile(profile.id);
+                  setPanel("none");
+                }}
+                aria-pressed={active}
+                data-profile-id={profile.id}
+              >
+                <NowPlayingProfileThumbnail profile={profile} />
+                <span className="profile-row-copy">
+                  <strong>{profile.name}</strong>
+                  <em>
+                    {profile.description ||
+                      (profile.builtIn ? "Built-in profile" : "Custom profile")}
+                  </em>
+                </span>
+                {active ? (
+                  <Check size={16} aria-hidden="true" />
+                ) : (
+                  <span className="badge">{profile.builtIn ? "Built-in" : "Custom"}</span>
+                )}
+              </button>
+            );
+          })}
+          <p className="profile-switcher-note">
+            Each profile keeps separate windowed and fullscreen proportions.
+          </p>
         </div>
       ) : null}
 
@@ -596,6 +665,33 @@ export function LyricsDock({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * A tiny data-driven preview, not a screenshot: artwork size, lyric weight and measure
+ * come from the profile's fullscreen proportions, so custom profiles preview truthfully
+ * without mounting a second Now Playing tree or running an off-screen renderer.
+ */
+function NowPlayingProfileThumbnail({ profile }: { profile: NowPlayingProfile }) {
+  const config = profile.fullscreen;
+  const artworkSize = Math.min(24, Math.max(12, Math.round(18 * config.artworkScale)));
+  const lineHeight = Math.min(7, Math.max(4, 5 * config.lyricsScale));
+  const lineWidth = Math.min(100, Math.max(58, config.lyricsMaxWidth / 12));
+  return (
+    <span className="profile-thumb" aria-hidden="true">
+      {config.artworkVisible ? (
+        <span
+          className="profile-thumb-art"
+          style={{ width: artworkSize, height: artworkSize }}
+        />
+      ) : null}
+      <span className="profile-thumb-lines">
+        <span style={{ height: lineHeight, width: `${lineWidth}%` }} />
+        <span style={{ height: lineHeight, width: `${Math.max(48, lineWidth * 0.82)}%` }} />
+        <span style={{ height: lineHeight, width: `${Math.max(38, lineWidth * 0.62)}%` }} />
+      </span>
+    </span>
   );
 }
 
