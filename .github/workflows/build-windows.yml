@@ -7,6 +7,11 @@ on:
         description: "Stage number used in the output filename (Cadence-<stage>.exe)"
         required: true
         default: "2"
+  push:
+    branches:
+      - arena/d2c7f76f-cadence
+    paths:
+      - .github/stage-build.txt
 
 permissions:
   contents: read
@@ -16,6 +21,14 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Determine stage
+        shell: pwsh
+        run: |
+          $stage = "${{ inputs.stage }}"
+          if (-not $stage) { $stage = (Get-Content .github/stage-build.txt -Raw).Trim() }
+          "STAGE=$stage" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Building Cadence-$stage.exe"
 
       - uses: actions/setup-node@v4
         with:
@@ -43,12 +56,12 @@ jobs:
             Select-Object -First 1
           if (-not $exe) { throw "No release .exe found under src-tauri/target/release" }
           New-Item -ItemType Directory -Force -Path stage-build | Out-Null
-          $target = "stage-build/Cadence-${{ inputs.stage }}.exe"
+          $target = "stage-build/Cadence-$env:STAGE.exe"
           Copy-Item $exe.FullName $target
           Write-Host "Staged $target from $($exe.FullName) ($($exe.Length) bytes)"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Cadence-${{ inputs.stage }}
-          path: stage-build/Cadence-${{ inputs.stage }}.exe
+          name: Cadence-${{ env.STAGE }}
+          path: stage-build/Cadence-${{ env.STAGE }}.exe
           if-no-files-found: error
