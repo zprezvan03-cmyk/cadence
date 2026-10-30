@@ -12,9 +12,10 @@ on:
       - arena/d2c7f76f-cadence
     paths:
       - .github/stage-build.txt
+      - .github/workflows/build-windows.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -65,3 +66,17 @@ jobs:
           name: Cadence-${{ env.STAGE }}
           path: stage-build/Cadence-${{ env.STAGE }}.exe
           if-no-files-found: error
+
+      - name: Commit zipped exe back to this branch for Drive delivery
+        shell: pwsh
+        run: |
+          $exePath = "stage-build/Cadence-$env:STAGE.exe"
+          $hash = (Get-FileHash $exePath -Algorithm SHA256).Hash.ToLower()
+          "$hash  Cadence-$env:STAGE.exe" | Out-File -Encoding ascii "stage-build/Cadence-$env:STAGE.sha256"
+          Compress-Archive -Path $exePath -DestinationPath "stage-build/Cadence-$env:STAGE.zip" -Force
+          Remove-Item $exePath
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f "stage-build/Cadence-$env:STAGE.zip" "stage-build/Cadence-$env:STAGE.sha256"
+          git commit -m "Stage $env:STAGE Windows build artifact (temporary, for Drive delivery)"
+          git push origin "HEAD:${{ github.ref_name }}"
