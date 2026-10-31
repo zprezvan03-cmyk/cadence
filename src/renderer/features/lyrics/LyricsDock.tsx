@@ -20,7 +20,6 @@ import {
   Plus,
   RefreshCw,
   Search,
-  Settings2,
   Sparkles,
   Wand2,
   XCircle,
@@ -104,15 +103,12 @@ export function LyricsDock({
   concealed = false,
   onPopoverChange,
 }: LyricsDockProps) {
-  const [panel, setPanel] = useState<"none" | "sources" | "appearance" | "profiles" | "search">(
-    "none"
-  );
+  const [panel, setPanel] = useState<"none" | "sources" | "profiles" | "search">("none");
   const [languageOpen, setLanguageOpen] = useState(false);
   // Popovers close the instant their state flips; presence only keeps each mounted for
   // its fast pop-out. Switching panels crossfades for one 120ms beat instead of cutting.
   const sourcesPresence = usePresence(panel === "sources");
   const searchPresence = usePresence(panel === "search");
-  const appearancePresence = usePresence(panel === "appearance");
   const profilesPresence = usePresence(panel === "profiles");
   const languagesPresence = usePresence(languageOpen);
   const activeNowPlayingProfile =
@@ -170,15 +166,6 @@ export function LyricsDock({
           aria-expanded={panel === "sources"}
         >
           <Sparkles size={16} /> Source <ChevronDown size={14} />
-        </button>
-        <button
-          type="button"
-          className="dock-button"
-          onClick={() => setPanel(panel === "appearance" ? "none" : "appearance")}
-          title="Lyrics appearance"
-          aria-expanded={panel === "appearance"}
-        >
-          <Settings2 size={16} /> Style
         </button>
         <button
           type="button"
@@ -519,113 +506,6 @@ export function LyricsDock({
                 </button>
               ))
             : null}
-        </div>
-      ) : null}
-
-      {appearancePresence.mounted ? (
-        <div className={`dock-popover dock-appearance ${appearancePresence.phaseClass}`} data-presence={appearancePresence.phase}>
-          <label className="slider-row">
-            <span>Font size</span>
-            <input
-              type="range"
-              min={1.5}
-              max={5.5}
-              step={0.1}
-              value={settings.fontSizeRem}
-              onChange={event => onPatch({ fontSizeRem: Number(event.target.value) })}
-            />
-            <output>{settings.fontSizeRem.toFixed(1)}rem</output>
-          </label>
-          <label className="slider-row">
-            <span>Translation Font Size</span>
-            <input
-              type="range"
-              min={10}
-              max={48}
-              step={1}
-              value={settings.translationFontSizePx}
-              onChange={event => onPatch({ translationFontSizePx: Number(event.target.value) })}
-              aria-label="Translation Font Size"
-            />
-            <output>{settings.translationFontSizePx} px</output>
-          </label>
-          <label className="slider-row">
-            <span>Romanization Font Size</span>
-            <input
-              type="range"
-              min={10}
-              max={48}
-              step={1}
-              value={settings.romanizationFontSizePx}
-              onChange={event => onPatch({ romanizationFontSizePx: Number(event.target.value) })}
-              aria-label="Romanization Font Size"
-            />
-            <output>{settings.romanizationFontSizePx} px</output>
-          </label>
-          <label className="slider-row">
-            <span>Weight</span>
-            <input
-              type="range"
-              min={300}
-              max={900}
-              step={50}
-              value={settings.fontWeight}
-              onChange={event => onPatch({ fontWeight: Number(event.target.value) })}
-            />
-            <output>{settings.fontWeight}</output>
-          </label>
-          <label className="slider-row">
-            <span>Line height</span>
-            <input
-              type="range"
-              min={1}
-              max={2}
-              step={0.05}
-              value={settings.lineHeight}
-              onChange={event => onPatch({ lineHeight: Number(event.target.value) })}
-            />
-            <output>{settings.lineHeight.toFixed(2)}</output>
-          </label>
-          <label className="slider-row">
-            <span>Active</span>
-            <input
-              type="range"
-              min={0.4}
-              max={1}
-              step={0.02}
-              value={settings.activeOpacity}
-              onChange={event => onPatch({ activeOpacity: Number(event.target.value) })}
-            />
-            <output>{Math.round(settings.activeOpacity * 100)}%</output>
-          </label>
-          <label className="slider-row">
-            <span>Inactive</span>
-            <input
-              type="range"
-              min={0.05}
-              max={0.9}
-              step={0.02}
-              value={settings.inactiveOpacity}
-              onChange={event => onPatch({ inactiveOpacity: Number(event.target.value) })}
-            />
-            <output>{Math.round(settings.inactiveOpacity * 100)}%</output>
-          </label>
-          <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked={settings.showCredits}
-              onChange={event => onPatch({ showCredits: event.target.checked })}
-            />
-            <span>Show songwriters</span>
-          </label>
-          <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked={settings.passiveScroll}
-              onChange={event => onPatch({ passiveScroll: event.target.checked })}
-            />
-            <span>Auto-scroll unsynced lyrics</span>
-          </label>
         </div>
       ) : null}
 
