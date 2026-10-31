@@ -184,15 +184,25 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
       minimal: { swipe: 0, glow: 0, fade: 1 },
     }[cfg.karaokeStyle];
     const slidePx = Math.round(12 * cfg.motionIntensity);
+    // These transforms are declared on the light-DOM container and inherited into
+    // the renderer's shadow tree, so they must not reference renderer variables
+    // (--blyrics-*): a var() inside a custom property resolves where the property
+    // is declared, those names do not exist out here, and the whole value would
+    // silently become invalid and fall back to the theme default — which is
+    // exactly what made Slide indistinguishable from Scale. Bake numbers in.
+    const lineScale =
+      cfg.lyricTransition === "fade" || cfg.lyricTransition === "none"
+        ? 1
+        : 1 - 0.05 * cfg.motionIntensity;
     const enterFrom =
       cfg.lyricTransition === "slide"
-        ? `translateY(${slidePx}px) scale(var(--blyrics-scale))`
+        ? `translateY(${slidePx}px) scale(${lineScale})`
         : cfg.lyricTransition === "fade" || cfg.lyricTransition === "none"
-          ? "scale(var(--blyrics-active-scale))"
-          : "scale(var(--blyrics-scale))";
+          ? `scale(${cfg.activeLineScale})`
+          : `scale(${lineScale})`;
     const exitTo =
       cfg.lyricTransition === "slide"
-        ? `translateY(${-slidePx}px) scale(var(--blyrics-scale))`
+        ? `translateY(${-slidePx}px) scale(${lineScale})`
         : enterFrom;
     const style: Record<string, string | number> = {
       "--np-lyrics-font-scale": (fontSizeRem / 3) * cfg.lyricsScale,
@@ -223,10 +233,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
         cfg.karaokeStyle === "minimal" || cfg.karaokeStyle === "glow"
           ? 1
           : cfg.activeWordScale,
-      "--np-line-scale":
-        cfg.lyricTransition === "fade" || cfg.lyricTransition === "none"
-          ? 1
-          : 1 - 0.05 * cfg.motionIntensity,
+      "--np-line-scale": lineScale,
       "--np-motion-duration":
         cfg.lyricTransition === "none"
           ? "1ms"

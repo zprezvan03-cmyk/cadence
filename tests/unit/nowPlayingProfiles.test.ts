@@ -38,6 +38,25 @@ describe("built-in Now Playing profiles", () => {
     expect(balanced.fullscreen).toEqual(BASE_NOW_PLAYING_PROFILE_CONFIG);
   });
 
+  it("gives every built-in one identity across windowed and fullscreen", () => {
+    // Karaoke style, background and line transition define what a profile IS;
+    // the two halves may differ in proportions only. A table that carried
+    // Immersive's glow/slide/visualizer solely in its fullscreen half made it
+    // animate exactly like Balanced in a window ("line transition does nothing").
+    for (const profile of BUILT_IN_NOW_PLAYING_PROFILES) {
+      expect(profile.windowed.karaokeStyle, profile.id).toBe(profile.fullscreen.karaokeStyle);
+      expect(profile.windowed.backgroundMode, profile.id).toBe(profile.fullscreen.backgroundMode);
+      expect(profile.windowed.lyricTransition, profile.id).toBe(profile.fullscreen.lyricTransition);
+    }
+    // The five identities are actually distinct from one another.
+    const identities = new Set(
+      BUILT_IN_NOW_PLAYING_PROFILES.map(
+        p => `${p.windowed.karaokeStyle}|${p.windowed.backgroundMode}|${p.windowed.lyricTransition}`
+      )
+    );
+    expect(identities.size).toBe(BUILT_IN_NOW_PLAYING_PROFILES.length);
+  });
+
   it("freezes built-ins while allowing an editable clone", () => {
     const balanced = BUILT_IN_NOW_PLAYING_PROFILES[0];
     expect(Object.isFrozen(BUILT_IN_NOW_PLAYING_PROFILES)).toBe(true);

@@ -93,6 +93,11 @@ function builtInProfile(
   };
 }
 
+// A built-in's identity — karaoke style, background, line transition — is the
+// same in both halves; windowed/fullscreen differ in proportions only. (An
+// earlier table carried Immersive's glow/slide/visualizer only in its
+// fullscreen half, so in a window it animated exactly like Balanced and the
+// Line transition control appeared to do nothing.)
 export const BUILT_IN_NOW_PLAYING_PROFILES: readonly NowPlayingProfile[] = deepFreeze([
   builtInProfile(
     "balanced",
@@ -114,6 +119,10 @@ export const BUILT_IN_NOW_PLAYING_PROFILES: readonly NowPlayingProfile[] = deepF
       controlsScale: 0.95,
       lyricsMaxWidth: 1200,
       spacingScale: 0.95,
+      karaokeStyle: "glow",
+      karaokeIntensity: 0.85,
+      backgroundMode: "blurred-artwork",
+      backgroundIntensity: 0.85,
     },
     {
       artworkScale: 0.74,
@@ -144,6 +153,8 @@ export const BUILT_IN_NOW_PLAYING_PROFILES: readonly NowPlayingProfile[] = deepF
       metadataScale: 1.05,
       lyricsMaxWidth: 980,
       spacingScale: 1.05,
+      karaokeStyle: "gradient",
+      backgroundMode: "gradient",
     },
     {
       artworkScale: 1.16,
@@ -172,6 +183,11 @@ export const BUILT_IN_NOW_PLAYING_PROFILES: readonly NowPlayingProfile[] = deepF
       controlsScale: 1.08,
       lyricsMaxWidth: 1160,
       spacingScale: 1.1,
+      karaokeStyle: "glow",
+      karaokeIntensity: 1,
+      activeWordScale: 1.16,
+      backgroundMode: "visualizer",
+      lyricTransition: "slide",
     },
     {
       artworkScale: 1.08,
