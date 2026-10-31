@@ -828,6 +828,505 @@ await selectNowPlayingProfile("balanced");
 await exitFullscreen();
 const fullscreenEffectsRestored = await profileProbe();
 
+/* 11. Studio feature matrix. Every Customization Studio control is driven through the
+   real UI (aria-label selectors, native value setters for React controlled inputs) and
+   verified against computed styles / geometry on the live tree — not just unit-tested.
+   Runs windowed at 1920x1080 unless a step explicitly enters fullscreen. */
+
+const mxOpenStudio = async () => {
+  await page.click('[data-testid="customize-now-playing"]');
+  await page.waitForSelector('[data-testid="customization-studio"]', { timeout: 10_000 });
+  await wait(450);
+};
+const mxCloseStudioBySave = async () => {
+  await page.click('[data-testid="studio-save"]');
+  await page.waitForFunction(
+    () => !document.querySelector('[data-testid="customization-studio"]'),
+    { timeout: 10_000 }
+  );
+  await wait(500);
+};
+const mxSetControl = async (sectionTitle: string | null, label: string, value: string) => {
+  await page.evaluate(
+    (args: { sectionTitle: string | null; label: string; value: string }) => {
+      const scope = args.sectionTitle
+        ? [...document.querySelectorAll(".studio-section")].find(
+            s => s.querySelector("h3")?.textContent?.trim() === args.sectionTitle
+          )
+        : document.querySelector('[data-testid="customization-studio"]');
+      const el = scope?.querySelector<HTMLInputElement | HTMLSelectElement>(
+        `[aria-label="${args.label}"]`
+      );
+      if (!el) throw new Error(`control "${args.label}" not found in ${args.sectionTitle ?? "studio"}`);
+      el.scrollIntoView({ block: "center" });
+      const proto =
+        el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(el, args.value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    { sectionTitle, label, value }
+  );
+  await wait(300);
+  // Range sliders record an undo point on commit (pointerup/blur); fire it after React settles.
+  await page.evaluate(
+    (args: { sectionTitle: string | null; label: string }) => {
+      const scope = args.sectionTitle
+        ? [...document.querySelectorAll(".studio-section")].find(
+            s => s.querySelector("h3")?.textContent?.trim() === args.sectionTitle
+          )
+        : document.querySelector('[data-testid="customization-studio"]');
+      const el = scope?.querySelector<HTMLElement>(`[aria-label="${args.label}"]`);
+      el?.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+      el?.blur();
+    },
+    { sectionTitle, label }
+  );
+  await wait(200);
+};
+const mxToggle = async (label: string) => {
+  const found = await page.evaluate((ariaLabel: string) => {
+    const el = document.querySelector<HTMLInputElement>(`[aria-label="${ariaLabel}"]`);
+    if (!el) return false;
+    el.scrollIntoView({ block: "center" });
+    el.click();
+    return true;
+  }, label);
+  if (!found) throw new Error(`toggle "${label}" not found`);
+  await wait(350);
+};
+const mxClickStudioButton = async (text: string) => {
+  const found = await page.evaluate((wanted: string) => {
+    const root = document.querySelector('[data-testid="customization-studio"]');
+    const btn = [...(root?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+      b => b.textContent?.replace(/\s+/g, " ").trim() === wanted
+    );
+    if (!btn) return false;
+    btn.scrollIntoView({ block: "center" });
+    btn.click();
+    return true;
+  }, text);
+  if (!found) throw new Error(`studio button "${text}" not found`);
+  await wait(350);
+};
+const mxStyle = () =>
+  page.evaluate(() => {
+    const view = document.querySelector<HTMLElement>(".lyrics-view")!;
+    const container = document.querySelector(".blyrics-container");
+    const containerCs = container ? getComputedStyle(container) : null;
+    const lines = [...document.querySelectorAll(".blyrics--line")];
+    const active = document.querySelector(".blyrics--active");
+    const inactive =
+      lines.find(line => !line.classList.contains("blyrics--active")) ?? null;
+    const firstLineCs = lines[0] ? getComputedStyle(lines[0]) : null;
+    return {
+      profileId: view.dataset.nowPlayingProfile ?? "",
+      background: view.dataset.profileBackground ?? "",
+      blur: view.dataset.profileBlur ?? "",
+      align: getComputedStyle(document.querySelector("braccato-lyrics")!).textAlign,
+      lineAlign: firstLineCs?.textAlign ?? "",
+      lineFont: firstLineCs?.fontFamily ?? "",
+      lineWeight: firstLineCs?.fontWeight ?? "",
+      lineLetterSpacing: firstLineCs?.letterSpacing ?? "",
+      lineHeightPx: firstLineCs ? Number.parseFloat(firstLineCs.lineHeight) || 0 : 0,
+      activeColor: active ? getComputedStyle(active).color : "",
+      // The renderer paints the active colour on inner word spans, not the line box.
+      activeSpanColors: active
+        ? [...active.querySelectorAll("*")].map(node => getComputedStyle(node).color)
+        : [],
+      inactiveColor: inactive ? getComputedStyle(inactive).color : "",
+      inactiveOpacity: inactive ? Number.parseFloat(getComputedStyle(inactive).opacity) || 0 : 0,
+      inactiveFilter: inactive ? getComputedStyle(inactive).filter : "",
+      rootActiveScale: view.style.getPropertyValue("--np-active-line-scale").trim(),
+      rootSwipe: view.style.getPropertyValue("--np-karaoke-swipe").trim(),
+      rootDuration: view.style.getPropertyValue("--np-motion-duration").trim(),
+      containerActiveScale:
+        containerCs?.getPropertyValue("--blyrics-active-scale").trim() ?? "",
+      containerActiveColorVar:
+        containerCs?.getPropertyValue("--blyrics-lyric-active-color").trim() ?? "",
+      containerHighlightVar:
+        containerCs?.getPropertyValue("--blyrics-highlight-color").trim() ?? "",
+      containerSwipe:
+        containerCs?.getPropertyValue("--blyrics-animate-highlight-swipe").trim() ?? "",
+      containerDuration:
+        containerCs?.getPropertyValue("--blyrics-transition-duration").trim() ?? "",
+      gradientFill: (() => {
+        const fill = document.querySelector(".np-bg-fill");
+        return fill ? getComputedStyle(fill).backgroundImage : "";
+      })(),
+      effectCanvas: Boolean(document.querySelector(".np-bg-canvas")),
+    };
+  });
+const mxLayout = () =>
+  page.evaluate(() => {
+    const box = (selector: string) => {
+      const node = document.querySelector(selector);
+      if (!node) return null;
+      const rect = node.getBoundingClientRect();
+      return {
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
+        w: Math.round(rect.width),
+        right: Math.round(rect.right),
+        display: getComputedStyle(node).display,
+      };
+    };
+    const heading = document.querySelector(".lyrics-heading");
+    return {
+      side: box(".fs-side"),
+      body: box(".lyrics-body"),
+      artwork: box(".fs-artwork"),
+      dock: box(".lyrics-dock"),
+      fsControls: box(".lyrics-footer .fs-controls"),
+      sideHeading: Boolean(document.querySelector(".fs-side .lyrics-heading")),
+      headerHeading: Boolean(document.querySelector(".lyrics-header .lyrics-heading")),
+      headingVisible: Boolean(
+        heading &&
+          getComputedStyle(heading).display !== "none" &&
+          heading.getBoundingClientRect().width > 0
+      ),
+    };
+  });
+const mxMessage = () =>
+  page.evaluate(
+    () => document.querySelector(".studio-message")?.textContent?.replace(/\s+/g, " ").trim() ?? ""
+  );
+const mxProfilesSettings = () =>
+  page.evaluate(async () => {
+    const cadence = (
+      window as unknown as {
+        cadence: { settings: { get: () => Promise<{ nowPlayingProfiles: unknown }> } };
+      }
+    ).cadence;
+    const settings = await cadence.settings.get();
+    return settings.nowPlayingProfiles as {
+      activeProfileId: string;
+      contextSwitching: { enabled: boolean; windowedProfileId: string; fullscreenProfileId: string };
+      customProfiles: {
+        id: string;
+        name: string;
+        windowed: Record<string, unknown>;
+        fullscreen: Record<string, unknown>;
+      }[];
+    };
+  });
+
+await setViewport(1920, 1080);
+await mxOpenStudio();
+
+// New profile: creates an editable "My profile" draft.
+await mxClickStudioButton("New");
+const mxNewDraft = await page.evaluate(() => ({
+  name: (document.querySelector('[data-testid="studio-profile-name"]') as HTMLInputElement | null)
+    ?.value,
+  header: document.querySelector(".studio-header p")?.textContent?.trim() ?? "",
+}));
+
+// Back to Balanced, duplicate it, rename the copy.
+await page.click('.studio-profile-row[data-profile-id="balanced"]');
+await wait(300);
+await page.click('[data-testid="studio-duplicate"]');
+await wait(350);
+const mxMatrixId = (await profileProbe()).profileId;
+await page.evaluate(() => {
+  const el = document.querySelector<HTMLInputElement>('[data-testid="studio-profile-name"]')!;
+  el.focus();
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+    el,
+    "Matrix Test"
+  );
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  el.blur();
+});
+await wait(300);
+
+// Typography: serif font, weight 900, letter spacing, line spacing (all windowed).
+const mxTypeBefore = await mxStyle();
+await mxSetControl("Typography", "Lyrics font", "georgia");
+await mxSetControl("Typography", "Lyrics weight", "900");
+await mxSetControl("Typography", "Letter spacing", "0.05");
+await mxSetControl("Typography", "Line spacing", "1.25");
+const mxTypeAfter = await mxStyle();
+await shot("22-studio-matrix-typography");
+
+// Alignment + custom colours.
+await mxSetControl("Layout", "Lyrics alignment", "center");
+await mxSetControl("Lyrics appearance", "Active line colour", "#ff8800");
+await mxSetControl("Lyrics appearance", "Inactive line colour", "#4466ff");
+const mxColorAfter = await mxStyle();
+await shot("23-studio-matrix-centre-colours");
+
+// Inactive blur + opacity, active line scale.
+await mxSetControl("Lyrics appearance", "Inactive blur", "3");
+await mxSetControl("Lyrics appearance", "Inactive opacity", "0.5");
+await mxSetControl("Lyrics appearance", "Active line scale", "1.15");
+const mxAppearanceAfter = await mxStyle();
+
+// Karaoke flags: minimal kills the swipe; glow restores it.
+await mxSetControl("Karaoke highlight", "Style", "minimal");
+const mxKaraokeMinimal = await mxStyle();
+await mxSetControl("Karaoke highlight", "Style", "glow");
+const mxKaraokeGlow = await mxStyle();
+
+// Motion: slide transition at 150% duration.
+await mxSetControl("Motion", "Line transition", "slide");
+await mxSetControl("Motion", "Duration", "1.5");
+const mxMotionAfter = await mxStyle();
+
+// Backgrounds: gradient, then particles (canvas mounts).
+await mxSetControl("Background", "Mode", "gradient");
+const mxGradient = await mxStyle();
+await shot("24-studio-matrix-gradient");
+await mxSetControl("Background", "Mode", "particles");
+const mxParticles = await mxStyle();
+await shot("25-studio-matrix-particles");
+
+// Undo returns to gradient; redo reapplies particles.
+await page.evaluate(() => {
+  document
+    .querySelector<HTMLButtonElement>('[data-testid="customization-studio"] [aria-label="Undo"]')
+    ?.click();
+});
+await wait(400);
+const mxAfterUndo = await mxStyle();
+await page.evaluate(() => {
+  document
+    .querySelector<HTMLButtonElement>('[data-testid="customization-studio"] [aria-label="Redo"]')
+    ?.click();
+});
+await wait(400);
+const mxAfterRedo = await mxStyle();
+
+// Save the windowed matrix edits.
+await mxCloseStudioBySave();
+const mxSavedSettings = await mxProfilesSettings();
+const mxSavedMatrix = mxSavedSettings.customProfiles.find(p => p.id === mxMatrixId);
+
+// Layout slots in fullscreen: artwork to the right column, title to the top bar.
+await enterFullscreen();
+await mxOpenStudio();
+await page.evaluate(() => {
+  const chipEl = [...document.querySelectorAll<HTMLElement>(".studio-chip")].find(
+    c => c.textContent?.trim() === "Artwork"
+  );
+  chipEl?.scrollIntoView({ block: "center" });
+  chipEl?.click();
+});
+await wait(200);
+await page.evaluate(() => {
+  document.querySelector<HTMLElement>(".studio-slot.slot-right")?.click();
+});
+await wait(400);
+await page.evaluate(() => {
+  const chipEl = [...document.querySelectorAll<HTMLElement>(".studio-chip")].find(
+    c => c.textContent?.trim() === "Title & artist"
+  );
+  chipEl?.click();
+});
+await wait(200);
+await page.evaluate(() => {
+  document.querySelector<HTMLElement>(".studio-slot.slot-top")?.click();
+});
+await wait(400);
+await mxCloseStudioBySave();
+const mxSlotsLayout = await mxLayout();
+await shot("26-fullscreen-artwork-right-metadata-top");
+
+// Visibility toggles: hide dock, controls, artwork and metadata; verify; restore.
+await mxOpenStudio();
+await mxToggle("Show lyrics dock");
+await mxToggle("Show playback controls");
+await mxToggle("Show artwork");
+await mxToggle("Show title & artist");
+await mxCloseStudioBySave();
+const mxHiddenLayout = await mxLayout();
+await shot("27-fullscreen-components-hidden");
+
+await mxOpenStudio();
+await mxToggle("Show lyrics dock");
+await mxToggle("Show playback controls");
+await mxToggle("Show artwork");
+await mxToggle("Show title & artist");
+
+// Mode separation: fullscreen lyrics 130% while this surface shows it live, then
+// windowed 80% edited from the same fullscreen session without affecting the surface.
+await mxSetControl("Typography", "Main lyrics size", "1.3");
+const mxFullscreenScaled = await profileProbe();
+await page.evaluate(() => {
+  const btn = [...document.querySelectorAll<HTMLButtonElement>(".studio-mode-toggle button")].find(
+    b => b.textContent?.trim() === "Windowed"
+  );
+  btn?.click();
+});
+await wait(300);
+await mxSetControl("Typography", "Main lyrics size", "0.8");
+const mxWindowedEditFromFullscreen = await profileProbe();
+await mxCloseStudioBySave();
+await exitFullscreen();
+const mxWindowedSeparated = await profileProbe();
+await shot("28-windowed-separated-config");
+await enterFullscreen();
+const mxFullscreenSeparated = await profileProbe();
+await exitFullscreen();
+
+// Section reset (Typography) reverts font + scale in the preview; discarding the
+// Studio session must leave the saved profile untouched.
+await mxOpenStudio();
+await page.evaluate(() => {
+  const btn = document.querySelector<HTMLButtonElement>('button[title="Reset Typography"]');
+  btn?.scrollIntoView({ block: "center" });
+  btn?.click();
+});
+await wait(450);
+const mxAfterSectionReset = await mxStyle();
+const mxResetFont = await profileProbe();
+await mxClickStudioButton("Cancel");
+const mxDiscardPrompt = await mxMessage();
+await mxClickStudioButton("Discard changes");
+await page.waitForFunction(
+  () => !document.querySelector('[data-testid="customization-studio"]'),
+  { timeout: 10_000 }
+);
+await wait(400);
+const mxAfterDiscardSettings = await mxProfilesSettings();
+const mxMatrixAfterDiscard = mxAfterDiscardSettings.customProfiles.find(
+  p => p.id === mxMatrixId
+);
+
+// Export feedback, invalid import rejection, then a valid import saved as active.
+await mxOpenStudio();
+await page.click('[data-testid="studio-export"]');
+await wait(500);
+const mxExportMessage = await mxMessage();
+
+const mxSetImportText = async (text: string) => {
+  await page.evaluate((value: string) => {
+    const el = document.querySelector<HTMLTextAreaElement>('[data-testid="studio-import-text"]')!;
+    el.scrollIntoView({ block: "center" });
+    el.focus();
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }, text);
+  await wait(300);
+};
+const mxCustomCountBeforeImport = (await mxProfilesSettings()).customProfiles.length;
+await mxSetImportText('{"kind":"not-a-cadence-profile","version":1}');
+await page.click('[data-testid="studio-import"]');
+await wait(400);
+const mxImportErrorMessage = await mxMessage();
+
+await mxSetImportText(
+  JSON.stringify({
+    kind: "cadence-now-playing-profile",
+    version: 1,
+    profile: {
+      id: "imported-matrix-1",
+      name: "Imported Matrix",
+      description: "Imported by the matrix harness",
+      builtIn: false,
+      windowed: { lyricsScale: 1.2, backgroundMode: "gradient" },
+      fullscreen: { backgroundMode: "gradient" },
+    },
+  })
+);
+await page.click('[data-testid="studio-import"]');
+await wait(400);
+const mxImportOkMessage = await mxMessage();
+await mxCloseStudioBySave();
+const mxAfterImportSettings = await mxProfilesSettings();
+
+// Quick Switcher lists both custom profiles.
+await openProfileSwitcher();
+const mxSwitcher = await profileProbe();
+await shot("29-quick-switcher-custom-profiles");
+// Close via the switcher's own button — a blind page click can land on sidebar nav.
+await page.$eval('[data-testid="now-playing-profile-button"]', el =>
+  (el as HTMLElement).click()
+);
+await wait(400);
+
+// Context switching: windowed → Balanced, fullscreen → Matrix Test, automatically.
+await mxOpenStudio();
+await mxToggle("Use different profiles for windowed and fullscreen");
+await mxSetControl(null, "Windowed profile", "balanced");
+await mxSetControl(null, "Fullscreen profile", mxMatrixId);
+await mxCloseStudioBySave();
+const mxContextWindowed = await profileProbe();
+await enterFullscreen();
+const mxContextFullscreen = await profileProbe();
+await shot("30-context-switching-fullscreen");
+await exitFullscreen();
+const mxContextBackWindowed = await profileProbe();
+
+// Turn context switching back off and restore Balanced.
+await mxOpenStudio();
+await mxToggle("Use different profiles for windowed and fullscreen");
+await mxCloseStudioBySave();
+await selectNowPlayingProfile("balanced");
+const mxContextDisabled = await profileProbe();
+
+// Delete the imported profile (two-step confirm), keep Matrix Test.
+await mxOpenStudio();
+await page.click('.studio-profile-row[data-profile-id="imported-matrix-1"]');
+await wait(350);
+await mxClickStudioButton("Delete");
+await mxClickStudioButton("Confirm delete");
+const mxDeleteMessage = await mxMessage();
+await mxCloseStudioBySave();
+const mxAfterDeleteSettings = await mxProfilesSettings();
+await selectNowPlayingProfile("balanced");
+const mxRestored = await profileProbe();
+
+const matrixSummary = {
+  matrixId: mxMatrixId,
+  newDraft: mxNewDraft,
+  typeBefore: mxTypeBefore,
+  typeAfter: mxTypeAfter,
+  colorAfter: mxColorAfter,
+  appearanceAfter: mxAppearanceAfter,
+  karaokeMinimal: mxKaraokeMinimal,
+  karaokeGlow: mxKaraokeGlow,
+  motionAfter: mxMotionAfter,
+  gradient: mxGradient,
+  particles: mxParticles,
+  afterUndo: mxAfterUndo.background,
+  afterRedo: mxAfterRedo.background,
+  savedMatrix: mxSavedMatrix
+    ? { name: mxSavedMatrix.name, windowed: mxSavedMatrix.windowed }
+    : null,
+  slotsLayout: mxSlotsLayout,
+  hiddenLayout: mxHiddenLayout,
+  fullscreenScaledFont: mxFullscreenScaled.lyricFontPx,
+  windowedEditFromFullscreenFont: mxWindowedEditFromFullscreen.lyricFontPx,
+  windowedSeparatedFont: mxWindowedSeparated.lyricFontPx,
+  fullscreenSeparatedFont: mxFullscreenSeparated.lyricFontPx,
+  afterSectionReset: { font: mxAfterSectionReset.lineFont, fontPx: mxResetFont.lyricFontPx },
+  discardPrompt: mxDiscardPrompt,
+  matrixAfterDiscard: mxMatrixAfterDiscard
+    ? {
+        fontId: mxMatrixAfterDiscard.windowed.fontId,
+        lyricsScale: mxMatrixAfterDiscard.windowed.lyricsScale,
+      }
+    : null,
+  exportMessage: mxExportMessage,
+  importErrorMessage: mxImportErrorMessage,
+  importOkMessage: mxImportOkMessage,
+  customCountBeforeImport: mxCustomCountBeforeImport,
+  afterImport: {
+    active: mxAfterImportSettings.activeProfileId,
+    customs: mxAfterImportSettings.customProfiles.map(p => p.id),
+  },
+  switcherRows: mxSwitcher.rows.map(r => r.id),
+  contextWindowed: mxContextWindowed.profileId,
+  contextFullscreen: mxContextFullscreen.profileId,
+  contextBackWindowed: mxContextBackWindowed.profileId,
+  contextDisabled: mxContextDisabled.profileId,
+  deleteMessage: mxDeleteMessage,
+  afterDeleteCustoms: mxAfterDeleteSettings.customProfiles.map(p => p.id),
+  restored: { id: mxRestored.profileId, background: mxRestored.backgroundMode },
+};
+
 const playbackAfterResponsive = await page.evaluate(() => {
   const audio = document.querySelector("audio");
   return audio ? { currentTime: audio.currentTime, paused: audio.paused, src: audio.currentSrc } : null;
@@ -871,6 +1370,7 @@ console.log(
       fullscreenVisualizer,
       fullscreenStudioOpen,
       fullscreenEffectsRestored,
+      matrixSummary,
       playbackBeforeResponsive,
       playbackAfterResponsive,
     },
@@ -1194,6 +1694,226 @@ check(
       fullscreenVisualizer.activeLineText === fullscreenParticles.activeLineText
   ),
   `blurred ${fullscreenParticles.backgroundMode} visualizer ${fullscreenVisualizer.backgroundMode} studio ${fullscreenStudioOpen} restored ${fullscreenEffectsRestored.backgroundMode}`
+);
+
+/* Studio feature matrix assertions. */
+check(
+  "mx-new-profile-creates-editable-draft",
+  Boolean(mxNewDraft.name === "My profile" && mxNewDraft.header.includes("Custom")),
+  JSON.stringify(mxNewDraft)
+);
+check(
+  "mx-typography-font-weight-spacing-live",
+  Boolean(
+    /Georgia/i.test(mxTypeAfter.lineFont) &&
+      mxTypeAfter.lineWeight === "900" &&
+      (Number.parseFloat(mxTypeAfter.lineLetterSpacing) || 0) > 1 &&
+      mxTypeAfter.lineHeightPx > mxTypeBefore.lineHeightPx
+  ),
+  `font ${mxTypeAfter.lineFont} weight ${mxTypeAfter.lineWeight} ls ${mxTypeAfter.lineLetterSpacing} lh ${mxTypeBefore.lineHeightPx}->${mxTypeAfter.lineHeightPx}`
+);
+check(
+  "mx-centre-alignment",
+  Boolean(mxColorAfter.align === "center" && mxColorAfter.lineAlign === "center"),
+  `host ${mxColorAfter.align} line ${mxColorAfter.lineAlign}`
+);
+const mxParseColor = (color: string) => {
+  const rgb = /rgba?\(([^)]+)\)/.exec(color);
+  if (rgb) {
+    const parts = rgb[1].split(",").map(part => Number.parseFloat(part));
+    return { r: parts[0], g: parts[1], b: parts[2], a: parts[3] ?? 1 };
+  }
+  const srgb = /color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\)/.exec(color);
+  if (srgb) {
+    return {
+      r: Math.round(Number.parseFloat(srgb[1]) * 255),
+      g: Math.round(Number.parseFloat(srgb[2]) * 255),
+      b: Math.round(Number.parseFloat(srgb[3]) * 255),
+      a: srgb[4] ? Number.parseFloat(srgb[4]) : 1,
+    };
+  }
+  return null;
+};
+const mxInactiveParsed = mxParseColor(mxColorAfter.inactiveColor);
+const mxInactiveDimmedParsed = mxParseColor(mxAppearanceAfter.inactiveColor);
+check(
+  "mx-custom-lyric-colours",
+  Boolean(
+    // The renderer paints the active colour as a karaoke highlight gradient driven by
+    // these container variables (screenshot 23 shows the orange line); the inactive
+    // colour lands on the line boxes directly.
+    mxColorAfter.containerActiveColorVar.toLowerCase() === "#ff8800" &&
+      mxColorAfter.containerHighlightVar.toLowerCase() === "#ff8800" &&
+      mxInactiveParsed &&
+      mxInactiveParsed.r === 68 &&
+      mxInactiveParsed.g === 102 &&
+      mxInactiveParsed.b === 255
+  ),
+  `activeVar ${mxColorAfter.containerActiveColorVar} highlightVar ${mxColorAfter.containerHighlightVar} inactive ${mxColorAfter.inactiveColor}`
+);
+const mxAlphaOf = (color: string) => mxParseColor(color)?.a ?? 1;
+check(
+  "mx-inactive-blur-opacity-active-scale",
+  Boolean(
+    mxAppearanceAfter.blur === "on" &&
+      mxAppearanceAfter.inactiveFilter.includes("blur(3px)") &&
+      // Inactive dimming is the colour's alpha (derived from --blyrics-inactive-opacity),
+      // halved here by the profile's 50% inactive-opacity scale.
+      mxAlphaOf(mxAppearanceAfter.inactiveColor) < mxAlphaOf(mxColorAfter.inactiveColor) * 0.75 &&
+      (mxAppearanceAfter.rootActiveScale === "1.15" ||
+        mxAppearanceAfter.containerActiveScale === "1.15")
+  ),
+  `filter ${mxAppearanceAfter.inactiveFilter} alpha ${mxAlphaOf(mxColorAfter.inactiveColor)}->${mxAlphaOf(mxAppearanceAfter.inactiveColor)} (${mxAppearanceAfter.inactiveColor}) scale root ${mxAppearanceAfter.rootActiveScale} container ${mxAppearanceAfter.containerActiveScale}`
+);
+check(
+  "mx-karaoke-style-flags",
+  Boolean(
+    (mxKaraokeMinimal.rootSwipe === "0" || mxKaraokeMinimal.containerSwipe === "0") &&
+      (mxKaraokeGlow.rootSwipe === "1" || mxKaraokeGlow.containerSwipe === "1")
+  ),
+  `minimal root ${mxKaraokeMinimal.rootSwipe}/${mxKaraokeMinimal.containerSwipe} glow root ${mxKaraokeGlow.rootSwipe}/${mxKaraokeGlow.containerSwipe}`
+);
+check(
+  "mx-motion-duration-scaled",
+  Boolean(
+    mxMotionAfter.rootDuration === "249ms" ||
+      mxMotionAfter.containerDuration === "249ms" ||
+      mxMotionAfter.containerDuration === "0.249s"
+  ),
+  `root ${mxMotionAfter.rootDuration} container ${mxMotionAfter.containerDuration}`
+);
+check(
+  "mx-gradient-background-live",
+  Boolean(mxGradient.background === "gradient" && mxGradient.gradientFill.includes("gradient")),
+  `mode ${mxGradient.background} fill ${mxGradient.gradientFill.slice(0, 60)}`
+);
+check(
+  "mx-particles-background-mounts-canvas",
+  Boolean(mxParticles.background === "particles" && mxParticles.effectCanvas),
+  `mode ${mxParticles.background} canvas ${mxParticles.effectCanvas}`
+);
+check(
+  "mx-undo-redo-background",
+  Boolean(mxAfterUndo.background === "gradient" && mxAfterRedo.background === "particles"),
+  `undo ${mxAfterUndo.background} redo ${mxAfterRedo.background}`
+);
+check(
+  "mx-save-persists-edited-profile",
+  Boolean(
+    mxSavedMatrix &&
+      mxSavedMatrix.name === "Matrix Test" &&
+      mxSavedMatrix.windowed.fontId === "georgia" &&
+      mxSavedMatrix.windowed.activeColor === "#ff8800" &&
+      mxSavedMatrix.windowed.backgroundMode === "particles" &&
+      mxSavedSettings.activeProfileId === mxMatrixId
+  ),
+  JSON.stringify(mxSavedMatrix ? mxSavedMatrix.windowed : null)
+);
+check(
+  "mx-artwork-right-and-metadata-top-slots",
+  Boolean(
+    mxSlotsLayout.side &&
+      mxSlotsLayout.body &&
+      mxSlotsLayout.side.x > mxSlotsLayout.body.x &&
+      mxSlotsLayout.body.right <= mxSlotsLayout.side.x + 1 &&
+      mxSlotsLayout.headerHeading &&
+      !mxSlotsLayout.sideHeading
+  ),
+  JSON.stringify(mxSlotsLayout)
+);
+check(
+  "mx-visibility-toggles-hide-components",
+  Boolean(
+    mxHiddenLayout.dock?.display === "none" &&
+      mxHiddenLayout.fsControls?.display === "none" &&
+      (mxHiddenLayout.artwork?.display === "none" || (mxHiddenLayout.artwork?.w ?? 0) === 0) &&
+      !mxHiddenLayout.headingVisible
+  ),
+  JSON.stringify(mxHiddenLayout)
+);
+check(
+  "mx-windowed-fullscreen-configs-independent",
+  Boolean(
+    Math.abs(mxFullscreenScaled.lyricFontPx - 84.2) <= 2.5 &&
+      Math.abs(mxWindowedEditFromFullscreen.lyricFontPx - mxFullscreenScaled.lyricFontPx) <= 0.2 &&
+      Math.abs(mxWindowedSeparated.lyricFontPx - 44.2) <= 2 &&
+      Math.abs(mxFullscreenSeparated.lyricFontPx - 84.2) <= 2.5
+  ),
+  `fs ${mxFullscreenScaled.lyricFontPx}/${mxFullscreenSeparated.lyricFontPx} win ${mxWindowedSeparated.lyricFontPx} (edit-from-fs surface ${mxWindowedEditFromFullscreen.lyricFontPx})`
+);
+check(
+  "mx-section-reset-reverts-typography",
+  Boolean(
+    !/Georgia/i.test(mxAfterSectionReset.lineFont) &&
+      Math.abs(mxResetFont.lyricFontPx - 55.2) <= 1.5
+  ),
+  `font ${mxAfterSectionReset.lineFont} px ${mxResetFont.lyricFontPx}`
+);
+check(
+  "mx-discard-leaves-saved-profile-untouched",
+  Boolean(
+    mxDiscardPrompt.includes("unsaved changes") &&
+      mxMatrixAfterDiscard &&
+      mxMatrixAfterDiscard.windowed.fontId === "georgia" &&
+      Math.abs(Number(mxMatrixAfterDiscard.windowed.lyricsScale) - 0.8) < 0.001
+  ),
+  `prompt ${JSON.stringify(mxDiscardPrompt)} saved ${JSON.stringify(mxMatrixAfterDiscard?.windowed ?? null)}`
+);
+check(
+  "mx-export-gives-feedback",
+  mxExportMessage.includes("Profile JSON"),
+  mxExportMessage
+);
+check(
+  "mx-import-rejects-foreign-json",
+  Boolean(
+    mxImportErrorMessage.length > 0 &&
+      !mxImportErrorMessage.includes("Imported") &&
+      mxAfterImportSettings.customProfiles.filter(p => p.id === "imported-matrix-1").length === 1
+  ),
+  mxImportErrorMessage
+);
+check(
+  "mx-import-valid-profile-saved-active",
+  Boolean(
+    mxImportOkMessage.includes("Imported Matrix") &&
+      mxAfterImportSettings.activeProfileId === "imported-matrix-1" &&
+      mxAfterImportSettings.customProfiles.some(p => p.id === "imported-matrix-1") &&
+      mxAfterImportSettings.customProfiles.length === mxCustomCountBeforeImport + 1
+  ),
+  `msg ${mxImportOkMessage} active ${mxAfterImportSettings.activeProfileId} count ${mxCustomCountBeforeImport}->${mxAfterImportSettings.customProfiles.length}`
+);
+check(
+  "mx-quick-switcher-lists-custom-profiles",
+  Boolean(
+    mxSwitcher.rows.some(r => r.id === mxMatrixId) &&
+      mxSwitcher.rows.some(r => r.id === "imported-matrix-1")
+  ),
+  `rows ${mxSwitcher.rows.map(r => r.id).join(",")}`
+);
+check(
+  "mx-context-switching-per-surface",
+  Boolean(
+    mxContextWindowed.profileId === "balanced" &&
+      mxContextFullscreen.profileId === mxMatrixId &&
+      mxContextBackWindowed.profileId === "balanced" &&
+      mxContextFullscreen.audio?.src === mxContextWindowed.audio?.src
+  ),
+  `win ${mxContextWindowed.profileId} fs ${mxContextFullscreen.profileId} back ${mxContextBackWindowed.profileId}`
+);
+check(
+  "mx-delete-custom-profile",
+  Boolean(
+    mxDeleteMessage.includes("Deleted") &&
+      !mxAfterDeleteSettings.customProfiles.some(p => p.id === "imported-matrix-1") &&
+      mxAfterDeleteSettings.customProfiles.some(p => p.id === mxMatrixId)
+  ),
+  `msg ${mxDeleteMessage} customs ${mxAfterDeleteSettings.customProfiles.map(p => p.id).join(",")}`
+);
+check(
+  "mx-matrix-restores-balanced",
+  Boolean(mxRestored.profileId === "balanced" && mxRestored.backgroundMode === "fluid"),
+  `${mxRestored.profileId}/${mxRestored.backgroundMode}`
 );
 
 const failures = Object.entries(results).filter(([, entry]) => !entry.value);

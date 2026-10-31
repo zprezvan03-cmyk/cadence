@@ -538,7 +538,12 @@ braccato-lyrics {
 }
 
 .lyrics-view[data-profile-inactive-color="custom"] .blyrics-container {
-  --blyrics-lyric-inactive-color: var(--np-inactive-color);
+  /* Derive the inactive colour the same way the renderer derives its own: the custom
+     hue at the inactive-opacity alpha, so the profile's inactive opacity (and the
+     Settings value under it) still dims custom colours instead of being bypassed. */
+  --blyrics-lyric-inactive-color: color(
+    from var(--np-inactive-color) srgb r g b / var(--blyrics-inactive-opacity, 0.55)
+  );
 }
 
 braccato-lyrics[data-upgrading="true"] {

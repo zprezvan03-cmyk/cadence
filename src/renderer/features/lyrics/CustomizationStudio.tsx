@@ -289,7 +289,12 @@ export function CustomizationStudio({
     }));
     setConfirmDelete(false);
     setMessage(`Deleted “${draft.name}”. Save to make it permanent.`);
+    const deletedId = draft.id;
     switchEditing(BUILT_IN_NOW_PLAYING_PROFILES[0]);
+    // switchEditing upserts the outgoing draft to preserve in-progress edits; when
+    // that draft is the one being deleted the upsert would resurrect it, so filter
+    // again afterwards (queued updaters run in call order).
+    setWorkingCustoms(list => list.filter(profile => profile.id !== deletedId));
   };
 
   const resetKeys = (keys: (keyof NowPlayingProfileConfig)[]) => {
