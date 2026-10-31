@@ -161,7 +161,7 @@ export function HomeView() {
       </section>
 
       {recentlyPlayed.length > 0 ? (
-        <section className="shelf">
+        <section className="shelf" data-testid="home-recently-played">
           <div className="shelf-heading">
             <h2>Recently played</h2>
             <button type="button" className="link" onClick={() => navigate({ name: "history" })}>Show all</button>
@@ -172,6 +172,7 @@ export function HomeView() {
                 type="button"
                 key={track.trackId}
                 className="quick-track"
+                data-testid="recently-played-item"
                 onClick={() => void playTrack(track.trackId)}
               >
                 <Artwork src={track.artworkUrl ?? null} alt={track.album || track.title} size="xs" />

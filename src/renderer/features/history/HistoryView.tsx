@@ -49,7 +49,12 @@ export function HistoryView() {
     return <div className="view-loading">Loading history…</div>;
   }
 
-  if (error) {
+  // A storage error (e.g. a failed clear) must never hide entries that are safely
+  // in the store: that would make history look deleted when it is not, and with the
+  // clear button gone there would be no way to recover in-session. The full-page
+  // error is only for having nothing to show; otherwise the list renders with the
+  // error surfaced as a banner above it.
+  if (error && entries.length === 0) {
     return (
       <div className="empty-state" data-testid="history-error">
         <p>Unable to load listening history.</p>
@@ -88,6 +93,13 @@ export function HistoryView() {
           </button>
         </div>
       </header>
+
+      {error ? (
+        <div className="empty-state" data-testid="history-error">
+          <p>Something went wrong with listening history storage.</p>
+          <p className="muted">{error}</p>
+        </div>
+      ) : null}
 
       <div className="history-list">
         {entries.map(entry => {

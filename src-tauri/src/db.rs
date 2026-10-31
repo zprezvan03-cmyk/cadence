@@ -308,11 +308,16 @@ impl LibraryDb {
         let mut out = Vec::new();
         for row in rows.flatten() {
             let (id, track_id, played_at, payload) = row;
+            // Skip a row whose payload no longer parses instead of failing the whole
+            // restore: one corrupt entry must never blank the user's entire history.
+            let Ok(payload) = serde_json::from_str(&payload) else {
+                continue;
+            };
             out.push(HistoryEntry {
                 id,
                 track_id,
                 played_at,
-                payload: serde_json::from_str(&payload).map_err(|e| e.to_string())?,
+                payload,
             });
         }
         Ok(out)

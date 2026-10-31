@@ -377,14 +377,6 @@ pub async fn cmd_db_mutate(
         .map_err(|e| e.to_string())?
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HistoryAddArgs {
-    pub track_id: i64,
-    pub played_at: i64,
-    pub payload: String,
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryEntry {
@@ -397,20 +389,27 @@ pub struct HistoryEntry {
 /// Records one completed listening session: the track that genuinely started playing, when it
 /// started, and a snapshot of its metadata at that moment. Fires once per play start, never on
 /// pause/resume or position ticks.
+///
+/// Parameters are flat (like every other command here) on purpose: Tauri resolves each
+/// parameter by name from the invoke payload, so a single struct parameter would require the
+/// bridge to nest the fields under that parameter's name. This command previously took a
+/// `HistoryAddArgs` struct while the bridge sent the fields flat, which made every invoke
+/// reject before reaching SQLite — history rendered from in-memory optimistic rows during a
+/// session and vanished on restart. The contract is pinned by tests/unit/ipcContract.test.ts.
 #[tauri::command]
 pub async fn cmd_history_add(
-    args: HistoryAddArgs,
+    track_id: i64,
+    played_at: i64,
+    payload: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let db = Arc::clone(&state.db);
-    // Persistence is fire-and-forget: playback must never wait on disk I/O, and failures are
-    // logged by the store's caller. Bind the Result to suppress the must_use warning while still
-    // propagating persistence errors up to the bridge caller.
-    let _ = tauri::async_runtime::spawn_blocking(move || {
-        db.add_history_entry(args.track_id, args.played_at, &args.payload)
-    })
-    .await
-    .map_err(|e| e.to_string())?;
+    // The write runs on the blocking pool so playback never waits on disk I/O, but its
+    // result is propagated: a failed insert must reach the bridge caller (which logs it)
+    // instead of being silently dropped.
+    tauri::async_runtime::spawn_blocking(move || db.add_history_entry(track_id, played_at, &payload))
+        .await
+        .map_err(|e| e.to_string())??;
     Ok(())
 }
 
