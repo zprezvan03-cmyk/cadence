@@ -13,6 +13,7 @@ import {
   cloneNowPlayingProfile,
   getActiveNowPlayingProfile,
   getEffectiveNowPlayingProfile,
+  getNowPlayingAnimationCacheKey,
   listNowPlayingProfiles,
   resolveNowPlayingProfileConfig,
 } from "../../../shared/nowPlayingProfiles";
@@ -140,7 +141,21 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
     return () => window.clearTimeout(timer);
   }, [lyrics.status, track?.id]);
 
-  const themeCss = useMemo(() => (lyricsSettings ? buildThemeCss(lyricsSettings) : ""), [lyricsSettings]);
+  // The renderer caches every CSS value it reads into JS — karaoke swipe/glow
+  // switches, glow radius, letter emphasis, line-transition transforms/duration,
+  // active-line scale — and only re-reads them when a theme is applied (its
+  // setTheme clears the style caches). Profile values travel through inherited
+  // --np-* variables, which plain CSS follows instantly but that JS cache does
+  // not, so the theme carries a generation key built from exactly the JS-read
+  // profile values: when one changes, the wrapper reapplies the theme and the
+  // next line animates with the new values. Without this, karaoke style and
+  // motion changes appear to do nothing until the next track. The comment uses
+  // a colon, so the renderer's theme-setting parser never treats it as a setting.
+  const themeCss = useMemo(() => {
+    if (!lyricsSettings) return "";
+    const key = getNowPlayingAnimationCacheKey(profileConfig);
+    return `${buildThemeCss(lyricsSettings)}\n/* cadence-anim-key: ${key} */`;
+  }, [lyricsSettings, profileConfig]);
 
   // Legacy typography settings were authored against a 48px (3rem) main lyric. Their
   // ratios multiply the container-derived fluid base in `lyrics.css`; the active
@@ -198,9 +213,16 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
       "--np-karaoke-swipe": karaoke.swipe,
       "--np-karaoke-glow": karaoke.glow,
       "--np-karaoke-fade": karaoke.fade,
-      "--np-karaoke-glow-radius": `${(0.8 * cfg.karaokeIntensity).toFixed(3)}rem`,
+      // Subtle glow is its own look, not just Progressive sweep renamed: the same
+      // wipe with a wider, softer halo (1.6x radius) and no letter pop, so the
+      // emphasis sits in the bloom around the word instead of its motion.
+      "--np-karaoke-glow-radius": `${(
+        0.8 * cfg.karaokeIntensity * (cfg.karaokeStyle === "glow" ? 1.6 : 1)
+      ).toFixed(3)}rem`,
       "--np-active-word-scale":
-        cfg.karaokeStyle === "minimal" ? 1 : cfg.activeWordScale,
+        cfg.karaokeStyle === "minimal" || cfg.karaokeStyle === "glow"
+          ? 1
+          : cfg.activeWordScale,
       "--np-line-scale":
         cfg.lyricTransition === "fade" || cfg.lyricTransition === "none"
           ? 1

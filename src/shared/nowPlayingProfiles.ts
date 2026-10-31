@@ -527,6 +527,28 @@ export function createCustomNowPlayingProfileId(): string {
 export const NOW_PLAYING_PROFILE_EXPORT_KIND = "cadence-now-playing-profile";
 
 /** Versioned envelope so a pasted settings blob or foreign JSON is rejected, not guessed at. */
+/**
+ * Generation key for the profile values the lyrics renderer reads into JS once and
+ * caches (karaoke swipe/glow switches, glow radius, letter emphasis, line-transition
+ * transforms and duration, active-line scale). Pure-CSS profile values (fonts,
+ * colours, sizes) follow inherited CSS variables live, but the cached ones only
+ * re-read when a theme is applied — so Cadence folds this key into the theme string:
+ * when it changes, the theme is reapplied and the renderer drops its style caches.
+ * Stable for equal inputs; any engine-read change produces a different key.
+ */
+export function getNowPlayingAnimationCacheKey(config: NowPlayingProfileConfig): string {
+  const num = (value: number) => Math.round(value * 1000) / 1000;
+  return [
+    config.karaokeStyle,
+    num(config.karaokeIntensity),
+    num(config.activeWordScale),
+    config.lyricTransition,
+    num(config.motionIntensity),
+    num(config.motionDurationScale),
+    num(config.activeLineScale),
+  ].join("|");
+}
+
 export function serializeNowPlayingProfile(profile: NowPlayingProfile): string {
   const { builtIn: _builtIn, ...rest } = cloneNowPlayingProfile(profile);
   return JSON.stringify(

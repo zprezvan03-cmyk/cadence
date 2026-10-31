@@ -8,6 +8,7 @@ import {
   createDefaultNowPlayingProfilesSettings,
   getActiveNowPlayingProfile,
   getEffectiveNowPlayingProfile,
+  getNowPlayingAnimationCacheKey,
   isBuiltInNowPlayingProfileId,
   listNowPlayingProfiles,
   normalizeNowPlayingProfileConfig,
@@ -238,6 +239,50 @@ describe("context switching", () => {
 
     const disabled = { ...settings, contextSwitching: { ...settings.contextSwitching, enabled: false } };
     expect(getEffectiveNowPlayingProfile(disabled, false).id).toBe("balanced");
+  });
+});
+
+describe("animation cache key", () => {
+  // The renderer caches CSS values it reads into JS and only re-reads them when a
+  // theme is applied; this key is folded into the theme string so a change to any
+  // engine-read profile value reapplies the theme and drops that cache.
+  it("is stable for equal configs and changes with every engine-read field", () => {
+    const base = { ...BASE_NOW_PLAYING_PROFILE_CONFIG };
+    expect(getNowPlayingAnimationCacheKey(base)).toBe(
+      getNowPlayingAnimationCacheKey({ ...base })
+    );
+    const mutations: Partial<typeof base>[] = [
+      { karaokeStyle: "solid" },
+      { karaokeStyle: "minimal" },
+      { karaokeIntensity: 0.25 },
+      { activeWordScale: 1.2 },
+      { lyricTransition: "slide" },
+      { motionIntensity: 0.5 },
+      { motionDurationScale: 1.5 },
+      { activeLineScale: 1.1 },
+    ];
+    for (const mutation of mutations) {
+      expect(getNowPlayingAnimationCacheKey({ ...base, ...mutation })).not.toBe(
+        getNowPlayingAnimationCacheKey(base)
+      );
+    }
+  });
+
+  it("ignores values plain CSS follows live (no theme reapply needed)", () => {
+    const base = { ...BASE_NOW_PLAYING_PROFILE_CONFIG };
+    const cssOnly: Partial<typeof base>[] = [
+      { fontId: "georgia" },
+      { activeColor: "#ff8800" },
+      { lyricsScale: 1.3 },
+      { backgroundMode: "particles" },
+      { inactiveBlurPx: 3 },
+      { lyricsAlignment: "center" },
+    ];
+    for (const mutation of cssOnly) {
+      expect(getNowPlayingAnimationCacheKey({ ...base, ...mutation })).toBe(
+        getNowPlayingAnimationCacheKey(base)
+      );
+    }
   });
 });
 

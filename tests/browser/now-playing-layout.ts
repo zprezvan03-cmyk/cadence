@@ -14,6 +14,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { extname, join, resolve } from "node:path";
 import puppeteer from "puppeteer-core";
+import { PNG } from "pngjs";
 import chromium, { inflate, setupLambdaEnvironment } from "@sparticuz/chromium";
 import { LibraryStore } from "../../src/main/library/store";
 import { scanLibrary } from "../../src/main/library/scanner";
@@ -110,7 +111,18 @@ const readBody = (req: import("node:http").IncomingMessage): Promise<string> =>
   });
 
 /** The lyrics answer for the current track, controlled per scenario. */
-type LyricsMode = "synced" | "plain" | "empty" | "error" | "slow";
+type LyricsMode = "synced" | "plain" | "empty" | "error" | "slow" | "wordsynced";
+
+/**
+ * Word-timed TTML shaped like the Apple Music files users actually load (a real one
+ * found the karaoke-style cache bug): two lines, each opening with one long word, so
+ * a mid-word screenshot can measure how much of that word the highlight has covered.
+ */
+const WORD_TTML = `<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="en"><body dur="00:06.000"><div>
+<p begin="00:00.400" end="00:03.000"><span begin="00:00.400" end="00:02.400">Alpha</span> <span begin="00:02.400" end="00:02.700">be</span> <span begin="00:02.700" end="00:03.000">ta</span></p>
+<p begin="00:03.800" end="00:06.000"><span begin="00:03.800" end="00:05.400">Alpha</span> <span begin="00:05.400" end="00:05.700">ep</span> <span begin="00:05.700" end="00:06.000">si</span></p>
+</div></body></tt>`;
 let mode: LyricsMode = "synced";
 
 const server = createServer(async (req, res) => {
@@ -157,9 +169,24 @@ const server = createServer(async (req, res) => {
                   cached: true,
                 },
               ]
-            : [];
+            : mode === "wordsynced"
+              ? [
+                  {
+                    source: "local-rich",
+                    provider: "Local TTML/QRC",
+                    text: WORD_TTML,
+                    syncHint: "synced",
+                    language: "en",
+                    songwriters: [],
+                    sourceHref: plainPath,
+                    cached: true,
+                  },
+                ]
+              : [];
       if (request.trackId === ids.synced && mode === "synced") return sendJson({ candidates, providerStatus: [] });
       if (request.trackId === ids.plain && mode === "plain") return sendJson({ candidates, providerStatus: [] });
+      // Word-sync scenario rides the plain track so the mode switch resolves fresh lyrics.
+      if (request.trackId === ids.plain && mode === "wordsynced") return sendJson({ candidates, providerStatus: [] });
       return sendJson({ candidates: [], providerStatus: [] });
     }
     if (url.pathname === "/api/lyrics/search") return sendJson({ results: [], providerStatus: [], cached: false });
@@ -1332,6 +1359,82 @@ const playbackAfterResponsive = await page.evaluate(() => {
   return audio ? { currentTime: audio.currentTime, paused: audio.paused, src: audio.currentSrc } : null;
 });
 await exitFullscreen();
+
+/* 12. Karaoke styles, end to end. A user-supplied word-timed TTML exposed that the
+   renderer caches the CSS values it reads into JS (karaoke swipe/glow switches,
+   glow radius, word emphasis, transition transforms) and only re-reads them when
+   a theme is applied — so profile karaoke/motion changes did nothing until the
+   next track. This plays real word-timed lyrics, photographs the active line
+   mid-way through a two-second word under Progressive sweep, switches the active
+   profile to Solid mid-song (no track change, no reload), and photographs the
+   same word in the next line: sweep must have covered roughly half the word,
+   solid all of it. Runs after the playback-preservation capture above because it
+   deliberately plays and seeks. */
+mode = "wordsynced";
+/** Bright-glyph coverage of the active line: highlighted glyphs over all glyphs. */
+const kxBrightRatio = async () => {
+  await page.waitForSelector("braccato-lyrics .blyrics--active", { timeout: 8_000 });
+  const box = await page.$eval("braccato-lyrics .blyrics--active", node => {
+    const rect = node.getBoundingClientRect();
+    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+  });
+  const png = PNG.sync.read(await page.screenshot({ clip: box }));
+  let bright = 0;
+  let glyph = 0;
+  for (let i = 0; i < png.data.length; i += 4) {
+    const luminance = (png.data[i] + png.data[i + 1] + png.data[i + 2]) / 3;
+    if (luminance > 45) glyph += 1;
+    if (luminance > 170) bright += 1;
+  }
+  return { bright, glyph, ratio: glyph ? bright / glyph : 0 };
+};
+/** Play to a media instant, then pause there so the capture is of a frozen frame. */
+const kxFreezeAt = async (target: number) => {
+  await page.waitForFunction(
+    (wanted: number) => {
+      const audio = document.querySelector("audio");
+      return Boolean(audio && !audio.paused && audio.currentTime >= wanted);
+    },
+    { polling: 25, timeout: 20_000 },
+    target
+  );
+  await page.evaluate(() => document.querySelector("audio")?.pause());
+  await wait(300);
+};
+
+await setViewport(1920, 1080);
+await selectNowPlayingProfile("balanced");
+await playTrackId(ids.plain);
+await nav("Now Playing");
+await page.evaluate(() => {
+  const audio = document.querySelector("audio")!;
+  audio.currentTime = 0;
+  void audio.play();
+});
+await page.waitForSelector("braccato-lyrics .blyrics--line", { timeout: 15_000 });
+// If resolving ran long, rewind so the approach to the measured instant is clean.
+await page.evaluate(() => {
+  const audio = document.querySelector("audio")!;
+  if (audio.currentTime > 1.1) audio.currentTime = 0.8;
+});
+await kxFreezeAt(1.35);
+const kxSweep = await kxBrightRatio();
+await shot("31-karaoke-sweep-midword");
+// Switch style mid-song through the real quick switcher: same track, same lyrics
+// payload — only the profile changes. Minimal is instant (no swipe).
+await selectNowPlayingProfile("minimal");
+await page.evaluate(() => {
+  const audio = document.querySelector("audio")!;
+  audio.currentTime = 3.82;
+  void audio.play();
+});
+await kxFreezeAt(4.6);
+const kxSolid = await kxBrightRatio();
+await shot("32-karaoke-solid-midword");
+mode = "synced";
+await selectNowPlayingProfile("balanced");
+await wait(400);
+const kxSummary = { sweep: kxSweep, solid: kxSolid };
 await setViewport(1440, 900);
 
 /* ------------------------------------------------------------------ report */
@@ -1371,6 +1474,7 @@ console.log(
       fullscreenStudioOpen,
       fullscreenEffectsRestored,
       matrixSummary,
+      kxSummary,
       playbackBeforeResponsive,
       playbackAfterResponsive,
     },
@@ -1914,6 +2018,16 @@ check(
   "mx-matrix-restores-balanced",
   Boolean(mxRestored.profileId === "balanced" && mxRestored.backgroundMode === "fluid"),
   `${mxRestored.profileId}/${mxRestored.backgroundMode}`
+);
+check(
+  "kx-sweep-progresses-where-solid-is-instant",
+  Boolean(
+    kxSweep.bright > 150 &&
+      kxSweep.ratio < 0.45 &&
+      kxSolid.ratio > 0.4 &&
+      kxSolid.ratio > kxSweep.ratio * 1.5
+  ),
+  `mid-word bright-glyph coverage: sweep ${(kxSweep.ratio * 100).toFixed(0)}% (${kxSweep.bright}/${kxSweep.glyph}) solid ${(kxSolid.ratio * 100).toFixed(0)}% (${kxSolid.bright}/${kxSolid.glyph}); same word at ~50% progress, profile switched mid-song`
 );
 
 const failures = Object.entries(results).filter(([, entry]) => !entry.value);
