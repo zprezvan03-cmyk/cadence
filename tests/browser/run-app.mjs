@@ -789,6 +789,18 @@ await clickTrack("Fixture FLAC");
 await wait(900);
 await page.click('button[aria-label="Now Playing"]');
 await page.waitForSelector(".lyrics-view", { timeout: 15_000 });
+// Restart the 6-second fixture and halve its rate for this section: clicking the
+// already-current track does not restart it, so on a slow machine it can be
+// seconds from ending here — it then ends mid-section, the player advances to
+// the MP3 fixture, and every downstream lyrics assertion silently measures the
+// wrong track. The rate is restored at the pause after the seek checks below.
+await page.evaluate(() => {
+  const audio = document.querySelector("audio");
+  if (audio) {
+    audio.currentTime = 0.3;
+    audio.playbackRate = 0.5;
+  }
+});
 await wait(1800);
 
 const navLabels = await page.$$eval("aside.sidebar .nav-item", nodes => nodes.map(node => node.textContent.trim()));
@@ -919,7 +931,11 @@ const atFive = await seekAndRead(4.9);
 const pausedSeek = (await audioState()).paused;
 console.log("DEBUG paused-seek", pausedSeek, JSON.stringify({ atOne, atFive }));
 check("lyrics-follow-seek", (atOne.active ?? "").includes("Word") && (atFive.active ?? "").includes("Last"), `1.0s → ${JSON.stringify(atOne.active)}, 4.9s → ${JSON.stringify(atFive.active)}`);
-await page.evaluate(() => document.querySelector("audio").pause());
+await page.evaluate(() => {
+  const audio = document.querySelector("audio");
+  audio.pause();
+  audio.playbackRate = 1;
+});
 
 /* ------------------------------------------- inline translation / romanization */
 
@@ -1832,9 +1848,14 @@ await layoutAtSize(1568, 889);
 await page.evaluate(() => document.querySelector("audio").play());
 await wait(300);
 
-// The queue opens from fullscreen and must sit above the fullscreen view.
+// The queue opens from fullscreen and must sit above the fullscreen view. Move the
+// pointer away first: wakeClick's wake depends on a real move event, and if the
+// pointer is already resting where the Queue button sits, the synthetic move is a
+// no-op and the click lands on still-concealed controls.
+await pointerAway();
+await wait(200);
 await wakeClick('[data-testid="fullscreen-controls"] button[aria-label="Queue"]');
-await wait(400);
+await wait(700);
 const queueLayer = await page.evaluate(() => {
   const panel = document.querySelector(".queue-panel");
   if (!panel) return null;
@@ -1843,8 +1864,10 @@ const queueLayer = await page.evaluate(() => {
   return { topmost: panel.contains(hit), bottomGap: Math.round(window.innerHeight - rect.bottom) };
 });
 check("queue-opens-over-fullscreen", queueLayer?.topmost === true && queueLayer.bottomGap === 0, JSON.stringify(queueLayer));
-await wakeClick('.queue-panel button[aria-label="Close queue"]');
-await wait(200);
+if (await page.$('.queue-panel button[aria-label="Close queue"]')) {
+  await wakeClick('.queue-panel button[aria-label="Close queue"]');
+  await wait(200);
+}
 
 // Lyrics stay hidden only in fullscreen: switch them off, leave fullscreen, and the normal page still shows them.
 await wakeClick('[data-testid="fullscreen-lyrics-toggle"]');
