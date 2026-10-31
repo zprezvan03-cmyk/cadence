@@ -13,6 +13,10 @@ import {
   type PlaylistRow,
   type StoredTrack,
 } from "./storeCore";
+import type { HistoryEntry, HistoryPayload } from "../../shared/types";
+
+/** The most history rows to keep, mirroring `HISTORY_CAP` in src-tauri/src/db.rs. */
+const HISTORY_CAP = 1000;
 
 export type { StoredTrack, NewTrack };
 
@@ -87,6 +91,11 @@ function loadInitialJson(jsonPath: string): DatabaseShape {
 }
 
 export class LibraryStore extends LibraryStoreCore {
+  /** Live SQLite handle for history writes (null on the JSON fallback engine). */
+  private sqliteDb: SqliteDatabase | null = null;
+  /** Session-only history when SQLite is unavailable (JSON fallback engine). */
+  private memoryHistory: HistoryEntry[] = [];
+
   constructor(
     dbPath: string,
     artworkDirectory: string,
@@ -127,6 +136,14 @@ export class LibraryStore extends LibraryStoreCore {
               key TEXT PRIMARY KEY,
               value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS listening_history (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              track_id INTEGER NOT NULL,
+              played_at INTEGER NOT NULL,
+              payload TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_listening_history_played_at
+              ON listening_history(played_at DESC, id DESC);
           `);
         }
       } catch (error) {
@@ -198,5 +215,73 @@ export class LibraryStore extends LibraryStoreCore {
         };
 
     super(artworkDirectory, mediaUrl, adapter, initialData);
+    this.sqliteDb = sqlite;
+  }
+
+  /**
+   * Listening history, mirroring `LibraryDb::{add_history_entry,list_history,clear_history}`
+   * (src-tauri/src/db.rs) against the same `listening_history` table, so the browser
+   * harnesses exercise the real persistence semantics: transactional insert, prune to the
+   * newest HISTORY_CAP rows, corrupt-payload rows skipped on read.
+   */
+  addHistoryEntry(trackId: number, playedAt: number, payload: HistoryPayload): HistoryEntry {
+    if (!this.sqliteDb) {
+      const entry: HistoryEntry = {
+        id: this.memoryHistory.reduce((max, e) => Math.max(max, e.id), 0) + 1,
+        trackId,
+        playedAt,
+        payload,
+      };
+      this.memoryHistory = [entry, ...this.memoryHistory].slice(0, HISTORY_CAP);
+      return entry;
+    }
+    const db = this.sqliteDb;
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = db
+        .prepare("INSERT INTO listening_history (track_id, played_at, payload) VALUES (?, ?, ?)")
+        .run(trackId, playedAt, JSON.stringify(payload)) as { lastInsertRowid?: number | bigint };
+      db.prepare(
+        `DELETE FROM listening_history WHERE id NOT IN (
+           SELECT id FROM listening_history ORDER BY played_at DESC, id DESC LIMIT ?
+         )`
+      ).run(HISTORY_CAP);
+      db.exec("COMMIT");
+      return { id: Number(result.lastInsertRowid ?? 0), trackId, playedAt, payload };
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  listHistory(limit = HISTORY_CAP): HistoryEntry[] {
+    if (!this.sqliteDb) return [...this.memoryHistory];
+    const rows = this.sqliteDb
+      .prepare(
+        "SELECT id, track_id, played_at, payload FROM listening_history ORDER BY played_at DESC, id DESC LIMIT ?"
+      )
+      .all(limit) as Array<{ id: number; track_id: number; played_at: number; payload: string }>;
+    const entries: HistoryEntry[] = [];
+    for (const row of rows) {
+      try {
+        entries.push({
+          id: row.id,
+          trackId: row.track_id,
+          playedAt: row.played_at,
+          payload: JSON.parse(row.payload) as HistoryPayload,
+        });
+      } catch {
+        /* skip corrupt row: one bad payload must never blank the whole history */
+      }
+    }
+    return entries;
+  }
+
+  clearHistory(): void {
+    if (!this.sqliteDb) {
+      this.memoryHistory = [];
+      return;
+    }
+    this.sqliteDb.prepare("DELETE FROM listening_history").run();
   }
 }

@@ -300,6 +300,30 @@ await page.evaluateOnNewDocument(() => {
       onScanProgress: () => () => {},
       onChanged: () => () => {},
     },
+    // In-memory listening history. Restart persistence across real launches is covered by
+    // tests/browser/history-persistence.ts; here it keeps History/Recently Played functional
+    // and the console free of "cannot read 'add' of undefined" history noise.
+    history: (() => {
+      let nextId = 1;
+      const rows: { id: number; trackId: number; playedAt: number; payload: unknown }[] = [];
+      return {
+        add: async (args: { trackId: number; playedAt: number; payload: unknown }) => {
+          const entry = {
+            id: nextId++,
+            trackId: args.trackId,
+            playedAt: args.playedAt,
+            payload: args.payload,
+          };
+          rows.unshift(entry);
+          rows.splice(1000);
+          return entry.id;
+        },
+        list: async () => [...rows],
+        clear: async () => {
+          rows.length = 0;
+        },
+      };
+    })(),
     playlists: {
       list: async () => [],
       create: async () => ({}),

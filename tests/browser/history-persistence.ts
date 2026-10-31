@@ -458,6 +458,17 @@ const playTrackByTitleInSongsView = async (page: Page, title: string) => {
 
 const readHistoryViewTitles = async (page: Page): Promise<string[]> => {
   await clickNav(page, "History");
+  // Wait for the view to settle (entries, empty state, or error) instead of a fixed
+  // delay: on a cold first launch the bootstrap restore can outlast a short wait.
+  await page
+    .waitForFunction(
+      () =>
+        document.querySelector(
+          '[data-testid="history-entry"], [data-testid="history-empty"], [data-testid="history-error"]',
+        ) !== null,
+      { timeout: 10_000 },
+    )
+    .catch(() => null);
   await wait(200);
   return page.evaluate(() =>
     Array.from(document.querySelectorAll('[data-testid="history-entry"] .history-info strong')).map(
@@ -468,6 +479,8 @@ const readHistoryViewTitles = async (page: Page): Promise<string[]> => {
 
 const readHomeRecentlyPlayedTitles = async (page: Page): Promise<string[]> => {
   await clickNav(page, "Home");
+  // Home renders from the history store; wait until its shelves have mounted.
+  await page.waitForSelector(".shelf", { timeout: 10_000 }).catch(() => null);
   await wait(200);
   return page.evaluate(() =>
     Array.from(
@@ -488,6 +501,7 @@ try {
     () => document.querySelectorAll('[data-testid="home-recently-played"]').length,
   );
   await clickNav(page, "History");
+  await page.waitForSelector('[data-testid="history-empty"]', { timeout: 10_000 }).catch(() => null);
   const initialEmptyVisible = Boolean(await page.$('[data-testid="history-empty"]'));
   check(
     "launch1-empty-initial-state",
@@ -636,6 +650,7 @@ try {
 
   const launch4Recent = await readHomeRecentlyPlayedTitles(page);
   await clickNav(page, "History");
+  await page.waitForSelector('[data-testid="history-empty"]', { timeout: 10_000 }).catch(() => null);
   const launch4EmptyVisible = Boolean(await page.$('[data-testid="history-empty"]'));
   await page.screenshot({ path: join(shotDir, "04-launch4-cleared-after-restart.png") });
   check(
