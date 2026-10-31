@@ -245,6 +245,9 @@ export function CustomizationStudio({
     copy.id = createCustomNowPlayingProfileId();
     copy.name = `${draft.name} copy`.slice(0, 60);
     copy.builtIn = false;
+    // Preserve in-progress edits on the original before switching to the copy,
+    // like switchEditing/createNew do; otherwise unsaved edits are lost.
+    if (!draft.builtIn) setWorkingCustoms(list => upsertCustom(list, draft));
     setWorkingCustoms(list => [...list, cloneNowPlayingProfile(copy)]);
     setPast([]);
     setFuture([]);
@@ -363,6 +366,10 @@ export function CustomizationStudio({
     const collidesBuiltIn = BUILT_IN_NOW_PLAYING_PROFILES.some(entry => entry.id === profile.id);
     if (collidesBuiltIn) profile.id = createCustomNowPlayingProfileId();
     const overwrite = workingCustoms.some(entry => entry.id === profile.id);
+    // Preserve in-progress edits on the outgoing draft before switching to the
+    // import, like switchEditing/createNew do. When the import overwrites the
+    // outgoing draft itself, the second upsert wins, which is the intent.
+    if (!draft.builtIn) setWorkingCustoms(list => upsertCustom(list, draft));
     setWorkingCustoms(list => upsertCustom(list, profile));
     setPast([]);
     setFuture([]);
@@ -533,6 +540,12 @@ export function CustomizationStudio({
 
         <fieldset className="studio-sections" disabled={readOnly}>
           <Section title="Layout" onReset={() => resetKeys(LAYOUT_KEYS)}>
+            {editMode === "windowed" ? (
+              <p className="studio-note" data-testid="studio-windowed-layout-note">
+                The windowed layout has no artwork column or inline playback controls, so
+                artwork, placement and playback-control settings are set in the Fullscreen tab.
+              </p>
+            ) : null}
             <div className="studio-layout-editor" aria-label="Layout slots">
               {(["left", "right", "top"] as const).map(zone => (
                 <div
@@ -557,7 +570,7 @@ export function CustomizationStudio({
               Lyrics always take the remaining column, so nothing can overlap.
             </p>
             <SliderRow label="Artwork size" value={cfg.artworkScale} min={0.6} max={1.25} step={0.01} format={pct} onChange={v => setCfg({ artworkScale: v })} onCommit={commit} />
-            <SliderRow label="Lyrics max width" value={cfg.lyricsMaxWidth} min={640} max={1280} step={10} format={v => `${Math.round(v)}px`} onChange={v => setCfg({ lyricsMaxWidth: Math.round(v) })} onCommit={commit} />
+            <SliderRow label="Lyrics max width" value={cfg.lyricsMaxWidth} min={720} max={1280} step={10} format={v => `${Math.round(v)}px`} onChange={v => setCfg({ lyricsMaxWidth: Math.round(v) })} onCommit={commit} />
             <SliderRow label="Control size" value={cfg.controlsScale} min={0.8} max={1.2} step={0.01} format={pct} onChange={v => setCfg({ controlsScale: v })} onCommit={commit} />
             <SliderRow label="Spacing" value={cfg.spacingScale} min={0.8} max={1.25} step={0.01} format={pct} onChange={v => setCfg({ spacingScale: v })} onCommit={commit} />
             <SelectRow label="Lyrics alignment" value={cfg.lyricsAlignment} options={[["left", "Left"], ["center", "Center"]]} onChange={v => setCfg({ lyricsAlignment: v as typeof cfg.lyricsAlignment }, true)} />

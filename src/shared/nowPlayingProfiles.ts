@@ -346,7 +346,9 @@ export function normalizeNowPlayingProfileConfig(
     metadataScale: clampNumber(source.metadataScale, fallback.metadataScale, 0.75, 1.25),
     controlsScale: clampNumber(source.controlsScale, fallback.controlsScale, 0.8, 1.2),
     lyricsMaxWidth: Math.round(
-      clampNumber(source.lyricsMaxWidth, fallback.lyricsMaxWidth, 640, 1280)
+      // 720 is the rendered floor (--np-lyrics-max-width clamps to it in CSS);
+      // allowing lower values would store settings that can never render.
+      clampNumber(source.lyricsMaxWidth, fallback.lyricsMaxWidth, 720, 1280)
     ),
     spacingScale: clampNumber(source.spacingScale, fallback.spacingScale, 0.8, 1.25),
     artworkSlot: cleanEnum(source.artworkSlot, ARTWORK_SLOTS, fallback.artworkSlot),
