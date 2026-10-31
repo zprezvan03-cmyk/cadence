@@ -1094,28 +1094,7 @@ await runSection("expanded-lyrics-completes", async () => {
   await page.click('button[title="Open a lyrics file"]'); await wait(180);
   check("lyrics-file-open", (await page.$eval(".lyrics-body", node => node.textContent)).includes("Chosen file line"), "chosen file rendered");
 
-  await clickText(".dock-button", "Style", false);
-  const dockSliders = ["Font size", "Translation Font Size", "Romanization Font Size", "Weight", "Line height", "Active", "Inactive"];
-  for (const label of dockSliders) {
-    const handles = await page.$$(".dock-appearance .slider-row");
-    let found = false;
-    for (const row of handles) {
-      if ((await row.$eval("span", node => node.textContent.trim())) !== label) continue;
-      const input = await row.$('input[type="range"]'); await input.focus(); await page.keyboard.press("Home"); await page.keyboard.press("ArrowRight"); await wait(50);
-      const value = await input.evaluate(node => node.value); const output = await row.$eval("output", node => node.textContent.trim());
-      check(`dock-style-${label.replaceAll(" ", "-").toLowerCase()}`, output.length > 0 && Number.isFinite(Number(value)), `${value}; ${output}`);
-      found = true; break;
-    }
-    if (!found) check(`dock-style-${label}`, false, "slider not found");
-  }
-  const creditToggle = await page.$('.dock-appearance .toggle-row input');
-  await creditToggle.click(); await wait(150);
-  check("dock-show-songwriters-off", !(await page.$(".blyrics-credits")), "credits hidden");
-  await creditToggle.click(); await wait(150);
-  check("dock-show-songwriters-on", Boolean(await page.$(".blyrics-credits")), "credits restored");
-  const passive = (await page.$$(".dock-appearance .toggle-row input"))[1]; await passive.click();
-  check("dock-passive-scroll-setting", (await storedSettings()).lyrics.passiveScroll === false, "toggle stored");
-  await clickText(".dock-button", "Style", false);
+  // The dock Style popover was removed; its sliders/toggles are audited via Settings below.
 
   await nav("Settings"); await settingsTab("Appearance"); await selectSetting("Theme", "custom");
   await page.type('[data-testid="settings-lyrics"] textarea', ".blyrics-container { --audit-theme: 42; }");

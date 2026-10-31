@@ -1071,6 +1071,30 @@ const setSettingsRange = (label, value) =>
     value
   );
 
+// The dock's Style popover was removed; its sliders live in Settings, so the size
+// checks below detour there and back to the lyrics.
+const openSettingsView = async () => {
+  await page.click('aside.sidebar button[title="Settings"]');
+  await page.waitForSelector('[data-testid="settings-view"]');
+  await page.evaluate(() => {
+    const appearanceTab = [...document.querySelectorAll(".settings-tabs button")].find(node =>
+      /appearance/i.test(node.textContent ?? "")
+    );
+    appearanceTab?.click();
+  });
+  await wait(400);
+};
+const backToNowPlaying = async () => {
+  await page.evaluate(() => {
+    const item = [...document.querySelectorAll("aside.sidebar .nav-item")].find(node =>
+      node.textContent.includes("Now Playing")
+    );
+    item?.click();
+  });
+  await page.waitForSelector(".lyrics-view", { timeout: 10_000 }).catch(() => null);
+  await wait(500);
+};
+
 await page.click('[data-testid="lyrics-dock"] button[title="Romanize lyrics"]');
 await page.waitForFunction(() => document.querySelectorAll("braccato-lyrics .blyrics--romanized").length >= 4, {
   timeout: 10_000,
@@ -1084,10 +1108,9 @@ check(
   JSON.stringify(defaultSizes)
 );
 
-await page.click('[data-testid="lyrics-dock"] button[title="Lyrics appearance"]');
-await page.waitForSelector('.dock-appearance input[aria-label="Translation Font Size"]');
-await setRange('.dock-appearance input[aria-label="Translation Font Size"]', 18);
-await wait(400);
+await openSettingsView();
+await setSettingsRange("Translation Font Size", 18);
+await backToNowPlaying();
 const translationSized = await decoFontSizes();
 check(
   "translation-font-size-live-and-independent",
@@ -1096,8 +1119,9 @@ check(
     translationSized.main === defaultSizes.main,
   `before=${JSON.stringify(defaultSizes)} after=${JSON.stringify(translationSized)}`
 );
-await setRange('.dock-appearance input[aria-label="Romanization Font Size"]', 14);
-await wait(400);
+await openSettingsView();
+await setSettingsRange("Romanization Font Size", 14);
+await backToNowPlaying();
 const romanizationSized = await decoFontSizes();
 check(
   "romanization-font-size-live-and-independent",
@@ -1131,15 +1155,13 @@ check(
 await page.keyboard.press("Escape");
 await wait(500);
 
-// Settings shows the same values the Styles sliders set, and driving it from there lands back
+// Settings still shows the values just set, and driving it from there lands back
 // on the lyrics.
-await page.click('aside.sidebar button[title="Settings"]');
-await page.waitForSelector('[data-testid="settings-view"]');
-await wait(400);
+await openSettingsView();
 const settingsTranslation = await readSettingsRange("Translation Font Size");
 const settingsRomanization = await readSettingsRange("Romanization Font Size");
 check(
-  "font-size-settings-mirror-styles",
+  "font-size-settings-shown",
   settingsTranslation.value === "18" &&
     settingsTranslation.output === "18 px" &&
     settingsRomanization.value === "14" &&
@@ -1148,14 +1170,7 @@ check(
 );
 await setSettingsRange("Translation Font Size", 22);
 await wait(300);
-await page.evaluate(() => {
-  const item = [...document.querySelectorAll("aside.sidebar .nav-item")].find(node =>
-    node.textContent.includes("Now Playing")
-  );
-  item?.click();
-});
-await page.waitForSelector(".lyrics-view", { timeout: 10_000 }).catch(() => null);
-await wait(600);
+await backToNowPlaying();
 const settingsDriven = await decoFontSizes();
 check(
   "settings-font-size-drives-lyrics",
@@ -1165,11 +1180,10 @@ check(
 );
 
 // Restore the defaults and the pre-section dock state for the checks that follow.
-await page.click('[data-testid="lyrics-dock"] button[title="Lyrics appearance"]');
-await page.waitForSelector('.dock-appearance input[aria-label="Translation Font Size"]');
-await setRange('.dock-appearance input[aria-label="Translation Font Size"]', 32);
-await setRange('.dock-appearance input[aria-label="Romanization Font Size"]', 26);
-await page.click('[data-testid="lyrics-dock"] button[title="Lyrics appearance"]');
+await openSettingsView();
+await setSettingsRange("Translation Font Size", 32);
+await setSettingsRange("Romanization Font Size", 26);
+await backToNowPlaying();
 await page.click('[data-testid="lyrics-dock"] button[title="Romanize lyrics"]');
 await page.waitForFunction(() => document.querySelectorAll("braccato-lyrics .blyrics--romanized").length === 0, {
   timeout: 10_000,
