@@ -65,3 +65,28 @@ describe("buildThemeCss secondary font sizes", () => {
     expect(invalid).toContain("font-size: var(--np-romanization-font-size, 26px);");
   });
 });
+
+describe("buildThemeCss opacity derivations", () => {
+  it("redeclares the engine's colour derivations at container scope for themes without colours", () => {
+    // The engine's variables.css derives these at host scope, where the
+    // container-level opacity variables cannot substitute; without the
+    // container redeclaration the opacity controls render at the fallbacks.
+    const css = buildThemeCss(settings({ themeId: "default" }));
+    expect(css).toContain("--blyrics-lyric-active-color: var(--blyrics-text-color,");
+    expect(css).toContain("--blyrics-lyric-inactive-color: color(from var(--blyrics-text-color,");
+    expect(css).toContain("var(--blyrics-inactive-opacity, 0.3)");
+  });
+
+  it("redeclares the line scale transforms at container scope so active-line scale resolves", () => {
+    const css = buildThemeCss(settings({ themeId: "default" }));
+    expect(css).toContain("--blyrics-line-enter-transform-to: scale(var(--blyrics-active-scale));");
+    expect(css).toContain("--blyrics-line-exit-transform-from: scale(var(--blyrics-active-scale));");
+  });
+
+  it("leaves themes that define their own colours alone, wired to the opacity variable", () => {
+    const css = buildThemeCss(settings({ themeId: "midnight" }));
+    expect(css.match(/--blyrics-lyric-inactive-color:/g)).toHaveLength(1);
+    expect(css).toContain("rgb(255 255 255 / var(--blyrics-inactive-opacity, 0.28))");
+    expect(css.match(/--blyrics-lyric-active-color:/g)).toHaveLength(1);
+  });
+});

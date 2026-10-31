@@ -116,6 +116,14 @@ describe("Now Playing profile normalization", () => {
     });
   });
 
+  it("floors the lyrics measure at the 720px the renderer can actually show", () => {
+    // --np-lyrics-max-width clamps to 720px in CSS, so anything lower would
+    // be a stored setting that never renders (dead slider range).
+    expect(normalizeNowPlayingProfileConfig({ lyricsMaxWidth: 640 }).lyricsMaxWidth).toBe(720);
+    expect(normalizeNowPlayingProfileConfig({ lyricsMaxWidth: 719 }).lyricsMaxWidth).toBe(720);
+    expect(normalizeNowPlayingProfileConfig({ lyricsMaxWidth: 900 }).lyricsMaxWidth).toBe(900);
+  });
+
   it("normalizes Studio-era fields: enums, colours, fonts and effect ranges", () => {
     const config = normalizeNowPlayingProfileConfig({
       artworkSlot: "right",

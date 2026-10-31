@@ -9,7 +9,7 @@
  * Usage: npm run build:web && npx vite-node tests/browser/now-playing-layout.ts
  */
 
-import { copyFileSync, createReadStream, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { extname, join, resolve } from "node:path";
@@ -71,11 +71,18 @@ const ids = {
   empty: idOf(emptyPath),
 };
 
+/** Scenario 14 gates a real artwork URL behind this flag so the blurred-artwork
+    background (and its blur slider) can be verified on the rendered layer;
+    every other scenario keeps the art-free library its geometry probes use. */
+let qaArtworkEnabled = false;
+const QA_ARTWORK_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAGklEQVR4nGO4oxGFFWlU3MGKGEY1jGoYvhoAPsJtEINlRLAAAAAASUVORK5CYII=";
+
 const snapshot = () => {
   const tracks = store.getTracks().map(track => ({
     ...store.toTrack(track),
     streamUrl: `/audio/${track.id}`,
-    artworkUrl: null,
+    artworkUrl: qaArtworkEnabled && track.id === ids.synced ? QA_ARTWORK_URL : null,
   }));
   return {
     tracks,
@@ -312,8 +319,24 @@ await page.evaluateOnNewDocument(() => {
       resolve: async (request: unknown) => call("/api/lyrics/resolve", request),
       search: async (request: unknown) => call("/api/lyrics/search", request),
       youtubeMetadata: async () => ({ ok: false, reason: "error", detail: "not in harness" }),
-      translate: async (request: { lines: string[] }) => ({ translations: request.lines.map(() => null), detectedLanguage: "en" }),
-      romanize: async (request: { lines: string[] }) => ({ romanizations: request.lines.map(() => null), detectedLanguage: "en" }),
+      // Secondary lines stay null unless a scenario opts in via __qaSecondary, so existing
+      // layout assertions never see translated/romanized spans they did not ask for.
+      translate: async (request: { lines: string[] }) => ({
+        translations: request.lines.map(line =>
+          (globalThis as unknown as { __qaSecondary?: boolean }).__qaSecondary
+            ? `[translated] ${line}`
+            : null
+        ),
+        detectedLanguage: "en",
+      }),
+      romanize: async (request: { lines: string[] }) => ({
+        romanizations: request.lines.map(line =>
+          (globalThis as unknown as { __qaSecondary?: boolean }).__qaSecondary
+            ? `[romanized] ${line}`
+            : null
+        ),
+        detectedLanguage: "en",
+      }),
       saveSidecar: async () => ({ path: "/harness/lyrics.lrc" }),
       clearCache: async () => ({ removedEntries: 0 }),
       listCache: async () => ({ entries: [], stats: { entryCount: 0, tracks: 0, searches: 0, bytes: 0 } }),
@@ -1429,6 +1452,878 @@ await selectNowPlayingProfile("balanced");
 await wait(400);
 const kxSummary = { sweep: kxSweep, solid: kxSolid };
 
+/* 14. Exhaustive Studio QA sweep. Every Customization Studio control is driven like
+   a user would drive it — real mouse drags across slider ranges, keyboard input,
+   clicks on chips/toggles/selects — and verified against the RENDERED result
+   (computed styles on the actual lyric lines, element geometry, canvas presence),
+   never just at the CSS-variable level: two shipped bugs (engine style cache,
+   shadow-DOM var trap) both passed variable-level probes while doing nothing on
+   screen. Covers every section, profile lifecycle, undo/redo, discard, windowed/
+   fullscreen separation, slots in fullscreen, save + restart persistence, profile
+   isolation, import/export, delete-active fallback, combined extremes, a rapid
+   soak, and operability at six viewport sizes. */
+await setViewport(1920, 1080);
+mode = "synced";
+await playTrackId(ids.synced);
+await nav("Now Playing");
+await page.waitForSelector("braccato-lyrics .blyrics--line", { timeout: 15_000 });
+// Secondary lines on (flag-gated echo in the bridge) so translation/romanization
+// typography has rendered elements to measure.
+await page.evaluate(() => {
+  (window as unknown as { __qaSecondary?: boolean }).__qaSecondary = true;
+  const audio = document.querySelector("audio")!;
+  audio.currentTime = 1.0;
+  audio.pause();
+});
+await page.click('[data-testid="lyrics-dock"] button[title="Romanize lyrics"]');
+await page.click('[data-testid="lyrics-dock"] button[title="Translate lyrics"]');
+await wait(400);
+await page.evaluate(() => {
+  const row = [...document.querySelectorAll(".dock-languages .source-row")].find(node =>
+    node.textContent?.includes("English")
+  ) as HTMLButtonElement | undefined;
+  row?.click();
+});
+await page
+  .waitForFunction(
+    () =>
+      document.querySelectorAll(".blyrics--translated").length >= 1 &&
+      document.querySelectorAll(".blyrics--romanized").length >= 1,
+    { timeout: 10_000 }
+  )
+  .catch(() => null);
+await wait(500);
+
+const qaNear = (a: number, b: number, tol: number) => Math.abs(a - b) <= tol;
+const qaProbe = () =>
+  page.evaluate(() => {
+    const view = document.querySelector<HTMLElement>(".lyrics-view")!;
+    const container = document.querySelector<HTMLElement>(".blyrics-container");
+    const cs = container ? getComputedStyle(container) : null;
+    const lines = [...document.querySelectorAll<HTMLElement>(".blyrics--line")];
+    const active = document.querySelector<HTMLElement>(".blyrics--active");
+    const inactive = lines.find(line => !line.classList.contains("blyrics--active")) ?? null;
+    const first = lines[0] ?? null;
+    const fcs = first ? getComputedStyle(first) : null;
+    const matrixA = (el: HTMLElement | null) => {
+      if (!el) return 0;
+      const m = /matrix\(([^)]+)\)/.exec(getComputedStyle(el).transform ?? "");
+      return m ? Number(m[1].split(",")[0]) : 1;
+    };
+    const alpha = (color: string) => {
+      const m = /\/\s*([\d.]+)\)/.exec(color) ?? /rgba?\([^)]*,\s*([\d.]+)\)/.exec(color);
+      return m ? Number(m[1]) : 1;
+    };
+    const translated = document.querySelector<HTMLElement>(".blyrics--translated");
+    const romanized = document.querySelector<HTMLElement>(".blyrics--romanized");
+    const fill = document.querySelector<HTMLElement>(".np-bg-fill");
+    const rect = (el: HTMLElement | null) =>
+      el
+        ? {
+            x: Math.round(el.getBoundingClientRect().x),
+            right: Math.round(el.getBoundingClientRect().right),
+            w: Math.round(el.getBoundingClientRect().width),
+            h: Math.round(el.getBoundingClientRect().height),
+            display: getComputedStyle(el).display,
+          }
+        : null;
+    const side = document.querySelector<HTMLElement>(".fs-side");
+    const body = document.querySelector<HTMLElement>(".lyrics-body");
+    const h1 = document.querySelector<HTMLElement>(".lyrics-heading h1");
+    const meta = document.querySelector<HTMLElement>(".lyrics-heading p");
+    const fsControls = document.querySelector<HTMLElement>(".lyrics-footer .fs-controls");
+    return {
+      profileId: view.dataset.nowPlayingProfile ?? "",
+      profileMode: view.dataset.profileMode ?? "",
+      bgMode: view.dataset.profileBackground ?? "",
+      lineFontSize: fcs ? Number.parseFloat(fcs.fontSize) : 0,
+      lineHeightPx: fcs ? Number.parseFloat(fcs.lineHeight) || 0 : 0,
+      letterSpacing: fcs?.letterSpacing ?? "",
+      fontFamily: fcs?.fontFamily ?? "",
+      fontWeight: fcs?.fontWeight ?? "",
+      textAlign: fcs?.textAlign ?? "",
+      activeScale: matrixA(active),
+      inactiveColor: inactive ? getComputedStyle(inactive).color : "",
+      inactiveAlpha: inactive ? alpha(getComputedStyle(inactive).color) : -1,
+      inactiveRGB: (() => {
+        if (!inactive) return [0, 0, 0];
+        const color = getComputedStyle(inactive).color;
+        const srgb = /color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)/.exec(color);
+        if (srgb) return [1, 2, 3].map(i => Math.round(Number(srgb[i]) * 255));
+        const rgb = /rgba?\((\d+)[, ]+(\d+)[, ]+(\d+)/.exec(color);
+        return rgb ? [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])] : [0, 0, 0];
+      })(),
+      activeTransform: active ? getComputedStyle(active).transform : "",
+      activeWrapScale: matrixA(active?.parentElement as HTMLElement | null),
+      activeWrapTransform: active?.parentElement
+        ? getComputedStyle(active.parentElement).transform
+        : "",
+      inactiveWrapScale: matrixA(inactive?.parentElement as HTMLElement | null),
+      inactiveScale: matrixA(inactive),
+      headerPadL: (() => {
+        const header = document.querySelector<HTMLElement>(".lyrics-header");
+        return header ? Number.parseFloat(getComputedStyle(header).paddingLeft) || 0 : 0;
+      })(),
+      inactiveFilter: inactive ? getComputedStyle(inactive).filter : "",
+      translatedSize: translated ? Number.parseFloat(getComputedStyle(translated).fontSize) : 0,
+      translatedFont: translated ? getComputedStyle(translated).fontFamily : "",
+      romanizedSize: romanized ? Number.parseFloat(getComputedStyle(romanized).fontSize) : 0,
+      romanizedFont: romanized ? getComputedStyle(romanized).fontFamily : "",
+      titleSize: h1 ? Number.parseFloat(getComputedStyle(h1).fontSize) : 0,
+      metaSize: meta ? Number.parseFloat(getComputedStyle(meta).fontSize) : 0,
+      containerWidth: container ? Math.round(container.getBoundingClientRect().width) : 0,
+      swipe: cs?.getPropertyValue("--blyrics-animate-highlight-swipe").trim() ?? "",
+      glow: cs?.getPropertyValue("--blyrics-animate-highlight-glow").trim() ?? "",
+      fade: cs?.getPropertyValue("--blyrics-animate-highlight-fade").trim() ?? "",
+      glowRadius: cs?.getPropertyValue("--blyrics-highlight-glow-radius-from").trim() ?? "",
+      wordScale: cs?.getPropertyValue("--blyrics-letter-wave-emphasis-scale").trim() ?? "",
+      activeColorVar: cs?.getPropertyValue("--blyrics-lyric-active-color").trim() ?? "",
+      art: rect(document.querySelector<HTMLElement>(".fs-artwork")),
+      body: rect(body),
+      bodyPadL: body ? Number.parseFloat(getComputedStyle(body).paddingLeft) || 0 : 0,
+      side: rect(side),
+      dock: rect(document.querySelector<HTMLElement>(".lyrics-dock")),
+      fsControlsDisplay: fsControls ? getComputedStyle(fsControls).display : "(absent)",
+      headingTop: Boolean(document.querySelector(".lyrics-header .lyrics-heading")),
+      headingSide: Boolean(document.querySelector(".fs-side .lyrics-heading")),
+      headingVisible: Boolean(h1 && h1.getBoundingClientRect().width > 0),
+      fillBg: fill ? getComputedStyle(fill).backgroundImage : "",
+      fillOpacity: fill ? getComputedStyle(fill).opacity : "",
+      fillFilter: fill ? getComputedStyle(fill).filter : "",
+      kawarp: (() => {
+        const c = document.querySelector(".kawarp-canvas");
+        return c ? getComputedStyle(c).display !== "none" : false;
+      })(),
+      fxCanvas: Boolean(document.querySelector(".np-bg-canvas")),
+      spacingScale: view.style.getPropertyValue("--np-profile-spacing-scale").trim(),
+      controlsScaleVar: view.style.getPropertyValue("--np-profile-controls-scale").trim(),
+      sideBodyGap:
+        side && body
+          ? Math.round(
+              Math.abs(body.getBoundingClientRect().x - side.getBoundingClientRect().right)
+            )
+          : -1,
+    };
+  });
+/** Locate a Studio control's live rect (after scrolling it into view). */
+const qaControlRect = (sectionTitle: string, label: string) =>
+  page.evaluate(
+    (args: { sectionTitle: string; label: string }) => {
+      const scope = [...document.querySelectorAll(".studio-section")].find(
+        s => s.querySelector("h3")?.textContent?.trim() === args.sectionTitle
+      );
+      const el = scope?.querySelector<HTMLElement>(`[aria-label="${args.label}"]`);
+      if (!el) throw new Error(`qa control "${args.label}" not found in ${args.sectionTitle}`);
+      el.scrollIntoView({ block: "center" });
+      const r = el.getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height };
+    },
+    { sectionTitle, label }
+  );
+const qaReadControl = (sectionTitle: string, label: string) =>
+  page.evaluate(
+    (args: { sectionTitle: string; label: string }) => {
+      const scope = [...document.querySelectorAll(".studio-section")].find(
+        s => s.querySelector("h3")?.textContent?.trim() === args.sectionTitle
+      );
+      const el = scope?.querySelector<HTMLInputElement | HTMLSelectElement>(
+        `[aria-label="${args.label}"]`
+      );
+      if (!el) return { value: "(missing)", output: "" };
+      const row = el.closest(".studio-row");
+      return {
+        value: el.value,
+        output: row?.querySelector("output")?.textContent?.trim() ?? "",
+      };
+    },
+    { sectionTitle, label }
+  );
+/** Real mouse drag on a slider track to a fraction of its range. */
+const qaDragSlider = async (sectionTitle: string, label: string, fraction: number) => {
+  await qaControlRect(sectionTitle, label);
+  await wait(250);
+  const rect = await qaControlRect(sectionTitle, label);
+  const y = rect.y + rect.h / 2;
+  const x0 = rect.x + 3;
+  const x1 = rect.x + rect.w - 3;
+  const target = x0 + (x1 - x0) * fraction;
+  await page.mouse.move(x0 + (x1 - x0) * 0.5, y);
+  await page.mouse.down();
+  await page.mouse.move(x0 + (target - x0) * 0.5, y, { steps: 4 });
+  await page.mouse.move(target, y, { steps: 4 });
+  await page.mouse.up();
+  await wait(300);
+  return qaReadControl(sectionTitle, label);
+};
+const qaSeekPause = async (seconds: number) => {
+  await page.evaluate((t: number) => {
+    const audio = document.querySelector("audio")!;
+    audio.currentTime = t;
+    audio.pause();
+  }, seconds);
+  await wait(450);
+};
+const qaModeTab = async (text: "Windowed" | "Fullscreen") => {
+  await page.evaluate((wanted: string) => {
+    const btn = [...document.querySelectorAll<HTMLButtonElement>(".studio-mode-toggle button")].find(
+      b => b.textContent?.trim() === wanted
+    );
+    btn?.click();
+  }, text);
+  await wait(300);
+};
+const qaHeader = () =>
+  page.evaluate(
+    () => document.querySelector(".studio-header p")?.textContent?.replace(/\s+/g, " ").trim() ?? ""
+  );
+const qaDraftId = () =>
+  page.evaluate(
+    () =>
+      document.querySelector<HTMLElement>(".studio-profile-row.active")?.dataset.profileId ?? ""
+  );
+
+const qaBaseline = await qaProbe();
+
+/* -- Built-in read-only, duplicate, rename -- */
+await mxOpenStudio();
+const qaReadOnly = await page.evaluate(() => ({
+  sliderDisabled:
+    document
+      .querySelector<HTMLInputElement>('[data-testid="studio-lyrics-scale"]')
+      ?.matches(":disabled") ?? null,
+  header: document.querySelector(".studio-header p")?.textContent?.trim() ?? "",
+  note: document.querySelector(".studio-note")?.textContent?.trim() ?? "",
+}));
+await page.click('[data-testid="studio-duplicate"]');
+await wait(400);
+const qaDraftIdInitial = await qaDraftId();
+await page.click('[data-testid="studio-profile-name"]');
+await page.keyboard.down("Control");
+await page.keyboard.press("a");
+await page.keyboard.up("Control");
+await page.type('[data-testid="studio-profile-name"]', "QA Sweep");
+await page.evaluate(() =>
+  (document.querySelector('[data-testid="studio-profile-name"]') as HTMLElement)?.blur()
+);
+await wait(300);
+const qaHeaderAfterRename = await qaHeader();
+
+/* -- Typography: real drags + keyboard across ranges -- */
+const qaSizeMin = await qaDragSlider("Typography", "Main lyrics size", 0);
+const qaProbeSizeMin = await qaProbe();
+const qaSizeMax = await qaDragSlider("Typography", "Main lyrics size", 1);
+const qaProbeSizeMax = await qaProbe();
+await qaControlRect("Typography", "Main lyrics size");
+await page.evaluate(() => {
+  [...document.querySelectorAll(".studio-section")]
+    .find(s => s.querySelector("h3")?.textContent?.trim() === "Typography")
+    ?.querySelector<HTMLInputElement>('[aria-label="Main lyrics size"]')
+    ?.focus();
+});
+await page.keyboard.press("Home");
+await wait(250);
+const qaSizeHome = await qaReadControl("Typography", "Main lyrics size");
+await page.keyboard.press("End");
+await wait(250);
+const qaSizeEnd = await qaReadControl("Typography", "Main lyrics size");
+await mxSetControl("Typography", "Main lyrics size", "1");
+const qaProbeSizeMid = await qaProbe();
+// Secondary sizes, each independent of the others.
+await mxSetControl("Typography", "Translation size", "0.7");
+const qaTransMin = await qaProbe();
+await mxSetControl("Typography", "Translation size", "1.35");
+const qaTransMax = await qaProbe();
+await mxSetControl("Typography", "Romanization size", "0.7");
+const qaRomanMin = await qaProbe();
+await mxSetControl("Typography", "Romanization size", "1.35");
+const qaRomanMax = await qaProbe();
+// Title + artist sizes.
+await mxSetControl("Typography", "Title size", "1.25");
+await mxSetControl("Typography", "Artist / album size", "0.75");
+const qaTitleBig = await qaProbe();
+await mxSetControl("Typography", "Title size", "0.75");
+await mxSetControl("Typography", "Artist / album size", "1.25");
+const qaTitleSmall = await qaProbe();
+// Line + letter spacing.
+await mxSetControl("Typography", "Line spacing", "1.4");
+const qaLineHigh = await qaProbe();
+await mxSetControl("Typography", "Line spacing", "0.85");
+const qaLineLow = await qaProbe();
+await mxSetControl("Typography", "Letter spacing", "0.08");
+const qaLetterWide = await qaProbe();
+await mxSetControl("Typography", "Letter spacing", "-0.02");
+const qaLetterTight = await qaProbe();
+// Fonts: main, translation, romanization independently.
+await mxSetControl("Typography", "Lyrics font", "georgia");
+const qaFontGeorgia = await qaProbe();
+await mxSetControl("Typography", "Lyrics font", "");
+const qaFontBack = await qaProbe();
+await mxSetControl("Typography", "Translation font", "tahoma");
+await mxSetControl("Typography", "Romanization font", "arial");
+const qaSecondaryFonts = await qaProbe();
+// Weight.
+await mxSetControl("Typography", "Lyrics weight", "900");
+const qaWeight900 = await qaProbe();
+await mxSetControl("Typography", "Lyrics weight", "0");
+const qaWeightSettings = await qaProbe();
+// Typography section reset returns every value above to base.
+await page.click('[data-testid="customization-studio"] button[title="Reset Typography"]');
+await wait(400);
+const qaAfterTypeReset = await qaProbe();
+const qaSizeAfterReset = await qaReadControl("Typography", "Main lyrics size");
+await shot("33-qa-typography-sweep");
+
+/* -- Lyrics appearance -- */
+await mxSetControl("Lyrics appearance", "Active line colour", "#ff8800");
+const qaActiveOrange = await qaProbe();
+const qaUseThemeShown = await page.evaluate(() => {
+  const section = [...document.querySelectorAll(".studio-section")].find(
+    s => s.querySelector("h3")?.textContent?.trim() === "Lyrics appearance"
+  );
+  return [...(section?.querySelectorAll("button") ?? [])].some(b => b.textContent?.includes("Use theme"));
+});
+await mxSetControl("Lyrics appearance", "Inactive line colour", "#3344ff");
+const qaInactiveBlue = await qaProbe();
+const qaClickUseTheme = () =>
+  page.evaluate(() => {
+    const section = [...document.querySelectorAll(".studio-section")].find(
+      s => s.querySelector("h3")?.textContent?.trim() === "Lyrics appearance"
+    );
+    const btn = [...(section?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(b =>
+      b.textContent?.includes("Use theme")
+    );
+    btn?.scrollIntoView({ block: "center" });
+    btn?.click();
+    return Boolean(btn);
+  });
+await qaClickUseTheme();
+await wait(400);
+await qaClickUseTheme();
+await wait(400);
+const qaColoursCleared = await qaProbe();
+await mxSetControl("Lyrics appearance", "Inactive opacity", "0.4");
+const qaOpacityLow = await qaProbe();
+await mxSetControl("Lyrics appearance", "Inactive opacity", "1.6");
+const qaOpacityHigh = await qaProbe();
+// The engine applies the active scale as a line ENTERS (the theme reapply
+// refreshes its JS style cache, then the next line animates with the new
+// value), so each probe enters a fresh line and lets the transition settle.
+const qaEnterLineAt = async (seconds: number) => {
+  await page.evaluate((t: number) => {
+    const audio = document.querySelector("audio")!;
+    audio.currentTime = t;
+    void audio.play();
+  }, seconds);
+  await wait(550);
+  await page.evaluate(() => document.querySelector("audio")!.pause());
+  await wait(150);
+};
+await mxSetControl("Lyrics appearance", "Active line scale", "0.9");
+await qaEnterLineAt(2.1);
+const qaActiveScale09 = await qaProbe();
+await mxSetControl("Lyrics appearance", "Active line scale", "1.2");
+await qaEnterLineAt(4.1);
+const qaActiveScale12 = await qaProbe();
+await mxSetControl("Lyrics appearance", "Active line scale", "1");
+await qaSeekPause(1.0);
+await mxSetControl("Lyrics appearance", "Inactive blur", "3");
+const qaBlurOn = await qaProbe();
+await mxSetControl("Lyrics appearance", "Inactive blur", "0");
+const qaBlurOff = await qaProbe();
+
+/* -- Karaoke highlight: every style, intensity → glow radius, word scale -- */
+const qaKaraokeByStyle: Record<string, Awaited<ReturnType<typeof qaProbe>>> = {};
+for (const style of ["sweep", "solid", "gradient", "glow", "minimal"]) {
+  await mxSetControl("Karaoke highlight", "Style", style);
+  qaKaraokeByStyle[style] = await qaProbe();
+}
+await mxSetControl("Karaoke highlight", "Style", "sweep");
+await mxSetControl("Karaoke highlight", "Intensity", "0");
+const qaGlow0 = await qaProbe();
+await mxSetControl("Karaoke highlight", "Intensity", "1");
+const qaGlow100 = await qaProbe();
+await mxSetControl("Karaoke highlight", "Style", "glow");
+const qaGlowStyle100 = await qaProbe();
+await mxSetControl("Karaoke highlight", "Style", "sweep");
+await mxSetControl("Karaoke highlight", "Active word scale", "1.2");
+const qaWord12 = await qaProbe();
+await mxSetControl("Karaoke highlight", "Style", "minimal");
+const qaWordMinimal = await qaProbe();
+await mxSetControl("Karaoke highlight", "Style", "sweep");
+
+/* -- Layout (windowed-measurable parts) -- */
+await mxSetControl("Layout", "Lyrics max width", "720");
+const qaWidth640 = await qaProbe();
+await mxSetControl("Layout", "Lyrics max width", "900");
+const qaWidth900 = await qaProbe();
+await mxSetControl("Layout", "Lyrics max width", "1280");
+const qaWidth1280 = await qaProbe();
+await mxSetControl("Layout", "Lyrics alignment", "center");
+const qaAlignCenter = await qaProbe();
+await mxSetControl("Layout", "Lyrics alignment", "left");
+const qaAlignLeft = await qaProbe();
+const qaBodyXBeforeSpacing = (await qaProbe()).body?.x ?? -1;
+await mxSetControl("Layout", "Spacing", "1.25");
+const qaSpacingHigh = await qaProbe();
+await mxSetControl("Layout", "Spacing", "0.8");
+const qaSpacingLow = await qaProbe();
+await mxSetControl("Layout", "Spacing", "1");
+await mxToggle("Show title & artist");
+const qaHeadingOff = await qaProbe();
+await mxToggle("Show title & artist");
+const qaHeadingOn = await qaProbe();
+await mxToggle("Show lyrics dock");
+const qaDockOff = await qaProbe();
+await mxToggle("Show lyrics dock");
+const qaDockOn = await qaProbe();
+await mxSetControl("Layout", "Control size", "0.8");
+const qaControls08 = await qaProbe();
+await mxSetControl("Layout", "Control size", "1.2");
+const qaControls12 = await qaProbe();
+await mxSetControl("Layout", "Control size", "1");
+
+/* -- Background: every mode rendered, intensity/blur applied, canvas gated by play -- */
+await page.evaluate(() => {
+  const audio = document.querySelector("audio")!;
+  audio.currentTime = 0.4;
+  audio.playbackRate = 0.35; // stretch the 6s fixture across this whole segment
+  void audio.play();
+});
+const qaBgByMode: Record<string, Awaited<ReturnType<typeof qaProbe>>> = {};
+for (const bgMode of ["solid", "gradient", "blurred-artwork", "fluid", "particles", "visualizer"]) {
+  await mxSetControl("Background", "Mode", bgMode);
+  await wait(500);
+  qaBgByMode[bgMode] = await qaProbe();
+}
+await shot("34-qa-background-visualizer");
+await mxSetControl("Background", "Mode", "gradient");
+await mxSetControl("Background", "Intensity", "0.2");
+const qaBgIntensityLow = await qaProbe();
+await mxSetControl("Background", "Intensity", "1");
+const qaBgIntensityHigh = await qaProbe();
+await mxSetControl("Background", "Mode", "particles");
+await mxSetControl("Background", "Effect speed", "2");
+await mxSetControl("Background", "Effect density", "0.25");
+const qaParticlesA = await qaProbe();
+const qaCanvasShotA = await page.screenshot({ clip: { x: 300, y: 200, width: 500, height: 300 } });
+await wait(600);
+const qaCanvasShotB = await page.screenshot({ clip: { x: 300, y: 200, width: 500, height: 300 } });
+const qaCanvasAnimates = !Buffer.from(qaCanvasShotA).equals(Buffer.from(qaCanvasShotB));
+await page.evaluate(() => {
+  const audio = document.querySelector("audio")!;
+  audio.pause();
+  audio.playbackRate = 1;
+});
+await mxSetControl("Background", "Mode", "fluid");
+
+/* -- Undo/redo with a real committed drag -- */
+const qaUndoBase = await qaProbe();
+await qaDragSlider("Typography", "Main lyrics size", 1);
+const qaUndoAfterDrag = await qaProbe();
+await page.click('[data-testid="customization-studio"] [aria-label="Undo"]');
+await wait(400);
+const qaUndoReverted = await qaProbe();
+await page.keyboard.down("Control");
+await page.keyboard.down("Shift");
+await page.keyboard.press("z");
+await page.keyboard.up("Shift");
+await page.keyboard.up("Control");
+await wait(400);
+const qaRedoApplied = await qaProbe();
+await page.keyboard.down("Control");
+await page.keyboard.press("z");
+await page.keyboard.up("Control");
+await wait(400);
+
+/* -- Fullscreen tab: edits stay in the fullscreen half, then render in fullscreen -- */
+const qaWindowedNote = await page.evaluate(
+  () =>
+    document.querySelector('[data-testid="studio-windowed-layout-note"]')?.textContent?.trim() ?? ""
+);
+await qaModeTab("Fullscreen");
+const qaFullscreenNote = await page.evaluate(
+  () =>
+    document.querySelector('[data-testid="studio-windowed-layout-note"]')?.textContent?.trim() ?? ""
+);
+await mxSetControl("Typography", "Main lyrics size", "0.7");
+await mxSetControl("Background", "Mode", "solid");
+await mxSetControl("Layout", "Artwork size", "0.6");
+await qaModeTab("Windowed");
+const qaWindowedKeptSize = await qaReadControl("Typography", "Main lyrics size");
+const qaWindowedKeptBg = await qaReadControl("Background", "Mode");
+const qaWindowedProbe = await qaProbe();
+await mxCloseStudioBySave();
+const qaSavedOnce = await mxProfilesSettings();
+await enterFullscreen();
+const qaFsInitial = await qaProbe();
+await qaSeekPause(1.0);
+await mxOpenStudio();
+await mxSetControl("Layout", "Artwork size", "1.25");
+const qaFsArtBig = await qaProbe();
+// Slot editor: artwork to the right column via click-chip → click-slot.
+await page.evaluate(() => {
+  const chipEl = [...document.querySelectorAll<HTMLElement>(".studio-chip")].find(c =>
+    c.textContent?.includes("Artwork")
+  );
+  chipEl?.scrollIntoView({ block: "center" });
+  chipEl?.click();
+});
+await wait(250);
+await page.evaluate(() => document.querySelector<HTMLElement>(".studio-slot.slot-right")?.click());
+await wait(450);
+const qaFsArtRight = await qaProbe();
+// Metadata to the top bar, then back with the artwork.
+await page.evaluate(() => {
+  const chipEl = [...document.querySelectorAll<HTMLElement>(".studio-chip")].find(c =>
+    c.textContent?.includes("Title")
+  );
+  chipEl?.scrollIntoView({ block: "center" });
+  chipEl?.click();
+});
+await wait(250);
+await page.evaluate(() => document.querySelector<HTMLElement>(".studio-slot.slot-top")?.click());
+await wait(450);
+const qaFsMetaTop = await qaProbe();
+await page.evaluate(() => {
+  const chipEl = [...document.querySelectorAll<HTMLElement>(".studio-chip")].find(c =>
+    c.textContent?.includes("Title")
+  );
+  chipEl?.click();
+});
+await wait(250);
+await page.evaluate(() => document.querySelector<HTMLElement>(".studio-slot.slot-right")?.click());
+await wait(450);
+const qaFsMetaSide = await qaProbe();
+// Hiding the artwork must hide it even while the heading shares its column.
+await mxToggle("Show artwork");
+const qaFsArtHidden = await qaProbe();
+await mxToggle("Show artwork");
+// Spacing geometry + playback-controls visibility in fullscreen.
+const qaFsPadBefore = (await qaProbe()).headerPadL;
+await mxSetControl("Layout", "Spacing", "1.25");
+const qaFsPadAfter = (await qaProbe()).headerPadL;
+await mxSetControl("Layout", "Spacing", "1");
+await mxToggle("Show playback controls");
+const qaFsControlsOff = await qaProbe();
+await mxToggle("Show playback controls");
+const qaFsControlsOn = await qaProbe();
+await shot("35-qa-fullscreen-slots");
+await mxCloseStudioBySave();
+await exitFullscreen();
+
+/* -- Persistence: distinctive saved state survives navigation and a full reload -- */
+await mxOpenStudio();
+await mxSetControl("Typography", "Main lyrics size", "1.21");
+await mxSetControl("Layout", "Lyrics alignment", "center");
+await mxCloseStudioBySave();
+await nav("Songs");
+await nav("Now Playing");
+await wait(600);
+const qaPersistNav = await qaProbe();
+await page.reload({ waitUntil: "networkidle0" });
+await page.waitForSelector(".sidebar", { timeout: 15_000 });
+await playTrackId(ids.synced);
+await nav("Now Playing");
+await page.waitForSelector("braccato-lyrics .blyrics--line", { timeout: 15_000 });
+await qaSeekPause(1.0);
+const qaPersistReload = await qaProbe();
+const qaPersistSettings = await mxProfilesSettings();
+
+/* -- Blurred artwork with a real artwork URL: image layer + blur slider -- */
+qaArtworkEnabled = true;
+await page.reload({ waitUntil: "networkidle0" });
+await page.waitForSelector(".sidebar", { timeout: 15_000 });
+await playTrackId(ids.synced);
+await nav("Now Playing");
+await page.waitForSelector("braccato-lyrics .blyrics--line", { timeout: 15_000 });
+await qaSeekPause(1.0);
+await mxOpenStudio();
+await mxSetControl("Background", "Mode", "blurred-artwork");
+await wait(500);
+const qaBgBlurredDefault = await qaProbe();
+await mxSetControl("Background", "Artwork blur", "0");
+const qaBgBlur0 = await qaProbe();
+await mxSetControl("Background", "Artwork blur", "60");
+const qaBgBlur60 = await qaProbe();
+await shot("37-qa-blurred-artwork");
+await mxSetControl("Background", "Mode", "fluid");
+await mxCloseStudioBySave();
+qaArtworkEnabled = false;
+await page.reload({ waitUntil: "networkidle0" });
+await page.waitForSelector(".sidebar", { timeout: 15_000 });
+await playTrackId(ids.synced);
+await nav("Now Playing");
+await page.waitForSelector("braccato-lyrics .blyrics--line", { timeout: 15_000 });
+await qaSeekPause(1.0);
+
+/* -- Profile isolation: a second custom edited independently -- */
+await mxOpenStudio();
+await mxClickStudioButton("New");
+await page.click('[data-testid="studio-profile-name"]');
+await page.keyboard.down("Control");
+await page.keyboard.press("a");
+await page.keyboard.up("Control");
+await page.type('[data-testid="studio-profile-name"]', "QA Second");
+await page.evaluate(() =>
+  (document.querySelector('[data-testid="studio-profile-name"]') as HTMLElement)?.blur()
+);
+await mxSetControl("Typography", "Main lyrics size", "0.7");
+await mxSetControl("Background", "Mode", "solid");
+const qaSecondId = await qaDraftId();
+await page.click(`.studio-profile-row[data-profile-id="${qaDraftIdInitial}"]`);
+await wait(400);
+const qaSweepIntactSize = await qaReadControl("Typography", "Main lyrics size");
+const qaSweepIntactProbe = await qaProbe();
+await page.click(`.studio-profile-row[data-profile-id="${qaSecondId}"]`);
+await wait(400);
+const qaSecondIntactSize = await qaReadControl("Typography", "Main lyrics size");
+await mxCloseStudioBySave();
+const qaIsolationSettings = await mxProfilesSettings();
+
+/* -- Duplicate must not lose the original's unsaved edits -- */
+await selectNowPlayingProfile(qaDraftIdInitial);
+await mxOpenStudio();
+await mxSetControl("Typography", "Main lyrics size", "0.77");
+await page.click('[data-testid="studio-duplicate"]');
+await wait(400);
+const qaCopyId = await qaDraftId();
+await page.click(`.studio-profile-row[data-profile-id="${qaDraftIdInitial}"]`);
+await wait(400);
+const qaAfterDuplicateBack = await qaReadControl("Typography", "Main lyrics size");
+// Clean up the copy again.
+await page.click(`.studio-profile-row[data-profile-id="${qaCopyId}"]`);
+await wait(300);
+await mxClickStudioButton("Delete");
+await mxClickStudioButton("Confirm delete");
+await page.click(`.studio-profile-row[data-profile-id="${qaDraftIdInitial}"]`);
+await wait(300);
+await mxSetControl("Typography", "Main lyrics size", "1.21");
+await mxCloseStudioBySave();
+
+/* -- Import / export -- */
+await mxOpenStudio();
+await page.click(`.studio-profile-row[data-profile-id="${qaSecondId}"]`);
+await wait(300);
+const qaDownloadDir = join(stateDir, "qa-downloads");
+mkdirSync(qaDownloadDir, { recursive: true });
+const qaCdp = await page.createCDPSession();
+await qaCdp.send("Page.setDownloadBehavior", { behavior: "allow", downloadPath: qaDownloadDir });
+await page.click('[data-testid="studio-export"]');
+await wait(900);
+const qaExportMessage = await mxMessage();
+const qaExportedFiles = existsSync(qaDownloadDir) ? readdirSync(qaDownloadDir) : [];
+let qaExportJson = "";
+for (const file of qaExportedFiles) {
+  if (file.endsWith(".cadence-profile.json")) {
+    qaExportJson = readFileSync(join(qaDownloadDir, file), "utf8");
+  }
+}
+const qaImportedEnvelope = (() => {
+  try {
+    const parsed = JSON.parse(qaExportJson) as { profile: { id: string; name: string } };
+    parsed.profile.name = "QA Imported";
+    parsed.profile.id = "custom-qa-imported-1";
+    return JSON.stringify(parsed);
+  } catch {
+    return "";
+  }
+})();
+const qaSetImportText = (text: string) =>
+  page.evaluate((value: string) => {
+    const el = document.querySelector<HTMLTextAreaElement>('[data-testid="studio-import-text"]')!;
+    el.scrollIntoView({ block: "center" });
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  }, text);
+await qaSetImportText(qaImportedEnvelope);
+await wait(250);
+await page.click('[data-testid="studio-import"]');
+await wait(450);
+const qaImportMessage = await mxMessage();
+const qaImportName = await page.evaluate(
+  () =>
+    (document.querySelector('[data-testid="studio-profile-name"]') as HTMLInputElement | null)
+      ?.value ?? ""
+);
+const qaImportedId = await qaDraftId();
+await qaSetImportText("{not valid json");
+await wait(250);
+await page.click('[data-testid="studio-import"]');
+await wait(350);
+const qaImportBadMessage = await mxMessage();
+const qaImportBadKeptDraft = await page.evaluate(
+  () =>
+    (document.querySelector('[data-testid="studio-profile-name"]') as HTMLInputElement | null)
+      ?.value ?? ""
+);
+await qaSetImportText("");
+await wait(200);
+const qaImportDisabledEmpty = await page.evaluate(
+  () =>
+    (document.querySelector('[data-testid="studio-import"]') as HTMLButtonElement | null)
+      ?.disabled ?? null
+);
+await mxCloseStudioBySave();
+const qaImportSavedSettings = await mxProfilesSettings();
+
+/* -- Delete an ACTIVE custom: save falls back to Balanced -- */
+await mxOpenStudio();
+await page.click(`.studio-profile-row[data-profile-id="${qaImportedId}"]`);
+await wait(300);
+await mxClickStudioButton("Delete");
+const qaDeleteArmed = await page.evaluate(() =>
+  [...document.querySelectorAll('[data-testid="customization-studio"] button')].some(b =>
+    b.textContent?.includes("Confirm delete")
+  )
+);
+await mxClickStudioButton("Confirm delete");
+const qaDeleteMessage = await mxMessage();
+await mxCloseStudioBySave();
+const qaAfterDeleteActive = await mxProfilesSettings();
+
+/* -- Discard protection -- */
+await selectNowPlayingProfile(qaDraftIdInitial);
+await mxOpenStudio();
+await mxSetControl("Typography", "Main lyrics size", "0.85");
+await mxClickStudioButton("Cancel");
+const qaDiscardArmed = await page.evaluate(() => ({
+  stillOpen: Boolean(document.querySelector('[data-testid="customization-studio"]')),
+  button: [...document.querySelectorAll('[data-testid="customization-studio"] button')].some(b =>
+    b.textContent?.includes("Discard changes")
+  ),
+}));
+await mxClickStudioButton("Discard changes");
+await page.waitForFunction(() => !document.querySelector('[data-testid="customization-studio"]'), {
+  timeout: 10_000,
+});
+await mxOpenStudio();
+const qaDiscardValue = await qaReadControl("Typography", "Main lyrics size");
+
+/* -- Empty name heals on save -- */
+await page.click('[data-testid="studio-profile-name"]');
+await page.keyboard.down("Control");
+await page.keyboard.press("a");
+await page.keyboard.up("Control");
+await page.keyboard.press("Backspace");
+await page.evaluate(() =>
+  (document.querySelector('[data-testid="studio-profile-name"]') as HTMLElement)?.blur()
+);
+await wait(250);
+await mxCloseStudioBySave();
+const qaEmptyNameSettings = await mxProfilesSettings();
+await mxOpenStudio();
+await page.click('[data-testid="studio-profile-name"]');
+await page.keyboard.down("Control");
+await page.keyboard.press("a");
+await page.keyboard.up("Control");
+await page.type('[data-testid="studio-profile-name"]', "QA Sweep");
+await page.evaluate(() =>
+  (document.querySelector('[data-testid="studio-profile-name"]') as HTMLElement)?.blur()
+);
+await wait(250);
+
+/* -- Combined extremes + rapid soak + responsive operability -- */
+await mxSetControl("Typography", "Main lyrics size", "1.35");
+await mxSetControl("Lyrics appearance", "Inactive blur", "6");
+await mxSetControl("Lyrics appearance", "Active line colour", "#ff0000");
+await mxSetControl("Background", "Mode", "particles");
+await mxSetControl("Karaoke highlight", "Style", "glow");
+await shot("36-qa-combo-extremes");
+const qaComboOverflow = await page.evaluate(() => {
+  const view = document.querySelector<HTMLElement>(".lyrics-view")!;
+  return { scrollW: view.scrollWidth, clientW: view.clientWidth };
+});
+const qaSoakMs = await page.evaluate(async () => {
+  const section = [...document.querySelectorAll(".studio-section")].find(
+    s => s.querySelector("h3")?.textContent?.trim() === "Typography"
+  );
+  const input = section?.querySelector<HTMLInputElement>('[aria-label="Main lyrics size"]')!;
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+  const started = performance.now();
+  for (let i = 0; i < 40; i += 1) {
+    setter.call(input, i % 2 ? "0.7" : "1.35");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await new Promise(requestAnimationFrame);
+  }
+  setter.call(input, "1.1");
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+  return Math.round(performance.now() - started);
+});
+await wait(500);
+const qaSoakValue = await qaReadControl("Typography", "Main lyrics size");
+const qaSoakProbe = await qaProbe();
+// Reset all returns the draft to base everywhere; close WITHOUT saving to keep
+// the saved QA Sweep state intact for the report probes above.
+await mxClickStudioButton("Reset all");
+const qaAfterResetAllSize = await qaReadControl("Typography", "Main lyrics size");
+const qaAfterResetAllBg = await qaReadControl("Background", "Mode");
+const qaResponsive: { size: string; inside: boolean; value: string }[] = [];
+for (const [w, h] of [
+  [1366, 768],
+  [1600, 900],
+  [2560, 1440],
+  [3440, 1440],
+  [900, 1400],
+  [3840, 2160],
+] as const) {
+  await setViewport(w, h);
+  const inside = await page.evaluate(() => {
+    const panel = document.querySelector<HTMLElement>('[data-testid="customization-studio"]');
+    if (!panel) return false;
+    const r = panel.getBoundingClientRect();
+    return r.left >= -1 && r.right <= window.innerWidth + 1 && r.width > 240;
+  });
+  const dragged = await qaDragSlider("Typography", "Main lyrics size", 0.25);
+  qaResponsive.push({ size: `${w}x${h}`, inside, value: dragged.value });
+}
+await setViewport(1920, 1080);
+await mxClickStudioButton("Cancel");
+await mxClickStudioButton("Discard changes").catch(() => null);
+await page
+  .waitForFunction(() => !document.querySelector('[data-testid="customization-studio"]'), {
+    timeout: 10_000,
+  })
+  .catch(() => null);
+await page.evaluate(() => {
+  (window as unknown as { __qaSecondary?: boolean }).__qaSecondary = false;
+});
+await selectNowPlayingProfile("balanced");
+await wait(400);
+const qaSummary = {
+  baseline: { lineFontSize: qaBaseline.lineFontSize, translated: qaBaseline.translatedSize, romanized: qaBaseline.romanizedSize },
+  readOnly: qaReadOnly,
+  headerAfterRename: qaHeaderAfterRename,
+  sizes: {
+    min: qaProbeSizeMin.lineFontSize,
+    max: qaProbeSizeMax.lineFontSize,
+    mid: qaProbeSizeMid.lineFontSize,
+    outputs: [qaSizeMin.output, qaSizeMax.output, qaSizeHome.output, qaSizeEnd.output],
+  },
+  widths: [qaWidth640.containerWidth, qaWidth900.containerWidth, qaWidth1280.containerWidth],
+  karaoke: Object.fromEntries(
+    Object.entries(qaKaraokeByStyle).map(([k, v]) => [k, { swipe: v.swipe, glow: v.glow }])
+  ),
+  glowRadii: [qaGlow0.glowRadius, qaGlow100.glowRadius, qaGlowStyle100.glowRadius],
+  backgrounds: Object.fromEntries(
+    Object.entries(qaBgByMode).map(([k, v]) => [
+      k,
+      { kawarp: v.kawarp, fx: v.fxCanvas, fill: v.fillBg.slice(0, 40) },
+    ])
+  ),
+  fs: {
+    initialBg: qaFsInitial.bgMode,
+    artSmall: qaFsInitial.art,
+    artBig: qaFsArtBig.art,
+    artHidden: qaFsArtHidden.art,
+    metaTop: { top: qaFsMetaTop.headingTop, side: qaFsMetaTop.headingSide },
+    controlsOffDisplay: qaFsControlsOff.fsControlsDisplay,
+  },
+  exportFile: qaExportedFiles,
+  importMessage: qaImportMessage,
+  soakMs: qaSoakMs,
+  responsive: qaResponsive,
+};
 await setViewport(1440, 900);
 
 /* ------------------------------------------------------------------ report */
@@ -1469,6 +2364,7 @@ console.log(
       fullscreenEffectsRestored,
       matrixSummary,
       kxSummary,
+      qaSummary,
       playbackBeforeResponsive,
       playbackAfterResponsive,
     },
@@ -2013,6 +2909,381 @@ check(
       kxSolid.ratio > kxSweep.ratio * 1.5
   ),
   `mid-word bright-glyph coverage: sweep ${(kxSweep.ratio * 100).toFixed(0)}% (${kxSweep.bright}/${kxSweep.glyph}) solid ${(kxSolid.ratio * 100).toFixed(0)}% (${kxSolid.bright}/${kxSolid.glyph}); same word at ~50% progress, profile switched mid-song`
+);
+check(
+  "qa-built-in-read-only",
+  qaReadOnly.sliderDisabled === true && qaReadOnly.note.includes("can be previewed and activated but not edited"),
+  JSON.stringify(qaReadOnly)
+);
+check(
+  "qa-duplicate-creates-editable-copy",
+  qaDraftIdInitial !== "" &&
+    qaDraftIdInitial !== "balanced" &&
+    qaHeaderAfterRename.includes("QA Sweep"),
+  `draft=${qaDraftIdInitial} header="${qaHeaderAfterRename}"`
+);
+check(
+  "qa-slider-drag-extremes-rendered",
+  qaSizeMin.value === "0.7" &&
+    qaSizeMin.output === "70%" &&
+    qaSizeMax.value === "1.35" &&
+    qaSizeMax.output === "135%" &&
+    qaProbeSizeMax.lineFontSize / qaProbeSizeMin.lineFontSize > 1.7,
+  `min=${JSON.stringify(qaSizeMin)}→${qaProbeSizeMin.lineFontSize}px max=${JSON.stringify(qaSizeMax)}→${qaProbeSizeMax.lineFontSize}px`
+);
+check(
+  "qa-slider-keyboard-home-end",
+  qaSizeHome.value === "0.7" && qaSizeEnd.value === "1.35",
+  `home=${qaSizeHome.value} end=${qaSizeEnd.value}`
+);
+check(
+  "qa-main-size-mid-rendered",
+  qaNear(qaProbeSizeMid.lineFontSize, qaBaseline.lineFontSize, 1),
+  `mid=${qaProbeSizeMid.lineFontSize} baseline=${qaBaseline.lineFontSize}`
+);
+check(
+  "qa-translation-size-independent",
+  qaTransMax.translatedSize / qaTransMin.translatedSize > 1.6 &&
+    Math.abs(qaTransMax.lineFontSize - qaTransMin.lineFontSize) <= 1,
+  `translated ${qaTransMin.translatedSize}→${qaTransMax.translatedSize}px main ${qaTransMin.lineFontSize}→${qaTransMax.lineFontSize}`
+);
+check(
+  "qa-romanization-size-independent",
+  qaRomanMax.romanizedSize / qaRomanMin.romanizedSize > 1.6 &&
+    Math.abs(qaRomanMax.lineFontSize - qaRomanMin.lineFontSize) <= 1,
+  `romanized ${qaRomanMin.romanizedSize}→${qaRomanMax.romanizedSize}px main ${qaRomanMin.lineFontSize}→${qaRomanMax.lineFontSize}`
+);
+check(
+  "qa-title-artist-sizes",
+  qaTitleBig.titleSize > qaTitleSmall.titleSize + 4 &&
+    qaTitleSmall.metaSize > qaTitleBig.metaSize + 2,
+  `title ${qaTitleSmall.titleSize}→${qaTitleBig.titleSize}px meta ${qaTitleBig.metaSize}→${qaTitleSmall.metaSize}px`
+);
+check(
+  "qa-line-spacing",
+  qaLineHigh.lineHeightPx > qaLineLow.lineHeightPx + 4,
+  `${qaLineLow.lineHeightPx}→${qaLineHigh.lineHeightPx}px`
+);
+check(
+  "qa-letter-spacing",
+  Number.parseFloat(qaLetterWide.letterSpacing) > 1.5 &&
+    Number.parseFloat(qaLetterTight.letterSpacing) < 0,
+  `tight=${qaLetterTight.letterSpacing} wide=${qaLetterWide.letterSpacing}`
+);
+check(
+  "qa-fonts-independent",
+  /Georgia/i.test(qaFontGeorgia.fontFamily) &&
+    qaFontBack.fontFamily === qaBaseline.fontFamily &&
+    /Tahoma/i.test(qaSecondaryFonts.translatedFont) &&
+    /Arial/i.test(qaSecondaryFonts.romanizedFont) &&
+    !/Tahoma/i.test(qaSecondaryFonts.fontFamily),
+  `main="${qaSecondaryFonts.fontFamily}" translated="${qaSecondaryFonts.translatedFont}" romanized="${qaSecondaryFonts.romanizedFont}" georgia="${qaFontGeorgia.fontFamily}"`
+);
+check(
+  "qa-weight-override-and-settings",
+  qaWeight900.fontWeight === "900" && qaWeightSettings.fontWeight === "700",
+  `900→${qaWeight900.fontWeight} settings(700)→${qaWeightSettings.fontWeight}`
+);
+check(
+  "qa-section-reset-typography",
+  qaSizeAfterReset.value === "1" &&
+    qaNear(qaAfterTypeReset.lineFontSize, qaBaseline.lineFontSize, 1) &&
+    qaAfterTypeReset.fontFamily === qaBaseline.fontFamily,
+  `size=${qaSizeAfterReset.value} font=${qaAfterTypeReset.lineFontSize}px/${qaAfterTypeReset.fontFamily}`
+);
+check(
+  "qa-active-colour-applied",
+  /#ff8800|255[\s,]+136[\s,]+0/.test(qaActiveOrange.activeColorVar) && qaUseThemeShown,
+  `var="${qaActiveOrange.activeColorVar}" useTheme=${qaUseThemeShown}`
+);
+check(
+  "qa-inactive-colour-applied",
+  qaNear(qaInactiveBlue.inactiveRGB[0], 51, 3) &&
+    qaNear(qaInactiveBlue.inactiveRGB[1], 68, 3) &&
+    qaNear(qaInactiveBlue.inactiveRGB[2], 255, 3),
+  `computed="${qaInactiveBlue.inactiveColor}" rgb=${JSON.stringify(qaInactiveBlue.inactiveRGB)}`
+);
+check(
+  "qa-colours-clear-to-theme",
+  qaColoursCleared.activeColorVar !== qaActiveOrange.activeColorVar &&
+    qaColoursCleared.inactiveColor === qaBaseline.inactiveColor,
+  `active="${qaColoursCleared.activeColorVar}" inactive="${qaColoursCleared.inactiveColor}" vs baseline "${qaBaseline.inactiveColor}"`
+);
+check(
+  "qa-inactive-opacity-multiplier",
+  qaNear(qaOpacityLow.inactiveAlpha, 0.12, 0.04) && qaNear(qaOpacityHigh.inactiveAlpha, 0.48, 0.06),
+  `0.4x=${qaOpacityLow.inactiveAlpha} 1.6x=${qaOpacityHigh.inactiveAlpha}`
+);
+check(
+  "qa-active-line-scale-extremes",
+  qaNear(qaActiveScale09.activeScale, 0.9, 0.07) &&
+    qaNear(qaActiveScale12.activeScale, 1.2, 0.07) &&
+    qaNear(qaActiveScale12.inactiveScale, 0.95, 0.04),
+  `active line 0.9→${qaActiveScale09.activeScale} (${qaActiveScale09.activeTransform}) 1.2→${qaActiveScale12.activeScale} (${qaActiveScale12.activeTransform}) inactive=${qaActiveScale12.inactiveScale}`
+);
+check(
+  "qa-inactive-blur",
+  /blur\(3px\)/.test(qaBlurOn.inactiveFilter) && !/blur/.test(qaBlurOff.inactiveFilter),
+  `on="${qaBlurOn.inactiveFilter}" off="${qaBlurOff.inactiveFilter}"`
+);
+check(
+  "qa-karaoke-all-styles-distinct",
+  new Set(
+    Object.values(qaKaraokeByStyle).map(
+      v => `${v.swipe}|${v.glow}|${v.fade}|${v.glowRadius}|${v.wordScale}`
+    )
+  ).size === 5 &&
+    qaKaraokeByStyle.sweep.swipe === "1" &&
+    qaKaraokeByStyle.glow.glow === "1" &&
+    qaKaraokeByStyle.minimal.swipe === "0",
+  JSON.stringify(
+    Object.fromEntries(
+      Object.entries(qaKaraokeByStyle).map(([k, v]) => [
+        k,
+        `${v.swipe}|${v.glow}|${v.fade}|${v.glowRadius}|${v.wordScale}`,
+      ])
+    )
+  )
+);
+check(
+  "qa-karaoke-intensity-glow-depth",
+  Number.parseFloat(qaGlow0.glowRadius) === 0 &&
+    Number.parseFloat(qaGlow100.glowRadius) > 0 &&
+    Number.parseFloat(qaGlowStyle100.glowRadius) > Number.parseFloat(qaGlow100.glowRadius),
+  `0=${qaGlow0.glowRadius} 100=${qaGlow100.glowRadius} glowStyle=${qaGlowStyle100.glowRadius}`
+);
+check(
+  "qa-active-word-scale",
+  qaNear(Number(qaWord12.wordScale), 1.2, 0.02) && Number(qaWordMinimal.wordScale) === 1,
+  `sweep=${qaWord12.wordScale} minimal=${qaWordMinimal.wordScale}`
+);
+check(
+  "qa-lyrics-max-width-rendered",
+  qaWidth640.containerWidth >= 700 &&
+    qaWidth640.containerWidth <= 760 &&
+    qaWidth900.containerWidth > qaWidth640.containerWidth + 60 &&
+    qaWidth1280.containerWidth > qaWidth900.containerWidth,
+  `720→${qaWidth640.containerWidth} 900→${qaWidth900.containerWidth} 1280→${qaWidth1280.containerWidth}`
+);
+check(
+  "qa-lyrics-alignment",
+  qaAlignCenter.textAlign === "center" && qaAlignLeft.textAlign !== "center",
+  `center=${qaAlignCenter.textAlign} left=${qaAlignLeft.textAlign}`
+);
+check(
+  "qa-spacing-windowed-geometry",
+  qaSpacingHigh.spacingScale === "1.25" &&
+    qaSpacingLow.spacingScale === "0.8" &&
+    qaSpacingHigh.bodyPadL > qaSpacingLow.bodyPadL + 8,
+  `body padding ${qaSpacingLow.bodyPadL}→${qaSpacingHigh.bodyPadL}px (gutter consumer)`
+);
+check(
+  "qa-heading-toggle",
+  qaHeadingOff.headingVisible === false && qaHeadingOn.headingVisible === true,
+  `off=${qaHeadingOff.headingVisible} on=${qaHeadingOn.headingVisible}`
+);
+check(
+  "qa-dock-toggle",
+  (qaDockOff.dock?.display ?? "none") === "none" && (qaDockOn.dock?.display ?? "") !== "none",
+  `off=${JSON.stringify(qaDockOff.dock)} on=${JSON.stringify(qaDockOn.dock)}`
+);
+check(
+  "qa-control-size-rendered",
+  qaControls08.controlsScaleVar === "0.8" &&
+    qaControls12.controlsScaleVar === "1.2" &&
+    (qaControls12.dock?.w ?? 0) > (qaControls08.dock?.w ?? 0) + 30,
+  `dock ${qaControls08.dock?.w}→${qaControls12.dock?.w}px`
+);
+check(
+  "qa-background-modes-rendered",
+  qaBgByMode.solid.kawarp === false &&
+    qaBgByMode.solid.fxCanvas === false &&
+    qaBgByMode.gradient.fillBg.includes("gradient") &&
+    qaBgByMode["blurred-artwork"].fillBg.includes("radial-gradient") &&
+    qaBgByMode.fluid.kawarp === true &&
+    qaBgByMode.particles.fxCanvas === true &&
+    qaBgByMode.visualizer.fxCanvas === true &&
+    qaBgByMode.visualizer.kawarp === false,
+  JSON.stringify(qaSummary.backgrounds)
+);
+check(
+  "qa-background-intensity-and-blur",
+  Number(qaBgIntensityLow.fillOpacity) <= 0.25 &&
+    Number(qaBgIntensityHigh.fillOpacity) >= 0.95 &&
+    qaBgBlurredDefault.fillBg.includes("url(") &&
+    /blur\(40px\)/.test(qaBgBlurredDefault.fillFilter) &&
+    /blur\(0px\)/.test(qaBgBlur0.fillFilter) &&
+    /blur\(60px\)/.test(qaBgBlur60.fillFilter),
+  `opacity ${qaBgIntensityLow.fillOpacity}→${qaBgIntensityHigh.fillOpacity} blurred fill=${qaBgBlurredDefault.fillBg.slice(0, 30)} blur "${qaBgBlur0.fillFilter}"→"${qaBgBlur60.fillFilter}"`
+);
+check(
+  "qa-particles-canvas-animates",
+  qaCanvasAnimates && qaParticlesA.fxCanvas,
+  `animates=${qaCanvasAnimates} fx=${qaParticlesA.fxCanvas}`
+);
+check(
+  "qa-undo-redo-around-drag",
+  qaUndoAfterDrag.lineFontSize > qaUndoReverted.lineFontSize + 4 &&
+    qaNear(qaUndoReverted.lineFontSize, qaUndoBase.lineFontSize, 1) &&
+    qaRedoApplied.lineFontSize > qaUndoReverted.lineFontSize + 4,
+  `base=${qaUndoBase.lineFontSize} drag=${qaUndoAfterDrag.lineFontSize} undo=${qaUndoReverted.lineFontSize} redo=${qaRedoApplied.lineFontSize}`
+);
+check(
+  "qa-fullscreen-tab-edits-isolated",
+  qaWindowedKeptSize.value === "1" &&
+    qaWindowedKeptBg.value === "fluid" &&
+    qaWindowedProbe.bgMode === "fluid",
+  `windowed size=${qaWindowedKeptSize.value} bg=${qaWindowedKeptBg.value}/${qaWindowedProbe.bgMode}`
+);
+check(
+  "qa-save-writes-both-halves",
+  (() => {
+    const saved = qaSavedOnce.customProfiles.find(p => p.id === qaDraftIdInitial);
+    return (
+      saved?.windowed.backgroundMode === "fluid" &&
+      saved.fullscreen.backgroundMode === "solid" &&
+      saved.fullscreen.lyricsScale === 0.7
+    );
+  })(),
+  JSON.stringify(qaSavedOnce.customProfiles.find(p => p.id === qaDraftIdInitial)?.fullscreen)
+);
+check(
+  "qa-fullscreen-renders-fs-half",
+  qaFsInitial.profileId === qaDraftIdInitial &&
+    qaFsInitial.profileMode === "fullscreen" &&
+    qaFsInitial.bgMode === "solid",
+  `profile=${qaFsInitial.profileId} mode=${qaFsInitial.profileMode} bg=${qaFsInitial.bgMode}`
+);
+check(
+  "qa-fs-artwork-size",
+  (qaFsArtBig.art?.w ?? 0) > (qaFsInitial.art?.w ?? 1) * 1.35,
+  `0.6x=${qaFsInitial.art?.w}→1.25x=${qaFsArtBig.art?.w}px`
+);
+check(
+  "qa-fs-artwork-slot-right",
+  (qaFsArtRight.art?.x ?? 0) > (qaFsArtBig.art?.x ?? 0) + 100,
+  `art x ${qaFsArtBig.art?.x}→${qaFsArtRight.art?.x}`
+);
+check(
+  "qa-fs-metadata-slots",
+  qaFsMetaTop.headingTop && !qaFsMetaTop.headingSide && qaFsMetaSide.headingSide,
+  `top=${qaFsMetaTop.headingTop}/${qaFsMetaTop.headingSide} back-side=${qaFsMetaSide.headingSide}`
+);
+check(
+  "qa-fs-artwork-hidden-with-heading",
+  !qaFsArtHidden.art || qaFsArtHidden.art.display === "none" || qaFsArtHidden.art.w === 0,
+  `art=${JSON.stringify(qaFsArtHidden.art)}`
+);
+check(
+  "qa-fs-spacing-geometry",
+  qaFsPadAfter > qaFsPadBefore + 5,
+  `header padding ${qaFsPadBefore}→${qaFsPadAfter}px`
+);
+check(
+  "qa-fs-playback-controls-toggle",
+  qaFsControlsOff.fsControlsDisplay === "none" && qaFsControlsOn.fsControlsDisplay !== "none",
+  `off=${qaFsControlsOff.fsControlsDisplay} on=${qaFsControlsOn.fsControlsDisplay}`
+);
+check(
+  "qa-persistence-navigation",
+  qaNear(qaPersistNav.lineFontSize, qaBaseline.lineFontSize * 1.21, 2) &&
+    qaPersistNav.textAlign === "center",
+  `font=${qaPersistNav.lineFontSize}px align=${qaPersistNav.textAlign}`
+);
+check(
+  "qa-persistence-reload",
+  qaNear(qaPersistReload.lineFontSize, qaBaseline.lineFontSize * 1.21, 2) &&
+    qaPersistReload.textAlign === "center" &&
+    qaPersistSettings.activeProfileId === qaDraftIdInitial,
+  `font=${qaPersistReload.lineFontSize}px align=${qaPersistReload.textAlign} active=${qaPersistSettings.activeProfileId}`
+);
+check(
+  "qa-profile-isolation",
+  qaSweepIntactSize.value === "1.21" &&
+    qaSecondIntactSize.value === "0.7" &&
+    (() => {
+      const second = qaIsolationSettings.customProfiles.find(p => p.id === qaSecondId);
+      const sweep = qaIsolationSettings.customProfiles.find(p => p.id === qaDraftIdInitial);
+      return (
+        second?.windowed.backgroundMode === "solid" &&
+        second.windowed.lyricsScale === 0.7 &&
+        sweep?.windowed.backgroundMode === "fluid" &&
+        sweep.windowed.lyricsScale === 1.21
+      );
+    })(),
+  `sweep=${qaSweepIntactSize.value} second=${qaSecondIntactSize.value}`
+);
+check(
+  "qa-duplicate-preserves-unsaved-edits",
+  qaAfterDuplicateBack.value === "0.77",
+  `back on original size=${qaAfterDuplicateBack.value} (edited to 0.77 before duplicating)`
+);
+check(
+  "qa-export-downloads-envelope",
+  qaExportedFiles.some(f => f.endsWith(".cadence-profile.json")) &&
+    qaExportMessage.includes("downloaded") &&
+    qaExportJson.includes('"kind"') && qaExportJson.includes('"profile"'),
+  `files=${JSON.stringify(qaExportedFiles)} msg="${qaExportMessage}"`
+);
+check(
+  "qa-import-round-trip",
+  qaImportMessage.startsWith("Imported") &&
+    qaImportMessage.includes("QA Imported") &&
+    !qaImportMessage.includes("replaced") &&
+    qaImportName === "QA Imported" &&
+    qaImportSavedSettings.customProfiles.some(p => p.name === "QA Imported"),
+  `msg="${qaImportMessage}" name="${qaImportName}" id=${qaImportedId}`
+);
+check(
+  "qa-import-invalid-safe",
+  qaImportBadMessage.includes("not valid JSON") &&
+    qaImportBadKeptDraft === "QA Imported" &&
+    qaImportDisabledEmpty === true,
+  `msg="${qaImportBadMessage}" draft="${qaImportBadKeptDraft}" disabledEmpty=${qaImportDisabledEmpty}`
+);
+check(
+  "qa-delete-active-falls-back",
+  qaDeleteArmed &&
+    qaAfterDeleteActive.activeProfileId === "balanced" &&
+    !qaAfterDeleteActive.customProfiles.some(p => p.id === qaImportedId),
+  `armed=${qaDeleteArmed} msg="${qaDeleteMessage}" active=${qaAfterDeleteActive.activeProfileId}`
+);
+check(
+  "qa-discard-protection-restores",
+  qaDiscardArmed.stillOpen && qaDiscardArmed.button && qaDiscardValue.value === "1.21",
+  `armed=${JSON.stringify(qaDiscardArmed)} valueAfter=${qaDiscardValue.value}`
+);
+check(
+  "qa-empty-name-heals-on-save",
+  qaEmptyNameSettings.customProfiles.find(p => p.id === qaDraftIdInitial)?.name === "Custom profile",
+  `name="${qaEmptyNameSettings.customProfiles.find(p => p.id === qaDraftIdInitial)?.name}"`
+);
+check(
+  "qa-combined-extremes-no-overflow",
+  qaComboOverflow.scrollW <= qaComboOverflow.clientW + 1,
+  `scrollW=${qaComboOverflow.scrollW} clientW=${qaComboOverflow.clientW}`
+);
+check(
+  "qa-rapid-soak-settles",
+  qaSoakValue.value === "1.1" &&
+    qaNear(qaSoakProbe.lineFontSize, qaBaseline.lineFontSize * 1.1, 2.5) &&
+    qaSoakMs < 5000,
+  `value=${qaSoakValue.value} font=${qaSoakProbe.lineFontSize}px soak=${qaSoakMs}ms/40 updates`
+);
+check(
+  "qa-reset-all-restores-base",
+  qaAfterResetAllSize.value === "1" && qaAfterResetAllBg.value === "fluid",
+  `size=${qaAfterResetAllSize.value} bg=${qaAfterResetAllBg.value}`
+);
+check(
+  "qa-windowed-layout-note",
+  qaWindowedNote.includes("no artwork column") && qaFullscreenNote === "",
+  `windowed="${qaWindowedNote}" fullscreen="${qaFullscreenNote}"`
+);
+check(
+  "qa-responsive-operability",
+  qaResponsive.every(r => r.inside && Math.abs(Number(r.value) - 0.8625) <= 0.05),
+  JSON.stringify(qaResponsive)
 );
 const failures = Object.entries(results).filter(([, entry]) => !entry.value);
 console.log(`\n${Object.keys(results).length - failures.length}/${Object.keys(results).length} checks passed`);
