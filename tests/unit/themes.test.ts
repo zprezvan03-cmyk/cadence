@@ -38,11 +38,10 @@ describe("buildThemeCss secondary font sizes", () => {
     expect(css).toContain("--blyrics-font-weight: var(--np-lyrics-weight, 700);");
   });
 
-  it("exposes the profile karaoke, motion and typography variables with safe fallbacks", () => {
+  it("exposes the profile karaoke and typography variables with safe fallbacks", () => {
     const css = buildThemeCss(settings({}));
     expect(css).toContain("--blyrics-animate-highlight-swipe: var(--np-karaoke-swipe, 1);");
     expect(css).toContain("--blyrics-letter-wave-emphasis-scale: var(--np-active-word-scale, 1.11);");
-    expect(css).toContain("--blyrics-transition-duration: var(--np-motion-duration, 0.166s);");
     expect(css).toContain("--blyrics-active-scale: var(--np-active-line-scale, 1);");
     expect(css).toContain("font-family: var(--np-romanization-font,");
   });

@@ -106,12 +106,6 @@ const BACKGROUND_KEYS: (keyof NowPlayingProfileConfig)[] = [
   "effectSpeed",
   "effectDensity",
 ];
-const MOTION_KEYS: (keyof NowPlayingProfileConfig)[] = [
-  "lyricTransition",
-  "motionIntensity",
-  "motionDurationScale",
-];
-
 function upsertCustom(list: NowPlayingProfile[], profile: NowPlayingProfile): NowPlayingProfile[] {
   const index = list.findIndex(entry => entry.id === profile.id);
   if (index === -1) return [...list, cloneNowPlayingProfile(profile)];
@@ -631,18 +625,6 @@ export function CustomizationStudio({
               Canvas effects run only while music plays and the window is visible, and stop
               completely when another background is chosen.
             </p>
-          </Section>
-
-          <Section title="Motion" onReset={() => resetKeys(MOTION_KEYS)}>
-            <SelectRow
-              label="Line transition"
-              value={cfg.lyricTransition}
-              options={[["scale", "Scale"], ["fade", "Fade"], ["slide", "Slide"], ["none", "None"]]}
-              onChange={v => setCfg({ lyricTransition: v as typeof cfg.lyricTransition }, true)}
-            />
-            <SliderRow label="Intensity" value={cfg.motionIntensity} min={0} max={1.5} step={0.01} format={pct} onChange={v => setCfg({ motionIntensity: v })} onCommit={commit} />
-            <SliderRow label="Duration" value={cfg.motionDurationScale} min={0.5} max={1.75} step={0.05} format={pct} onChange={v => setCfg({ motionDurationScale: v })} onCommit={commit} />
-            <p className="studio-note">The system and app reduced-motion settings always take precedence.</p>
           </Section>
         </fieldset>
 

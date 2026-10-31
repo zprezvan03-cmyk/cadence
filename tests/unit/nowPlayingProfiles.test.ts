@@ -39,19 +39,18 @@ describe("built-in Now Playing profiles", () => {
   });
 
   it("gives every built-in one identity across windowed and fullscreen", () => {
-    // Karaoke style, background and line transition define what a profile IS;
-    // the two halves may differ in proportions only. A table that carried
-    // Immersive's glow/slide/visualizer solely in its fullscreen half made it
-    // animate exactly like Balanced in a window ("line transition does nothing").
+    // Karaoke style and background define what a profile IS; the two halves
+    // may differ in proportions only. A table that carried Immersive's
+    // glow/visualizer solely in its fullscreen half made it animate and
+    // theme exactly like Balanced in a window.
     for (const profile of BUILT_IN_NOW_PLAYING_PROFILES) {
       expect(profile.windowed.karaokeStyle, profile.id).toBe(profile.fullscreen.karaokeStyle);
       expect(profile.windowed.backgroundMode, profile.id).toBe(profile.fullscreen.backgroundMode);
-      expect(profile.windowed.lyricTransition, profile.id).toBe(profile.fullscreen.lyricTransition);
     }
     // The five identities are actually distinct from one another.
     const identities = new Set(
       BUILT_IN_NOW_PLAYING_PROFILES.map(
-        p => `${p.windowed.karaokeStyle}|${p.windowed.backgroundMode}|${p.windowed.lyricTransition}`
+        p => `${p.windowed.karaokeStyle}|${p.windowed.backgroundMode}`
       )
     );
     expect(identities.size).toBe(BUILT_IN_NOW_PLAYING_PROFILES.length);
@@ -133,9 +132,13 @@ describe("Now Playing profile normalization", () => {
       karaokeIntensity: 7,
       backgroundMode: "particles",
       backgroundBlurPx: -4,
+      // Fields from the removed Motion section linger in saved profiles;
+      // normalization must ignore them rather than resurrect the option.
       lyricTransition: "spin",
       motionDurationScale: 9,
     });
+    expect("lyricTransition" in config).toBe(false);
+    expect("motionDurationScale" in config).toBe(false);
     expect(config).toMatchObject({
       artworkSlot: "right",
       metadataSlot: "artwork",
@@ -151,8 +154,6 @@ describe("Now Playing profile normalization", () => {
       karaokeIntensity: 1,
       backgroundMode: "particles",
       backgroundBlurPx: 0,
-      lyricTransition: "scale",
-      motionDurationScale: 1.75,
     });
   });
 
@@ -275,9 +276,6 @@ describe("animation cache key", () => {
       { karaokeStyle: "minimal" },
       { karaokeIntensity: 0.25 },
       { activeWordScale: 1.2 },
-      { lyricTransition: "slide" },
-      { motionIntensity: 0.5 },
-      { motionDurationScale: 1.5 },
       { activeLineScale: 1.1 },
     ];
     for (const mutation of mutations) {

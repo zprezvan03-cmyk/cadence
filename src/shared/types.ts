@@ -413,7 +413,6 @@ export type NowPlayingBackgroundMode =
   | "solid"
   | "particles"
   | "visualizer";
-export type NowPlayingLyricTransition = "scale" | "fade" | "slide" | "none";
 
 /**
  * Visual proportions for one Now Playing surface. These values deliberately layer on the
@@ -490,12 +489,6 @@ export interface NowPlayingProfileConfig {
   /** Particle density / visualizer responsiveness multiplier (0.25–1.5). */
   effectDensity: number;
 
-  /* Motion (layered on the global motion tokens; reduced-motion still wins). */
-  lyricTransition: NowPlayingLyricTransition;
-  /** Transition distance/emphasis multiplier (0–1.5). */
-  motionIntensity: number;
-  /** Lyric transition duration multiplier (0.5–1.75). */
-  motionDurationScale: number;
 }
 
 /** One named Now Playing profile, with distinct windowed and fullscreen proportions. */

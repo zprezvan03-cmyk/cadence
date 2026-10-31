@@ -142,15 +142,15 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   }, [lyrics.status, track?.id]);
 
   // The renderer caches every CSS value it reads into JS — karaoke swipe/glow
-  // switches, glow radius, letter emphasis, line-transition transforms/duration,
-  // active-line scale — and only re-reads them when a theme is applied (its
-  // setTheme clears the style caches). Profile values travel through inherited
-  // --np-* variables, which plain CSS follows instantly but that JS cache does
-  // not, so the theme carries a generation key built from exactly the JS-read
-  // profile values: when one changes, the wrapper reapplies the theme and the
-  // next line animates with the new values. Without this, karaoke style and
-  // motion changes appear to do nothing until the next track. The comment uses
-  // a colon, so the renderer's theme-setting parser never treats it as a setting.
+  // switches, glow radius, letter emphasis, active-line scale — and only
+  // re-reads them when a theme is applied (its setTheme clears the style
+  // caches). Profile values travel through inherited --np-* variables, which
+  // plain CSS follows instantly but that JS cache does not, so the theme
+  // carries a generation key built from exactly the JS-read profile values:
+  // when one changes, the wrapper reapplies the theme and the next line
+  // animates with the new values. Without this, karaoke style changes appear
+  // to do nothing until the next track. The comment uses a colon, so the
+  // renderer's theme-setting parser never treats it as a setting.
   const themeCss = useMemo(() => {
     if (!lyricsSettings) return "";
     const key = getNowPlayingAnimationCacheKey(profileConfig);
@@ -183,27 +183,6 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
       glow: { swipe: 1, glow: 1, fade: 1 },
       minimal: { swipe: 0, glow: 0, fade: 1 },
     }[cfg.karaokeStyle];
-    const slidePx = Math.round(12 * cfg.motionIntensity);
-    // These transforms are declared on the light-DOM container and inherited into
-    // the renderer's shadow tree, so they must not reference renderer variables
-    // (--blyrics-*): a var() inside a custom property resolves where the property
-    // is declared, those names do not exist out here, and the whole value would
-    // silently become invalid and fall back to the theme default — which is
-    // exactly what made Slide indistinguishable from Scale. Bake numbers in.
-    const lineScale =
-      cfg.lyricTransition === "fade" || cfg.lyricTransition === "none"
-        ? 1
-        : 1 - 0.05 * cfg.motionIntensity;
-    const enterFrom =
-      cfg.lyricTransition === "slide"
-        ? `translateY(${slidePx}px) scale(${lineScale})`
-        : cfg.lyricTransition === "fade" || cfg.lyricTransition === "none"
-          ? `scale(${cfg.activeLineScale})`
-          : `scale(${lineScale})`;
-    const exitTo =
-      cfg.lyricTransition === "slide"
-        ? `translateY(${-slidePx}px) scale(${lineScale})`
-        : enterFrom;
     const style: Record<string, string | number> = {
       "--np-lyrics-font-scale": (fontSizeRem / 3) * cfg.lyricsScale,
       "--np-translation-font-ratio": (translationFontSizePx / 48) * cfg.translationScale,
@@ -233,13 +212,6 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
         cfg.karaokeStyle === "minimal" || cfg.karaokeStyle === "glow"
           ? 1
           : cfg.activeWordScale,
-      "--np-line-scale": lineScale,
-      "--np-motion-duration":
-        cfg.lyricTransition === "none"
-          ? "1ms"
-          : `${Math.round(166 * cfg.motionDurationScale)}ms`,
-      "--np-line-enter-from": enterFrom,
-      "--np-line-exit-to": exitTo,
     };
     if (cfg.lyricsWeight > 0) style["--np-lyrics-weight"] = cfg.lyricsWeight;
     if (cfg.fontId) style["--blyrics-font-family"] = fontStack(cfg.fontId);

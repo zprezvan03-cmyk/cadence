@@ -10,7 +10,6 @@ import type {
   NowPlayingArtworkSlot,
   NowPlayingBackgroundMode,
   NowPlayingKaraokeStyle,
-  NowPlayingLyricTransition,
   NowPlayingLyricsAlignment,
   NowPlayingMetadataSlot,
   NowPlayingProfile,
@@ -67,9 +66,6 @@ export const BASE_NOW_PLAYING_PROFILE_CONFIG: NowPlayingProfileConfig = deepFree
   backgroundBlurPx: 40,
   effectSpeed: 1,
   effectDensity: 1,
-  lyricTransition: "scale",
-  motionIntensity: 1,
-  motionDurationScale: 1,
 });
 
 function profileConfig(patch: Partial<NowPlayingProfileConfig> = {}): NowPlayingProfileConfig {
@@ -93,11 +89,10 @@ function builtInProfile(
   };
 }
 
-// A built-in's identity — karaoke style, background, line transition — is the
-// same in both halves; windowed/fullscreen differ in proportions only. (An
-// earlier table carried Immersive's glow/slide/visualizer only in its
-// fullscreen half, so in a window it animated exactly like Balanced and the
-// Line transition control appeared to do nothing.)
+// A built-in's identity — karaoke style and background — is the same in both
+// halves; windowed/fullscreen differ in proportions only. (An earlier table
+// carried Immersive's glow/visualizer only in its fullscreen half, so in a
+// window it animated and themed exactly like Balanced.)
 export const BUILT_IN_NOW_PLAYING_PROFILES: readonly NowPlayingProfile[] = deepFreeze([
   builtInProfile(
     "balanced",
@@ -187,7 +182,6 @@ export const BUILT_IN_NOW_PLAYING_PROFILES: readonly NowPlayingProfile[] = deepF
       karaokeIntensity: 1,
       activeWordScale: 1.16,
       backgroundMode: "visualizer",
-      lyricTransition: "slide",
     },
     {
       artworkScale: 1.08,
@@ -203,7 +197,6 @@ export const BUILT_IN_NOW_PLAYING_PROFILES: readonly NowPlayingProfile[] = deepF
       karaokeIntensity: 1,
       activeWordScale: 1.16,
       backgroundMode: "visualizer",
-      lyricTransition: "slide",
     }
   ),
   builtInProfile(
@@ -224,7 +217,6 @@ export const BUILT_IN_NOW_PLAYING_PROFILES: readonly NowPlayingProfile[] = deepF
       karaokeIntensity: 0.3,
       activeWordScale: 1,
       backgroundMode: "solid",
-      lyricTransition: "fade",
     },
     {
       artworkScale: 0.78,
@@ -240,7 +232,6 @@ export const BUILT_IN_NOW_PLAYING_PROFILES: readonly NowPlayingProfile[] = deepF
       karaokeIntensity: 0.3,
       activeWordScale: 1,
       backgroundMode: "solid",
-      lyricTransition: "fade",
     }
   ),
 ]);
@@ -328,7 +319,6 @@ const BACKGROUND_MODES: readonly NowPlayingBackgroundMode[] = [
   "particles",
   "visualizer",
 ];
-const LYRIC_TRANSITIONS: readonly NowPlayingLyricTransition[] = ["scale", "fade", "slide", "none"];
 
 export function normalizeNowPlayingProfileConfig(
   input: unknown,
@@ -401,18 +391,6 @@ export function normalizeNowPlayingProfileConfig(
     backgroundBlurPx: clampNumber(source.backgroundBlurPx, fallback.backgroundBlurPx, 0, 60),
     effectSpeed: clampNumber(source.effectSpeed, fallback.effectSpeed, 0.25, 2),
     effectDensity: clampNumber(source.effectDensity, fallback.effectDensity, 0.25, 1.5),
-    lyricTransition: cleanEnum(
-      source.lyricTransition,
-      LYRIC_TRANSITIONS,
-      fallback.lyricTransition
-    ),
-    motionIntensity: clampNumber(source.motionIntensity, fallback.motionIntensity, 0, 1.5),
-    motionDurationScale: clampNumber(
-      source.motionDurationScale,
-      fallback.motionDurationScale,
-      0.5,
-      1.75
-    ),
   };
 }
 
@@ -545,9 +523,9 @@ export const NOW_PLAYING_PROFILE_EXPORT_KIND = "cadence-now-playing-profile";
 /** Versioned envelope so a pasted settings blob or foreign JSON is rejected, not guessed at. */
 /**
  * Generation key for the profile values the lyrics renderer reads into JS once and
- * caches (karaoke swipe/glow switches, glow radius, letter emphasis, line-transition
- * transforms and duration, active-line scale). Pure-CSS profile values (fonts,
- * colours, sizes) follow inherited CSS variables live, but the cached ones only
+ * caches (karaoke swipe/glow switches, glow radius, letter emphasis, active-line
+ * scale). Pure-CSS profile values (fonts, colours, sizes) follow inherited CSS
+ * variables live, but the cached ones only
  * re-read when a theme is applied — so Cadence folds this key into the theme string:
  * when it changes, the theme is reapplied and the renderer drops its style caches.
  * Stable for equal inputs; any engine-read change produces a different key.
@@ -558,9 +536,6 @@ export function getNowPlayingAnimationCacheKey(config: NowPlayingProfileConfig):
     config.karaokeStyle,
     num(config.karaokeIntensity),
     num(config.activeWordScale),
-    config.lyricTransition,
-    num(config.motionIntensity),
-    num(config.motionDurationScale),
     num(config.activeLineScale),
   ].join("|");
 }

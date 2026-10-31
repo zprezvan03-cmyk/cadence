@@ -111,7 +111,7 @@ const readBody = (req: import("node:http").IncomingMessage): Promise<string> =>
   });
 
 /** The lyrics answer for the current track, controlled per scenario. */
-type LyricsMode = "synced" | "plain" | "empty" | "error" | "slow" | "wordsynced" | "linemotion";
+type LyricsMode = "synced" | "plain" | "empty" | "error" | "slow" | "wordsynced";
 
 /**
  * Word-timed TTML shaped like the Apple Music files users actually load (a real one
@@ -124,18 +124,6 @@ const WORD_TTML = `<?xml version="1.0" encoding="UTF-8"?>
 <p begin="00:03.800" end="00:06.000"><span begin="00:03.800" end="00:05.400">Alpha</span> <span begin="00:05.400" end="00:05.700">ep</span> <span begin="00:05.700" end="00:06.000">si</span></p>
 </div></body></tt>`;
 
-/**
- * Four evenly spaced lines for the line-transition probe: three line changes inside
- * the 6-second fixture, one per built-in transition style (Scale, Slide, Fade), with
- * profile switches in the gaps between them.
- */
-const LINE_TTML = `<?xml version="1.0" encoding="UTF-8"?>
-<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="en"><body dur="00:06.000"><div>
-<p begin="00:00.400" end="00:01.700"><span begin="00:00.400" end="00:01.200">Alpha</span> <span begin="00:01.200" end="00:01.450">be</span> <span begin="00:01.450" end="00:01.700">ta</span></p>
-<p begin="00:02.000" end="00:03.300"><span begin="00:02.000" end="00:02.800">Alpha</span> <span begin="00:02.800" end="00:03.050">ep</span> <span begin="00:03.050" end="00:03.300">si</span></p>
-<p begin="00:03.600" end="00:04.900"><span begin="00:03.600" end="00:04.400">Alpha</span> <span begin="00:04.400" end="00:04.650">ga</span> <span begin="00:04.650" end="00:04.900">mma</span></p>
-<p begin="00:05.100" end="00:05.900"><span begin="00:05.100" end="00:05.600">Alpha</span> <span begin="00:05.600" end="00:05.750">de</span> <span begin="00:05.750" end="00:05.900">lta</span></p>
-</div></body></tt>`;
 let mode: LyricsMode = "synced";
 
 const server = createServer(async (req, res) => {
@@ -182,12 +170,12 @@ const server = createServer(async (req, res) => {
                   cached: true,
                 },
               ]
-            : mode === "wordsynced" || mode === "linemotion"
+            : mode === "wordsynced"
               ? [
                   {
                     source: "local-rich",
                     provider: "Local TTML/QRC",
-                    text: mode === "linemotion" ? LINE_TTML : WORD_TTML,
+                    text: WORD_TTML,
                     syncHint: "synced",
                     language: "en",
                     songwriters: [],
@@ -199,7 +187,7 @@ const server = createServer(async (req, res) => {
       if (request.trackId === ids.synced && mode === "synced") return sendJson({ candidates, providerStatus: [] });
       if (request.trackId === ids.plain && mode === "plain") return sendJson({ candidates, providerStatus: [] });
       // Word-sync scenarios ride the plain track so the mode switch resolves fresh lyrics.
-      if (request.trackId === ids.plain && (mode === "wordsynced" || mode === "linemotion"))
+      if (request.trackId === ids.plain && (mode === "wordsynced"))
         return sendJson({ candidates, providerStatus: [] });
       return sendJson({ candidates: [], providerStatus: [] });
     }
@@ -980,7 +968,6 @@ const mxStyle = () =>
       inactiveFilter: inactive ? getComputedStyle(inactive).filter : "",
       rootActiveScale: view.style.getPropertyValue("--np-active-line-scale").trim(),
       rootSwipe: view.style.getPropertyValue("--np-karaoke-swipe").trim(),
-      rootDuration: view.style.getPropertyValue("--np-motion-duration").trim(),
       containerActiveScale:
         containerCs?.getPropertyValue("--blyrics-active-scale").trim() ?? "",
       containerActiveColorVar:
@@ -989,8 +976,6 @@ const mxStyle = () =>
         containerCs?.getPropertyValue("--blyrics-highlight-color").trim() ?? "",
       containerSwipe:
         containerCs?.getPropertyValue("--blyrics-animate-highlight-swipe").trim() ?? "",
-      containerDuration:
-        containerCs?.getPropertyValue("--blyrics-transition-duration").trim() ?? "",
       gradientFill: (() => {
         const fill = document.querySelector(".np-bg-fill");
         return fill ? getComputedStyle(fill).backgroundImage : "";
@@ -1108,11 +1093,6 @@ await mxSetControl("Karaoke highlight", "Style", "minimal");
 const mxKaraokeMinimal = await mxStyle();
 await mxSetControl("Karaoke highlight", "Style", "glow");
 const mxKaraokeGlow = await mxStyle();
-
-// Motion: slide transition at 150% duration.
-await mxSetControl("Motion", "Line transition", "slide");
-await mxSetControl("Motion", "Duration", "1.5");
-const mxMotionAfter = await mxStyle();
 
 // Backgrounds: gradient, then particles (canvas mounts).
 await mxSetControl("Background", "Mode", "gradient");
@@ -1328,7 +1308,6 @@ const matrixSummary = {
   appearanceAfter: mxAppearanceAfter,
   karaokeMinimal: mxKaraokeMinimal,
   karaokeGlow: mxKaraokeGlow,
-  motionAfter: mxMotionAfter,
   gradient: mxGradient,
   particles: mxParticles,
   afterUndo: mxAfterUndo.background,
@@ -1450,172 +1429,6 @@ await selectNowPlayingProfile("balanced");
 await wait(400);
 const kxSummary = { sweep: kxSweep, solid: kxSolid };
 
-/* 13. Line transitions, end to end. "I see no difference between them, even at
-   slower songs": the Scale/Slide/Fade options existed only as CSS variables in
-   earlier probes, never as measured motion. Play four evenly spaced lines,
-   sample each entering line's computed transform + WAAPI keyframes on every
-   frame, and switch profiles in the gaps so line 1 runs Scale (Balanced),
-   line 2 Slide (Immersive) and line 3 Fade (Minimal). Scale must dip the
-   entering line to ~0.95 before growing it to full size, Slide must carry a
-   ~12px translateY entrance, Fade must do neither. */
-mode = "linemotion";
-type LineProbeRecord = {
-  text: string;
-  mediaAt: number;
-  profile: string;
-  enterVar: string;
-  minA: number;
-  finalA: number;
-  maxTy: number;
-  keyframes: string[];
-};
-await playTrackId(ids.synced);
-await playTrackId(ids.plain);
-await nav("Now Playing");
-await page.waitForSelector("braccato-lyrics .blyrics--line", { timeout: 15_000 });
-await page.evaluate(() => {
-  const audio = document.querySelector("audio")!;
-  audio.currentTime = 0;
-  audio.pause();
-  const probe: { records: unknown[]; errors: string[]; snapshot: () => unknown[] } = {
-    records: [],
-    errors: [],
-    snapshot: () => [],
-  };
-  (window as unknown as { __lineProbe?: unknown }).__lineProbe = probe;
-  document.querySelector("braccato-lyrics")?.addEventListener("braccato:error", event => {
-    const detail = (event as CustomEvent<{ phase?: unknown; error?: { message?: unknown } }>).detail;
-    probe.errors.push(`${String(detail?.phase)}: ${String(detail?.error?.message ?? detail?.error)}`);
-  });
-  let active: Element | null = null;
-  let rec: LineProbeRecord | null = null;
-  const loop = () => {
-    const el = document.querySelector("braccato-lyrics .blyrics--active");
-    if (el !== active) {
-      if (rec) probe.records.push(rec);
-      active = el;
-      const container = document.querySelector("braccato-lyrics .blyrics-container");
-      rec = el
-        ? {
-            text: (el.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 24),
-            mediaAt: +(document.querySelector("audio")?.currentTime ?? 0).toFixed(2),
-            profile:
-              document.querySelector<HTMLElement>(".lyrics-view")?.dataset.nowPlayingProfile ?? "?",
-            enterVar: container
-              ? getComputedStyle(container)
-                  .getPropertyValue("--blyrics-line-enter-transform-from")
-                  .trim()
-              : "?",
-            minA: 1,
-            finalA: 1,
-            maxTy: 0,
-            keyframes: [],
-          }
-        : null;
-    }
-    if (rec && el) {
-      const m = /matrix\(([^)]+)\)/.exec(getComputedStyle(el).transform ?? "");
-      if (m) {
-        const parts = m[1].split(",").map(Number);
-        rec.minA = Math.min(rec.minA, parts[0]);
-        rec.finalA = parts[0];
-        rec.maxTy = Math.max(rec.maxTy, Math.abs(parts[5]));
-      }
-      for (const animation of el.getAnimations()) {
-        try {
-          for (const frame of animation.effect?.getKeyframes() ?? []) {
-            const t = frame.transform;
-            if (typeof t === "string" && t && !rec.keyframes.includes(t)) rec.keyframes.push(t);
-          }
-        } catch {
-          /* finished animations can throw while being read */
-        }
-      }
-    }
-    requestAnimationFrame(loop);
-  };
-  probe.snapshot = () =>
-    rec ? [...probe.records, { ...rec, keyframes: [...rec.keyframes] }] : [...probe.records];
-  requestAnimationFrame(loop);
-});
-const ltWaitTime = (target: number) =>
-  page.waitForFunction(
-    (wanted: number) => {
-      const audio = document.querySelector("audio");
-      return Boolean(audio && audio.currentTime >= wanted);
-    },
-    { polling: 25, timeout: 20_000 },
-    target
-  );
-const ltThemeKey = () =>
-  page.$eval("braccato-lyrics", el => {
-    const theme = (el as unknown as { theme?: string }).theme ?? "";
-    return /cadence-anim-key: ([^*]+) \*\//.exec(theme)?.[1]?.trim() ?? `(no key; tail: ${theme.slice(-30)})`;
-  });
-const ltSnapshot = () =>
-  page.evaluate(
-    () =>
-      (window as unknown as { __lineProbe?: { snapshot: () => unknown[] } }).__lineProbe?.snapshot() ?? []
-  ) as Promise<LineProbeRecord[]>;
-const ltPlay = () =>
-  page.evaluate(() => {
-    void document.querySelector("audio")!.play();
-  });
-const ltPause = () =>
-  page.evaluate(() => {
-    document.querySelector("audio")!.pause();
-  });
-// Switch profiles while paused between lines: the switcher takes ~1-2s of UI
-// automation, and the engine starts a line's entrance animation ~0.6s before
-// its first word, so switching during playback raced the very activations
-// being measured. Paused switches exercise the same render/theme path.
-const ltKeyBalanced = await ltThemeKey();
-await page.evaluate(() => {
-  const audio = document.querySelector("audio")!;
-  audio.currentTime = 0;
-  void audio.play();
-});
-await ltWaitTime(1.0); // line 1 has activated under Balanced (Scale)
-await ltPause();
-const ltAfterL1 = await ltSnapshot();
-await selectNowPlayingProfile("immersive"); // Slide applies from line 2
-const ltKeyImmersive = await ltThemeKey();
-await ltPlay();
-await ltWaitTime(2.7); // line 2 has activated under Immersive (Slide)
-await ltPause();
-const ltAfterL2 = await ltSnapshot();
-await selectNowPlayingProfile("minimal"); // Fade applies from line 3
-const ltKeyMinimal = await ltThemeKey();
-await ltPlay();
-await ltWaitTime(4.3); // line 3 has activated under Minimal (Fade)
-await ltPause();
-const ltAfterL3 = await ltSnapshot();
-const ltErrors = (await page.evaluate(
-  () => (window as unknown as { __lineProbe?: { errors: string[] } }).__lineProbe?.errors ?? []
-)) as string[];
-const ltFindIn = (records: LineProbeRecord[], needle: string) =>
-  records.find(r => r.text.includes(needle));
-const ltScale = ltFindIn(ltAfterL1, "be");
-const ltSlide = ltFindIn(ltAfterL2, "ep");
-const ltFade = ltFindIn(ltAfterL3, "ga");
-const ltRecords = ltAfterL3;
-mode = "synced";
-await selectNowPlayingProfile("balanced");
-await wait(400);
-const ltSummary = {
-  themeKeys: { balanced: ltKeyBalanced, immersive: ltKeyImmersive, minimal: ltKeyMinimal },
-  braccatoErrors: ltErrors,
-  records: ltRecords.map(r => ({
-    text: r.text,
-    mediaAt: r.mediaAt,
-    profile: r.profile,
-    enterVar: r.enterVar,
-    minA: +r.minA.toFixed(3),
-    finalA: +r.finalA.toFixed(3),
-    maxTy: +r.maxTy.toFixed(1),
-    keyframes: r.keyframes,
-  })),
-};
 await setViewport(1440, 900);
 
 /* ------------------------------------------------------------------ report */
@@ -1656,7 +1469,6 @@ console.log(
       fullscreenEffectsRestored,
       matrixSummary,
       kxSummary,
-      ltSummary,
       playbackBeforeResponsive,
       playbackAfterResponsive,
     },
@@ -2060,15 +1872,6 @@ check(
   `minimal root ${mxKaraokeMinimal.rootSwipe}/${mxKaraokeMinimal.containerSwipe} glow root ${mxKaraokeGlow.rootSwipe}/${mxKaraokeGlow.containerSwipe}`
 );
 check(
-  "mx-motion-duration-scaled",
-  Boolean(
-    mxMotionAfter.rootDuration === "249ms" ||
-      mxMotionAfter.containerDuration === "249ms" ||
-      mxMotionAfter.containerDuration === "0.249s"
-  ),
-  `root ${mxMotionAfter.rootDuration} container ${mxMotionAfter.containerDuration}`
-);
-check(
   "mx-gradient-background-live",
   Boolean(mxGradient.background === "gradient" && mxGradient.gradientFill.includes("gradient")),
   `mode ${mxGradient.background} fill ${mxGradient.gradientFill.slice(0, 60)}`
@@ -2211,23 +2014,6 @@ check(
   ),
   `mid-word bright-glyph coverage: sweep ${(kxSweep.ratio * 100).toFixed(0)}% (${kxSweep.bright}/${kxSweep.glyph}) solid ${(kxSolid.ratio * 100).toFixed(0)}% (${kxSolid.bright}/${kxSolid.glyph}); same word at ~50% progress, profile switched mid-song`
 );
-const LT_TY = /translateY\(\s*-?(?:1[0-9]|2[0-9])(?:\.\d+)?px\s*\)/;
-check(
-  "lt-scale-shrinks-entering-line",
-  Boolean(ltScale && ltFade && ltScale.minA <= 0.978 && ltScale.minA < ltFade.minA - 0.015),
-  `entering-line min scale: Scale ${ltScale?.minA.toFixed(3)} vs Fade ${ltFade?.minA.toFixed(3)} (keyframes: ${ltScale?.keyframes.join(" | ")})`
-);
-check(
-  "lt-slide-rides-vertically",
-  Boolean(ltSlide && ltSlide.keyframes.some(k => LT_TY.test(k))),
-  `Slide keyframes: ${ltSlide?.keyframes.join(" | ") || "(none captured)"}`
-);
-check(
-  "lt-fade-has-no-line-motion",
-  Boolean(ltFade && ltFade.minA >= 0.99 && !ltFade.keyframes.some(k => LT_TY.test(k))),
-  `Fade min scale ${ltFade?.minA.toFixed(3)}, keyframes: ${ltFade?.keyframes.join(" | ") || "(none)"}`
-);
-
 const failures = Object.entries(results).filter(([, entry]) => !entry.value);
 console.log(`\n${Object.keys(results).length - failures.length}/${Object.keys(results).length} checks passed`);
 if (failures.length) {
