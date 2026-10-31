@@ -6,14 +6,17 @@
  */
 
 import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Minimize2, Music4, RefreshCw, Search } from "lucide-react";
-import type { AppSettings, Track } from "../../../shared/types";
+import { Minimize2, Music4, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
+import type { AppSettings, NowPlayingProfile, Track } from "../../../shared/types";
 import { DEFAULT_PROVIDER_ORDER } from "../../../shared/upstream/better-lyrics/constants";
 import {
+  cloneNowPlayingProfile,
   getActiveNowPlayingProfile,
+  getEffectiveNowPlayingProfile,
   listNowPlayingProfiles,
   resolveNowPlayingProfileConfig,
 } from "../../../shared/nowPlayingProfiles";
+import { fontStack } from "../../../shared/fonts";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
 import { BraccatoLyrics } from "./BraccatoLyrics";
@@ -21,7 +24,8 @@ import { LyricsDock } from "./LyricsDock";
 import { FullscreenControls } from "./FullscreenControls";
 import { Artwork } from "../../components/Artwork";
 import { useControlsHover } from "./useControlsHover";
-import { KawarpBackground } from "../shaders/KawarpBackground";
+import { NowPlayingBackground } from "./NowPlayingBackground";
+import { CustomizationStudio, type StudioSavePayload } from "./CustomizationStudio";
 import { useLyrics } from "./useLyrics";
 import { buildThemeCss } from "../../upstream/better-lyrics/themes";
 import { useLastNonNull, usePresence } from "../../app/usePresence";
@@ -95,18 +99,32 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   const lyricsSettings = settings?.lyrics;
   const shaderSettings = settings?.shaders;
   const nowPlayingProfilesSettings = settings?.nowPlayingProfiles;
+  // The Studio edits a draft clone; while it exists the view renders the draft so
+  // every control previews live on this same tree, and nothing reaches settings
+  // until Save. Playback, the lyrics clock and scroll state are never touched.
+  const [studioOpen, setStudioOpen] = useState(false);
+  const [studioDraft, setStudioDraft] = useState<NowPlayingProfile | null>(null);
+  const studioPresence = usePresence(studioOpen);
   const activeNowPlayingProfile = useMemo(
-    () => getActiveNowPlayingProfile(nowPlayingProfilesSettings),
-    [nowPlayingProfilesSettings]
+    () =>
+      studioDraft ??
+      getEffectiveNowPlayingProfile(nowPlayingProfilesSettings, fullscreen),
+    [fullscreen, nowPlayingProfilesSettings, studioDraft]
   );
   const availableNowPlayingProfiles = useMemo(
     () => listNowPlayingProfiles(nowPlayingProfilesSettings),
     [nowPlayingProfilesSettings]
   );
   const nowPlayingProfileConfig = useMemo(
-    () => resolveNowPlayingProfileConfig(nowPlayingProfilesSettings, fullscreen),
-    [fullscreen, nowPlayingProfilesSettings]
+    () =>
+      studioDraft
+        ? fullscreen
+          ? studioDraft.fullscreen
+          : studioDraft.windowed
+        : resolveNowPlayingProfileConfig(nowPlayingProfilesSettings, fullscreen),
+    [fullscreen, nowPlayingProfilesSettings, studioDraft]
   );
+  const profileConfig = nowPlayingProfileConfig;
   const showLyrics = lyricsSettings?.showLyricsInFullscreen ?? true;
   // The toggle only applies in fullscreen; the normal page always shows lyrics.
   const lyricsVisible = !fullscreen || showLyrics;
@@ -142,19 +160,69 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
       10,
       48
     );
-    return {
-      "--np-lyrics-font-scale": (fontSizeRem / 3) * nowPlayingProfileConfig.lyricsScale,
-      "--np-translation-font-ratio":
-        (translationFontSizePx / 48) * nowPlayingProfileConfig.translationScale,
-      "--np-romanization-font-ratio":
-        (romanizationFontSizePx / 48) * nowPlayingProfileConfig.romanizationScale,
-      "--np-profile-artwork-scale": nowPlayingProfileConfig.artworkScale,
-      "--np-profile-title-scale": nowPlayingProfileConfig.titleScale,
-      "--np-profile-metadata-scale": nowPlayingProfileConfig.metadataScale,
-      "--np-profile-controls-scale": nowPlayingProfileConfig.controlsScale,
-      "--np-profile-spacing-scale": nowPlayingProfileConfig.spacingScale,
-      "--np-profile-lyrics-max-width": `${nowPlayingProfileConfig.lyricsMaxWidth}px`,
-    } as CSSProperties;
+    const cfg = nowPlayingProfileConfig;
+    const karaoke = {
+      sweep: { swipe: 1, glow: 1, fade: 1 },
+      solid: { swipe: 0, glow: 0, fade: 1 },
+      gradient: { swipe: 1, glow: 0, fade: 1 },
+      glow: { swipe: 1, glow: 1, fade: 1 },
+      minimal: { swipe: 0, glow: 0, fade: 1 },
+    }[cfg.karaokeStyle];
+    const slidePx = Math.round(12 * cfg.motionIntensity);
+    const enterFrom =
+      cfg.lyricTransition === "slide"
+        ? `translateY(${slidePx}px) scale(var(--blyrics-scale))`
+        : cfg.lyricTransition === "fade" || cfg.lyricTransition === "none"
+          ? "scale(var(--blyrics-active-scale))"
+          : "scale(var(--blyrics-scale))";
+    const exitTo =
+      cfg.lyricTransition === "slide"
+        ? `translateY(${-slidePx}px) scale(var(--blyrics-scale))`
+        : enterFrom;
+    const style: Record<string, string | number> = {
+      "--np-lyrics-font-scale": (fontSizeRem / 3) * cfg.lyricsScale,
+      "--np-translation-font-ratio": (translationFontSizePx / 48) * cfg.translationScale,
+      "--np-romanization-font-ratio": (romanizationFontSizePx / 48) * cfg.romanizationScale,
+      "--np-profile-artwork-scale": cfg.artworkScale,
+      "--np-profile-title-scale": cfg.titleScale,
+      "--np-profile-metadata-scale": cfg.metadataScale,
+      "--np-profile-controls-scale": cfg.controlsScale,
+      "--np-profile-spacing-scale": cfg.spacingScale,
+      "--np-profile-lyrics-max-width": `${cfg.lyricsMaxWidth}px`,
+      "--np-lyrics-align": cfg.lyricsAlignment,
+      "--np-line-spacing-scale": cfg.lineSpacingScale,
+      "--np-letter-spacing": `${cfg.letterSpacingEm}em`,
+      "--np-inactive-opacity-scale": cfg.inactiveOpacityScale,
+      "--np-active-line-scale": cfg.activeLineScale,
+      "--np-inactive-blur": `${cfg.inactiveBlurPx}px`,
+      "--np-karaoke-swipe": karaoke.swipe,
+      "--np-karaoke-glow": karaoke.glow,
+      "--np-karaoke-fade": karaoke.fade,
+      "--np-karaoke-glow-radius": `${(0.8 * cfg.karaokeIntensity).toFixed(3)}rem`,
+      "--np-active-word-scale":
+        cfg.karaokeStyle === "minimal" ? 1 : cfg.activeWordScale,
+      "--np-line-scale":
+        cfg.lyricTransition === "fade" || cfg.lyricTransition === "none"
+          ? 1
+          : 1 - 0.05 * cfg.motionIntensity,
+      "--np-motion-duration":
+        cfg.lyricTransition === "none"
+          ? "1ms"
+          : `${Math.round(166 * cfg.motionDurationScale)}ms`,
+      "--np-line-enter-from": enterFrom,
+      "--np-line-exit-to": exitTo,
+    };
+    if (cfg.lyricsWeight > 0) style["--np-lyrics-weight"] = cfg.lyricsWeight;
+    if (cfg.fontId) style["--blyrics-font-family"] = fontStack(cfg.fontId);
+    if (cfg.translationFontId) {
+      style["--blyrics-translated-font-family"] = fontStack(cfg.translationFontId);
+    }
+    if (cfg.romanizationFontId) {
+      style["--np-romanization-font"] = fontStack(cfg.romanizationFontId);
+    }
+    if (cfg.activeColor) style["--np-active-color"] = cfg.activeColor;
+    if (cfg.inactiveColor) style["--np-inactive-color"] = cfg.inactiveColor;
+    return style as CSSProperties;
   }, [
     lyricsSettings?.fontSizeRem,
     lyricsSettings?.translationFontSizePx,
@@ -171,7 +239,51 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
 
   const handleSelectNowPlayingProfile = useCallback(
     (profileId: string) => {
-      void patchSettings({ nowPlayingProfiles: { activeProfileId: profileId } });
+      const context = nowPlayingProfilesSettings?.contextSwitching;
+      void patchSettings({
+        nowPlayingProfiles: {
+          activeProfileId: profileId,
+          ...(context?.enabled
+            ? {
+                contextSwitching: {
+                  ...context,
+                  ...(fullscreen
+                    ? { fullscreenProfileId: profileId }
+                    : { windowedProfileId: profileId }),
+                },
+              }
+            : {}),
+        },
+      });
+    },
+    [fullscreen, nowPlayingProfilesSettings?.contextSwitching, patchSettings]
+  );
+
+  const openStudio = useCallback(() => {
+    setStudioDraft(
+      cloneNowPlayingProfile(
+        getEffectiveNowPlayingProfile(nowPlayingProfilesSettings, fullscreen)
+      )
+    );
+    setStudioOpen(true);
+  }, [fullscreen, nowPlayingProfilesSettings]);
+
+  const closeStudio = useCallback(() => {
+    setStudioOpen(false);
+    setStudioDraft(null);
+  }, []);
+
+  const saveStudio = useCallback(
+    (payload: StudioSavePayload) => {
+      void patchSettings({
+        nowPlayingProfiles: {
+          customProfiles: payload.customProfiles,
+          activeProfileId: payload.activeProfileId,
+          contextSwitching: payload.contextSwitching,
+        },
+      });
+      setStudioOpen(false);
+      setStudioDraft(null);
     },
     [patchSettings]
   );
@@ -236,35 +348,72 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
     track !== null &&
     ((slowLoading && !lyrics.hasLyrics) || lyrics.status === "empty" || lyrics.status === "error");
 
+  const headingInSide =
+    fullscreen && showLyricsSetting && profileConfig.metadataSlot === "artwork" && profileConfig.metadataVisible;
+  const showSide =
+    fullscreen && showLyricsSetting && (profileConfig.artworkVisible || headingInSide);
+  const headingInHeader =
+    profileConfig.metadataVisible &&
+    (!fullscreen || (showLyricsSetting && profileConfig.metadataSlot === "top"));
+
   return (
     <div
       ref={viewRef}
-      className={`lyrics-view ${fullscreen ? "is-fullscreen" : ""} ${panelMode ? "is-lyrics-off" : ""}`}
+      className={[
+        "lyrics-view",
+        fullscreen ? "is-fullscreen" : "",
+        panelMode ? "is-lyrics-off" : "",
+        profileConfig.artworkSlot === "right" ? "artwork-right" : "",
+        fullscreen && showLyricsSetting && !showSide ? "has-no-side" : "",
+      ].join(" ")}
       style={nowPlayingScaleStyle}
       data-testid="lyrics-view"
       data-now-playing-profile={activeNowPlayingProfile.id}
       data-profile-mode={fullscreen ? "fullscreen" : "windowed"}
-      data-profile-artwork={nowPlayingProfileConfig.artworkVisible ? "visible" : "hidden"}
+      data-profile-artwork={profileConfig.artworkVisible ? "visible" : "hidden"}
+      data-profile-background={profileConfig.backgroundMode}
+      data-profile-dock={profileConfig.dockVisible ? "visible" : "hidden"}
+      data-profile-controls={profileConfig.controlsVisible ? "visible" : "hidden"}
+      data-profile-blur={profileConfig.inactiveBlurPx > 0 ? "on" : "off"}
+      data-profile-active-color={profileConfig.activeColor ? "custom" : "theme"}
+      data-profile-inactive-color={profileConfig.inactiveColor ? "custom" : "theme"}
     >
-      <KawarpBackground
+      <NowPlayingBackground
+        mode={profileConfig.backgroundMode}
         artworkUrl={track?.artworkUrl ?? null}
         animatedArtUrl={track?.animatedArtUrl ?? null}
-        settings={shaderSettings ?? settings.shaders}
+        shaderSettings={shaderSettings ?? settings.shaders}
         playing={playing}
         verbose={settings.advanced.showLogs}
+        intensity={profileConfig.backgroundIntensity}
+        blurPx={profileConfig.backgroundBlurPx}
+        speed={profileConfig.effectSpeed}
+        density={profileConfig.effectDensity}
+        accentColor={track?.accentColor ?? null}
+        fallbackAccent={settings.appearance.accent}
       />
 
-      {fullscreen && showLyricsSetting ? (
+      {showSide ? (
         <div className="fs-side">
           <div className="fs-artwork" ref={fsArtworkRef}>
             <Artwork src={track?.artworkUrl} alt={track?.album ?? "Artwork"} size="hero" />
           </div>
-          {heading}
+          {headingInSide ? heading : null}
         </div>
       ) : null}
 
       <div className="lyrics-header">
-        {fullscreen ? null : heading}
+        {headingInHeader ? heading : null}
+        <button
+          type="button"
+          className="np-customize-button"
+          onClick={openStudio}
+          aria-label="Customize Now Playing"
+          title="Customize Now Playing"
+          data-testid="customize-now-playing"
+        >
+          <SlidersHorizontal size={16} /> Customize
+        </button>
         {/* One exit button, top-right, in both fullscreen layouts. */}
         {fullscreen ? (
           <button
@@ -286,7 +435,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
             <Artwork src={track?.artworkUrl} alt={track?.album ?? "Artwork"} size="hero" />
           </div>
           <div className="fs-panel">
-            {heading}
+            {profileConfig.metadataVisible ? heading : null}
             <FullscreenControls
               variant="panel"
               track={track}
@@ -310,7 +459,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
             themeCss={themeCss}
             offsetMs={lyricsSettings?.offsetMs ?? 0}
             passiveScroll={lyricsSettings?.passiveScroll ?? true}
-            fontFamily={settings.appearance.fontFamily}
+            fontFamily={profileConfig.fontId || settings.appearance.fontFamily}
             songwriters={lyrics.parsed?.songwriters ?? []}
             language={lyrics.parsed?.language ?? null}
             noLyrics={lyrics.status === "empty"}
@@ -431,6 +580,19 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
         ) : null}
       </div>
       )}
+
+      {studioPresence.mounted && studioDraft && nowPlayingProfilesSettings ? (
+        <CustomizationStudio
+          profilesSettings={nowPlayingProfilesSettings}
+          draft={studioDraft}
+          onDraftChange={setStudioDraft}
+          initialMode={fullscreen ? "fullscreen" : "windowed"}
+          onSave={saveStudio}
+          onClose={closeStudio}
+          phaseClass={studioPresence.phaseClass}
+          phase={studioPresence.phase}
+        />
+      ) : null}
 
       {toastPresence.mounted && renderedToast ? (
         <div className={`toast ${toastPresence.phaseClass}`} data-presence={toastPresence.phase} role="status" data-testid="toast">

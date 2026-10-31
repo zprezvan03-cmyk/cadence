@@ -399,6 +399,22 @@ export interface ShaderSettings extends GradientSettings {
 /** The two Now Playing surfaces a profile can describe independently. */
 export type NowPlayingProfileMode = "windowed" | "fullscreen";
 
+/** Which side of the fullscreen stage the artwork column occupies. */
+export type NowPlayingArtworkSlot = "left" | "right";
+/** Where the title/artist block sits in fullscreen: under the artwork, or across the top. */
+export type NowPlayingMetadataSlot = "artwork" | "top";
+export type NowPlayingLyricsAlignment = "left" | "center";
+/** Word-highlight treatments. They only ever affect lyrics that actually carry word timings. */
+export type NowPlayingKaraokeStyle = "sweep" | "solid" | "gradient" | "glow" | "minimal";
+export type NowPlayingBackgroundMode =
+  | "fluid"
+  | "blurred-artwork"
+  | "gradient"
+  | "solid"
+  | "particles"
+  | "visualizer";
+export type NowPlayingLyricTransition = "scale" | "fade" | "slide" | "none";
+
 /**
  * Visual proportions for one Now Playing surface. These values deliberately layer on the
  * existing global lyrics typography settings: a profile changes the balance of artwork,
@@ -426,6 +442,60 @@ export interface NowPlayingProfileConfig {
   lyricsMaxWidth: number;
   /** Multiplier for Now Playing gutters and major gaps (0.8–1.25). */
   spacingScale: number;
+
+  /* Layout (grid-constrained component placement) */
+  artworkSlot: NowPlayingArtworkSlot;
+  metadataSlot: NowPlayingMetadataSlot;
+  metadataVisible: boolean;
+  dockVisible: boolean;
+  controlsVisible: boolean;
+  lyricsAlignment: NowPlayingLyricsAlignment;
+
+  /* Typography. Font ids reference the shared font list; "" inherits the app font. */
+  fontId: string;
+  translationFontId: string;
+  romanizationFontId: string;
+  /** Main lyric weight 300–900; 0 inherits the Settings weight. */
+  lyricsWeight: number;
+  /** Line-height multiplier on the Settings line height (0.85–1.4). */
+  lineSpacingScale: number;
+  /** Extra letter spacing in em (-0.02–0.08). */
+  letterSpacingEm: number;
+
+  /* Lyrics appearance. Colors are #rrggbb; "" inherits the active theme. */
+  activeColor: string;
+  inactiveColor: string;
+  /** Multiplier on the Settings inactive opacity (0.4–1.6). */
+  inactiveOpacityScale: number;
+  /** Renderer active-line scale (0.9–1.2). */
+  activeLineScale: number;
+  /** Blur applied to inactive lines, px (0–6). Opt-in; 0 disables the filter entirely. */
+  inactiveBlurPx: number;
+
+  /* Karaoke / word highlight (word-timed sources only; never faked for line-level lyrics). */
+  karaokeStyle: NowPlayingKaraokeStyle;
+  /** Highlight/glow strength (0–1). */
+  karaokeIntensity: number;
+  /** Active-word emphasis scale (1–1.2). */
+  activeWordScale: number;
+
+  /* Background. Canvas modes are opt-in and run only while playing and visible. */
+  backgroundMode: NowPlayingBackgroundMode;
+  /** Background opacity (0.2–1). */
+  backgroundIntensity: number;
+  /** Blur radius for the blurred-artwork background, px (0–60). */
+  backgroundBlurPx: number;
+  /** Particle/visualizer speed multiplier (0.25–2). */
+  effectSpeed: number;
+  /** Particle density / visualizer responsiveness multiplier (0.25–1.5). */
+  effectDensity: number;
+
+  /* Motion (layered on the global motion tokens; reduced-motion still wins). */
+  lyricTransition: NowPlayingLyricTransition;
+  /** Transition distance/emphasis multiplier (0–1.5). */
+  motionIntensity: number;
+  /** Lyric transition duration multiplier (0.5–1.75). */
+  motionDurationScale: number;
 }
 
 /** One named Now Playing profile, with distinct windowed and fullscreen proportions. */
@@ -444,6 +514,16 @@ export interface NowPlayingProfilesSettings {
   version: 1;
   activeProfileId: string;
   customProfiles: NowPlayingProfile[];
+  /**
+   * Optional per-context profile activation (disabled by default): when enabled, the
+   * windowed and fullscreen surfaces use these profiles instead of `activeProfileId`.
+   * Each chosen profile still contributes only its matching mode config.
+   */
+  contextSwitching: {
+    enabled: boolean;
+    windowedProfileId: string;
+    fullscreenProfileId: string;
+  };
 }
 
 export interface AppSettings {

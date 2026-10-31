@@ -4,13 +4,17 @@ import {
   BUILT_IN_NOW_PLAYING_PROFILES,
   MAX_CUSTOM_NOW_PLAYING_PROFILES,
   cloneNowPlayingProfile,
+  createCustomNowPlayingProfileId,
   createDefaultNowPlayingProfilesSettings,
   getActiveNowPlayingProfile,
+  getEffectiveNowPlayingProfile,
   isBuiltInNowPlayingProfileId,
   listNowPlayingProfiles,
   normalizeNowPlayingProfileConfig,
   normalizeNowPlayingProfilesSettings,
+  parseNowPlayingProfileJson,
   resolveNowPlayingProfileConfig,
+  serializeNowPlayingProfile,
 } from "../../src/shared/nowPlayingProfiles";
 
 describe("built-in Now Playing profiles", () => {
@@ -79,7 +83,7 @@ describe("Now Playing profile normalization", () => {
         lyricsMaxWidth: 9999.6,
         spacingScale: 42,
       })
-    ).toEqual({
+    ).toMatchObject({
       artworkVisible: true,
       artworkScale: 1.25,
       lyricsScale: 0.7,
@@ -90,6 +94,45 @@ describe("Now Playing profile normalization", () => {
       controlsScale: 0.8,
       lyricsMaxWidth: 1280,
       spacingScale: 1.25,
+    });
+  });
+
+  it("normalizes Studio-era fields: enums, colours, fonts and effect ranges", () => {
+    const config = normalizeNowPlayingProfileConfig({
+      artworkSlot: "right",
+      metadataSlot: "diagonal",
+      lyricsAlignment: "center",
+      fontId: "georgia",
+      translationFontId: "Comic Sans MS",
+      romanizationFontId: "noto-sans",
+      lyricsWeight: 950,
+      activeColor: "#FF8800",
+      inactiveColor: "red",
+      inactiveBlurPx: 99,
+      karaokeStyle: "glow",
+      karaokeIntensity: 7,
+      backgroundMode: "particles",
+      backgroundBlurPx: -4,
+      lyricTransition: "spin",
+      motionDurationScale: 9,
+    });
+    expect(config).toMatchObject({
+      artworkSlot: "right",
+      metadataSlot: "artwork",
+      lyricsAlignment: "center",
+      fontId: "georgia",
+      translationFontId: "",
+      romanizationFontId: "noto-sans",
+      lyricsWeight: 900,
+      activeColor: "#ff8800",
+      inactiveColor: "",
+      inactiveBlurPx: 6,
+      karaokeStyle: "glow",
+      karaokeIntensity: 1,
+      backgroundMode: "particles",
+      backgroundBlurPx: 0,
+      lyricTransition: "scale",
+      motionDurationScale: 1.75,
     });
   });
 
@@ -166,5 +209,87 @@ describe("Now Playing profile normalization", () => {
     });
 
     expect(settings.customProfiles).toHaveLength(MAX_CUSTOM_NOW_PLAYING_PROFILES);
+  });
+});
+
+describe("context switching", () => {
+  it("defaults off and resolves the single active profile for both surfaces", () => {
+    const settings = createDefaultNowPlayingProfilesSettings();
+    expect(settings.contextSwitching.enabled).toBe(false);
+    expect(getEffectiveNowPlayingProfile(settings, false).id).toBe("balanced");
+    expect(getEffectiveNowPlayingProfile(settings, true).id).toBe("balanced");
+  });
+
+  it("uses per-context profiles only when enabled, and repairs unknown ids", () => {
+    const settings = normalizeNowPlayingProfilesSettings({
+      version: 1,
+      activeProfileId: "balanced",
+      customProfiles: [],
+      contextSwitching: {
+        enabled: true,
+        windowedProfileId: "lyrics-focus",
+        fullscreenProfileId: "gone",
+      },
+    });
+    expect(getEffectiveNowPlayingProfile(settings, false).id).toBe("lyrics-focus");
+    // Unknown fullscreen id was repaired to the active profile at normalize time.
+    expect(settings.contextSwitching.fullscreenProfileId).toBe("balanced");
+    expect(getEffectiveNowPlayingProfile(settings, true).id).toBe("balanced");
+
+    const disabled = { ...settings, contextSwitching: { ...settings.contextSwitching, enabled: false } };
+    expect(getEffectiveNowPlayingProfile(disabled, false).id).toBe("balanced");
+  });
+});
+
+describe("profile import / export", () => {
+  it("round-trips a custom profile through the versioned envelope", () => {
+    const custom = cloneNowPlayingProfile(BUILT_IN_NOW_PLAYING_PROFILES[1]);
+    custom.id = createCustomNowPlayingProfileId();
+    custom.name = "Stage Layout";
+    custom.builtIn = false;
+    custom.fullscreen.backgroundMode = "particles";
+
+    const parsed = parseNowPlayingProfileJson(serializeNowPlayingProfile(custom));
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.profile).toEqual(custom);
+      expect(parsed.profile.builtIn).toBe(false);
+    }
+  });
+
+  it("rejects foreign JSON, broken JSON and newer formats without guessing", () => {
+    expect(parseNowPlayingProfileJson("not json")).toMatchObject({ ok: false });
+    expect(parseNowPlayingProfileJson('{"hello":"world"}')).toMatchObject({ ok: false });
+    expect(
+      parseNowPlayingProfileJson(
+        JSON.stringify({ kind: "cadence-now-playing-profile", version: 99, profile: {} })
+      )
+    ).toMatchObject({ ok: false });
+  });
+
+  it("normalizes hostile values instead of trusting the file", () => {
+    const parsed = parseNowPlayingProfileJson(
+      JSON.stringify({
+        kind: "cadence-now-playing-profile",
+        version: 1,
+        profile: {
+          id: "imported-1",
+          name: "Imported",
+          builtIn: true,
+          windowed: { lyricsScale: 500, backgroundMode: "execute-me", activeColor: "url(evil)" },
+          fullscreen: { karaokeStyle: "glow" },
+          evil: "ignored",
+        },
+      })
+    );
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.profile.builtIn).toBe(false);
+      expect(parsed.profile.windowed.lyricsScale).toBe(1.35);
+      expect(parsed.profile.windowed.backgroundMode).toBe("fluid");
+      expect(parsed.profile.windowed.activeColor).toBe("");
+      expect(parsed.profile.fullscreen.karaokeStyle).toBe("glow");
+      expect("evil" in parsed.profile).toBe(false);
+    }
   });
 });

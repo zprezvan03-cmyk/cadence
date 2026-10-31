@@ -7,10 +7,17 @@
  */
 
 import type {
+  NowPlayingArtworkSlot,
+  NowPlayingBackgroundMode,
+  NowPlayingKaraokeStyle,
+  NowPlayingLyricTransition,
+  NowPlayingLyricsAlignment,
+  NowPlayingMetadataSlot,
   NowPlayingProfile,
   NowPlayingProfileConfig,
   NowPlayingProfilesSettings,
 } from "./types";
+import { FONT_OPTIONS } from "./fonts";
 
 export const NOW_PLAYING_PROFILES_VERSION = 1;
 export const DEFAULT_NOW_PLAYING_PROFILE_ID = "balanced";
@@ -35,6 +42,34 @@ export const BASE_NOW_PLAYING_PROFILE_CONFIG: NowPlayingProfileConfig = deepFree
   controlsScale: 1,
   lyricsMaxWidth: 1120,
   spacingScale: 1,
+  artworkSlot: "left",
+  metadataSlot: "artwork",
+  metadataVisible: true,
+  dockVisible: true,
+  controlsVisible: true,
+  lyricsAlignment: "left",
+  fontId: "",
+  translationFontId: "",
+  romanizationFontId: "",
+  lyricsWeight: 0,
+  lineSpacingScale: 1,
+  letterSpacingEm: 0,
+  activeColor: "",
+  inactiveColor: "",
+  inactiveOpacityScale: 1,
+  activeLineScale: 1,
+  inactiveBlurPx: 0,
+  karaokeStyle: "sweep",
+  karaokeIntensity: 0.7,
+  activeWordScale: 1.11,
+  backgroundMode: "fluid",
+  backgroundIntensity: 1,
+  backgroundBlurPx: 40,
+  effectSpeed: 1,
+  effectDensity: 1,
+  lyricTransition: "scale",
+  motionIntensity: 1,
+  motionDurationScale: 1,
 });
 
 function profileConfig(patch: Partial<NowPlayingProfileConfig> = {}): NowPlayingProfileConfig {
@@ -90,6 +125,10 @@ export const BUILT_IN_NOW_PLAYING_PROFILES: readonly NowPlayingProfile[] = deepF
       controlsScale: 0.95,
       lyricsMaxWidth: 1200,
       spacingScale: 0.95,
+      karaokeStyle: "glow",
+      karaokeIntensity: 0.85,
+      backgroundMode: "blurred-artwork",
+      backgroundIntensity: 0.85,
     }
   ),
   builtInProfile(
@@ -115,6 +154,8 @@ export const BUILT_IN_NOW_PLAYING_PROFILES: readonly NowPlayingProfile[] = deepF
       metadataScale: 1.06,
       lyricsMaxWidth: 940,
       spacingScale: 1.05,
+      karaokeStyle: "gradient",
+      backgroundMode: "gradient",
     }
   ),
   builtInProfile(
@@ -142,6 +183,11 @@ export const BUILT_IN_NOW_PLAYING_PROFILES: readonly NowPlayingProfile[] = deepF
       controlsScale: 1.1,
       lyricsMaxWidth: 1160,
       spacingScale: 1.1,
+      karaokeStyle: "glow",
+      karaokeIntensity: 1,
+      activeWordScale: 1.16,
+      backgroundMode: "visualizer",
+      lyricTransition: "slide",
     }
   ),
   builtInProfile(
@@ -158,6 +204,11 @@ export const BUILT_IN_NOW_PLAYING_PROFILES: readonly NowPlayingProfile[] = deepF
       controlsScale: 0.9,
       lyricsMaxWidth: 920,
       spacingScale: 0.9,
+      karaokeStyle: "minimal",
+      karaokeIntensity: 0.3,
+      activeWordScale: 1,
+      backgroundMode: "solid",
+      lyricTransition: "fade",
     },
     {
       artworkScale: 0.78,
@@ -169,6 +220,11 @@ export const BUILT_IN_NOW_PLAYING_PROFILES: readonly NowPlayingProfile[] = deepF
       controlsScale: 0.88,
       lyricsMaxWidth: 900,
       spacingScale: 0.9,
+      karaokeStyle: "minimal",
+      karaokeIntensity: 0.3,
+      activeWordScale: 1,
+      backgroundMode: "solid",
+      lyricTransition: "fade",
     }
   ),
 ]);
@@ -180,6 +236,11 @@ export function createDefaultNowPlayingProfilesSettings(): NowPlayingProfilesSet
     version: NOW_PLAYING_PROFILES_VERSION,
     activeProfileId: DEFAULT_NOW_PLAYING_PROFILE_ID,
     customProfiles: [],
+    contextSwitching: {
+      enabled: false,
+      windowedProfileId: DEFAULT_NOW_PLAYING_PROFILE_ID,
+      fullscreenProfileId: DEFAULT_NOW_PLAYING_PROFILE_ID,
+    },
   };
 }
 
@@ -208,6 +269,50 @@ function cleanText(value: unknown, fallback: string, maxLength: number): string 
   const text = value.replace(/\s+/g, " ").trim().slice(0, maxLength).trim();
   return text || fallback;
 }
+
+function cleanEnum<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value)
+    ? (value as T)
+    : fallback;
+}
+
+function cleanBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+const FONT_IDS = new Set(FONT_OPTIONS.map(option => option.id));
+
+/** "" inherits the app font; unknown ids (newer builds, hand edits) degrade to inherit. */
+function cleanFontId(value: unknown): string {
+  return typeof value === "string" && FONT_IDS.has(value) ? value : "";
+}
+
+/** Only plain #rrggbb colors are ever persisted; anything else inherits the theme. */
+function cleanColor(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const color = value.trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(color) ? color : "";
+}
+
+const ARTWORK_SLOTS: readonly NowPlayingArtworkSlot[] = ["left", "right"];
+const METADATA_SLOTS: readonly NowPlayingMetadataSlot[] = ["artwork", "top"];
+const LYRICS_ALIGNMENTS: readonly NowPlayingLyricsAlignment[] = ["left", "center"];
+const KARAOKE_STYLES: readonly NowPlayingKaraokeStyle[] = [
+  "sweep",
+  "solid",
+  "gradient",
+  "glow",
+  "minimal",
+];
+const BACKGROUND_MODES: readonly NowPlayingBackgroundMode[] = [
+  "fluid",
+  "blurred-artwork",
+  "gradient",
+  "solid",
+  "particles",
+  "visualizer",
+];
+const LYRIC_TRANSITIONS: readonly NowPlayingLyricTransition[] = ["scale", "fade", "slide", "none"];
 
 export function normalizeNowPlayingProfileConfig(
   input: unknown,
@@ -238,6 +343,60 @@ export function normalizeNowPlayingProfileConfig(
       clampNumber(source.lyricsMaxWidth, fallback.lyricsMaxWidth, 640, 1280)
     ),
     spacingScale: clampNumber(source.spacingScale, fallback.spacingScale, 0.8, 1.25),
+    artworkSlot: cleanEnum(source.artworkSlot, ARTWORK_SLOTS, fallback.artworkSlot),
+    metadataSlot: cleanEnum(source.metadataSlot, METADATA_SLOTS, fallback.metadataSlot),
+    metadataVisible: cleanBoolean(source.metadataVisible, fallback.metadataVisible),
+    dockVisible: cleanBoolean(source.dockVisible, fallback.dockVisible),
+    controlsVisible: cleanBoolean(source.controlsVisible, fallback.controlsVisible),
+    lyricsAlignment: cleanEnum(
+      source.lyricsAlignment,
+      LYRICS_ALIGNMENTS,
+      fallback.lyricsAlignment
+    ),
+    fontId: cleanFontId(source.fontId),
+    translationFontId: cleanFontId(source.translationFontId),
+    romanizationFontId: cleanFontId(source.romanizationFontId),
+    lyricsWeight:
+      Number(source.lyricsWeight) === 0 || source.lyricsWeight === undefined
+        ? fallback.lyricsWeight
+        : Math.round(clampNumber(source.lyricsWeight, fallback.lyricsWeight, 300, 900) / 10) * 10,
+    lineSpacingScale: clampNumber(source.lineSpacingScale, fallback.lineSpacingScale, 0.85, 1.4),
+    letterSpacingEm: clampNumber(source.letterSpacingEm, fallback.letterSpacingEm, -0.02, 0.08),
+    activeColor: cleanColor(source.activeColor),
+    inactiveColor: cleanColor(source.inactiveColor),
+    inactiveOpacityScale: clampNumber(
+      source.inactiveOpacityScale,
+      fallback.inactiveOpacityScale,
+      0.4,
+      1.6
+    ),
+    activeLineScale: clampNumber(source.activeLineScale, fallback.activeLineScale, 0.9, 1.2),
+    inactiveBlurPx: clampNumber(source.inactiveBlurPx, fallback.inactiveBlurPx, 0, 6),
+    karaokeStyle: cleanEnum(source.karaokeStyle, KARAOKE_STYLES, fallback.karaokeStyle),
+    karaokeIntensity: clampNumber(source.karaokeIntensity, fallback.karaokeIntensity, 0, 1),
+    activeWordScale: clampNumber(source.activeWordScale, fallback.activeWordScale, 1, 1.2),
+    backgroundMode: cleanEnum(source.backgroundMode, BACKGROUND_MODES, fallback.backgroundMode),
+    backgroundIntensity: clampNumber(
+      source.backgroundIntensity,
+      fallback.backgroundIntensity,
+      0.2,
+      1
+    ),
+    backgroundBlurPx: clampNumber(source.backgroundBlurPx, fallback.backgroundBlurPx, 0, 60),
+    effectSpeed: clampNumber(source.effectSpeed, fallback.effectSpeed, 0.25, 2),
+    effectDensity: clampNumber(source.effectDensity, fallback.effectDensity, 0.25, 1.5),
+    lyricTransition: cleanEnum(
+      source.lyricTransition,
+      LYRIC_TRANSITIONS,
+      fallback.lyricTransition
+    ),
+    motionIntensity: clampNumber(source.motionIntensity, fallback.motionIntensity, 0, 1.5),
+    motionDurationScale: clampNumber(
+      source.motionDurationScale,
+      fallback.motionDurationScale,
+      0.5,
+      1.75
+    ),
   };
 }
 
@@ -283,10 +442,21 @@ export function normalizeNowPlayingProfilesSettings(
       ? requestedActiveId
       : DEFAULT_NOW_PLAYING_PROFILE_ID;
 
+  const rawContext = isRecord(input.contextSwitching) ? input.contextSwitching : {};
+  const contextId = (value: unknown) => {
+    const id = cleanProfileId(value);
+    return id && usedIds.has(id) ? id : activeProfileId;
+  };
+
   return {
     version: NOW_PLAYING_PROFILES_VERSION,
     activeProfileId,
     customProfiles,
+    contextSwitching: {
+      enabled: cleanBoolean(rawContext.enabled, false),
+      windowedProfileId: contextId(rawContext.windowedProfileId),
+      fullscreenProfileId: contextId(rawContext.fullscreenProfileId),
+    },
   };
 }
 
@@ -316,14 +486,86 @@ export function getActiveNowPlayingProfile(
   return getNowPlayingProfile(settings, settings?.activeProfileId);
 }
 
+/**
+ * The profile that actually drives a surface: the context-specific one when context
+ * switching is enabled, otherwise the single active profile. Always resolves to a
+ * valid profile, so the view never renders without one.
+ */
+export function getEffectiveNowPlayingProfile(
+  settings: NowPlayingProfilesSettings | null | undefined,
+  fullscreen: boolean
+): NowPlayingProfile {
+  const context = settings?.contextSwitching;
+  if (context?.enabled) {
+    return getNowPlayingProfile(
+      settings,
+      fullscreen ? context.fullscreenProfileId : context.windowedProfileId
+    );
+  }
+  return getActiveNowPlayingProfile(settings);
+}
+
 export function resolveNowPlayingProfileConfig(
   settings: NowPlayingProfilesSettings | null | undefined,
   fullscreen: boolean
 ): NowPlayingProfileConfig {
-  const profile = getActiveNowPlayingProfile(settings);
+  const profile = getEffectiveNowPlayingProfile(settings, fullscreen);
   return fullscreen ? profile.fullscreen : profile.windowed;
 }
 
 export function cloneNowPlayingProfile(profile: NowPlayingProfile): NowPlayingProfile {
   return structuredClone(profile);
+}
+
+/** Collision-resistant-enough id for a user profile; uniqueness is enforced on save. */
+export function createCustomNowPlayingProfileId(): string {
+  return `custom-${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffffff).toString(36)}`;
+}
+
+/* ------------------------------------------------------------- import / export */
+
+export const NOW_PLAYING_PROFILE_EXPORT_KIND = "cadence-now-playing-profile";
+
+/** Versioned envelope so a pasted settings blob or foreign JSON is rejected, not guessed at. */
+export function serializeNowPlayingProfile(profile: NowPlayingProfile): string {
+  const { builtIn: _builtIn, ...rest } = cloneNowPlayingProfile(profile);
+  return JSON.stringify(
+    { kind: NOW_PLAYING_PROFILE_EXPORT_KIND, version: NOW_PLAYING_PROFILES_VERSION, profile: rest },
+    null,
+    2
+  );
+}
+
+export type NowPlayingProfileParseResult =
+  | { ok: true; profile: NowPlayingProfile }
+  | { ok: false; error: string };
+
+/**
+ * Parses an exported profile. The payload is data only: it is normalized field by field
+ * (unknown fields dropped, numbers clamped, enums checked) and never evaluated.
+ */
+export function parseNowPlayingProfileJson(text: string): NowPlayingProfileParseResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { ok: false, error: "That is not valid JSON." };
+  }
+  if (!isRecord(parsed)) return { ok: false, error: "Expected a Cadence profile file." };
+  if (parsed.kind !== NOW_PLAYING_PROFILE_EXPORT_KIND) {
+    return { ok: false, error: "That JSON is not a Cadence Now Playing profile." };
+  }
+  const version = Number(parsed.version);
+  if (!Number.isFinite(version) || version < 1) {
+    return { ok: false, error: "This profile file has no readable version." };
+  }
+  if (version > NOW_PLAYING_PROFILES_VERSION) {
+    return {
+      ok: false,
+      error: `This profile was made by a newer Cadence (format v${version}). Update Cadence to import it.`,
+    };
+  }
+  const profile = normalizeNowPlayingProfile(parsed.profile, false);
+  if (!profile) return { ok: false, error: "The profile inside this file is missing or invalid." };
+  return { ok: true, profile };
 }

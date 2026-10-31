@@ -478,6 +478,7 @@ const profileProbe = () =>
     return {
       profileId: view?.dataset.nowPlayingProfile ?? "",
       profileMode: view?.dataset.profileMode ?? "",
+      backgroundMode: view?.dataset.profileBackground ?? "",
       profileButtonTitle: button?.title ?? "",
       profileButtonExpanded: button?.getAttribute("aria-expanded") ?? "",
       switcherPresent: Boolean(
@@ -715,6 +716,118 @@ const profileArtworkWindowed = await profileProbe();
 await selectNowPlayingProfile("balanced");
 const profileBalancedRestored = await profileProbe();
 
+/* 9. Customization Studio. Balanced must open read-only; Duplicate creates the
+   editable copy; slider/select edits preview live on the same tree; Save persists
+   the custom profile through the real settings store. React controlled inputs are
+   driven with the native value setter, the standard way to synthesize real input. */
+const setControlValue = async (selector: string, value: string) => {
+  await page.$eval(selector, (node, next) => {
+    const element = node as HTMLInputElement | HTMLSelectElement;
+    const proto =
+      element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    setter?.call(element, next);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  }, value);
+};
+
+const studioBefore = await profileProbe();
+await page.click('[data-testid="customize-now-playing"]');
+await page.waitForSelector('[data-testid="customization-studio"]', { timeout: 10_000 });
+await wait(450);
+await shot("17-studio-builtin-readonly");
+const studioBuiltIn = await page.evaluate(() => ({
+  savePresent: Boolean(document.querySelector('[data-testid="studio-save"]')),
+  profileRows: document.querySelectorAll(".studio-profile-row").length,
+  profileListHeight:
+    document.querySelector(".studio-profiles")?.getBoundingClientRect().height ?? 0,
+  lyricsScaleDisabled:
+    document.querySelector('[data-testid="studio-lyrics-scale"]')?.matches(":disabled") ?? null,
+  protectedNote:
+    document
+      .querySelector('[data-testid="customization-studio"]')
+      ?.textContent?.includes("Built-in (protected)") ?? false,
+}));
+
+await page.click('[data-testid="studio-duplicate"]');
+await wait(350);
+await setControlValue('[data-testid="studio-lyrics-scale"]', "1.3");
+await wait(600);
+const studioPreview = await profileProbe();
+
+await setControlValue('[data-testid="studio-background-mode"]', "solid");
+await wait(450);
+await shot("18-studio-custom-preview");
+const studioCustomPreview = await profileProbe();
+
+await page.click('[data-testid="studio-save"]');
+await page.waitForFunction(
+  () => !document.querySelector('[data-testid="customization-studio"]'),
+  { timeout: 10_000 }
+);
+await wait(700);
+const studioSaved = await profileProbe();
+const studioSavedSettings = await page.evaluate(async () => {
+  const cadence = (
+    window as unknown as {
+      cadence: { settings: { get: () => Promise<{ nowPlayingProfiles: unknown }> } };
+    }
+  ).cadence;
+  const settings = await cadence.settings.get();
+  const profiles = settings.nowPlayingProfiles as {
+    activeProfileId: string;
+    customProfiles: {
+      id: string;
+      name: string;
+      windowed: { backgroundMode: string; lyricsScale: number };
+    }[];
+  };
+  return {
+    activeProfileId: profiles.activeProfileId,
+    customs: profiles.customProfiles.map(profile => ({
+      id: profile.id,
+      name: profile.name,
+      backgroundMode: profile.windowed.backgroundMode,
+      lyricsScale: profile.windowed.lyricsScale,
+    })),
+  };
+});
+await selectNowPlayingProfile("balanced");
+const studioRestored = await profileProbe();
+
+/* 10. Fullscreen surface: per-profile backgrounds and the Studio itself. Lyrics
+   Focus ships blurred artwork, Immersive the (opt-in) canvas visualizer; both must
+   mount over the shared tree without disturbing playback or the active line. */
+await enterFullscreen();
+await page.setViewport({ width: 1920, height: 1080 });
+await wait(500);
+await selectNowPlayingProfile("lyrics-focus");
+await wait(600);
+await shot("19-fullscreen-blurred-background");
+const fullscreenParticles = await profileProbe();
+
+await selectNowPlayingProfile("immersive");
+await wait(600);
+await shot("20-fullscreen-visualizer-background");
+const fullscreenVisualizer = await profileProbe();
+
+await page.click('[data-testid="customize-now-playing"]');
+await page.waitForSelector('[data-testid="customization-studio"]', { timeout: 10_000 });
+await wait(450);
+await shot("21-fullscreen-studio");
+const fullscreenStudioOpen = await page.evaluate(
+  () => Boolean(document.querySelector('[data-testid="customization-studio"]'))
+);
+await page.mouse.click(30, 30);
+await page.waitForFunction(
+  () => !document.querySelector('[data-testid="customization-studio"]'),
+  { timeout: 10_000 }
+);
+await selectNowPlayingProfile("balanced");
+await exitFullscreen();
+const fullscreenEffectsRestored = await profileProbe();
+
 const playbackAfterResponsive = await page.evaluate(() => {
   const audio = document.querySelector("audio");
   return audio ? { currentTime: audio.currentTime, paused: audio.paused, src: audio.currentSrc } : null;
@@ -747,6 +860,17 @@ console.log(
       profileArtworkFocus,
       profileArtworkWindowed,
       profileBalancedRestored,
+      studioBefore,
+      studioBuiltIn,
+      studioPreview,
+      studioCustomPreview,
+      studioSaved,
+      studioSavedSettings,
+      studioRestored,
+      fullscreenParticles,
+      fullscreenVisualizer,
+      fullscreenStudioOpen,
+      fullscreenEffectsRestored,
       playbackBeforeResponsive,
       playbackAfterResponsive,
     },
@@ -1007,6 +1131,69 @@ check(
       ) <= 2
   ),
   `restored lyric/title/host ${profileBalancedRestored.lyricFontPx}/${profileBalancedRestored.titleFontPx}/${profileBalancedRestored.hostWidth} reference ${responsive1920Windowed.lyricFontPx}/${responsive1920Windowed.titleFontPx}/${responsive1920Windowed.host?.width}`
+);
+
+check(
+  "studio-opens-builtin-readonly",
+  Boolean(
+    studioBuiltIn.savePresent &&
+      studioBuiltIn.profileRows === 5 &&
+      studioBuiltIn.profileListHeight > 100 &&
+      studioBuiltIn.lyricsScaleDisabled === true &&
+      studioBuiltIn.protectedNote
+  ),
+  JSON.stringify(studioBuiltIn)
+);
+check(
+  "studio-duplicate-previews-live-on-shared-tree",
+  Boolean(
+    studioPreview.profileId.startsWith("custom-") &&
+      studioPreview.lyricFontPx > studioBefore.lyricFontPx + 10 &&
+      studioPreview.audio?.src === studioBefore.audio?.src &&
+      studioPreview.audio?.paused === studioBefore.audio?.paused &&
+      Math.abs((studioPreview.audio?.currentTime ?? 0) - (studioBefore.audio?.currentTime ?? 0)) < 0.05 &&
+      studioPreview.activeLineText === studioBefore.activeLineText
+  ),
+  `before ${studioBefore.profileId}/${studioBefore.lyricFontPx}px preview ${studioPreview.profileId}/${studioPreview.lyricFontPx}px`
+);
+check(
+  "studio-background-preview-applies",
+  studioCustomPreview.backgroundMode === "solid",
+  `background ${studioCustomPreview.backgroundMode}`
+);
+check(
+  "studio-save-persists-custom-profile",
+  Boolean(
+    studioSavedSettings.activeProfileId === studioSaved.profileId &&
+      studioSavedSettings.customs.length === 1 &&
+      studioSavedSettings.customs[0].backgroundMode === "solid" &&
+      Math.abs(studioSavedSettings.customs[0].lyricsScale - 1.3) < 0.001 &&
+      Math.abs(studioSaved.lyricFontPx - studioPreview.lyricFontPx) <= 0.2
+  ),
+  JSON.stringify(studioSavedSettings)
+);
+check(
+  "studio-custom-can-switch-back-to-balanced",
+  Boolean(
+    studioRestored.profileId === "balanced" &&
+      Math.abs(studioRestored.lyricFontPx - studioBefore.lyricFontPx) <= 0.2 &&
+      studioRestored.backgroundMode === "fluid"
+  ),
+  `restored ${studioRestored.profileId}/${studioRestored.lyricFontPx}px/${studioRestored.backgroundMode}`
+);
+check(
+  "fullscreen-canvas-backgrounds-and-studio",
+  Boolean(
+    fullscreenParticles.backgroundMode === "blurred-artwork" &&
+      fullscreenParticles.profileMode === "fullscreen" &&
+      fullscreenVisualizer.backgroundMode === "visualizer" &&
+      fullscreenStudioOpen &&
+      fullscreenEffectsRestored.profileId === "balanced" &&
+      fullscreenEffectsRestored.backgroundMode === "fluid" &&
+      fullscreenVisualizer.audio?.src === fullscreenParticles.audio?.src &&
+      fullscreenVisualizer.activeLineText === fullscreenParticles.activeLineText
+  ),
+  `blurred ${fullscreenParticles.backgroundMode} visualizer ${fullscreenVisualizer.backgroundMode} studio ${fullscreenStudioOpen} restored ${fullscreenEffectsRestored.backgroundMode}`
 );
 
 const failures = Object.entries(results).filter(([, entry]) => !entry.value);

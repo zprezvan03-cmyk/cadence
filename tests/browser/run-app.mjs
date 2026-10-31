@@ -1260,6 +1260,9 @@ const motionOf = async box => {
   // motion measurement. A static/black control still has no window that can pass the thresholds.
   let strongest = null;
   for (let sample = 0; sample < 3; sample += 1) {
+    // Keep the cursor over the controls so the idle-conceal fade cannot fire mid-sample:
+    // a fade during the black-fill baseline reveals the moving shader and contaminates it.
+    await page.mouse.move(box.x + box.width / 2, box.y + 6);
     const first = PNG.sync.read(await page.screenshot({ clip: box }));
     await wait(800);
     const second = PNG.sync.read(await page.screenshot({ clip: box }));
@@ -1289,6 +1292,13 @@ const hideContents = hidden => page.evaluate(value => {
   for (const child of node.children) child.style.visibility = value ? "hidden" : "";
 }, hidden);
 await hideContents(true);
+// Pin the bar visible with no fade for the whole measurement: an idle-conceal (or re-show)
+// transition inside a sample window swamps the backdrop signal this check exists to measure.
+await page.evaluate(() => {
+  const node = document.querySelector('[data-testid="fullscreen-controls"]');
+  node.style.opacity = "1";
+  node.style.transition = "none";
+});
 const glassMotion = await motionOf(fsBox);
 await page.evaluate(() => {
   const node = document.querySelector('[data-testid="fullscreen-controls"]');
@@ -1300,6 +1310,8 @@ await page.evaluate(() => {
   const node = document.querySelector('[data-testid="fullscreen-controls"]');
   node.style.background = "";
   node.style.backdropFilter = "";
+  node.style.opacity = "";
+  node.style.transition = "";
 });
 await hideContents(false);
 check(

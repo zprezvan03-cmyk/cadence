@@ -103,14 +103,26 @@ ${settings.hideInstrumentalOnly ? "/* blyrics-hide-instrumental-only = true; */"
 ${settings.showCredits ? "" : "/* blyrics-hide-credits = true; */"}
 .blyrics-container {
   --blyrics-font-size: var(--np-lyrics-font-size, ${fontSize}rem);
-  --blyrics-font-weight: ${fontWeight};
-  --blyrics-line-height: ${lineHeight};
+  --blyrics-font-weight: var(--np-lyrics-weight, ${fontWeight});
+  --blyrics-line-height: calc(${lineHeight} * var(--np-line-spacing-scale, 1));
   --blyrics-active-opacity: ${activeOpacity};
-  --blyrics-inactive-opacity: ${inactiveOpacity};
+  --blyrics-inactive-opacity: calc(${inactiveOpacity} * var(--np-inactive-opacity-scale, 1));
   --blyrics-translated-font-size: var(--np-translation-font-size, ${translationFontSizePx}px);
+  --blyrics-active-scale: var(--np-active-line-scale, 1);
+  --blyrics-scale: var(--np-line-scale, 0.95);
+  --blyrics-transition-duration: var(--np-motion-duration, 0.166s);
+  --blyrics-line-enter-transform-from: var(--np-line-enter-from, scale(var(--blyrics-scale)));
+  --blyrics-line-exit-transform-to: var(--np-line-exit-to, scale(var(--blyrics-scale)));
+  --blyrics-animate-highlight-swipe: var(--np-karaoke-swipe, 1);
+  --blyrics-animate-highlight-glow: var(--np-karaoke-glow, 1);
+  --blyrics-animate-highlight-fade: var(--np-karaoke-fade, 1);
+  --blyrics-highlight-glow-radius-from: var(--np-karaoke-glow-radius, 0.8rem);
+  --blyrics-letter-wave-emphasis-scale: var(--np-active-word-scale, 1.11);
+  letter-spacing: var(--np-letter-spacing, 0em);
 }
 .blyrics-container .blyrics--romanized {
   font-size: var(--np-romanization-font-size, ${romanizationFontSizePx}px);
+  font-family: var(--np-romanization-font, var(--blyrics-translated-font-family, var(--blyrics-font-family, var(--blyrics-default-font-family))));
 }
 `.trim();
 }
