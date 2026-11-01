@@ -3,8 +3,14 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Clock3, Mic2, Play, Plus, Search, Shuffle, Trash2, X } from "lucide-react";
-import type { Playlist, Track } from "../../../shared/types";
+import { ArrowLeft, Clock3, Mic2, Play, Plus, Search, Shuffle, Sparkles, Trash2, X } from "lucide-react";
+import type { Playlist, SmartPlaylistPreset, SmartPlaylistRule, Track } from "../../../shared/types";
+import {
+  SMART_PLAYLIST_PRESETS,
+  describeSmartPlaylistRule,
+  evaluateSmartPlaylist,
+  normalizeSmartPlaylistRule,
+} from "../../../shared/smartPlaylists";
 import { useLibrary } from "../../state/libraryStore";
 import { usePlayer } from "../../state/playerStore";
 import { useUi } from "../../state/uiStore";
@@ -239,6 +245,8 @@ export function PlaylistView({ playlistId }: { playlistId: number }) {
   const removeFromPlaylist = useLibrary(state => state.removeFromPlaylist);
   const renamePlaylist = useLibrary(state => state.renamePlaylist);
   const addToPlaylist = useLibrary(state => state.addToPlaylist);
+  const updateSmartPlaylist = useLibrary(state => state.updateSmartPlaylist);
+  const showToast = useUi(state => state.showToast);
   const playQueue = usePlayer(state => state.playQueue);
   const playShuffled = usePlayer(state => state.playShuffled);
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -246,6 +254,10 @@ export function PlaylistView({ playlistId }: { playlistId: number }) {
   const addingPresence = usePresence(adding);
   const [addQuery, setAddQuery] = useState("");
   const [editing, setEditing] = useState(false);
+  const [editingRule, setEditingRule] = useState(false);
+  const [rulePreset, setRulePreset] = useState<SmartPlaylistPreset>("most-played");
+  const [ruleValue, setRuleValue] = useState("");
+  const [ruleLimit, setRuleLimit] = useState("100");
   const playlist = snapshot?.playlists.find((entry: Playlist) => entry.id === playlistId);
 
   useEffect(() => {
@@ -256,7 +268,7 @@ export function PlaylistView({ playlistId }: { playlistId: number }) {
     return () => {
       cancelled = true;
     };
-  }, [playlistId, snapshot?.playlists]);
+  }, [playlistId, snapshot?.playlists, snapshot?.tracks]);
 
   const candidates = useMemo(() => {
     const needle = addQuery.trim().toLocaleLowerCase();
@@ -267,21 +279,52 @@ export function PlaylistView({ playlistId }: { playlistId: number }) {
       .slice(0, 40);
   }, [snapshot?.tracks, tracks, addQuery]);
 
+  const smartRule = playlist?.smart ? normalizeSmartPlaylistRule(playlist.smart) : null;
+  const isSmart = Boolean(smartRule);
+  const rulePresetInfo = SMART_PLAYLIST_PRESETS[rulePreset];
+  const normalizedEditedRule = useMemo(() => {
+    const rule: SmartPlaylistRule = { preset: rulePreset };
+    if (SMART_PLAYLIST_PRESETS[rulePreset].needsValue) rule.value = ruleValue.trim();
+    const limit = Number(ruleLimit);
+    if (ruleLimit && Number.isFinite(limit)) rule.limit = limit;
+    return normalizeSmartPlaylistRule(rule);
+  }, [ruleLimit, rulePreset, ruleValue]);
+  const editedRulePreviewCount = useMemo(
+    () =>
+      normalizedEditedRule
+        ? evaluateSmartPlaylist(snapshot?.tracks ?? [], normalizedEditedRule).length
+        : null,
+    [normalizedEditedRule, snapshot?.tracks],
+  );
+  const openRuleEditor = () => {
+    if (!smartRule) return;
+    setRulePreset(smartRule.preset);
+    setRuleValue(smartRule.value ?? "");
+    setRuleLimit(smartRule.limit?.toString() ?? "");
+    setEditingRule(true);
+  };
+
   if (!playlist) return <div className="empty-state">Playlist not found.</div>;
 
   return (
     <div className="view detail-view">
       <Hero
         artworkUrl={playlist.artworkUrl}
-        eyebrow="Playlist"
+        eyebrow={isSmart ? "Smart playlist" : "Playlist"}
         title={playlist.name}
-        meta={`${playlist.trackCount} songs · ${formatTime(playlist.duration)}`}
+        meta={`${playlist.trackCount} songs · ${formatTime(playlist.duration)}${smartRule ? ` · ${describeSmartPlaylistRule(smartRule)}` : ""}`}
         onPlay={() => void playQueue(tracks.map(track => track.id), 0)}
         onShuffle={() => void playShuffled(tracks.map(track => track.id), Math.floor(Math.random() * Math.max(1, tracks.length)))}
       >
-        <button type="button" onClick={() => setAdding(true)}>
-          <Plus size={16} /> Add songs
-        </button>
+        {isSmart ? (
+          <button type="button" data-testid="edit-smart-rule" onClick={openRuleEditor}>
+            <Sparkles size={16} /> Edit rule
+          </button>
+        ) : (
+          <button type="button" onClick={() => setAdding(true)}>
+            <Plus size={16} /> Add songs
+          </button>
+        )}
         <button type="button" onClick={() => setEditing(true)}>
           Rename
         </button>
@@ -308,18 +351,107 @@ export function PlaylistView({ playlistId }: { playlistId: number }) {
         </form>
       ) : null}
 
+      {smartRule && !editingRule ? (
+        <div className="smart-rule-banner" data-testid="smart-rule-banner">
+          <div>
+            <strong>{describeSmartPlaylistRule(smartRule)}</strong>
+            <p>This playlist updates itself from your library, so songs can’t be added or removed by hand.</p>
+          </div>
+          <button type="button" onClick={openRuleEditor}>
+            <Sparkles size={15} /> Edit rule
+          </button>
+        </div>
+      ) : null}
+
+      {smartRule && editingRule ? (
+        <form
+          className="smart-playlist-form"
+          data-testid="smart-rule-form"
+          onSubmit={async event => {
+            event.preventDefault();
+            if (!normalizedEditedRule) {
+              showToast(`Enter a ${rulePresetInfo.valueLabel.toLowerCase()} for that rule.`);
+              return;
+            }
+            await updateSmartPlaylist(playlist.id, normalizedEditedRule);
+            setEditingRule(false);
+            showToast("Smart playlist updated");
+          }}
+        >
+          <div className="smart-playlist-fields">
+            <label className="field">
+              <span>Rule</span>
+              <select
+                value={rulePreset}
+                data-testid="smart-rule-preset"
+                onChange={event => setRulePreset(event.target.value as SmartPlaylistPreset)}
+              >
+                {Object.entries(SMART_PLAYLIST_PRESETS).map(([preset, info]) => (
+                  <option key={preset} value={preset}>
+                    {info.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {rulePresetInfo.needsValue ? (
+              <label className="field">
+                <span>{rulePresetInfo.valueLabel}</span>
+                <input
+                  value={ruleValue}
+                  placeholder={rulePresetInfo.valueLabel}
+                  data-testid="smart-rule-value"
+                  onChange={event => setRuleValue(event.target.value)}
+                />
+              </label>
+            ) : null}
+            <label className="field">
+              <span>Limit</span>
+              <select
+                value={ruleLimit}
+                data-testid="smart-rule-limit"
+                onChange={event => setRuleLimit(event.target.value)}
+              >
+                <option value="25">25 songs</option>
+                <option value="50">50 songs</option>
+                <option value="100">100 songs</option>
+                <option value="250">250 songs</option>
+                <option value="">No limit</option>
+              </select>
+            </label>
+          </div>
+          <p className="muted" data-testid="smart-rule-preview">
+            {rulePresetInfo.description}{" "}
+            {editedRulePreviewCount === null
+              ? `Enter a ${rulePresetInfo.valueLabel.toLowerCase()} to preview it.`
+              : `${editedRulePreviewCount} song${editedRulePreviewCount === 1 ? "" : "s"} match right now.`}
+          </p>
+          <div className="heading-actions">
+            <button type="submit" className="primary" data-testid="smart-rule-save" disabled={!normalizedEditedRule}>
+              Save rule
+            </button>
+            <button type="button" onClick={() => setEditingRule(false)}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : null}
+
       <TrackList
         tracks={tracks}
-        onRemove={track => {
-          void removeFromPlaylist(playlist.id, track.id).then(() =>
-            setTracks(previous => previous.filter(candidate => candidate.id !== track.id))
-          );
-        }}
-        emptyMessage="This playlist is empty. Add some songs."
+        onRemove={
+          isSmart
+            ? undefined
+            : track => {
+                void removeFromPlaylist(playlist.id, track.id).then(() =>
+                  setTracks(previous => previous.filter(candidate => candidate.id !== track.id)),
+                );
+              }
+        }
+        emptyMessage={isSmart ? "No songs match this rule yet." : "This playlist is empty. Add some songs."}
         testId="playlist-track-list"
       />
 
-      {addingPresence.mounted ? (
+      {!isSmart && addingPresence.mounted ? (
         <div
           className={`modal-backdrop ${addingPresence.phaseClass}`}
           data-presence={addingPresence.phase}

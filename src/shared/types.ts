@@ -53,6 +53,51 @@ export interface Track {
   hasSidecarLyrics: boolean;
   /** True when this file has a supported audio extension; codec support is checked separately. */
   playable: boolean;
+  /** True when the user has edited this track's details in Cadence (see `metadataOverride`). */
+  metadataEdited?: boolean;
+  /**
+   * The user's saved edits for this track, plus the scanned file-tag values they replaced.
+   * Cadence re-applies `patch` after every rescan, so edits survive rescans without the
+   * audio file itself ever being modified. Null/absent when the track is unedited.
+   */
+  metadataOverride?: TrackMetadataOverride | null;
+}
+
+/** Editable text/number fields of a track, as patched by the user in the track editor. */
+export interface TrackMetadataEdit {
+  title?: string;
+  artist?: string;
+  albumArtist?: string;
+  album?: string;
+  genre?: string;
+  year?: number | null;
+  trackNo?: number | null;
+  discNo?: number | null;
+  /** Artwork file in Cadence's artwork cache; `null` means "explicitly no cover". */
+  artworkFile?: string | null;
+}
+
+/** A complete snapshot of a track's editable fields, as read from the audio file's tags. */
+export interface TrackMetadataSnapshot {
+  title: string;
+  artist: string;
+  albumArtist: string;
+  album: string;
+  genre: string;
+  year: number | null;
+  trackNo: number | null;
+  discNo: number | null;
+  artworkFile: string | null;
+}
+
+/**
+ * Durable per-track edit state: `patch` holds only the fields the user changed, and
+ * `original` holds the latest scanned tag values so "Reset to file tags" is always exact.
+ */
+export interface TrackMetadataOverride {
+  patch: TrackMetadataEdit;
+  original: TrackMetadataSnapshot;
+  updatedAt: number;
 }
 
 export interface Album {
@@ -75,6 +120,28 @@ export interface Artist {
   albumCount: number;
 }
 
+/** Built-in smart playlist rule kinds, evaluated live against the current library. */
+export type SmartPlaylistPreset =
+  | "favorites"
+  | "recently-added"
+  | "recently-played"
+  | "most-played"
+  | "never-played"
+  | "genre"
+  | "artist";
+
+/**
+ * A smart playlist rule. Smart playlists store no track list: membership is recomputed
+ * from the library every time the playlist is read, so it stays current on its own.
+ */
+export interface SmartPlaylistRule {
+  preset: SmartPlaylistPreset;
+  /** Genre or artist text for the `genre` / `artist` presets. */
+  value?: string;
+  /** Maximum number of tracks (after the preset's ordering); absent means no practical cap. */
+  limit?: number;
+}
+
 export interface Playlist {
   id: number;
   name: string;
@@ -85,6 +152,10 @@ export interface Playlist {
   duration: number;
   /** Artwork of the first track, used as the playlist cover. */
   artworkUrl: string | null;
+  /** `smart` playlists are rule-driven and cannot be edited track by track. */
+  kind?: "manual" | "smart";
+  /** The rule driving a smart playlist; null/absent for manual playlists. */
+  smart?: SmartPlaylistRule | null;
 }
 
 export interface ScanProgress {
@@ -668,12 +739,32 @@ export interface CadenceApi {
     getTrack(id: number): Promise<Track | null>;
     setFavorite(id: number, favorite: boolean): Promise<void>;
     recordPlay(id: number): Promise<void>;
+    /**
+     * Saves user edits to a track's details as a durable override that is re-applied after
+     * every rescan (the audio file itself is never modified). Resolves with the updated track.
+     */
+    updateTrackMetadata(id: number, edit: TrackMetadataEdit): Promise<Track | null>;
+    /** Discards all saved edits for a track, restoring the values scanned from its file tags. */
+    resetTrackMetadata(id: number): Promise<Track | null>;
+    /**
+     * Stores a user-chosen cover image for a track (saved into Cadence's artwork cache and
+     * kept across rescans). Resolves with the updated track.
+     */
+    setTrackArtwork(id: number, data: ArrayBuffer, mimeType: string): Promise<Track | null>;
+    /** Removes the track's cover in Cadence (kept across rescans until reset). */
+    removeTrackArtwork(id: number): Promise<Track | null>;
+    /** Drops only the artwork edit, so the cover scanned from the file shows again. */
+    resetTrackArtwork(id: number): Promise<Track | null>;
     onScanProgress(listener: (progress: ScanProgress) => void): () => void;
     onChanged(listener: () => void): () => void;
   };
   playlists: {
     list(): Promise<Playlist[]>;
     create(name: string, trackIds?: number[]): Promise<Playlist>;
+    /** Creates a rule-driven playlist whose membership is recomputed from the library. */
+    createSmart(name: string, rule: SmartPlaylistRule): Promise<Playlist>;
+    /** Replaces the rule of an existing smart playlist. */
+    updateSmart(id: number, rule: SmartPlaylistRule): Promise<void>;
     rename(id: number, name: string): Promise<void>;
     remove(id: number): Promise<void>;
     addTracks(id: number, trackIds: number[]): Promise<void>;

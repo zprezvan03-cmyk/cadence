@@ -10,6 +10,7 @@ import { useLibrary } from "./state/libraryStore";
 import { useOnboarding } from "./state/onboardingStore";
 import { useSettings } from "./state/settingsStore";
 import { PlaylistPicker } from "./app/PlaylistPicker";
+import { TrackEditor } from "./features/library/TrackEditor";
 import { Sidebar } from "./app/Sidebar";
 import { TopBar } from "./app/TopBar";
 import { useWindowChrome, WindowTitleBar } from "./app/WindowTitleBar";
@@ -166,6 +167,7 @@ export function App() {
       </main>
       <QueuePanel />
       <PlaylistPicker />
+      <TrackEditor />
       <AppToast />
       <Onboarding />
     </div>

@@ -23,6 +23,7 @@
  */
 
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import {
   createReadStream,
   existsSync,
@@ -145,6 +146,10 @@ const server = createServer(async (req, res) => {
     res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
     res.end(JSON.stringify(body));
   };
+  const sendTrack = (id: number) => {
+    const track = store.getTrack(id);
+    return sendJson(track ? store.toTrack(track) : null);
+  };
 
   if (url.pathname.startsWith("/api/")) {
     try {
@@ -185,6 +190,50 @@ const server = createServer(async (req, res) => {
           store.recordPlay(id);
           return sendJson({ ok: true });
         }
+        case "/api/library/updateTrackMetadata": {
+          const { id, edit } = (body ?? {}) as { id: number; edit: Parameters<typeof store.setTrackMetadata>[1] };
+          store.setTrackMetadata(id, edit);
+          return sendTrack(id);
+        }
+        case "/api/library/resetTrackMetadata": {
+          const { id } = (body ?? {}) as { id: number };
+          store.clearTrackMetadata(id);
+          return sendTrack(id);
+        }
+        case "/api/library/setTrackArtwork": {
+          const { id, dataBase64, mimeType } = (body ?? {}) as {
+            id: number;
+            dataBase64: string;
+            mimeType: string;
+          };
+          if (!store.getTrack(id)) return sendJson(null);
+          const bytes = Buffer.from(dataBase64, "base64");
+          const ext =
+            mimeType === "image/png"
+              ? ".png"
+              : mimeType === "image/webp"
+                ? ".webp"
+                : mimeType === "image/gif"
+                  ? ".gif"
+                  : mimeType === "image/bmp"
+                    ? ".bmp"
+                    : ".jpg";
+          const fileName = `${createHash("sha1").update(bytes).digest("hex")}${ext}`;
+          const target = join(artworkDir, fileName);
+          if (!existsSync(target)) writeFileSync(target, bytes);
+          store.setTrackArtwork(id, fileName);
+          return sendTrack(id);
+        }
+        case "/api/library/removeTrackArtwork": {
+          const { id } = (body ?? {}) as { id: number };
+          store.removeTrackArtwork(id);
+          return sendTrack(id);
+        }
+        case "/api/library/resetTrackArtwork": {
+          const { id } = (body ?? {}) as { id: number };
+          store.resetTrackArtwork(id);
+          return sendTrack(id);
+        }
         case "/api/history/add": {
           // Enforce the exact Tauri v2 IPC contract: { trackId, playedAt, payload }
           const args = (body ?? {}) as {
@@ -214,6 +263,64 @@ const server = createServer(async (req, res) => {
           }
           store.clearHistory();
           return sendJson({ ok: true });
+        case "/api/playlists/list":
+          return sendJson(store.getPlaylists());
+        case "/api/playlists/create": {
+          const { name, trackIds } = (body ?? {}) as { name: string; trackIds?: number[] };
+          return sendJson(store.createPlaylist(name, trackIds ?? []));
+        }
+        case "/api/playlists/createSmart": {
+          const { name, rule } = (body ?? {}) as {
+            name: string;
+            rule: Parameters<typeof store.createSmartPlaylist>[1];
+          };
+          const created = store.createSmartPlaylist(name, rule);
+          return created ? sendJson(created) : sendJson({ error: "Invalid smart playlist rule" }, 400);
+        }
+        case "/api/playlists/updateSmart": {
+          const { id, rule } = (body ?? {}) as {
+            id: number;
+            rule: Parameters<typeof store.updateSmartPlaylist>[1];
+          };
+          return store.updateSmartPlaylist(id, rule)
+            ? sendJson({ ok: true })
+            : sendJson({ error: "Invalid smart playlist rule" }, 400);
+        }
+        case "/api/playlists/rename": {
+          const { id, name } = (body ?? {}) as { id: number; name: string };
+          store.renamePlaylist(id, name);
+          return sendJson({ ok: true });
+        }
+        case "/api/playlists/remove": {
+          const { id } = (body ?? {}) as { id: number };
+          store.deletePlaylist(id);
+          return sendJson({ ok: true });
+        }
+        case "/api/playlists/addTracks": {
+          const { id, trackIds } = (body ?? {}) as { id: number; trackIds: number[] };
+          store.addTracksToPlaylist(id, trackIds);
+          return sendJson({ ok: true });
+        }
+        case "/api/playlists/removeTrack": {
+          const { id, trackId } = (body ?? {}) as { id: number; trackId: number };
+          store.removeTrackFromPlaylist(id, trackId);
+          return sendJson({ ok: true });
+        }
+        case "/api/playlists/reorder": {
+          const { id, trackIds } = (body ?? {}) as { id: number; trackIds: number[] };
+          store.reorderPlaylist(id, trackIds);
+          return sendJson({ ok: true });
+        }
+        case "/api/playlists/tracks": {
+          const { id } = (body ?? {}) as { id: number };
+          return sendJson(
+            store
+              .getPlaylistTrackIds(id)
+              .map(trackId => store.getTrack(trackId))
+              .filter(track => track !== null)
+              .map(track => store.toTrack(track)),
+          );
+        }
         case "/api/settings/get":
           return sendJson(settings.get());
         case "/api/settings/patch":
@@ -349,6 +456,19 @@ const launchAppPage = async (): Promise<Page> => {
         recordPlay: async (id: number) => {
           await call("/api/library/recordPlay", { id });
         },
+        updateTrackMetadata: (id: number, edit: unknown) =>
+          call("/api/library/updateTrackMetadata", { id, edit }),
+        resetTrackMetadata: (id: number) => call("/api/library/resetTrackMetadata", { id }),
+        setTrackArtwork: async (id: number, data: ArrayBuffer, mimeType: string) => {
+          const bytes = new Uint8Array(data);
+          let binary = "";
+          for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+            binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+          }
+          return call("/api/library/setTrackArtwork", { id, dataBase64: btoa(binary), mimeType });
+        },
+        removeTrackArtwork: (id: number) => call("/api/library/removeTrackArtwork", { id }),
+        resetTrackArtwork: (id: number) => call("/api/library/resetTrackArtwork", { id }),
         onScanProgress: () => () => {},
         onChanged: () => () => {},
       },
@@ -363,14 +483,29 @@ const launchAppPage = async (): Promise<Page> => {
         },
       },
       playlists: {
-        list: async () => [],
-        create: async () => ({}),
-        rename: async () => undefined,
-        remove: async () => undefined,
-        addTracks: async () => undefined,
-        removeTrack: async () => undefined,
-        reorder: async () => undefined,
-        tracks: async () => [],
+        list: () => call("/api/playlists/list"),
+        create: (name: string, trackIds: number[] = []) =>
+          call("/api/playlists/create", { name, trackIds }),
+        createSmart: (name: string, rule: unknown) => call("/api/playlists/createSmart", { name, rule }),
+        updateSmart: async (id: number, rule: unknown) => {
+          await call("/api/playlists/updateSmart", { id, rule });
+        },
+        rename: async (id: number, name: string) => {
+          await call("/api/playlists/rename", { id, name });
+        },
+        remove: async (id: number) => {
+          await call("/api/playlists/remove", { id });
+        },
+        addTracks: async (id: number, trackIds: number[]) => {
+          await call("/api/playlists/addTracks", { id, trackIds });
+        },
+        removeTrack: async (id: number, trackId: number) => {
+          await call("/api/playlists/removeTrack", { id, trackId });
+        },
+        reorder: async (id: number, trackIds: number[]) => {
+          await call("/api/playlists/reorder", { id, trackIds });
+        },
+        tracks: (id: number) => call("/api/playlists/tracks", { id }),
       },
       settings: {
         get: () => call("/api/settings/get"),
@@ -744,6 +879,180 @@ try {
       homeShelves.rediscover.includes("Fixture Opus") &&
       homeShelves.rediscover.includes("Fixture ALAC"),
     JSON.stringify(homeShelves),
+  );
+
+  /* =================================================================================
+   * Launch 6: Library tools. Edit a track's title + cover in the UI, force a real
+   * rescan and restart, then verify smart playlists and duplicate detection render.
+   * ================================================================================= */
+  const editedTitle = "Edited Fixture FLAC";
+  const flacBeforeEdit = store.getTracks().find(track => track.title === "Fixture FLAC")!;
+  const artworkBeforeEdit = flacBeforeEdit.artworkFile;
+  const coverPath = join(stateDir, "custom-cover.png");
+  writeFileSync(
+    coverPath,
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAwMCAO+ip1sAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  );
+
+  const openTrackEditorByTitle = async (title: string) => {
+    await clickNav(page, "Songs");
+    await page.waitForSelector('[data-testid="track-row"]', { timeout: 10_000 });
+    for (const row of await page.$$('[data-testid="track-row"]')) {
+      const text = await row.$eval(".title-text", node => node.textContent?.trim() ?? "").catch(() => "");
+      if (text !== title) continue;
+      const button = await row.$('button[aria-label="More actions"]');
+      if (!button) break;
+      await button.click();
+      await page.waitForSelector('[data-testid="track-edit-details"]', { timeout: 10_000 });
+      await page.click('[data-testid="track-edit-details"]');
+      await page.waitForSelector('[data-testid="track-editor"]', { timeout: 10_000 });
+      return;
+    }
+    throw new Error(`Could not open track editor for: ${title}`);
+  };
+
+  const replaceInputValue = async (selector: string, value: string) => {
+    await page.focus(selector);
+    await page.keyboard.down("Control");
+    await page.keyboard.press("KeyA");
+    await page.keyboard.up("Control");
+    await page.keyboard.press("Backspace");
+    await page.type(selector, value);
+  };
+
+  const saveTrackTitle = async (title: string) => {
+    await replaceInputValue('[data-testid="track-editor-title"]', title);
+    await page.click('[data-testid="track-editor-save"]');
+    await page
+      .waitForFunction(
+        (expected: string) =>
+          Array.from(document.querySelectorAll('[data-testid="track-row"] .title-text')).some(
+            el => el.textContent?.trim() === expected,
+          ),
+        { timeout: 10_000 },
+        title,
+      )
+      .catch(() => null);
+    await wait(250);
+  };
+
+  await openTrackEditorByTitle("Fixture FLAC");
+  const artworkInput = await page.$('[data-testid="track-editor-artwork-input"]');
+  await (
+    artworkInput as unknown as { uploadFile: (path: string) => Promise<void> } | null
+  )?.uploadFile(coverPath);
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    if (store.getTrack(flacBeforeEdit.id)?.artworkFile !== flacBeforeEdit.artworkFile) break;
+    await wait(100);
+  }
+  const artworkAfterUpload = store.getTrack(flacBeforeEdit.id)?.artworkFile ?? null;
+  await replaceInputValue('[data-testid="track-editor-title"]', editedTitle);
+  await page.screenshot({ path: join(shotDir, "07-launch6-track-editor.png") });
+  await page.click('[data-testid="track-editor-save"]');
+  await page
+    .waitForFunction(
+      (expected: string) =>
+        Array.from(document.querySelectorAll('[data-testid="track-row"] .title-text')).some(
+          el => el.textContent?.trim() === expected,
+        ),
+      { timeout: 10_000 },
+      editedTitle,
+    )
+    .catch(() => null);
+  await wait(250);
+  check(
+    "launch6-track-editor-saves-metadata-and-artwork",
+    store.getTrack(flacBeforeEdit.id)?.title === editedTitle &&
+      artworkAfterUpload !== null &&
+      artworkAfterUpload.endsWith(".png") &&
+      artworkAfterUpload !== artworkBeforeEdit,
+    `title=${store.getTrack(flacBeforeEdit.id)?.title}, artwork=${artworkAfterUpload}`,
+  );
+
+  // Close completely, force a genuine rescan of the files on disk, and relaunch: the
+  // Cadence edit must still win over the file tags the scanner reads again.
+  await page.close();
+  await scanLibrary(store, { folders: [audioDir], force: true });
+  restartBackend("1.0.1");
+  page = await launchAppPage();
+  await clickNav(page, "Songs");
+  await page.waitForSelector('[data-testid="track-row"]', { timeout: 10_000 });
+  const titlesAfterRescan = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('[data-testid="track-row"] .title-text')).map(
+      el => el.textContent?.trim() ?? "",
+    ),
+  );
+  check(
+    "launch6-metadata-edit-survives-force-rescan-and-restart",
+    titlesAfterRescan.includes(editedTitle) && !titlesAfterRescan.includes("Fixture FLAC"),
+    JSON.stringify(titlesAfterRescan),
+  );
+
+  await clickNav(page, "Playlists");
+  await page.click('[data-testid="new-smart-playlist"]');
+  await page.waitForSelector('[data-testid="smart-playlist-form"]', { timeout: 10_000 });
+  const smartPreviewText = await page.$eval(
+    '[data-testid="smart-playlist-preview"]',
+    el => el.textContent?.replace(/\s+/g, " ").trim() ?? "",
+  );
+  await page.type('[data-testid="smart-playlist-name"]', "Most played check");
+  await page.click('[data-testid="smart-playlist-form"] button[type="submit"]');
+  await page.waitForSelector('[data-testid="smart-rule-banner"]', { timeout: 10_000 });
+  const smartBannerText = await page.$eval(
+    '[data-testid="smart-rule-banner"]',
+    el => el.textContent?.replace(/\s+/g, " ").trim() ?? "",
+  );
+  const smartTrackTitles = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('[data-testid="playlist-track-list"] .title-text')).map(
+      el => el.textContent?.trim() ?? "",
+    ),
+  );
+  await page.screenshot({ path: join(shotDir, "08-launch6-smart-playlist.png") });
+  check(
+    "launch6-smart-playlist-renders-live-membership",
+    smartPreviewText.includes("match right now") &&
+      smartBannerText.includes("Most played") &&
+      smartTrackTitles[0] === editedTitle,
+    `preview=${smartPreviewText}; tracks=${JSON.stringify(smartTrackTitles)}`,
+  );
+
+  // Give a second fixture the same title/artist so the duplicate finder has a real pair
+  // (the fixture files share artist and near-identical lengths by construction).
+  await openTrackEditorByTitle("Fixture MP3");
+  await saveTrackTitle(editedTitle);
+  await clickNav(page, "Songs");
+  await page.click('[data-testid="find-duplicates"]');
+  await page.waitForSelector('[data-testid="duplicate-group"]', { timeout: 10_000 });
+  const duplicatePanel = await page.evaluate(() => ({
+    text: document.querySelector('[data-testid="duplicates-panel"]')?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+    paths: Array.from(document.querySelectorAll('[data-testid="duplicate-track"] .duplicate-track-copy em')).map(
+      el => el.textContent?.trim() ?? "",
+    ),
+  }));
+  await page.screenshot({ path: join(shotDir, "09-launch6-duplicates.png") });
+  check(
+    "launch6-duplicates-panel-groups-the-pair-with-a-keeper",
+    duplicatePanel.text.includes("Recommended keeper") &&
+      duplicatePanel.paths.some(path => path.endsWith("fixture.flac")) &&
+      duplicatePanel.paths.some(path => path.endsWith("fixture.mp3")),
+    JSON.stringify(duplicatePanel.paths),
+  );
+
+  await page.click('[data-testid="duplicate-review-all"]');
+  await page.waitForSelector('[data-testid="playlist-track-list"]', { timeout: 10_000 }).catch(() => null);
+  await wait(400);
+  const reviewTitles = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('[data-testid="playlist-track-list"] .title-text')).map(
+      el => el.textContent?.trim() ?? "",
+    ),
+  );
+  check(
+    "launch6-duplicate-review-playlist-opens-with-both-copies",
+    reviewTitles.length >= 2 && reviewTitles.every(title => title === editedTitle),
+    JSON.stringify(reviewTitles),
   );
 
   await page.close();

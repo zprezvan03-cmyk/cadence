@@ -380,6 +380,18 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
     }
   );
 
+  /** Saves cover bytes into the artwork cache under their content hash; returns the file name. */
+  const saveArtworkBytes = async (data: Uint8Array, format: string): Promise<string> => {
+    const hash = await sha1Hex(data);
+    const ext = artworkExtensionForMime(format);
+    const fileName = `${hash}${ext}`;
+    // Raw IPC avoids a second JS number array and JSON string for every cover image.
+    await invoke<string>("cmd_save_artwork", data, {
+      headers: { "x-file-name": fileName },
+    });
+    return fileName;
+  };
+
   // Scanner host I/O backed by binary `cmd_read_file_chunk` + `RangeTokenizer`
   const parseWalkedAudioFile = (file: WalkedAudioFile) =>
     readTrackMetadataCore(file.path, {
@@ -395,16 +407,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         if (res instanceof ArrayBuffer) return new Uint8Array(res);
         return Uint8Array.from(res);
       },
-      saveArtwork: async (data, format) => {
-        const hash = await sha1Hex(data);
-        const ext = artworkExtensionForMime(format);
-        const fileName = `${hash}${ext}`;
-        // Raw IPC avoids a second JS number array and JSON string for every embedded cover.
-        await invoke<string>("cmd_save_artwork", data, {
-          headers: { "x-file-name": fileName },
-        });
-        return fileName;
-      },
+      saveArtwork: saveArtworkBytes,
       fileExists: candidate => {
         if (file.animatedArtPath && candidate.toLowerCase() === file.animatedArtPath.toLowerCase()) {
           return true;
@@ -490,7 +493,8 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         store.upsertTrack({
           ...parsed,
           hasEmbeddedLyrics: parsed.embeddedLyrics !== null,
-          artworkFile: parsed.artworkFile ?? existing?.artworkFile ?? null,
+          artworkFile:
+            parsed.artworkFile ?? existing?.metadataOverride?.original.artworkFile ?? existing?.artworkFile ?? null,
           animatedArtPath: parsed.animatedArtPath ?? existing?.animatedArtPath ?? null,
           accentColor: existing?.accentColor ?? null,
         });
@@ -651,6 +655,53 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         await flushDbQueue();
       },
 
+      async updateTrackMetadata(id, edit) {
+        store.setTrackMetadata(id, edit);
+        await flushDbQueue();
+        emitLibraryChanged();
+        const stored = store.getTrack(id);
+        return stored ? store.toTrack(stored) : null;
+      },
+
+      async resetTrackMetadata(id) {
+        store.clearTrackMetadata(id);
+        await flushDbQueue();
+        emitLibraryChanged();
+        const stored = store.getTrack(id);
+        return stored ? store.toTrack(stored) : null;
+      },
+
+      async setTrackArtwork(id, data, mimeType) {
+        if (!store.getTrack(id)) return null;
+        const bytes = new Uint8Array(data);
+        if (bytes.byteLength === 0) throw new Error("That image file is empty.");
+        if (!mimeType.toLowerCase().startsWith("image/")) {
+          throw new Error("Choose an image file for the cover.");
+        }
+        const fileName = await saveArtworkBytes(bytes, mimeType);
+        store.setTrackArtwork(id, fileName);
+        await flushDbQueue();
+        emitLibraryChanged();
+        const stored = store.getTrack(id);
+        return stored ? store.toTrack(stored) : null;
+      },
+
+      async removeTrackArtwork(id) {
+        store.removeTrackArtwork(id);
+        await flushDbQueue();
+        emitLibraryChanged();
+        const stored = store.getTrack(id);
+        return stored ? store.toTrack(stored) : null;
+      },
+
+      async resetTrackArtwork(id) {
+        store.resetTrackArtwork(id);
+        await flushDbQueue();
+        emitLibraryChanged();
+        const stored = store.getTrack(id);
+        return stored ? store.toTrack(stored) : null;
+      },
+
       onScanProgress(listener: (progress: ScanProgress) => void): () => void {
         progressListeners.add(listener);
         return () => {
@@ -703,6 +754,20 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         await flushDbQueue();
         emitLibraryChanged();
         return created;
+      },
+      async createSmart(name, rule) {
+        const created = store.createSmartPlaylist(name, rule);
+        if (!created) throw new Error("That smart playlist needs a genre or artist to match.");
+        await flushDbQueue();
+        emitLibraryChanged();
+        return created;
+      },
+      async updateSmart(id, rule) {
+        if (!store.updateSmartPlaylist(id, rule)) {
+          throw new Error("That smart playlist needs a genre or artist to match.");
+        }
+        await flushDbQueue();
+        emitLibraryChanged();
       },
       async rename(id: number, name: string) {
         store.renamePlaylist(id, name);

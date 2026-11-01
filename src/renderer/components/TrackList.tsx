@@ -8,6 +8,7 @@ import {
   Heart,
   ListPlus,
   MoreHorizontal,
+  Pencil,
   Play,
   Plus,
   Rows3,
@@ -158,6 +159,7 @@ export const TrackList = memo(function TrackList({
   const toggle = usePlayer(state => state.toggle);
   const setFavorite = useLibrary(state => state.setFavorite);
   const openPlaylistPicker = useUi(state => state.openPlaylistPicker);
+  const openTrackEditor = useUi(state => state.openTrackEditor);
   const navigate = useUi(state => state.navigate);
 
   const trackIds = useMemo(() => tracks.map(track => track.id), [tracks]);
@@ -282,6 +284,16 @@ export const TrackList = memo(function TrackList({
           </button>
           <button type="button" onClick={() => { openPlaylistPicker([renderedMenu.track.id]); setMenu(null); }}>
             <Plus size={15} /> Add to playlist…
+          </button>
+          <button
+            type="button"
+            data-testid="track-edit-details"
+            onClick={() => {
+              openTrackEditor(renderedMenu.track.id);
+              setMenu(null);
+            }}
+          >
+            <Pencil size={15} /> Edit details…
           </button>
           <button
             type="button"
