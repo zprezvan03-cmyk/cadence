@@ -4,7 +4,7 @@
  * starting Fetch All advances immediately while the background job continues on its own.
  */
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, FolderPlus, Music2, Sparkles } from "lucide-react";
 import type { LyricsFetchConcurrency } from "../../../shared/types";
 import { useLibrary } from "../../state/libraryStore";
@@ -32,6 +32,17 @@ export function Onboarding() {
   const initFetchAll = useFetchAll(state => state.init);
   const refreshStats = useFetchAll(state => state.refreshStats);
   const startFetchAll = useFetchAll(state => state.start);
+
+  // Direction of the last step change, so pages slide in from the side the
+  // user is travelling towards. Adjusted during render (React's recommended
+  // pattern for deriving state from a changed value) so the entering page
+  // already carries the right direction on its first frame.
+  const [lastStep, setLastStep] = useState(step);
+  const [direction, setDirection] = useState<"forward" | "back">("forward");
+  if (step !== lastStep) {
+    setLastStep(step);
+    setDirection(step > lastStep ? "forward" : "back");
+  }
 
   useEffect(() => {
     if (!visible) return;
@@ -65,6 +76,7 @@ export function Onboarding() {
           ))}
         </ol>
 
+        <div key={stepName} className={`onboarding-page-wrap is-${direction}`} data-direction={direction}>
         {stepName === "welcome" ? (
           <section className="onboarding-page" data-testid="onboarding-welcome">
             <Music2 size={40} className="onboarding-icon" />
@@ -222,6 +234,7 @@ export function Onboarding() {
             </p>
           </section>
         ) : null}
+        </div>
 
         <footer className="onboarding-nav">
           <button type="button" className="ghost-button" data-testid="onboarding-skip-all" onClick={finish}>

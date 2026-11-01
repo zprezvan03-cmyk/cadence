@@ -31,6 +31,7 @@ import { formatDurationSeconds, resolveSearchFields, type ManualSearchInput } fr
 import type { SearchDraft } from "../../state/lyricsStore";
 import type { ManualSearchState, YouTubeResolveState } from "./useLyrics";
 import { TRANSLATION_LANGUAGES } from "./translationLanguages";
+import { staggerDelayMs, STAGGER_CAP } from "../../app/motion";
 import { usePresence } from "../../app/usePresence";
 
 interface LyricsDockProps {
@@ -477,11 +478,16 @@ export function LyricsDock({
             </div>
           ) : null}
           {manualSearchState.status === "ready"
-            ? manualSearchState.results.map(candidate => (
+            ? manualSearchState.results.map((candidate, index) => (
                 <button
                   type="button"
                   key={`${candidate.source}-${candidate.matchTitle ?? ""}-${candidate.text.length}`}
-                  className="source-row"
+                  className="source-row search-result-row"
+                  style={
+                    index < STAGGER_CAP
+                      ? { animationDelay: `${staggerDelayMs(index, 8)}ms` }
+                      : undefined
+                  }
                   onClick={() => {
                     onSelectSearchResult(candidate);
                     setPanel("none");

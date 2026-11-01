@@ -688,6 +688,9 @@ const seekTiming = await page.evaluate(() => {
     trackDuration: track.transitionDuration,
     bufferProperty: getComputedStyle(buffer).transitionProperty,
     bufferDuration: getComputedStyle(buffer).transitionDuration,
+    bufferTransform: getComputedStyle(buffer).transform,
+    bufferLayoutWidth: buffer.offsetWidth,
+    wrapperWidth: buffer.parentElement?.clientWidth ?? 0,
   };
 });
 check(
@@ -696,7 +699,14 @@ check(
     seekTiming.trackDuration.split(",").every(value => value.trim() === "0s"),
   JSON.stringify(seekTiming)
 );
-check("buffer-width-transitions", seekTiming.bufferProperty.includes("width") && seekTiming.bufferDuration !== "0s", JSON.stringify(seekTiming));
+check(
+  "buffer-fill-transforms-not-width",
+  seekTiming.bufferProperty.includes("transform") &&
+    !seekTiming.bufferProperty.includes("width") &&
+    seekTiming.bufferDuration === "0.32s" &&
+    Math.abs(seekTiming.bufferLayoutWidth - seekTiming.wrapperWidth) <= 1,
+  JSON.stringify(seekTiming)
+);
 
 const seekJump = await page.evaluate(async () => {
   const input = document.querySelector("input.seek") as HTMLInputElement;
@@ -1039,10 +1049,132 @@ check("layout-stable", geometry.playerHeight === 92 && geometry.contentHeight ==
 await shot("07-after-rapid-nav");
 
 await navItem("Albums");
-await wait(420);
+await wait(40);
+await shot("08-albums-grid-mid");
+await wait(500);
+const artworkFade = await page.evaluate(() => {
+  const img = document.querySelector(".media-card .artwork img") as HTMLImageElement | null;
+  if (!img) return null;
+  const style = getComputedStyle(img);
+  return { loaded: img.dataset.loaded, opacity: style.opacity, transitionProperty: style.transitionProperty };
+});
+check(
+  "artwork-fades-in-on-load",
+  artworkFade?.loaded === "true" && artworkFade.opacity === "1" && artworkFade.transitionProperty.includes("opacity"),
+  JSON.stringify(artworkFade)
+);
 await shot("08-albums-grid");
 await navItem("Home");
+await wait(40);
+// The fixture library has a single album card, so the stagger itself is probed on
+// Home's quick grids, which hold several tracks.
+const gridStagger = await page.evaluate(() => {
+  const grid = document.querySelector(".quick-grid");
+  return [...(grid?.children ?? [])].slice(0, 4).map(card => {
+    const style = getComputedStyle(card);
+    return { name: style.animationName, delay: style.animationDelay, duration: style.animationDuration };
+  });
+});
+check(
+  "card-grid-staggers-capped",
+  gridStagger.length >= 2 &&
+    gridStagger[0].name === "card-in" &&
+    gridStagger[0].delay === "0s" &&
+    gridStagger[1].delay === "0.024s" &&
+    gridStagger[0].duration === "0.24s",
+  JSON.stringify(gridStagger)
+);
 await wait(280);
+
+/* ------------------------------------------- 8b. settings + onboarding motion */
+
+await sidebarItem("Settings");
+await wait(300);
+const tabUnderline = await page.evaluate(() => {
+  const active = document.querySelector(".settings-tabs button.active");
+  const inactive = document.querySelector(".settings-tabs button:not(.active)");
+  const activeStyle = active ? getComputedStyle(active, "::after") : null;
+  const inactiveStyle = inactive ? getComputedStyle(inactive, "::after") : null;
+  return {
+    activeTransform: activeStyle?.transform ?? "",
+    inactiveTransform: inactiveStyle?.transform ?? "",
+    property: activeStyle?.transitionProperty ?? "",
+    duration: activeStyle?.transitionDuration ?? "",
+  };
+});
+check(
+  "settings-tab-underline-slides",
+  tabUnderline.activeTransform.startsWith("matrix(1") &&
+    tabUnderline.inactiveTransform.startsWith("matrix(0") &&
+    tabUnderline.property.includes("transform") &&
+    tabUnderline.duration === "0.18s",
+  JSON.stringify(tabUnderline)
+);
+await clickText(".settings-tabs button", "Appearance");
+await wait(250);
+await page.click('[data-testid="replay-onboarding"]');
+await page.waitForSelector('[data-testid="onboarding"]', { timeout: 5000 });
+await wait(80);
+const onboardingProbe = () =>
+  page.evaluate(() => {
+    const wrap = document.querySelector(".onboarding-page-wrap");
+    const card = document.querySelector(".onboarding-card");
+    return {
+      direction: (wrap as HTMLElement | null)?.dataset.direction ?? null,
+      wrapAnimation: wrap ? getComputedStyle(wrap).animationName : null,
+      cardAnimation: card ? getComputedStyle(card).animationName : null,
+    };
+  });
+const onboardingFirst = await onboardingProbe();
+check(
+  "onboarding-card-enters",
+  onboardingFirst.cardAnimation === "modal-in" && onboardingFirst.wrapAnimation === "onboarding-forward",
+  JSON.stringify(onboardingFirst)
+);
+await page.click('[data-testid="onboarding-next"]');
+await wait(80);
+const onboardingForward = await onboardingProbe();
+await page.evaluate(() => {
+  const back = [...document.querySelectorAll(".onboarding-nav button")].find(button =>
+    button.textContent?.includes("Back")
+  ) as HTMLButtonElement | undefined;
+  back?.click();
+});
+await wait(80);
+const onboardingBack = await onboardingProbe();
+check(
+  "onboarding-steps-direction-aware",
+  onboardingForward.direction === "forward" &&
+    onboardingForward.wrapAnimation === "onboarding-forward" &&
+    onboardingBack.direction === "back" &&
+    onboardingBack.wrapAnimation === "onboarding-back",
+  JSON.stringify({ onboardingForward, onboardingBack })
+);
+await shot("10-onboarding-step");
+await page.setViewport({ width: 700, height: 900 });
+await wait(160);
+const onboardingNarrow = await page.evaluate(() => {
+  const card = document.querySelector(".onboarding-card")!.getBoundingClientRect();
+  return {
+    left: Math.round(card.left),
+    right: Math.round(card.right),
+    innerWidth: window.innerWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  };
+});
+check(
+  "onboarding-fits-narrow-window",
+  onboardingNarrow.left >= 0 &&
+    onboardingNarrow.right <= onboardingNarrow.innerWidth &&
+    onboardingNarrow.scrollWidth <= onboardingNarrow.innerWidth + 1,
+  JSON.stringify(onboardingNarrow)
+);
+await shot("10-onboarding-narrow");
+await page.setViewport({ width: 1440, height: 900 });
+await wait(160);
+await page.click('[data-testid="onboarding-skip-all"]');
+await wait(250);
+check("onboarding-dismisses", !(await page.$('[data-testid="onboarding"]')), "setup closed");
 
 /* ------------------------------------------------------- 9. reduced motion */
 
@@ -1057,13 +1189,27 @@ const toggleReduceMotion = () =>
   });
 await toggleReduceMotion();
 await wait(300);
-const reducedSetting = await page.evaluate(() => ({
-  flag: document.documentElement.dataset.reduceMotion,
-  navDuration: getComputedStyle(document.querySelector(".nav-item")!).transitionDuration,
-  viewAnimation: getComputedStyle(document.querySelector(".view")!).animationDuration,
-  collapsed: ["0.001ms", "1e-06s", "0.000001s"].includes(getComputedStyle(document.querySelector(".nav-item")!).transitionDuration),
-}));
-check("setting-collapses-motion", reducedSetting.flag === "true" && reducedSetting.collapsed, JSON.stringify(reducedSetting));
+const reducedSetting = await page.evaluate(() => {
+  const root = getComputedStyle(document.documentElement);
+  return {
+    flag: document.documentElement.dataset.reduceMotion,
+    dur1: root.getPropertyValue("--dur-1").trim(),
+    dur2: root.getPropertyValue("--dur-2").trim(),
+    dur3: root.getPropertyValue("--dur-3").trim(),
+    dur4: root.getPropertyValue("--dur-4").trim(),
+    viewAnimation: getComputedStyle(document.querySelector(".view")!).animationDuration,
+  };
+});
+check(
+  "setting-collapses-motion-keeps-fast-feedback",
+  reducedSetting.flag === "true" &&
+    ["120ms", "0.12s", ".12s"].includes(reducedSetting.dur1) &&
+    [reducedSetting.dur2, reducedSetting.dur3, reducedSetting.dur4].every(value =>
+      ["0.01ms", ".01ms"].includes(value)
+    ) &&
+    ["0.001ms", "1e-06s", "0.000001s"].includes(reducedSetting.viewAnimation),
+  JSON.stringify(reducedSetting)
+);
 
 await toggleReduceMotion();
 await wait(300);
@@ -1168,24 +1314,34 @@ check("compact-sidebar-pill-aligns", compactPill.compact === "true" && compactPi
 await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
 await page.reload({ waitUntil: "networkidle2" });
 await waitForApp();
-const osReduced = await page.evaluate(() => ({
-  flag: document.documentElement.dataset.reduceMotion,
-  media: matchMedia("(prefers-reduced-motion: reduce)").matches,
-  navDuration: getComputedStyle(document.querySelector(".nav-item")!).transitionDuration,
-  viewAnimation: getComputedStyle(document.querySelector(".view")!).animationDuration,
-  collapsed:
-    ["0.001ms", "1e-06s", "0.000001s"].includes(getComputedStyle(document.querySelector(".nav-item")!).transitionDuration) &&
-    ["0.001ms", "1e-06s", "0.000001s"].includes(getComputedStyle(document.querySelector(".view")!).animationDuration),
-}));
+const osReduced = await page.evaluate(() => {
+  const root = getComputedStyle(document.documentElement);
+  return {
+    flag: document.documentElement.dataset.reduceMotion,
+    media: matchMedia("(prefers-reduced-motion: reduce)").matches,
+    dur1: root.getPropertyValue("--dur-1").trim(),
+    dur3: root.getPropertyValue("--dur-3").trim(),
+    viewAnimation: getComputedStyle(document.querySelector(".view")!).animationDuration,
+    collapsed:
+      ["0.01ms", ".01ms"].includes(root.getPropertyValue("--dur-3").trim()) &&
+      ["0.001ms", "1e-06s", "0.000001s"].includes(getComputedStyle(document.querySelector(".view")!).animationDuration),
+  };
+});
 await page.evaluate(() => {
   const buttons = [...document.querySelectorAll(".nav .nav-item")] as HTMLButtonElement[];
   buttons.find(button => button.title === "Albums")!.click();
 });
-await wait(100);
+// Fast feedback transitions are intentionally preserved at 120ms; give them
+// time to finish, then nothing at all should still be moving.
+await wait(220);
 const osReducedRunning = await page.evaluate(() => document.getAnimations().filter(animation => animation.playState === "running").length);
 check(
   "os-reduced-motion-honoured",
-  osReduced.media && osReduced.flag === "false" && osReduced.collapsed && osReducedRunning === 0,
+  osReduced.media &&
+    osReduced.flag === "false" &&
+    osReduced.collapsed &&
+    ["120ms", "0.12s", ".12s"].includes(osReduced.dur1) &&
+    osReducedRunning === 0,
   JSON.stringify({ ...osReduced, running: osReducedRunning })
 );
 

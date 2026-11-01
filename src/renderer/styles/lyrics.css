@@ -1255,6 +1255,23 @@ braccato-lyrics[data-upgrading="true"] {
   margin-top: 1px;
 }
 
+/* Manual-search results stagger in (delay capped in LyricsDock via the shared
+   motion helper); source/profile selector rows keep the popover's own entrance. */
+.dock-search .search-result-row {
+  animation: dock-result-in var(--dur-2) var(--ease-out) both;
+}
+
+@keyframes dock-result-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .lyrics-dock:has(.dock-profiles) {
   z-index: 5;
 }

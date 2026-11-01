@@ -197,6 +197,52 @@
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
 }
 
+/* Capped entrances for card grids and the history list: only the first twelve items
+   animate, and the delay stops growing after eight steps, so a large library never
+   cascades and items past the cap are simply settled. The virtualized track list is
+   deliberately excluded — rows there mount constantly while scrolling. */
+.card-grid > :nth-child(-n + 12),
+.quick-grid > :nth-child(-n + 12),
+.history-list > :nth-child(-n + 12) {
+  animation: card-in var(--dur-3) var(--ease-out) both;
+}
+
+.card-grid > :nth-child(2),
+.quick-grid > :nth-child(2),
+.history-list > :nth-child(2) { animation-delay: calc(var(--stagger-step) * 1); }
+.card-grid > :nth-child(3),
+.quick-grid > :nth-child(3),
+.history-list > :nth-child(3) { animation-delay: calc(var(--stagger-step) * 2); }
+.card-grid > :nth-child(4),
+.quick-grid > :nth-child(4),
+.history-list > :nth-child(4) { animation-delay: calc(var(--stagger-step) * 3); }
+.card-grid > :nth-child(5),
+.quick-grid > :nth-child(5),
+.history-list > :nth-child(5) { animation-delay: calc(var(--stagger-step) * 4); }
+.card-grid > :nth-child(6),
+.quick-grid > :nth-child(6),
+.history-list > :nth-child(6) { animation-delay: calc(var(--stagger-step) * 5); }
+.card-grid > :nth-child(7),
+.quick-grid > :nth-child(7),
+.history-list > :nth-child(7) { animation-delay: calc(var(--stagger-step) * 6); }
+.card-grid > :nth-child(8),
+.quick-grid > :nth-child(8),
+.history-list > :nth-child(8) { animation-delay: calc(var(--stagger-step) * 7); }
+.card-grid > :nth-child(n + 9):nth-child(-n + 12),
+.quick-grid > :nth-child(n + 9):nth-child(-n + 12),
+.history-list > :nth-child(n + 9):nth-child(-n + 12) { animation-delay: calc(var(--stagger-step) * 8); }
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .artist-card .artwork-md {
   border-radius: 999px;
   overflow: hidden;
@@ -437,6 +483,7 @@
   padding: 46px 20px;
   color: var(--text-dim);
   text-align: center;
+  animation: fade-in var(--dur-2) var(--ease-out);
   font-size: 13.5px;
 }
 
@@ -750,19 +797,37 @@
 }
 
 .settings-tabs button {
+  position: relative;
   padding: 10px 14px;
   color: var(--text-dim);
   font-weight: 600;
   border-bottom: 2px solid transparent;
   white-space: nowrap;
-  transition:
-    color var(--dur-1) var(--ease-out),
-    border-color var(--dur-2) var(--ease-out);
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+/* The active underline grows from the leading edge instead of snapping border-colour,
+   so switching tabs reads as one indicator travelling to the new tab. */
+.settings-tabs button::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform var(--dur-2) var(--ease-out);
 }
 
 .settings-tabs button.active {
   color: var(--text);
-  border-color: var(--accent);
+}
+
+.settings-tabs button.active::after {
+  transform: scaleX(1);
 }
 
 .settings-section {
@@ -1919,6 +1984,29 @@
 
 .fetch-indicator-wrap {
   position: relative;
+  animation: fade-in var(--dur-2) var(--ease-out);
+}
+
+.fetch-indicator-wrap.is-exiting {
+  animation: fade-out var(--dur-1) var(--ease-in) forwards;
+  pointer-events: none;
+}
+
+/* Counts remount on change (keyed by value) and tick in with one fast beat. */
+.fetch-indicator-count,
+.fetch-count-value {
+  animation: count-in var(--dur-1) var(--ease-out);
+}
+
+@keyframes count-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .fetch-indicator {
@@ -2475,6 +2563,39 @@
   display: flex;
   flex-direction: column;
   gap: 18px;
+  animation: modal-in var(--dur-2) var(--ease-out);
+}
+
+/* Pages slide in from the side the user is travelling towards; the wrapper is
+   keyed by step, so each step change is one short entrance, never a layout shift. */
+.onboarding-page-wrap.is-forward {
+  animation: onboarding-forward var(--dur-3) var(--ease-out);
+}
+
+.onboarding-page-wrap.is-back {
+  animation: onboarding-back var(--dur-3) var(--ease-out);
+}
+
+@keyframes onboarding-forward {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes onboarding-back {
+  from {
+    opacity: 0;
+    transform: translateX(-18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .onboarding-steps {
@@ -2489,12 +2610,35 @@
 }
 
 .onboarding-steps li {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 5px 9px;
   border-radius: 999px;
   border: 1px solid var(--border);
+  transition:
+    color var(--dur-2) var(--ease-out),
+    border-color var(--dur-2) var(--ease-out);
+}
+
+/* Completed/active pills fill from the left, so progress reads at a glance. */
+.onboarding-steps li::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform var(--dur-3) var(--ease-out);
+}
+
+.onboarding-steps li.active::after,
+.onboarding-steps li.done::after {
+  transform: scaleX(1);
 }
 
 .onboarding-steps li > span {
@@ -2506,6 +2650,14 @@
   background: var(--surface-3);
   font-size: 10px;
   font-weight: 650;
+  transition:
+    background var(--dur-2) var(--ease-out),
+    color var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-spring);
+}
+
+.onboarding-steps li.active > span {
+  transform: scale(1.12);
 }
 
 .onboarding-steps li.active {

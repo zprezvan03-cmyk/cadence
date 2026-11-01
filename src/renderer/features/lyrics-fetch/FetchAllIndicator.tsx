@@ -23,6 +23,18 @@ export function FetchAllIndicator() {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const panelPresence = usePresence(open);
 
+  // The indicator itself is a floating surface too: it fades in when a job
+  // starts and out after the completion linger, instead of popping. While
+  // exiting it renders the last visible snapshot, so the final frame still
+  // shows the finished counts rather than the reset idle job.
+  const indicatorVisible =
+    snapshot.state !== "idle" &&
+    snapshot.state !== "canceled" &&
+    !(snapshot.state === "completed" && lingerDone);
+  const indicatorPresence = usePresence(indicatorVisible);
+  const [renderSnapshot, setRenderSnapshot] = useState(snapshot);
+  if (indicatorVisible && renderSnapshot !== snapshot) setRenderSnapshot(snapshot);
+
   useEffect(() => {
     init();
   }, [init]);
@@ -47,16 +59,19 @@ export function FetchAllIndicator() {
     return () => window.removeEventListener("pointerdown", onPointerDown);
   }, [open]);
 
-  const { state, total, processed } = snapshot;
-  if (state === "idle" || state === "canceled") return null;
-  if (state === "completed" && lingerDone) return null;
+  if (!indicatorPresence.mounted) return null;
+  const { state, total, processed } = renderSnapshot;
 
   const percent = total > 0 ? Math.round((processed / total) * 100) : 0;
   const running = state === "running";
   const paused = state === "paused";
 
   return (
-    <div className="fetch-indicator-wrap" ref={rootRef}>
+    <div
+      className={`fetch-indicator-wrap ${indicatorPresence.phaseClass}`}
+      data-presence={indicatorPresence.phase}
+      ref={rootRef}
+    >
       <button
         type="button"
         className={`fetch-indicator ${state === "completed" ? "is-complete" : ""}`}
@@ -73,7 +88,7 @@ export function FetchAllIndicator() {
         ) : (
           <Loader2 size={15} className="spin" />
         )}
-        <span className="fetch-indicator-count">
+        <span className="fetch-indicator-count" key={state === "completed" ? "done" : processed}>
           {state === "completed" ? "Done" : `${processed}/${total}`}
         </span>
         {state !== "completed" ? (
@@ -108,25 +123,25 @@ export function FetchAllIndicator() {
           <dl className="fetch-panel-counts">
             <div>
               <dt>Found</dt>
-              <dd data-testid="fetch-count-found">{snapshot.found}</dd>
+              <dd className="fetch-count-value" key={renderSnapshot.found} data-testid="fetch-count-found">{renderSnapshot.found}</dd>
             </div>
             <div>
               <dt>Not Found</dt>
-              <dd data-testid="fetch-count-not-found">{snapshot.notFound}</dd>
+              <dd className="fetch-count-value" key={renderSnapshot.notFound} data-testid="fetch-count-not-found">{renderSnapshot.notFound}</dd>
             </div>
             <div>
               <dt>Failed</dt>
-              <dd data-testid="fetch-count-failed">{snapshot.failed}</dd>
+              <dd className="fetch-count-value" key={renderSnapshot.failed} data-testid="fetch-count-failed">{renderSnapshot.failed}</dd>
             </div>
             <div>
               <dt>Skipped</dt>
-              <dd data-testid="fetch-count-skipped">{snapshot.skipped}</dd>
+              <dd className="fetch-count-value" key={renderSnapshot.skipped} data-testid="fetch-count-skipped">{renderSnapshot.skipped}</dd>
             </div>
           </dl>
-          {snapshot.currentTrack ? (
+          {renderSnapshot.currentTrack ? (
             <p className="fetch-panel-current" data-testid="fetch-current-track">
-              Now fetching: {snapshot.currentTrack.title}
-              {snapshot.currentTrack.artist ? ` — ${snapshot.currentTrack.artist}` : ""}
+              Now fetching: {renderSnapshot.currentTrack.title}
+              {renderSnapshot.currentTrack.artist ? ` — ${renderSnapshot.currentTrack.artist}` : ""}
             </p>
           ) : state === "completed" ? (
             <p className="fetch-panel-current">All eligible tracks have been processed.</p>
@@ -142,7 +157,7 @@ export function FetchAllIndicator() {
                 <Play size={14} /> Resume
               </button>
             ) : null}
-            {snapshot.failed > 0 && !running ? (
+            {renderSnapshot.failed > 0 && !running ? (
               <button
                 type="button"
                 data-testid="fetch-retry-failed"

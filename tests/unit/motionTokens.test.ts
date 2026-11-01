@@ -97,4 +97,21 @@ describe("motion tokens", () => {
     expect(globalCss).toMatch(/\.modal-backdrop\.is-exiting\s*\{[^}]*pointer-events: none/);
     expect(globalCss).toMatch(/\.context-menu\.is-exiting\s*\{[^}]*pointer-events: none/);
   });
+
+  it("collapses reduced-motion layout layers but preserves the fast feedback layer", () => {
+    const reducedCss = globalCss.slice(globalCss.indexOf('[data-reduce-motion="true"] {'));
+    for (const token of ["--dur-0", "--dur-2", "--dur-3", "--dur-4"]) {
+      expect(reducedCss).toContain(`${token}: 0.01ms`);
+    }
+    // --dur-1 (120ms hover/press colour + opacity feedback) is deliberately not collapsed.
+    expect(reducedCss).not.toContain("--dur-1: 0.01ms");
+    expect(reducedCss).toContain("@media (prefers-reduced-motion: reduce)");
+  });
+
+  it("paints the buffered seek fill with a transform, never a width transition", () => {
+    const seekBuffer = globalCss.match(/\.seek-buffer\s*\{([^}]+)\}/)?.[1] ?? "";
+    expect(seekBuffer).toContain("transition: transform var(--dur-4) var(--ease-out)");
+    expect(seekBuffer).not.toContain("transition: width");
+    expect(seekBuffer).toContain("transform-origin: left center");
+  });
 });

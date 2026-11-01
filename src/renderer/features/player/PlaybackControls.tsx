@@ -64,7 +64,12 @@ export function SeekRow() {
         {formatTime(position)}
       </span>
       <div className="seek-wrapper">
-        <div className="seek-buffer" style={{ width: `${duration ? (buffered / duration) * 100 : 0}%` }} />
+        <div
+          className="seek-buffer"
+          style={{
+            transform: `translateY(-50%) scaleX(${duration ? Math.min(1, Math.max(0, buffered / duration)) : 0})`,
+          }}
+        />
         <input
           className="seek"
           type="range"

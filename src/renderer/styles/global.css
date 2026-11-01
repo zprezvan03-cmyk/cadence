@@ -289,6 +289,7 @@ a {
 .view-loading {
   padding: 48px;
   color: var(--text-dim);
+  animation: fade-in var(--dur-2) var(--ease-out);
 }
 
 .error-banner {
@@ -1043,12 +1044,22 @@ a {
 
 /* Covers fade in where they are large enough to be looked at (album grids, detail headers, the
    player, fullscreen). Song-row thumbnails deliberately do not: a 500-row list must not start 500
-   animations when it opens. */
+   transitions when it opens. The fade is keyed to the image actually loading (`data-loaded`,
+   set by Artwork on load / when already complete), not to mount, so a slow cover cannot pop in
+   after a mount-keyed animation already finished. */
 .media-card .artwork img,
 .detail-hero .artwork img,
 .fs-artwork .artwork img,
 .fs-panel-art .artwork img {
-  animation: artwork-in var(--dur-3) var(--ease-out);
+  opacity: 0;
+  transition: opacity var(--dur-3) var(--ease-out);
+}
+
+.media-card .artwork img[data-loaded="true"],
+.detail-hero .artwork img[data-loaded="true"],
+.fs-artwork .artwork img[data-loaded="true"],
+.fs-panel-art .artwork img[data-loaded="true"] {
+  opacity: 1;
 }
 
 .artwork-fallback-icon {
@@ -1224,13 +1235,17 @@ a {
   position: absolute;
   left: 0;
   top: 50%;
-  transform: translateY(-50%);
+  width: 100%;
+  transform: translateY(-50%) scaleX(0);
+  transform-origin: left center;
   height: 3px;
   background: rgba(255, 255, 255, 0.14);
   border-radius: 3px;
   pointer-events: none;
-  /* Buffered audio may lag behind the pointer; the played fill must not (see below). */
-  transition: width var(--dur-4) var(--ease-out);
+  /* Buffered audio may lag behind the pointer; the played fill must not (see below).
+     The fill is a full-width bar scaled on X, so catch-up stays on the compositor
+     instead of relaying out the seek row on every buffered-range update. */
+  transition: transform var(--dur-4) var(--ease-out);
 }
 
 input[type="range"].seek,
@@ -1976,6 +1991,20 @@ kbd {
   font-family: inherit;
 }
 
+/* Reduced motion: animations and the larger transition layers collapse, but the 120ms
+   `--dur-1` layer — hover/press colour and opacity feedback — is preserved so controls
+   still acknowledge the pointer. Token overrides do the transition work: every app
+   transition runs on `--dur-*`, while a blanket `transition-duration` override cannot
+   tell a colour fade from a 320ms layout slide. Presence exits already unmount
+   immediately under reduced motion (see `app/motion.ts`), so nothing waits on a timer
+   for an animation that is not shown. */
+[data-reduce-motion="true"] {
+  --dur-0: 0.01ms;
+  --dur-2: 0.01ms;
+  --dur-3: 0.01ms;
+  --dur-4: 0.01ms;
+}
+
 [data-reduce-motion="true"],
 [data-reduce-motion="true"] *,
 [data-reduce-motion="true"] *::before,
@@ -1983,22 +2012,27 @@ kbd {
   animation-duration: 0.001ms !important;
   animation-delay: 0ms !important;
   animation-iteration-count: 1 !important;
-  transition-duration: 0.001ms !important;
   transition-delay: 0ms !important;
   scroll-behavior: auto !important;
 }
 
-/* The same collapse for the OS preference, so a reduced-motion system never sees the app move
-   even if the in-app toggle was never touched. The lyrics renderer applies its own upstream
-   reduced-motion rules on top of this. */
+/* The same treatment for the OS preference, so a reduced-motion system never sees the
+   app move even if the in-app toggle was never touched. The lyrics renderer applies its
+   own upstream reduced-motion rules on top of this. */
 @media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-0: 0.01ms;
+    --dur-2: 0.01ms;
+    --dur-3: 0.01ms;
+    --dur-4: 0.01ms;
+  }
+
   *,
   *::before,
   *::after {
     animation-duration: 0.001ms !important;
     animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
     transition-delay: 0ms !important;
     scroll-behavior: auto !important;
   }
