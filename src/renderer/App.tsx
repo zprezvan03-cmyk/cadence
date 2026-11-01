@@ -24,6 +24,7 @@ import { LyricsView } from "./features/lyrics/LyricsView";
 import { PlayerBar } from "./features/player/PlayerBar";
 import { QueuePanel } from "./features/player/QueuePanel";
 import { SettingsView } from "./features/settings/SettingsView";
+import { StatsView } from "./features/stats/StatsView";
 import { usePlayer } from "./state/playerStore";
 import { useUi } from "./state/uiStore";
 
@@ -40,6 +41,8 @@ function RouteContent() {
       return <HomeView />;
     case "history":
       return <HistoryView />;
+    case "stats":
+      return <StatsView />;
     case "library":
       return <LibraryView tab={route.tab} />;
     case "search":

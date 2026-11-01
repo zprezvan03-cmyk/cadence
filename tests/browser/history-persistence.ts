@@ -659,6 +659,93 @@ try {
     `recent=${launch4Recent.length}, emptyVisible=${launch4EmptyVisible}`,
   );
 
+  /* =================================================================================
+   * Launch 5: Listening stats & Home discovery read the same persisted history.
+   * Seed controlled play starts (recent repeats + long-quiet tracks) straight into
+   * SQLite, restart, and verify the rendered Stats view and Home shelves.
+   * ================================================================================= */
+  await page.close();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const seedNow = Date.now();
+  const libraryTracks = store.getTracks().map(t => store.toTrack(t));
+  const seedPlay = (title: string, playedAt: number) => {
+    const t = libraryTracks.find(candidate => candidate.title === title);
+    if (!t) throw new Error(`Fixture track not found: ${title}`);
+    store.addHistoryEntry(t.id, playedAt, {
+      trackId: t.id,
+      path: t.path,
+      title: t.title,
+      artist: t.artist,
+      albumArtist: t.albumArtist,
+      album: t.album,
+      artworkUrl: t.artworkUrl,
+      duration: t.duration,
+    });
+  };
+  // Fixture Opus / Fixture ALAC were never played in the UI above, so their library
+  // counters stay untouched and only these old history rows describe them.
+  seedPlay("Fixture FLAC", seedNow - 2 * dayMs);
+  seedPlay("Fixture FLAC", seedNow - dayMs);
+  seedPlay("Fixture FLAC", seedNow - 60_000);
+  seedPlay("Fixture MP3", seedNow - 30 * 60_000);
+  seedPlay("Fixture Opus", seedNow - 45 * dayMs);
+  seedPlay("Fixture ALAC", seedNow - 60 * dayMs);
+
+  restartBackend("1.0.1");
+  page = await launchAppPage();
+
+  await clickNav(page, "Stats");
+  await page.waitForSelector('[data-testid="stats-view"]', { timeout: 10_000 });
+  await page.waitForSelector('[data-testid="stats-summary"]', { timeout: 10_000 }).catch(() => null);
+  const recordedPlays = await page
+    .$eval('[data-testid="stats-summary"] .stat-card strong', el => el.textContent?.trim() ?? "")
+    .catch(() => "");
+  const statsTopTracks = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('[data-testid="stats-top-tracks"] .stats-rank-row')).map(
+      el => el.textContent?.replace(/\s+/g, " ").trim() ?? "",
+    ),
+  );
+  const statsBarCounts = await page.evaluate(() => ({
+    days: document.querySelectorAll('[data-testid="stats-day-chart"] .stats-bar-column').length,
+    hours: document.querySelectorAll('[data-testid="stats-hour-chart"] .stats-bar-column').length,
+  }));
+  await page.screenshot({ path: join(shotDir, "05-launch5-stats.png") });
+  check(
+    "launch5-stats-summary-and-top-tracks-render",
+    recordedPlays === "6" &&
+      (statsTopTracks[0]?.includes("Fixture FLAC") ?? false) &&
+      (statsTopTracks[0]?.includes("3 plays") ?? false),
+    `recorded=${recordedPlays}, top=${JSON.stringify(statsTopTracks[0] ?? "")}`,
+  );
+  check(
+    "launch5-stats-charts-render-30-days-and-24-hours",
+    statsBarCounts.days === 30 && statsBarCounts.hours === 24,
+    JSON.stringify(statsBarCounts),
+  );
+
+  await clickNav(page, "Home");
+  await page.waitForSelector('[data-testid="home-top-tracks"]', { timeout: 10_000 }).catch(() => null);
+  const homeShelves = await page.evaluate(() => ({
+    top: Array.from(document.querySelectorAll('[data-testid="home-top-tracks"] .title-text')).map(
+      el => el.textContent?.trim() ?? "",
+    ),
+    onRepeat: Array.from(
+      document.querySelectorAll('[data-testid="home-on-repeat"] [data-testid="on-repeat-item"] strong'),
+    ).map(el => el.textContent?.trim() ?? ""),
+    rediscover: Array.from(
+      document.querySelectorAll('[data-testid="home-rediscover"] [data-testid="rediscover-item"] strong'),
+    ).map(el => el.textContent?.trim() ?? ""),
+  }));
+  await page.screenshot({ path: join(shotDir, "06-launch5-home-shelves.png") });
+  check(
+    "launch5-home-discovery-shelves-render",
+    homeShelves.top[0] === "Fixture FLAC" &&
+      homeShelves.onRepeat.includes("Fixture FLAC") &&
+      homeShelves.rediscover.includes("Fixture Opus") &&
+      homeShelves.rediscover.includes("Fixture ALAC"),
+    JSON.stringify(homeShelves),
+  );
+
   await page.close();
 } finally {
   await browser.close();
