@@ -36,6 +36,10 @@ export interface StoredTrack {
   addedAt: number;
   lastPlayedAt: number | null;
   playCount: number;
+  replayGainTrackDb: number | null;
+  replayGainAlbumDb: number | null;
+  replayGainTrackPeak: number | null;
+  replayGainAlbumPeak: number | null;
 }
 
 export interface NewTrack extends Omit<StoredTrack, "id" | "favorite" | "addedAt" | "lastPlayedAt" | "playCount"> {
@@ -460,6 +464,10 @@ export class LibraryStoreCore {
       addedAt: track.addedAt,
       lastPlayedAt: track.lastPlayedAt,
       playCount: track.playCount,
+      replayGainTrackDb: track.replayGainTrackDb ?? null,
+      replayGainAlbumDb: track.replayGainAlbumDb ?? null,
+      replayGainTrackPeak: track.replayGainTrackPeak ?? null,
+      replayGainAlbumPeak: track.replayGainAlbumPeak ?? null,
       hasSidecarLyrics: track.hasSidecarLyrics,
       playable: track.playable,
     };

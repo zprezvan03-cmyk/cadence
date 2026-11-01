@@ -51,6 +51,10 @@ export interface ParsedTrack {
   embeddedLyrics: { text: string; kind: string } | null;
   hasSidecarLyrics: boolean;
   playable: boolean;
+  replayGainTrackDb: number | null;
+  replayGainAlbumDb: number | null;
+  replayGainTrackPeak: number | null;
+  replayGainAlbumPeak: number | null;
 }
 
 export function pathBasename(filePath: string, suffix?: string): string {
@@ -183,6 +187,67 @@ export interface MetadataHostIo {
   fileExists: (path: string) => boolean | Promise<boolean>;
 }
 
+export interface ReplayGainTags {
+  trackDb: number | null;
+  albumDb: number | null;
+  trackPeak: number | null;
+  albumPeak: number | null;
+}
+
+function parseReplayGainNumber(raw: unknown): number | null {
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
+  if (raw instanceof Uint8Array) return parseReplayGainNumber(new TextDecoder().decode(raw));
+  if (typeof raw !== "string") return null;
+  const value = Number.parseFloat(raw.replace(/db/i, "").trim());
+  return Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Extracts ReplayGain gain/peak values from music-metadata's native tag buckets. Vorbis comments
+ * (FLAC/Ogg/Opus) and APE use the ReplayGain key as the tag id, ID3v2 hides it in a TXXX frame's
+ * description, and MP4 freeform atoms surface as ids like "----:com.apple.iTunes:REPLAYGAIN_*".
+ * music-metadata does not normalize these into `common`, so the natives are the only source.
+ */
+export function replayGainFromNativeTags(native: unknown): ReplayGainTags {
+  const result: ReplayGainTags = { trackDb: null, albumDb: null, trackPeak: null, albumPeak: null };
+  if (!native || typeof native !== "object") return result;
+  const fields: Record<string, keyof ReplayGainTags> = {
+    REPLAYGAIN_TRACK_GAIN: "trackDb",
+    REPLAYGAIN_ALBUM_GAIN: "albumDb",
+    REPLAYGAIN_TRACK_PEAK: "trackPeak",
+    REPLAYGAIN_ALBUM_PEAK: "albumPeak",
+  };
+  for (const tags of Object.values(native as Record<string, unknown>)) {
+    if (!Array.isArray(tags)) continue;
+    for (const tag of tags) {
+      if (!tag || typeof tag !== "object") continue;
+      const { id, value } = tag as { id?: unknown; value?: unknown };
+      if (typeof id !== "string") continue;
+      let key: string | null = null;
+      let raw: unknown = value;
+      if (id.toUpperCase() === "TXXX" && value && typeof value === "object") {
+        const txxx = value as { description?: unknown; text?: unknown };
+        if (typeof txxx.description === "string") {
+          key = txxx.description.toUpperCase();
+          raw = txxx.text;
+        }
+      } else {
+        key = (id.toUpperCase().split(":").pop() ?? "").trim();
+        if (value && typeof value === "object" && !Array.isArray(value) && !(value instanceof Uint8Array)) {
+          const record = value as { text?: unknown };
+          if (typeof record.text === "string" || typeof record.text === "number") raw = record.text;
+        }
+      }
+      if (!key) continue;
+      const field = fields[key];
+      if (!field || result[field] !== null) continue;
+      const parsed = parseReplayGainNumber(Array.isArray(raw) ? raw[0] : raw);
+      if (parsed !== null) result[field] = parsed;
+    }
+  }
+  return result;
+}
+
 export async function readTrackMetadataCore(path: string, io: MetadataHostIo): Promise<ParsedTrack> {
   const extension = pathExtname(path).toLowerCase();
   const fallbackTitle = pathBasename(path, extension);
@@ -241,11 +306,16 @@ export async function readTrackMetadataCore(path: string, io: MetadataHostIo): P
       embeddedLyrics: null,
       hasSidecarLyrics,
       playable: isPlayableExtension(path),
+      replayGainTrackDb: null,
+      replayGainAlbumDb: null,
+      replayGainTrackPeak: null,
+      replayGainAlbumPeak: null,
     };
   }
 
   const common = metadata.common ?? ({} as any);
   const format = metadata.format ?? ({} as any);
+  const replayGain = replayGainFromNativeTags(metadata.native);
 
   let artworkFile: string | null = null;
   const picture = Array.isArray(common.picture) ? common.picture[0] : null;
@@ -280,5 +350,9 @@ export async function readTrackMetadataCore(path: string, io: MetadataHostIo): P
     embeddedLyrics: lyricsFromTags(common),
     hasSidecarLyrics,
     playable: isPlayableExtension(path),
+    replayGainTrackDb: replayGain.trackDb,
+    replayGainAlbumDb: replayGain.albumDb,
+    replayGainTrackPeak: replayGain.trackPeak,
+    replayGainAlbumPeak: replayGain.albumPeak,
   };
 }

@@ -21,6 +21,17 @@ export const DEFAULT_SETTINGS: AppSettings = {
     repeat: "off",
     playbackRate: 1,
     resumeOnLaunch: true,
+    crossfadeSeconds: 0,
+    gaplessPlayback: false,
+    replayGainMode: "off",
+    replayGainPreampDb: 0,
+    replayGainPreventClipping: true,
+    equalizer: {
+      enabled: false,
+      preampDb: 0,
+      bandsDb: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      presetId: "flat",
+    },
   },
   appearance: {
     accent: "#ff3d71",
@@ -86,8 +97,41 @@ export function mergeSettings<T>(base: T, patch: unknown): T {
   return result as T;
 }
 
-/** Clamps fetch-automation + onboarding fields; applied on load and on every patch. */
+/** Clamps bounded settings fields; applied on load and on every patch. */
 function normalizeSettings(settings: AppSettings): AppSettings {
+  const clampNumber = (value: unknown, fallback: number, min: number, max: number): number => {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+  };
+  const playback = isPlainObject(settings.playback)
+    ? settings.playback
+    : structuredClone(DEFAULT_SETTINGS.playback);
+  const equalizer = isPlainObject(playback.equalizer)
+    ? playback.equalizer
+    : structuredClone(DEFAULT_SETTINGS.playback.equalizer);
+  playback.crossfadeSeconds = clampNumber(playback.crossfadeSeconds, 0, 0, 12);
+  playback.gaplessPlayback = Boolean(playback.gaplessPlayback);
+  if (!["off", "track", "album"].includes(playback.replayGainMode)) {
+    playback.replayGainMode = DEFAULT_SETTINGS.playback.replayGainMode;
+  }
+  playback.replayGainPreampDb = clampNumber(playback.replayGainPreampDb, 0, -12, 12);
+  playback.replayGainPreventClipping =
+    typeof playback.replayGainPreventClipping === "boolean"
+      ? playback.replayGainPreventClipping
+      : DEFAULT_SETTINGS.playback.replayGainPreventClipping;
+  playback.equalizer = {
+    enabled: Boolean(equalizer.enabled),
+    preampDb: clampNumber(equalizer.preampDb, 0, -12, 12),
+    bandsDb: Array.from({ length: 10 }, (_, index) =>
+      clampNumber(Array.isArray(equalizer.bandsDb) ? equalizer.bandsDb[index] : 0, 0, -12, 12)
+    ),
+    presetId:
+      typeof equalizer.presetId === "string" && equalizer.presetId.trim()
+        ? equalizer.presetId.trim().slice(0, 64)
+        : DEFAULT_SETTINGS.playback.equalizer.presetId,
+  };
+  settings.playback = playback as AppSettings["playback"];
+
   settings.lyrics.providerOrder = migrateProviderOrder(settings.lyrics.providerOrder);
   const cooldown = Number(settings.lyrics.notFoundCooldownDays);
   settings.lyrics.notFoundCooldownDays = Number.isFinite(cooldown)

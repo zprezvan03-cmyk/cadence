@@ -185,7 +185,9 @@ export function BraccatoLyrics({
     []
   );
 
-  // Bind once: the element, not React, owns the per-frame clock while a media element is bound.
+  // The Braccato element, not React, owns the per-frame clock while a media element is bound.
+  // With gapless/crossfade decks the active media element can be promoted, so rebind on that
+  // explicit engine event; ordinary cuts keep the same element and do not rebind.
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
@@ -210,13 +212,20 @@ export function BraccatoLyrics({
     element.addEventListener("braccato:error", handleError);
     element.addEventListener("braccato:scroll-state", handleScroll);
 
-    try {
-      element.source = audioEngine.element;
-    } catch (error) {
-      callbacks.current.onError?.(`source: ${(error as Error).message}`);
-    }
+    const bindSource = (sourceElement: HTMLAudioElement) => {
+      try {
+        if (element.source !== sourceElement) element.source = sourceElement;
+      } catch (error) {
+        callbacks.current.onError?.(`source: ${(error as Error).message}`);
+      }
+    };
+    bindSource(audioEngine.element);
+    const unsubscribeSource = audioEngine.on("source", ({ element: sourceElement }) => {
+      bindSource(sourceElement);
+    });
 
     return () => {
+      unsubscribeSource();
       element.removeEventListener("braccato:lyrics-loaded", handleLoaded);
       element.removeEventListener("braccato:error", handleError);
       element.removeEventListener("braccato:scroll-state", handleScroll);

@@ -1,10 +1,13 @@
 import { create } from "zustand";
-import type { RepeatMode } from "../../shared/types";
+import type { PlaybackSettings, RepeatMode, Track } from "../../shared/types";
 import { audioEngine } from "../audio/engine";
+import { computeReplayGain } from "../audio/replayGain";
 import { advancePosition, buildOrder } from "../player/queue";
+import { decideTransition, TransitionGuard } from "../player/transitions";
 import { getTrackById } from "./trackRegistry";
 import { useLibrary } from "./libraryStore";
 import { useHistory } from "./historyStore";
+import { useSettings } from "./settingsStore";
 
 const SESSION_KEY = "cadence.session.v1";
 
@@ -35,7 +38,7 @@ interface PlayerState extends SessionState {
   removeFromQueue: (trackId: number) => void;
   clearQueue: () => void;
   toggle: () => Promise<void>;
-  next: (auto?: boolean) => Promise<void>;
+  next: (auto?: boolean, fadeSeconds?: number) => Promise<void>;
   previous: () => void;
   seek: (seconds: number) => void;
   jumpTo: (position: number) => Promise<void>;
@@ -102,9 +105,49 @@ export function readSession(): SessionState | null {
 
 let loadToken = 0;
 let lastPositionPersistAt = 0;
+const transitionGuard = new TransitionGuard();
+
+type PlaybackAudioSettings = Pick<
+  PlaybackSettings,
+  "crossfadeSeconds" | "gaplessPlayback" | "replayGainMode" | "replayGainPreampDb" | "replayGainPreventClipping"
+>;
+
+const FALLBACK_PLAYBACK_AUDIO: PlaybackAudioSettings = {
+  crossfadeSeconds: 0,
+  gaplessPlayback: false,
+  replayGainMode: "off",
+  replayGainPreampDb: 0,
+  replayGainPreventClipping: true,
+};
+
+function playbackAudioSettings(): PlaybackAudioSettings {
+  return useSettings.getState().settings?.playback ?? FALLBACK_PLAYBACK_AUDIO;
+}
+
+function replayGainForTrack(track: Track): number {
+  return computeReplayGain(track, playbackAudioSettings()).linear;
+}
 
 export const usePlayer = create<PlayerState>()((set, get) => {
   const after = () => persist(get());
+
+  const recordStartedTrack = (trackId: number, track: Track): void => {
+    void useLibrary.getState().recordPlay(trackId).catch(() => undefined);
+    void useHistory.getState().add(track).catch(() => undefined);
+    // Prepare the successor while this track is running instead of at the transition boundary.
+    prewarmNext();
+  };
+
+  const trackAtPosition = (
+    state: PlayerState,
+    position: number
+  ): { trackId: number; track: Track } | null => {
+    const queueIndex = state.order[position];
+    const trackId = queueIndex === undefined ? undefined : state.queue[queueIndex];
+    if (trackId === undefined) return null;
+    const track = getTrackById(trackId);
+    return track ? { trackId, track } : null;
+  };
 
   const loadCurrent = async (autoplay: boolean): Promise<void> => {
     const state = get();
@@ -114,7 +157,8 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     const track = getTrackById(trackId);
     if (!track) return;
     const token = ++loadToken;
-    const loaded = await audioEngine.load(track);
+    transitionGuard.reset();
+    const loaded = await audioEngine.load(track, { gain: replayGainForTrack(track) });
     if (!loaded || token !== loadToken) return;
     if (state.position > 0) audioEngine.seek(state.position);
     audioEngine.setVolume(state.volume);
@@ -126,27 +170,61 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       // The engine reports decoder/play() failures through its own state; only a track that really
       // started belongs in Home → Recently played and in listening history.
       if (!audioEngine.paused && !audioEngine.element.error) {
-        void useLibrary.getState().recordPlay(trackId).catch(() => undefined);
-        void useHistory.getState().add(track).catch(() => undefined);
-        // Apple Lossless has to be decoded to PCM before it can play, so prepare the next track
-        // while this one is running instead of making the listener wait at the transition.
-        prewarmNext();
+        recordStartedTrack(trackId, track);
       }
     }
   };
 
   /**
-   * Decodes the next queue entry in the background (a no-op unless it is an ALAC file). Skipped
-   * for repeat-one, where the next track is the one already playing.
+   * Prepares the next queue entry in the background. ALAC always gets its native PCM decode;
+   * the standby media deck is loaded only when gapless playback or crossfade is enabled.
+   * Skipped for repeat-one, where the next track is the one already playing.
    */
   const prewarmNext = (): void => {
     const state = get();
-    if (state.repeat === "one" || state.order.length < 2) return;
-    const nextQueueIndex = state.order[(state.orderPosition + 1) % state.order.length];
-    const nextTrackId = nextQueueIndex === undefined ? undefined : state.queue[nextQueueIndex];
-    if (nextTrackId === undefined || nextTrackId === currentTrackId(state)) return;
-    const nextTrack = getTrackById(nextTrackId);
-    if (nextTrack) audioEngine.prewarm(nextTrack);
+    if (state.order.length === 0) return;
+    const result = advancePosition(state.orderPosition, state.order.length, state.repeat, 1);
+    if (result.exhausted || result.restart) return;
+    const next = trackAtPosition(state, result.position);
+    if (!next) return;
+    audioEngine.prewarm(next.track);
+    const audio = playbackAudioSettings();
+    if (audio.crossfadeSeconds > 0 || audio.gaplessPlayback) {
+      void audioEngine.preloadNext(next.track).catch(() => undefined);
+    }
+  };
+
+  /**
+   * Promotes the standby deck only after the engine confirms the target really started. Queue
+   * state deliberately flips at that point, so a failed automatic transition leaves the outgoing
+   * track current and able to reach its natural `ended` fallback.
+   */
+  const transitionToPosition = async (position: number, fadeSeconds: number): Promise<boolean> => {
+    const target = trackAtPosition(get(), position);
+    if (!target) return false;
+    const token = ++loadToken;
+    const started = await audioEngine.transitionTo(target.track, {
+      fadeSeconds,
+      gain: replayGainForTrack(target.track),
+    });
+    if (!started || token !== loadToken) return false;
+
+    const current = get();
+    set({
+      orderPosition: position,
+      position: 0,
+      duration: target.track.duration,
+      error: null,
+      ended: false,
+    });
+    audioEngine.setVolume(current.volume);
+    audioEngine.setMuted(current.muted);
+    audioEngine.setRate(current.rate);
+    if (!audioEngine.paused && !audioEngine.element.error) {
+      recordStartedTrack(target.trackId, target.track);
+    }
+    after();
+    return true;
   };
 
   const goToPosition = async (position: number, autoplay: boolean): Promise<void> => {
@@ -331,11 +409,12 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       await audioEngine.toggle();
     },
 
-    next: async auto => {
+    next: async (auto, fadeSeconds) => {
       const state = get();
       if (state.order.length === 0) return;
       const result = advancePosition(state.orderPosition, state.order.length, state.repeat, 1);
       if (result.restart) {
+        transitionGuard.reset();
         audioEngine.seek(0);
         await audioEngine.play();
         return;
@@ -345,6 +424,22 @@ export const usePlayer = create<PlayerState>()((set, get) => {
         audioEngine.pause();
         return;
       }
+
+      const audio = playbackAudioSettings();
+      const manualCrossfade =
+        !auto &&
+        !audioEngine.paused &&
+        audio.crossfadeSeconds > 0 &&
+        result.position !== state.orderPosition;
+      if (fadeSeconds !== undefined || manualCrossfade) {
+        const started = await transitionToPosition(
+          result.position,
+          fadeSeconds ?? audio.crossfadeSeconds
+        );
+        // An automatic failure leaves the outgoing track to finish naturally. A manual request
+        // falls back to the proven cut, unless another action has already changed the queue head.
+        if (started || auto || get().orderPosition !== state.orderPosition) return;
+      }
       await goToPosition(result.position, true);
     },
 
@@ -352,14 +447,30 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       const state = get();
       if (state.order.length === 0) return;
       if (state.position > 3) {
+        transitionGuard.reset();
         audioEngine.seek(0);
         return;
       }
       const result = advancePosition(state.orderPosition, state.order.length, state.repeat, -1);
+      const audio = playbackAudioSettings();
+      if (
+        !audioEngine.paused &&
+        audio.crossfadeSeconds > 0 &&
+        result.position !== state.orderPosition
+      ) {
+        void (async () => {
+          const started = await transitionToPosition(result.position, audio.crossfadeSeconds);
+          if (!started && get().orderPosition === state.orderPosition) {
+            await goToPosition(result.position, true);
+          }
+        })();
+        return;
+      }
       void goToPosition(result.position, !audioEngine.paused);
     },
 
     seek: seconds => {
+      transitionGuard.reset();
       audioEngine.seek(seconds);
       set({ position: Math.max(0, seconds), ended: false });
       after();
@@ -433,7 +544,7 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       const trackId = currentTrackId(get());
       const track = trackId === null ? null : getTrackById(trackId);
       if (!track) return;
-      const loaded = await audioEngine.load(track);
+      const loaded = await audioEngine.load(track, { gain: replayGainForTrack(track) });
       if (!loaded) return;
       audioEngine.setVolume(session.volume);
       audioEngine.setMuted(session.muted);
@@ -448,6 +559,36 @@ export const usePlayer = create<PlayerState>()((set, get) => {
 
     syncTime: (position, duration, buffered) => {
       set({ position, duration, buffered });
+      transitionGuard.observe(position);
+
+      const state = get();
+      const audio = playbackAudioSettings();
+      if ((audio.crossfadeSeconds > 0 || audio.gaplessPlayback) && state.order.length > 0) {
+        const advance = advancePosition(state.orderPosition, state.order.length, state.repeat, 1);
+        const decision = decideTransition({
+          isPlaying: state.isPlaying && !audioEngine.paused,
+          position,
+          duration,
+          crossfadeSeconds: audio.crossfadeSeconds,
+          gaplessPlayback: audio.gaplessPlayback,
+          repeat: state.repeat,
+          hasNext:
+            !advance.exhausted &&
+            !advance.restart &&
+            trackAtPosition(state, advance.position) !== null,
+        });
+        if (decision.kind !== "none") {
+          const key = `${state.orderPosition}:${currentTrackId(state) ?? "none"}`;
+          if (transitionGuard.tryArm(key)) {
+            if (decision.kind === "repeat-one-loop") {
+              void get().next(true);
+            } else {
+              void get().next(true, decision.kind === "crossfade" ? decision.fadeSeconds : 0);
+            }
+          }
+        }
+      }
+
       // Do not write localStorage on every 100 ms clock tick, but do checkpoint progress often
       // enough that Restore last session resumes where the listener actually stopped.
       const now = Date.now();

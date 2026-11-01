@@ -41,6 +41,14 @@ export interface Track {
   addedAt: number;
   lastPlayedAt: number | null;
   playCount: number;
+  /** ReplayGain track adjustment from file tags, in dB (null when untagged). */
+  replayGainTrackDb: number | null;
+  /** ReplayGain album adjustment from file tags, in dB (null when untagged). */
+  replayGainAlbumDb: number | null;
+  /** ReplayGain track peak amplitude (linear), used for clipping prevention. */
+  replayGainTrackPeak: number | null;
+  /** ReplayGain album peak amplitude (linear), used for clipping prevention. */
+  replayGainAlbumPeak: number | null;
   /** True when a sidecar `.lrc`/`.ttml`/`.qrc`/`.srt` file sits next to the audio file. */
   hasSidecarLyrics: boolean;
   /** True when this file has a supported audio extension; codec support is checked separately. */
@@ -368,6 +376,16 @@ export interface LyricsSettings {
   showLyricsInFullscreen: boolean;
 }
 
+export type ReplayGainMode = "off" | "track" | "album";
+
+export interface EqualizerSettings {
+  enabled: boolean;
+  preampDb: number;
+  /** 10 band gains in dB (-12..+12); centre frequencies live in the renderer's equalizer module. */
+  bandsDb: number[];
+  presetId: string;
+}
+
 export interface PlaybackSettings {
   volume: number;
   muted: boolean;
@@ -375,6 +393,14 @@ export interface PlaybackSettings {
   repeat: RepeatMode;
   playbackRate: number;
   resumeOnLaunch: boolean;
+  /** Seconds of overlap between consecutive tracks; 0 disables crossfade. */
+  crossfadeSeconds: number;
+  /** Preload the next track so queue transitions cut without a silent gap. */
+  gaplessPlayback: boolean;
+  replayGainMode: ReplayGainMode;
+  replayGainPreampDb: number;
+  replayGainPreventClipping: boolean;
+  equalizer: EqualizerSettings;
 }
 
 export interface AppearanceSettings {

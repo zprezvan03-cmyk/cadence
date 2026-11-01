@@ -8,9 +8,11 @@ import { useEffect } from "react";
 import type { AppSettings, MediaCommand } from "../../shared/types";
 import { inferArtworkMimeType } from "../../main/media/protocolHandler";
 import { audioEngine } from "../audio/engine";
+import { computeReplayGain } from "../audio/replayGain";
 import { applyFontFamily } from "./fonts";
 import { useLibrary } from "../state/libraryStore";
 import { readSession, usePlayer, currentTrackId } from "../state/playerStore";
+import { getTrackById } from "../state/trackRegistry";
 import { useSettings } from "../state/settingsStore";
 import { useUi } from "../state/uiStore";
 import { useHistory } from "../state/historyStore";
@@ -492,6 +494,10 @@ export function useBootstrap(): void {
         if (player.rate !== settings.playback.playbackRate) player.setRate(settings.playback.playbackRate);
         if (player.repeat !== settings.playback.repeat) player.setRepeat(settings.playback.repeat);
         if (player.shuffle !== settings.playback.shuffle) player.toggleShuffle();
+        audioEngine.applyEqualizer(settings.playback.equalizer);
+        const trackId = currentTrackId(player);
+        const track = trackId === null ? null : getTrackById(trackId);
+        audioEngine.setTrackGain(computeReplayGain(track, settings.playback).linear);
       } finally {
         applyingSettings = false;
       }

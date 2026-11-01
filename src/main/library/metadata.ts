@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import { parseFile } from "music-metadata";
+import { replayGainFromNativeTags } from "./metadataCore";
 
 export const AUDIO_EXTENSIONS = [
   ".flac",
@@ -81,6 +82,10 @@ export interface ParsedTrack {
   embeddedLyrics: { text: string; kind: string } | null;
   hasSidecarLyrics: boolean;
   playable: boolean;
+  replayGainTrackDb: number | null;
+  replayGainAlbumDb: number | null;
+  replayGainTrackPeak: number | null;
+  replayGainAlbumPeak: number | null;
 }
 
 export function isAudioFile(path: string): boolean {
@@ -211,11 +216,16 @@ export async function readTrackMetadata(path: string, artworkDir: string): Promi
       embeddedLyrics: null,
       hasSidecarLyrics: findSidecarLyrics(path) !== null,
       playable: isPlayableExtension(path),
+      replayGainTrackDb: null,
+      replayGainAlbumDb: null,
+      replayGainTrackPeak: null,
+      replayGainAlbumPeak: null,
     };
   }
 
   const common = metadata.common ?? ({} as any);
   const format = metadata.format ?? ({} as any);
+  const replayGain = replayGainFromNativeTags(metadata.native);
   const { statSync } = await import("node:fs");
   const stat = statSync(path);
 
@@ -251,6 +261,10 @@ export async function readTrackMetadata(path: string, artworkDir: string): Promi
     embeddedLyrics: lyricsFromTags(common),
     hasSidecarLyrics: findSidecarLyrics(path) !== null,
     playable: isPlayableExtension(path),
+    replayGainTrackDb: replayGain.trackDb,
+    replayGainAlbumDb: replayGain.albumDb,
+    replayGainTrackPeak: replayGain.trackPeak,
+    replayGainAlbumPeak: replayGain.albumPeak,
   };
 }
 

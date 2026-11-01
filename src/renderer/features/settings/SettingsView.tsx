@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { ChevronDown, ChevronUp, FolderMinus, FolderPlus, RotateCcw, Stethoscope, Trash2 } from "lucide-react";
-import type { AppInfo, AppSettings, ShaderSettings } from "../../../shared/types";
+import type { AppInfo, AppSettings, EqualizerSettings, ReplayGainMode, ShaderSettings } from "../../../shared/types";
 import { FONT_KINDS, FONT_OPTIONS, resolveFontOption } from "../../../shared/fonts";
 import { detectUnavailableFonts } from "../../app/fonts";
 import { useLibrary } from "../../state/libraryStore";
@@ -29,6 +29,12 @@ import { invalidateLyricsResolution } from "../lyrics/useLyrics";
 import { LyricsCachePanel } from "./LyricsCachePanel";
 import { FetchAllSettings } from "../lyrics-fetch/FetchAllSettings";
 import { useOnboarding } from "../../state/onboardingStore";
+import {
+  EQ_BAND_LABELS,
+  EQ_PRESETS,
+  matchingEqualizerPresetId,
+  normalizeEqBandsDb,
+} from "../../audio/equalizer";
 import type { LyricsFetchConcurrency } from "../../../shared/types";
 import { useSessionState } from "../../app/useSessionState";
 
@@ -147,6 +153,20 @@ export function SettingsView() {
 
   const patchLyrics = (patch: Partial<AppSettings["lyrics"]>) => void patchSettings({ lyrics: patch });
   const patchShaders = (patch: Partial<ShaderSettings>) => void patchSettings({ shaders: patch });
+  const formatDb = (value: number) => `${value > 0 ? "+" : ""}${value.toFixed(1)} dB`;
+  // Patch a complete equalizer object: the settings store's optimistic merge is only shallow
+  // below `playback`, so a partial nested object would briefly drop the other EQ fields
+  // until the (deep-merging) host response lands.
+  const patchEqualizer = (patch: Partial<EqualizerSettings>) =>
+    void patchSettings({
+      playback: {
+        equalizer: {
+          ...settings.playback.equalizer,
+          ...patch,
+          bandsDb: normalizeEqBandsDb(patch.bandsDb ?? settings.playback.equalizer.bandsDb),
+        },
+      },
+    });
 
   // Provider-order edits go through the shared helpers so a removal is persisted as an upstream
   // `d_` entry instead of being spliced out: migrateProviderOrder re-inserts missing defaults, so a
@@ -571,6 +591,132 @@ export function SettingsView() {
             </select>
           </div>
           <Toggle label="Shuffle by default" checked={settings.playback.shuffle} onChange={value => void patchSettings({ playback: { shuffle: value } })} />
+
+          <div className="settings-subsection" data-testid="settings-audio">
+            <h3>Audio</h3>
+            <Range
+              label="Crossfade"
+              hint="Overlap the end of one track with the start of the next. Off keeps today's instant cut."
+              value={settings.playback.crossfadeSeconds}
+              min={0}
+              max={12}
+              step={0.5}
+              format={value => (value === 0 ? "Off" : `${value.toFixed(1)}s`)}
+              onChange={value => void patchSettings({ playback: { crossfadeSeconds: value } })}
+            />
+            <Toggle
+              label="Gapless playback"
+              hint="Preload the next track so album tracks that run together cut without a silent gap."
+              checked={settings.playback.gaplessPlayback}
+              onChange={value => void patchSettings({ playback: { gaplessPlayback: value } })}
+            />
+            <div className="setting-row">
+              <span>
+                <strong>ReplayGain</strong>
+                <em>Level out loud and quiet files using ReplayGain tags read when files are scanned. Untagged files are untouched.</em>
+              </span>
+              <select
+                data-testid="replaygain-mode"
+                value={settings.playback.replayGainMode}
+                onChange={event => void patchSettings({ playback: { replayGainMode: event.target.value as ReplayGainMode } })}
+              >
+                <option value="off">Off</option>
+                <option value="track">Track gain</option>
+                <option value="album">Album gain</option>
+              </select>
+            </div>
+            <Range
+              label="ReplayGain preamp"
+              hint="Extra level added on top of the ReplayGain adjustment."
+              value={settings.playback.replayGainPreampDb}
+              min={-12}
+              max={12}
+              step={0.5}
+              format={formatDb}
+              onChange={value => void patchSettings({ playback: { replayGainPreampDb: value } })}
+            />
+            <Toggle
+              label="Prevent clipping"
+              hint="Use each file's ReplayGain peak tag to cap boosts before they can distort."
+              checked={settings.playback.replayGainPreventClipping}
+              onChange={value => void patchSettings({ playback: { replayGainPreventClipping: value } })}
+            />
+          </div>
+
+          <div className="settings-subsection" data-testid="settings-equalizer">
+            <h3>Equalizer</h3>
+            <Toggle
+              label="Enable equalizer"
+              hint="Ten-band EQ applied after ReplayGain. Turning it off is instantly transparent."
+              checked={settings.playback.equalizer.enabled}
+              onChange={value => patchEqualizer({ enabled: value })}
+            />
+            <div className="setting-row">
+              <span>
+                <strong>Preset</strong>
+                <em>Moving any band switches to Custom.</em>
+              </span>
+              <select
+                data-testid="equalizer-preset"
+                value={matchingEqualizerPresetId(settings.playback.equalizer.bandsDb)}
+                onChange={event => {
+                  const preset = EQ_PRESETS.find(candidate => candidate.id === event.target.value);
+                  if (preset) patchEqualizer({ bandsDb: [...preset.bandsDb], presetId: preset.id });
+                }}
+              >
+                {EQ_PRESETS.map(preset => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.label}
+                  </option>
+                ))}
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+            <Range
+              label="EQ preamp"
+              hint="Overall level trim — lower it if strong boosts make loud tracks clip."
+              value={settings.playback.equalizer.preampDb}
+              min={-12}
+              max={12}
+              step={0.5}
+              format={formatDb}
+              onChange={value => patchEqualizer({ preampDb: value })}
+            />
+            <div className="equalizer-bands" role="group" aria-label="Equalizer bands">
+              {normalizeEqBandsDb(settings.playback.equalizer.bandsDb).map((bandDb, index) => (
+                <label className="equalizer-band" key={EQ_BAND_LABELS[index]}>
+                  <span>{EQ_BAND_LABELS[index]}</span>
+                  <input
+                    type="range"
+                    min={-12}
+                    max={12}
+                    step={0.5}
+                    value={bandDb}
+                    data-testid={`equalizer-band-${index}`}
+                    aria-label={`${EQ_BAND_LABELS[index]} Hz band`}
+                    onChange={event => {
+                      const bandsDb = normalizeEqBandsDb(settings.playback.equalizer.bandsDb);
+                      bandsDb[index] = Number(event.target.value);
+                      patchEqualizer({ bandsDb, presetId: matchingEqualizerPresetId(bandsDb) });
+                    }}
+                  />
+                  <output>{formatDb(bandDb)}</output>
+                </label>
+              ))}
+            </div>
+            <div className="setting-row">
+              <span>
+                <strong>Reset equalizer</strong>
+                <em>Back to flat with no preamp.</em>
+              </span>
+              <button
+                type="button"
+                onClick={() => patchEqualizer({ preampDb: 0, bandsDb: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], presetId: "flat" })}
+              >
+                <RotateCcw size={14} /> Reset
+              </button>
+            </div>
+          </div>
         </section>
       ) : null}
 

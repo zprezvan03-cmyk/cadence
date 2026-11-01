@@ -30,6 +30,10 @@ const track = (overrides: Partial<{ id: number; title: string; artist: string; a
   addedAt: 0,
   lastPlayedAt: null,
   playCount: 0,
+  replayGainTrackDb: null,
+  replayGainAlbumDb: null,
+  replayGainTrackPeak: null,
+  replayGainAlbumPeak: null,
   hasSidecarLyrics: false,
   playable: true,
 });

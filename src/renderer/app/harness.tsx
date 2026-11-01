@@ -143,6 +143,10 @@ function makeHarnessTrack(spec: HarnessTrackSpec): Track {
     hasSidecarLyrics: true,
     playable: true,
     ...spec,
+    replayGainTrackDb: spec.replayGainTrackDb ?? null,
+    replayGainAlbumDb: spec.replayGainAlbumDb ?? null,
+    replayGainTrackPeak: spec.replayGainTrackPeak ?? null,
+    replayGainAlbumPeak: spec.replayGainAlbumPeak ?? null,
   };
 }
 
@@ -174,7 +178,20 @@ const defaultLyricsSettings: LyricsSettings = {
 function harnessAppSettings(lyrics?: Partial<LyricsSettings>): AppSettings {
   return {
     version: 1,
-    playback: { volume: 0.85, muted: false, shuffle: false, repeat: "off", playbackRate: 1, resumeOnLaunch: false },
+    playback: {
+      volume: 0.85,
+      muted: false,
+      shuffle: false,
+      repeat: "off",
+      playbackRate: 1,
+      resumeOnLaunch: false,
+      crossfadeSeconds: 0,
+      gaplessPlayback: false,
+      replayGainMode: "off",
+      replayGainPreampDb: 0,
+      replayGainPreventClipping: true,
+      equalizer: { enabled: false, preampDb: 0, bandsDb: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], presetId: "flat" },
+    },
     appearance: { accent: "#ff3d71", reduceMotion: false, compactSidebar: false, compactSidebarHoverExpand: true, blurArtwork: true, fontFamily: "inter" },
     lyrics: { ...defaultLyricsSettings, ...lyrics },
     nowPlayingProfiles: createDefaultNowPlayingProfilesSettings(),

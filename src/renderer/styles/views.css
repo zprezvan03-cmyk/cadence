@@ -797,6 +797,40 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Ten vertical EQ faders. Chromium/WebView2 supports vertical range inputs via writing-mode. */
+.equalizer-bands {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(44px, 1fr));
+  gap: 10px;
+  padding: 14px 4px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.equalizer-band {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.equalizer-band input[type="range"] {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 22px;
+  height: 132px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  .equalizer-bands {
+    grid-template-columns: repeat(5, minmax(44px, 1fr));
+  }
+}
+
 .provider-order {
   list-style: none;
   padding: 0;

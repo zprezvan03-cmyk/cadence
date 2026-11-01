@@ -27,7 +27,7 @@ import av
 
 try:
     from mutagen.flac import FLAC, Picture
-    from mutagen.id3 import APIC, ID3, TALB, TIT2, TPE1, TRCK, TYER, USLT
+    from mutagen.id3 import APIC, ID3, TALB, TIT2, TPE1, TRCK, TXXX, TYER, USLT
     from mutagen.mp4 import MP4, MP4Cover
     from mutagen.oggopus import OggOpus
     from mutagen.oggvorbis import OggVorbis
@@ -148,6 +148,10 @@ def tag_mp3(path: Path, cover: bytes) -> None:
     audio.add(TYER(encoding=3, text="2024"))
     audio.add(APIC(encoding=3, mime="image/png", type=3, desc="Cover", data=cover))
     audio.add(USLT(encoding=3, lang="eng", desc="", text=LRC))
+    audio.add(TXXX(encoding=3, desc="REPLAYGAIN_TRACK_GAIN", text="-6.00 dB"))
+    audio.add(TXXX(encoding=3, desc="REPLAYGAIN_TRACK_PEAK", text="0.900000"))
+    audio.add(TXXX(encoding=3, desc="REPLAYGAIN_ALBUM_GAIN", text="-5.00 dB"))
+    audio.add(TXXX(encoding=3, desc="REPLAYGAIN_ALBUM_PEAK", text="0.950000"))
     audio.save(str(path), v2_version=3)
 
 
@@ -171,6 +175,10 @@ def tag_flac(path: Path, cover: bytes) -> None:
     audio["tracknumber"] = "2"
     audio["date"] = "2024"
     audio["lyrics"] = LRC
+    audio["REPLAYGAIN_TRACK_GAIN"] = "-6.00 dB"
+    audio["REPLAYGAIN_TRACK_PEAK"] = "0.900000"
+    audio["REPLAYGAIN_ALBUM_GAIN"] = "-5.00 dB"
+    audio["REPLAYGAIN_ALBUM_PEAK"] = "0.950000"
     picture = Picture()
     picture.type = 3
     picture.mime = "image/png"
