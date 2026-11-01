@@ -23,6 +23,8 @@ interface UiState {
   playlistPicker: { trackIds: number[] } | null;
   playlistCreateRequested: boolean;
   trackEditorId: number | null;
+  miniPlayer: boolean;
+  shortcutsHelpOpen: boolean;
   toast: string | null;
   navigate: (route: Route) => void;
   goBack: () => void;
@@ -35,6 +37,9 @@ interface UiState {
   closePlaylistPicker: () => void;
   openTrackEditor: (trackId: number) => void;
   closeTrackEditor: () => void;
+  setMiniPlayer: (value: boolean) => void;
+  toggleMiniPlayer: () => void;
+  setShortcutsHelpOpen: (value: boolean) => void;
   requestPlaylistCreate: () => void;
   acknowledgePlaylistCreate: () => void;
   showToast: (message: string) => void;
@@ -114,6 +119,8 @@ export const useUi = create<UiState>()((set, get) => ({
   playlistPicker: null,
   playlistCreateRequested: false,
   trackEditorId: null,
+  miniPlayer: false,
+  shortcutsHelpOpen: false,
   toast: null,
   navigate: route => {
     const hash = routeToHash(route);
@@ -140,6 +147,10 @@ export const useUi = create<UiState>()((set, get) => ({
   closePlaylistPicker: () => set({ playlistPicker: null }),
   openTrackEditor: trackId => set({ trackEditorId: trackId }),
   closeTrackEditor: () => set({ trackEditorId: null }),
+  setMiniPlayer: value =>
+    set(state => ({ miniPlayer: value, queueOpen: value ? false : state.queueOpen })),
+  toggleMiniPlayer: () => get().setMiniPlayer(!get().miniPlayer),
+  setShortcutsHelpOpen: value => set({ shortcutsHelpOpen: value }),
   requestPlaylistCreate: () => {
     get().navigate({ name: "library", tab: "playlists" });
     set({ playlistCreateRequested: true });

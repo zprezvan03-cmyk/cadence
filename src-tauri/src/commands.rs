@@ -140,6 +140,12 @@ pub struct HttpFetchArgs {
     pub url: String,
     pub headers: HashMap<String, String>,
     pub timeout_ms: u64,
+    /// HTTP method; absent keeps the historical GET-only behaviour.
+    #[serde(default)]
+    pub method: Option<String>,
+    /// Optional request body for POST-style calls (e.g. last.fm scrobbling).
+    #[serde(default)]
+    pub body: Option<String>,
 }
 
 fn atomic_write_utf8(target: &Path, content: &str) -> Result<(), String> {
@@ -850,12 +856,21 @@ pub async fn cmd_http_fetch(
     }
 
     let timeout_ms = args.timeout_ms.clamp(500, 30_000);
+    let method = match args.method.as_deref().map(str::to_ascii_uppercase).as_deref() {
+        Some("POST") => reqwest::Method::POST,
+        Some("PUT") => reqwest::Method::PUT,
+        Some("DELETE") => reqwest::Method::DELETE,
+        _ => reqwest::Method::GET,
+    };
     let mut req = state
         .http_client
-        .get(parsed)
+        .request(method, parsed)
         .timeout(Duration::from_millis(timeout_ms));
     for (k, v) in &args.headers {
         req = req.header(k.as_str(), v.as_str());
+    }
+    if let Some(body) = &args.body {
+        req = req.body(body.clone());
     }
 
     let outcome = tokio::select! {
@@ -936,6 +951,65 @@ pub fn cmd_window_action(action: String, window: WebviewWindow) -> Result<(), St
         }
         _ => Err("Unknown window action".to_string()),
     }
+}
+
+struct MiniPlayerState {
+    enabled: bool,
+    previous_size: Option<(f64, f64)>,
+}
+
+static MINI_PLAYER: Mutex<MiniPlayerState> = Mutex::new(MiniPlayerState {
+    enabled: false,
+    previous_size: None,
+});
+
+/// Switch the main window between its normal layout size and the compact,
+/// always-on-top mini-player size. The renderer owns the mini UI; this
+/// command only owns the OS window geometry so entering/leaving mini mode
+/// restores the exact size the user had before.
+#[tauri::command]
+pub fn cmd_set_mini_player(enabled: bool, window: WebviewWindow) -> Result<(), String> {
+    let mut state = MINI_PLAYER
+        .lock()
+        .map_err(|_| "Mini-player state unavailable".to_string())?;
+    if enabled {
+        if !state.enabled {
+            if window.is_fullscreen().unwrap_or(false) {
+                window.set_fullscreen(false).map_err(|e| e.to_string())?;
+            }
+            if window.is_maximized().unwrap_or(false) {
+                window.unmaximize().map_err(|e| e.to_string())?;
+            }
+            let scale = window.scale_factor().unwrap_or(1.0).max(0.1);
+            if let Ok(size) = window.inner_size() {
+                state.previous_size = Some((size.width as f64 / scale, size.height as f64 / scale));
+            }
+        }
+        window
+            .set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(360.0, 132.0))))
+            .map_err(|e| e.to_string())?;
+        window
+            .set_size(tauri::Size::Logical(tauri::LogicalSize::new(460.0, 160.0)))
+            .map_err(|e| e.to_string())?;
+        window.set_resizable(false).map_err(|e| e.to_string())?;
+        window.set_always_on_top(true).map_err(|e| e.to_string())?;
+        state.enabled = true;
+    } else {
+        let (width, height) = state.previous_size.unwrap_or((1440.0, 920.0));
+        window.set_always_on_top(false).map_err(|e| e.to_string())?;
+        window.set_resizable(true).map_err(|e| e.to_string())?;
+        window
+            .set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(1040.0, 680.0))))
+            .map_err(|e| e.to_string())?;
+        window
+            .set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+                width.max(1040.0),
+                height.max(680.0),
+            )))
+            .map_err(|e| e.to_string())?;
+        state.enabled = false;
+    }
+    Ok(())
 }
 
 #[tauri::command]

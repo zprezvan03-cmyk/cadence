@@ -3,7 +3,7 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Heart, ListMusic, Maximize2, Mic2 } from "lucide-react";
+import { Heart, ListMusic, Maximize2, Mic2, PictureInPicture2 } from "lucide-react";
 import { useCurrentTrack } from "../../app/hooks";
 import { useLibrary } from "../../state/libraryStore";
 import { usePlayer } from "../../state/playerStore";
@@ -21,6 +21,7 @@ export function PlayerBar() {
   const navigate = useUi(state => state.navigate);
   const setFavorite = useLibrary(state => state.setFavorite);
   const toggleFullscreenLyrics = useUi(state => state.toggleFullscreenLyrics);
+  const setMiniPlayer = useUi(state => state.setMiniPlayer);
   const buffering = usePlayer(state => state.buffering);
   const isPlaying = usePlayer(state => state.isPlaying);
   // Apple Lossless is decoded before it can play, which can take a moment. Show that work only
@@ -108,6 +109,16 @@ export function PlayerBar() {
           onClick={() => toggleQueue()}
         >
           <ListMusic size={18} />
+        </button>
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Mini player"
+          title="Mini player (Ctrl+Shift+P)"
+          data-testid="open-mini-player"
+          onClick={() => setMiniPlayer(true)}
+        >
+          <PictureInPicture2 size={17} />
         </button>
         <button
           type="button"

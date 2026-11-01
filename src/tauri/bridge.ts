@@ -134,6 +134,14 @@ function createTauriRuntimeFetch(): RuntimeFetch {
     };
     signal?.addEventListener("abort", onAbort, { once: true });
 
+    const method = (init?.method ?? "GET").toUpperCase();
+    const body =
+      typeof init?.body === "string"
+        ? init.body
+        : init?.body instanceof URLSearchParams
+          ? init.body.toString()
+          : undefined;
+
     try {
       const res = await invoke<HttpFetchResponse>("cmd_http_fetch", {
         args: {
@@ -141,6 +149,8 @@ function createTauriRuntimeFetch(): RuntimeFetch {
           url,
           headers,
           timeoutMs: 15_000,
+          method,
+          body,
         },
       });
       return new Response(res.body, {
@@ -1110,6 +1120,10 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
 
       async window(action) {
         await invoke("cmd_window_action", { action });
+      },
+
+      async setMiniPlayer(enabled: boolean): Promise<void> {
+        await invoke("cmd_set_mini_player", { enabled });
       },
 
       async isFullScreen(): Promise<boolean> {

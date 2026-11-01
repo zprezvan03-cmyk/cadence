@@ -77,6 +77,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
     onboardingCompleted: false,
     onboardingStep: 0,
   },
+  scrobbling: {
+    enabled: false,
+    apiKey: "",
+    apiSecret: "",
+    sessionKey: "",
+    username: "",
+  },
 };
 
 type AnyRecord = Record<string, unknown>;
@@ -146,6 +153,16 @@ function normalizeSettings(settings: AppSettings): AppSettings {
     onboardingStep: Number.isFinite(step) ? Math.min(4, Math.max(0, Math.round(step))) : 0,
   };
   settings.nowPlayingProfiles = normalizeNowPlayingProfilesSettings(settings.nowPlayingProfiles);
+  const scrobblingSource: AnyRecord = isPlainObject(settings.scrobbling) ? settings.scrobbling : {};
+  const credential = (value: unknown): string =>
+    typeof value === "string" ? value.trim().slice(0, 256) : "";
+  settings.scrobbling = {
+    enabled: Boolean(scrobblingSource.enabled),
+    apiKey: credential(scrobblingSource.apiKey),
+    apiSecret: credential(scrobblingSource.apiSecret),
+    sessionKey: credential(scrobblingSource.sessionKey),
+    username: credential(scrobblingSource.username),
+  };
   return settings;
 }
 

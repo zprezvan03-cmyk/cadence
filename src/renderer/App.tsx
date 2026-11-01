@@ -5,11 +5,13 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { useCurrentTrack } from "./app/hooks";
 import { useAutofetchLyrics } from "./features/lyrics/useAutofetch";
+import { useLastFmScrobbler } from "./features/scrobble/useLastFmScrobbler";
 import { Onboarding } from "./features/onboarding/Onboarding";
 import { useLibrary } from "./state/libraryStore";
 import { useOnboarding } from "./state/onboardingStore";
 import { useSettings } from "./state/settingsStore";
 import { PlaylistPicker } from "./app/PlaylistPicker";
+import { ShortcutsHelp } from "./app/ShortcutsHelp";
 import { TrackEditor } from "./features/library/TrackEditor";
 import { Sidebar } from "./app/Sidebar";
 import { TopBar } from "./app/TopBar";
@@ -22,6 +24,7 @@ import { HomeView } from "./features/library/HomeView";
 import { LibraryView } from "./features/library/LibraryView";
 import { HistoryView } from "./features/history/HistoryView";
 import { LyricsView } from "./features/lyrics/LyricsView";
+import { MiniPlayer } from "./features/player/MiniPlayer";
 import { PlayerBar } from "./features/player/PlayerBar";
 import { QueuePanel } from "./features/player/QueuePanel";
 import { SettingsView } from "./features/settings/SettingsView";
@@ -103,6 +106,7 @@ export function App() {
   useBootstrap();
   // Autofetch: lyrics lookup begins on every track change, whichever tab is open.
   useAutofetchLyrics();
+  useLastFmScrobbler();
 
   const settingsLoaded = useSettings(state => state.loaded);
   const folderCount = useLibrary(state => state.snapshot?.folders.length ?? null);
@@ -115,6 +119,7 @@ export function App() {
     }
   }, [settingsLoaded, folderCount, trackCount, maybeAutoShowOnboarding]);
   const fullscreenLyrics = useUi(state => state.fullscreenLyrics);
+  const miniPlayer = useUi(state => state.miniPlayer);
   const route = useUi(state => state.route);
   const error = usePlayer(state => state.error);
   const chrome = useWindowChrome();
@@ -124,6 +129,24 @@ export function App() {
   // flicker. Library tabs keep separate keys so switching Songs → Albums still animates.
   const viewKey = route.name === "search" ? "search" : `${route.name}-${JSON.stringify(route)}`;
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const miniWindowSyncStarted = useRef(false);
+
+  // The renderer state owns mini mode; the native layer only follows it to
+  // resize/pin the OS window. Skip the initial `false` so a normal launch
+  // never issues a redundant restore-size command.
+  useEffect(() => {
+    if (!miniWindowSyncStarted.current) {
+      miniWindowSyncStarted.current = true;
+      return;
+    }
+    void (async () => {
+      try {
+        await window.cadence?.app?.setMiniPlayer?.(miniPlayer);
+      } catch {
+        /* Browser tests and older bridges render mini mode without resizing. */
+      }
+    })();
+  }, [miniPlayer]);
 
   useLayoutEffect(() => {
     const node = contentRef.current;
@@ -140,6 +163,15 @@ export function App() {
   // The title bar is only drawn when the OS frame is off (Windows); immersive and native fullscreen
   // hand the whole window to the content.
   const titleBar = chrome.undecorated && !chrome.fullscreen && !immersive;
+
+  if (miniPlayer) {
+    return (
+      <div className="mini-shell">
+        <MiniPlayer />
+        <AppToast />
+      </div>
+    );
+  }
 
   return (
     <div className={`app-shell ${immersive ? "is-immersive" : ""} ${titleBar ? "has-title-bar" : ""}`}>
@@ -168,6 +200,7 @@ export function App() {
       <QueuePanel />
       <PlaylistPicker />
       <TrackEditor />
+      <ShortcutsHelp />
       <AppToast />
       <Onboarding />
     </div>

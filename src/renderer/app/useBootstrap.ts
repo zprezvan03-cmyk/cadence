@@ -173,6 +173,7 @@ export function useBootstrap(): void {
       if (action === "add-folder") void useLibrary.getState().addFolder();
       if (action === "rescan") void useLibrary.getState().rescan();
       if (action === "toggle-fullscreen-lyrics") useUi.getState().toggleFullscreenLyrics();
+      if (action === "toggle-mini-player") useUi.getState().toggleMiniPlayer();
     });
 
     const unsubscribeProgress = window.cadence?.library?.onScanProgress?.(progress => {
@@ -320,6 +321,16 @@ export function useBootstrap(): void {
       const cmd = event.ctrlKey || event.metaKey;
       const lower = event.key.toLowerCase();
 
+      // The shortcut reference is modal: while it is open, playback shortcuts
+      // must not keep firing behind it. Escape and ? both dismiss it.
+      if (ui.shortcutsHelpOpen) {
+        if (event.key === "Escape" || event.key === "?") {
+          event.preventDefault();
+          ui.setShortcutsHelpOpen(false);
+        }
+        return;
+      }
+
       if (cmd && lower === "k") {
         event.preventDefault();
         document.getElementById("global-search")?.focus();
@@ -338,6 +349,18 @@ export function useBootstrap(): void {
       if (cmd && !event.shiftKey && lower === "p") {
         event.preventDefault();
         void player.toggle();
+        return;
+      }
+      if (cmd && event.shiftKey && lower === "p") {
+        event.preventDefault();
+        ui.toggleMiniPlayer();
+        return;
+      }
+      if (cmd && !event.shiftKey && lower === "l") {
+        event.preventDefault();
+        const trackId = currentTrackId(player);
+        const track = trackId === null ? null : useLibrary.getState().tracksById.get(trackId) ?? null;
+        if (track) void useLibrary.getState().setFavorite(track.id, !track.favorite);
         return;
       }
       if (cmd && event.key === "ArrowRight") {
@@ -425,6 +448,10 @@ export function useBootstrap(): void {
         case "R":
           player.cycleRepeat();
           break;
+        case "?":
+          event.preventDefault();
+          ui.setShortcutsHelpOpen(true);
+          break;
         case "Escape":
           // Overlays consume Escape before the immersive view does. QueuePanel also listens for
           // this key; toggling to false in both places is idempotent and prevents a double exit.
@@ -436,6 +463,11 @@ export function useBootstrap(): void {
             event.preventDefault();
             event.stopImmediatePropagation();
             ui.toggleQueue(false);
+            return;
+          }
+          if (ui.miniPlayer) {
+            event.preventDefault();
+            ui.setMiniPlayer(false);
             return;
           }
           if (ui.fullscreenLyrics) {

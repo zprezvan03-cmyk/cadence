@@ -1055,6 +1055,93 @@ try {
     JSON.stringify(reviewTitles),
   );
 
+  /* =================================================================================
+   * Launch 7: System integration surfaces that can render in a browser harness —
+   * mini-player mode, the shortcut reference, and last.fm credential settings.
+   * (The native tray and OS window resize are verified by the Windows build.)
+   * ================================================================================= */
+  await page.click('[data-testid="open-mini-player"]');
+  await page.waitForSelector('[data-testid="mini-player"]', { timeout: 10_000 });
+  // Match the native mini-player window size so the screenshot judges the real layout.
+  await page.setViewport({ width: 460, height: 160 });
+  await wait(250);
+  const miniPlayerState = await page.evaluate(() => ({
+    text: document.querySelector('[data-testid="mini-player"]')?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+    sidebarVisible: Boolean(document.querySelector(".sidebar")),
+    hasPlayToggle: Boolean(document.querySelector('[data-testid="mini-player"] [data-testid="play-toggle"]')),
+    hasSeek: Boolean(document.querySelector('[data-testid="mini-player"] input[aria-label="Seek"]')),
+  }));
+  await page.screenshot({ path: join(shotDir, "10-launch7-mini-player.png") });
+  await page.keyboard.press("Escape");
+  await page.waitForSelector(".sidebar", { timeout: 10_000 });
+  await page.setViewport({ width: 1440, height: 900 });
+  await wait(250);
+  check(
+    "launch7-mini-player-renders-and-escape-restores-full-player",
+    !miniPlayerState.sidebarVisible &&
+      miniPlayerState.hasPlayToggle &&
+      miniPlayerState.hasSeek &&
+      miniPlayerState.text.includes("Cadence"),
+    JSON.stringify(miniPlayerState),
+  );
+
+  await page.keyboard.press("?");
+  await page.waitForSelector('[data-testid="shortcuts-help"]', { timeout: 10_000 });
+  await wait(400); // let the modal entrance settle before judging/screenshot
+  const shortcutsText = await page.$eval(
+    '[data-testid="shortcuts-help"]',
+    el => el.textContent?.replace(/\s+/g, " ").trim() ?? "",
+  );
+  await page.screenshot({ path: join(shotDir, "11-launch7-shortcuts.png") });
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(
+    () => !document.querySelector('[data-testid="shortcuts-help"]'),
+    { timeout: 10_000 },
+  );
+  check(
+    "launch7-shortcut-help-opens-with-question-mark-and-closes-with-escape",
+    shortcutsText.includes("Keyboard shortcuts") &&
+      shortcutsText.includes("Mini player") &&
+      shortcutsText.includes("Favourite current track"),
+    shortcutsText.slice(0, 240),
+  );
+
+  await clickNav(page, "Settings");
+  await page.waitForSelector('[data-testid="settings-view"]', { timeout: 10_000 });
+  await page.evaluate(() => {
+    const tab = Array.from(document.querySelectorAll(".settings-tabs button")).find(
+      button => button.textContent?.trim() === "Playback",
+    ) as HTMLButtonElement | undefined;
+    tab?.click();
+  });
+  await page.waitForSelector('[data-testid="settings-lastfm"]', { timeout: 10_000 });
+  await page.type('[data-testid="lastfm-api-key"]', "test-key-123");
+  await page.type('[data-testid="lastfm-api-secret"]', "test-secret-456");
+  await page.evaluate(() => {
+    const button = Array.from(
+      document.querySelectorAll('[data-testid="settings-lastfm"] button'),
+    ).find(candidate => candidate.textContent?.trim() === "Save credentials") as
+      | HTMLButtonElement
+      | undefined;
+    button?.click();
+  });
+  await page.waitForSelector('[data-testid="lastfm-message"]', { timeout: 10_000 });
+  const lastFmMessage = await page.$eval(
+    '[data-testid="lastfm-message"]',
+    el => el.textContent?.trim() ?? "",
+  );
+  await page.$eval('[data-testid="settings-lastfm"]', el => el.scrollIntoView({ block: "start" }));
+  await wait(300);
+  await page.screenshot({ path: join(shotDir, "12-launch7-lastfm-settings.png") });
+  check(
+    "launch7-lastfm-credentials-save-through-settings",
+    lastFmMessage.includes("credentials saved") &&
+      settings.get().scrobbling.apiKey === "test-key-123" &&
+      settings.get().scrobbling.apiSecret === "test-secret-456" &&
+      settings.get().scrobbling.enabled === false,
+    `message=${lastFmMessage}; saved=${JSON.stringify(settings.get().scrobbling)}`,
+  );
+
   await page.close();
 } finally {
   await browser.close();

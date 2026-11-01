@@ -630,6 +630,20 @@ export interface AppSettings {
     /** Step to resume at when onboarding was interrupted (0 = Welcome). */
     onboardingStep: number;
   };
+  scrobbling: LastFmSettings;
+}
+
+/** last.fm scrobbling credentials and session, stored locally in settings. */
+export interface LastFmSettings {
+  enabled: boolean;
+  /** User-supplied last.fm API key (Cadence ships no shared key). */
+  apiKey: string;
+  /** User-supplied last.fm shared secret used only to sign requests locally. */
+  apiSecret: string;
+  /** Long-lived session key returned by auth.getSession; empty until connected. */
+  sessionKey: string;
+  /** Connected last.fm username, shown in Settings once authorized. */
+  username: string;
 }
 
 /** One completed listening session, newest first when listed. */
@@ -848,6 +862,8 @@ export interface CadenceApi {
     openPath(path: string): Promise<void>;
     chooseLyricsFile(trackId: number): Promise<{ canceled: boolean; path?: string; text?: string }>;
     window(action: WindowAction): Promise<void>;
+    /** Resize the OS window into (or out of) the compact always-on-top mini-player. */
+    setMiniPlayer(enabled: boolean): Promise<void>;
     isFullScreen(): Promise<boolean>;
     /** Frame state captured while the bridge boots, so the title bar renders on the first frame. */
     initialWindowChrome: WindowChromeState;

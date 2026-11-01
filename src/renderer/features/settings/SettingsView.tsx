@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronUp, FolderMinus, FolderPlus, RotateCcw, Stethoscope, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, FolderMinus, FolderPlus, Keyboard, RotateCcw, Stethoscope, Trash2 } from "lucide-react";
 import type { AppInfo, AppSettings, EqualizerSettings, ReplayGainMode, ShaderSettings } from "../../../shared/types";
 import { FONT_KINDS, FONT_OPTIONS, resolveFontOption } from "../../../shared/fonts";
 import { detectUnavailableFonts } from "../../app/fonts";
@@ -26,6 +26,7 @@ import {
 import { THEMES } from "../../upstream/better-lyrics/themes";
 import { TRANSLATION_LANGUAGES } from "../lyrics/translationLanguages";
 import { invalidateLyricsResolution } from "../lyrics/useLyrics";
+import { LastFmSettings } from "./LastFmSettings";
 import { LyricsCachePanel } from "./LyricsCachePanel";
 import { FetchAllSettings } from "../lyrics-fetch/FetchAllSettings";
 import { useOnboarding } from "../../state/onboardingStore";
@@ -134,6 +135,7 @@ export function SettingsView() {
   const [unavailableFonts, setUnavailableFonts] = useState<ReadonlySet<string>>(() => new Set());
   const [clearingCache, setClearingCache] = useState(false);
   const showToast = useUi(state => state.showToast);
+  const setShortcutsHelpOpen = useUi(state => state.setShortcutsHelpOpen);
   const navigate = useUi(state => state.navigate);
 
   useEffect(() => {
@@ -189,15 +191,20 @@ export function SettingsView() {
           <p className="eyebrow">Settings</p>
           <h1>Make it yours</h1>
         </div>
-        <button
-          type="button"
-          onClick={async () => {
-            await resetSettings();
-            showToast("Settings restored to defaults");
-          }}
-        >
-          <RotateCcw size={16} /> Reset all
-        </button>
+        <div className="heading-actions">
+          <button type="button" data-testid="open-shortcuts-help" onClick={() => setShortcutsHelpOpen(true)}>
+            <Keyboard size={16} /> Keyboard shortcuts
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              await resetSettings();
+              showToast("Settings restored to defaults");
+            }}
+          >
+            <RotateCcw size={16} /> Reset all
+          </button>
+        </div>
       </header>
 
       <nav className="settings-tabs">
@@ -717,6 +724,12 @@ export function SettingsView() {
               </button>
             </div>
           </div>
+
+          <LastFmSettings
+            settings={settings.scrobbling}
+            patchSettings={patch => patchSettings(patch)}
+            showToast={showToast}
+          />
         </section>
       ) : null}
 

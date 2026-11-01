@@ -127,6 +127,61 @@ fn setup_macos_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     Ok(())
 }
 
+fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+    use tauri::menu::{MenuBuilder, MenuItemBuilder};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+    let show = MenuItemBuilder::with_id("tray:show", "Show Cadence").build(app)?;
+    let toggle = MenuItemBuilder::with_id("tray:toggle", "Play / Pause").build(app)?;
+    let next = MenuItemBuilder::with_id("tray:next", "Next Track").build(app)?;
+    let previous = MenuItemBuilder::with_id("tray:previous", "Previous Track").build(app)?;
+    let mini = MenuItemBuilder::with_id("tray:mini", "Mini Player").build(app)?;
+    let quit = MenuItemBuilder::with_id("tray:quit", "Quit Cadence").build(app)?;
+    let menu = MenuBuilder::new(app)
+        .items(&[&show, &toggle, &next, &previous, &mini])
+        .separator()
+        .item(&quit)
+        .build()?;
+
+    let mut builder = TrayIconBuilder::with_id("cadence-tray")
+        .tooltip("Cadence")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app_handle, event| match event.id().as_ref() {
+            "tray:show" => focus_main_window(app_handle),
+            "tray:toggle" => {
+                let _ = app_handle.emit("cadence://player-command", "toggle");
+            }
+            "tray:next" => {
+                let _ = app_handle.emit("cadence://player-command", "next");
+            }
+            "tray:previous" => {
+                let _ = app_handle.emit("cadence://player-command", "previous");
+            }
+            "tray:mini" => {
+                focus_main_window(app_handle);
+                let _ = app_handle.emit("cadence://menu-action", "toggle-mini-player");
+            }
+            "tray:quit" => app_handle.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                focus_main_window(tray.app_handle());
+            }
+        });
+    if let Some(icon) = app.default_window_icon().cloned() {
+        builder = builder.icon(icon);
+    }
+    builder.build(app)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let initial_argv: Vec<String> = std::env::args().collect();
@@ -217,6 +272,9 @@ pub fn run() {
             let _ = setup_macos_menu(app.handle());
 
             register_media_shortcuts(app.handle());
+            // Tray is a convenience surface; a tray failure (e.g. a desktop
+            // without a system tray) must never block app launch.
+            let _ = setup_tray(app.handle());
 
             Ok(())
         })
@@ -246,6 +304,7 @@ pub fn run() {
             commands::cmd_shell_show_in_folder,
             commands::cmd_shell_open_external,
             commands::cmd_window_action,
+            commands::cmd_set_mini_player,
             commands::cmd_window_is_fullscreen,
             commands::cmd_window_chrome_state,
         ])
