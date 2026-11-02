@@ -32,8 +32,10 @@ import {
 } from "lucide-react";
 import type { AppSettings } from "../../../shared/types";
 import { DEFAULT_PROVIDER_ORDER } from "../../../shared/upstream/better-lyrics/constants";
-import { normalizeYouTubeArtist, parseYouTubeVideoId } from "../../../shared/youtube";
+import { trackSourceKey } from "../../../shared/media";
+import { normalizeYouTubeArtist, parseYouTubeLink } from "../../../shared/youtube";
 import { Artwork } from "../../components/Artwork";
+import { SourceBadge } from "../../components/SourceBadge";
 import { formatTime } from "../../player/queue";
 import {
   EMPTY_REMOTE_PLAYBACK_CLOCK,
@@ -251,6 +253,7 @@ export function YouTubeNowPlayingView() {
   const videoId = useYouTubeRemote(state => state.videoId);
   const sourceUrl = useYouTubeRemote(state => state.sourceUrl);
   const metadata = useYouTubeRemote(state => state.metadata);
+  const currentItem = useYouTubeRemote(state => state.currentItem);
   const sizeMode = useYouTubeRemote(state => state.sizeMode);
   const volume = useYouTubeRemote(state => state.volume);
   const setDraftUrl = useYouTubeRemote(state => state.setDraftUrl);
@@ -261,6 +264,7 @@ export function YouTubeNowPlayingView() {
   const clearRemote = useYouTubeRemote(state => state.clear);
 
   const settings = useSettings(state => state.settings);
+  const navigate = useUi(state => state.navigate);
   const lyricsSettings = settings?.lyrics ?? FALLBACK_LYRICS_SETTINGS;
   const playerRef = useRef<YouTubePlayerHandle | null>(null);
   const [inputError, setInputError] = useState<string | null>(null);
@@ -302,17 +306,25 @@ export function YouTubeNowPlayingView() {
 
   const submitUrl = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const parsedVideoId = parseYouTubeVideoId(draftUrl);
-    if (!parsedVideoId) {
+    const parsed = parseYouTubeLink(draftUrl);
+    if (!parsed) {
       setInputError(
-        "That doesn't look like a supported YouTube video link. Paste a music.youtube.com/watch, youtube.com/watch, or youtu.be link."
+        "That doesn't look like a supported YouTube link. Paste a video, public playlist, or /channel/ link from YouTube or YouTube Music."
       );
       return;
     }
     setInputError(null);
     setPlayerError(null);
     setPlayVisibilityMessage(false);
-    load(parsedVideoId, canonicalSourceUrl(draftUrl, parsedVideoId));
+    if (parsed.kind === "playlist") {
+      navigate({ name: "youtube-playlist", playlistId: parsed.playlistId });
+      return;
+    }
+    if (parsed.kind === "channel") {
+      navigate({ name: "youtube-channel", channelId: parsed.channelId });
+      return;
+    }
+    load(parsed.videoId, parsed.canonicalUrl);
   };
 
   const updateMetadataDuration = useCallback(
@@ -332,12 +344,18 @@ export function YouTubeNowPlayingView() {
       const clock = youtubePlaybackClock.getSnapshot();
       setMetadata({
         videoId: playerMetadata.videoId,
-        sourceId: `youtube:${playerMetadata.videoId}`,
+        sourceId:
+          current.metadata?.sourceId ??
+          (current.currentItem
+            ? trackSourceKey(current.currentItem.source)
+            : `youtube:${playerMetadata.videoId}`),
         title: playerMetadata.title,
         artist: normalizeYouTubeArtist(playerMetadata.author) ?? playerMetadata.author,
         album: current.metadata?.album ?? "",
         duration: clock.duration > 0 ? clock.duration : current.metadata?.duration ?? 0,
-        artworkUrl: `https://i.ytimg.com/vi/${playerMetadata.videoId}/hqdefault.jpg`,
+        artworkUrl:
+          current.metadata?.artworkUrl ??
+          `https://i.ytimg.com/vi/${playerMetadata.videoId}/hqdefault.jpg`,
         sourceUrl: current.sourceUrl ?? canonicalSourceUrl(current.draftUrl, playerMetadata.videoId),
       });
     },
@@ -426,7 +444,7 @@ export function YouTubeNowPlayingView() {
       <form className="youtube-url-form" onSubmit={submitUrl}>
         <label htmlFor="youtube-music-url">
           <Link2 size={16} aria-hidden="true" />
-          <span>YouTube or YouTube Music link</span>
+          <span>YouTube or YouTube Music video, playlist or channel link</span>
         </label>
         <div className="youtube-url-row">
           <input
@@ -444,7 +462,7 @@ export function YouTubeNowPlayingView() {
             }}
           />
           <button type="submit" className="primary" data-testid="youtube-load-button">
-            Load video
+            Open link
           </button>
         </div>
         {inputError ? (
@@ -453,8 +471,8 @@ export function YouTubeNowPlayingView() {
           </p>
         ) : (
           <p className="youtube-form-hint">
-            Supported links are validated locally and only the 11-character video ID is handed to the
-            official player. Playlist-only links are not loaded in this prototype.
+            Supported links are validated locally. Video links hand only the 11-character video ID
+            to the official player; public playlist and channel links open their catalog pages.
           </p>
         )}
       </form>
@@ -481,9 +499,31 @@ export function YouTubeNowPlayingView() {
               className="youtube-artwork"
             />
             <div className="youtube-track-copy">
-              <span className="youtube-source-badge">YouTube</span>
+              {currentItem ? (
+                <SourceBadge source={currentItem} />
+              ) : (
+                <span className="youtube-source-badge">YouTube</span>
+              )}
               <h2 data-testid="youtube-title">{metadata?.title ?? "Paste a link to begin"}</h2>
-              <p data-testid="youtube-artist">{metadata?.artist || "Artist will appear after the player loads"}</p>
+              <p data-testid="youtube-artist">
+                {metadata?.artist ? (
+                  currentItem?.channelId ? (
+                    <button
+                      type="button"
+                      className="remote-channel-link"
+                      onClick={() =>
+                        navigate({ name: "youtube-channel", channelId: currentItem.channelId! })
+                      }
+                    >
+                      {metadata.artist}
+                    </button>
+                  ) : (
+                    metadata.artist
+                  )
+                ) : (
+                  "Artist will appear after the player loads"
+                )}
+              </p>
               <p className="youtube-album-note">
                 {metadata?.album ? metadata.album : "Album is not provided by the YouTube player"}
               </p>

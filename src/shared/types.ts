@@ -100,6 +100,128 @@ export interface TrackMetadataOverride {
   updatedAt: number;
 }
 
+/* ------------------------------------------------------------------ media sources */
+
+/**
+ * Content origin is deliberately separate from the mechanism that eventually plays it. A
+ * `youtube-music` source is reserved for links/results whose provenance is actually YouTube
+ * Music; generic YouTube Data API videos remain `youtube` and are never relabelled as native
+ * YouTube Music songs.
+ */
+export type TrackSource =
+  | { kind: "local"; trackId: number }
+  | { kind: "youtube-music"; remoteId: string; canonicalUrl: string }
+  | { kind: "youtube"; remoteId: string; canonicalUrl: string };
+
+export type PlaybackMechanism = "local-file" | "youtube-iframe" | "unavailable";
+
+export type MediaAvailability = "ready" | "not-embeddable" | "unavailable" | "live" | "unknown";
+
+/** Source-aware display/playback item shared by local and remote catalog surfaces. */
+export interface MediaItem {
+  source: TrackSource;
+  title: string;
+  artistLabel: string;
+  channelId: string | null;
+  channelTitle: string | null;
+  albumLabel: string | null;
+  durationSeconds: number | null;
+  artworkUrl: string | null;
+  publishedAt: string | null;
+  availability: MediaAvailability;
+  fetchedAt: number;
+}
+
+export interface YouTubeChannelItem {
+  id: string;
+  title: string;
+  handle: string | null;
+  description: string;
+  artworkUrl: string | null;
+  canonicalUrl: string;
+  uploadsPlaylistId: string | null;
+  fetchedAt: number;
+}
+
+export interface YouTubePlaylistSummary {
+  id: string;
+  title: string;
+  description: string;
+  channelId: string | null;
+  channelTitle: string | null;
+  artworkUrl: string | null;
+  itemCount: number | null;
+  canonicalUrl: string;
+  publishedAt: string | null;
+  fetchedAt: number;
+}
+
+export interface CatalogPage<T> {
+  items: T[];
+  nextPageToken: string | null;
+  totalResults: number | null;
+  cached: boolean;
+  fetchedAt: number;
+}
+
+export interface YouTubeChannelDetail {
+  channel: YouTubeChannelItem;
+  playlists: YouTubePlaylistSummary[];
+  uploads: CatalogPage<MediaItem>;
+  cached: boolean;
+  fetchedAt: number;
+}
+
+export interface YouTubePlaylistDetail {
+  playlist: YouTubePlaylistSummary;
+  cached: boolean;
+  fetchedAt: number;
+}
+
+export type YouTubeCatalogErrorKind =
+  | "disabled"
+  | "missing-key"
+  | "invalid-key"
+  | "api-not-enabled"
+  | "quota-exceeded"
+  | "rate-limited"
+  | "not-found"
+  | "forbidden"
+  | "offline"
+  | "timeout"
+  | "server"
+  | "malformed"
+  | "aborted"
+  | "unavailable";
+
+export interface YouTubeCatalogError {
+  kind: YouTubeCatalogErrorKind;
+  message: string;
+  status?: number;
+}
+
+export type YouTubeCatalogResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: YouTubeCatalogError };
+
+export interface YouTubeCatalogSearchRequest {
+  query: string;
+  pageToken?: string | null;
+  maxResults?: number;
+}
+
+export interface YouTubeCatalogPageRequest {
+  pageToken?: string | null;
+  maxResults?: number;
+}
+
+export interface YouTubeCatalogStatus {
+  enabled: boolean;
+  configured: boolean;
+  region: string;
+  cacheEntries: number;
+}
+
 export interface Album {
   /** Stable slug: `${albumArtist}\u0000${name}`. */
   id: string;
@@ -631,6 +753,7 @@ export interface AppSettings {
     onboardingStep: number;
   };
   scrobbling: LastFmSettings;
+  youtubeCatalog: YouTubeCatalogSettings;
 }
 
 /** last.fm scrobbling credentials and session, stored locally in settings. */
@@ -644,6 +767,15 @@ export interface LastFmSettings {
   sessionKey: string;
   /** Connected last.fm username, shown in Settings once authorized. */
   username: string;
+}
+
+/** Public YouTube catalog access. The key is supplied and stored locally by the user. */
+export interface YouTubeCatalogSettings {
+  enabled: boolean;
+  /** User-supplied YouTube Data API v3 key. Cadence ships no shared key. */
+  apiKey: string;
+  /** ISO 3166-1 alpha-2 region for charts/search; empty means derive from the system locale. */
+  region: string;
 }
 
 /** One completed listening session, newest first when listed. */
@@ -838,6 +970,31 @@ export interface CadenceApi {
       promote(trackId: number): Promise<void>;
       onProgress(listener: (snapshot: LyricsFetchJobSnapshot) => void): () => void;
     };
+  };
+  youtubeCatalog: {
+    status(): Promise<YouTubeCatalogStatus>;
+    clearCache(): Promise<{ cleared: number }>;
+    searchMusicVideos(
+      request: YouTubeCatalogSearchRequest
+    ): Promise<YouTubeCatalogResult<CatalogPage<MediaItem>>>;
+    searchChannels(
+      request: YouTubeCatalogSearchRequest
+    ): Promise<YouTubeCatalogResult<CatalogPage<YouTubeChannelItem>>>;
+    searchPlaylists(
+      request: YouTubeCatalogSearchRequest
+    ): Promise<YouTubeCatalogResult<CatalogPage<YouTubePlaylistSummary>>>;
+    trending(
+      request?: YouTubeCatalogPageRequest
+    ): Promise<YouTubeCatalogResult<CatalogPage<MediaItem>>>;
+    getChannel(request: { channelId: string }): Promise<YouTubeCatalogResult<YouTubeChannelDetail>>;
+    getPlaylist(request: {
+      playlistId: string;
+    }): Promise<YouTubeCatalogResult<YouTubePlaylistDetail>>;
+    getPlaylistItems(request: {
+      playlistId: string;
+      pageToken?: string | null;
+      maxResults?: number;
+    }): Promise<YouTubeCatalogResult<CatalogPage<MediaItem>>>;
   };
   player: {
     /** Decode an ALAC source to a seekable lossless PCM WAV cache and return its media URL. */

@@ -199,6 +199,7 @@ function harnessAppSettings(lyrics?: Partial<LyricsSettings>): AppSettings {
     advanced: { showLogs: false },
     general: { onboardingCompleted: true, onboardingStep: 0 },
     scrobbling: { enabled: false, apiKey: "", apiSecret: "", sessionKey: "", username: "" },
+    youtubeCatalog: { enabled: false, apiKey: "", region: "" },
   };
 }
 

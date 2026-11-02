@@ -34,6 +34,7 @@ import { LyricsFetchAllCore, type FetchTrackInfo } from "../main/lyrics/fetchAll
 import { FETCH_CONCURRENCY_PRESETS } from "../main/lyrics/http";
 import { setRuntimeFetch, type RuntimeFetch } from "../main/lyrics/http";
 import { fetchYouTubeMetadata } from "../main/lyrics/youtube";
+import { YouTubeCatalogCore } from "../main/youtube/catalogCore";
 import {
   clearCache as clearTranslationCache,
   createTranslationCache,
@@ -298,6 +299,27 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
   );
 
   const lyricsService = new LyricsServiceCore(store, lyricsCache, localLyricsReader);
+  const youtubeCatalog = new YouTubeCatalogCore({
+    getSettings: () => settings.get().youtubeCatalog,
+  });
+  const catalogControllers: Record<"search" | "detail" | "home", AbortController | null> = {
+    search: null,
+    detail: null,
+    home: null,
+  };
+  const runCatalog = async <T,>(
+    group: keyof typeof catalogControllers,
+    operation: (signal: AbortSignal) => Promise<T>
+  ): Promise<T> => {
+    catalogControllers[group]?.abort();
+    const controller = new AbortController();
+    catalogControllers[group] = controller;
+    try {
+      return await operation(controller.signal);
+    } finally {
+      if (catalogControllers[group] === controller) catalogControllers[group] = null;
+    }
+  };
   const translationCache = createTranslationCache();
 
   // Fetch-automation settings feed the shared service directly: the central provider limiter
@@ -1062,6 +1084,36 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
             fetchAllListeners.delete(listener);
           };
         },
+      },
+    },
+
+    youtubeCatalog: {
+      async status() {
+        return youtubeCatalog.status();
+      },
+      async clearCache() {
+        return youtubeCatalog.clearCache();
+      },
+      searchMusicVideos(request) {
+        return runCatalog("search", signal => youtubeCatalog.searchMusicVideos(request, signal));
+      },
+      searchChannels(request) {
+        return runCatalog("search", signal => youtubeCatalog.searchChannels(request, signal));
+      },
+      searchPlaylists(request) {
+        return runCatalog("search", signal => youtubeCatalog.searchPlaylists(request, signal));
+      },
+      trending(request) {
+        return runCatalog("home", signal => youtubeCatalog.trending(request ?? {}, signal));
+      },
+      getChannel(request) {
+        return runCatalog("detail", signal => youtubeCatalog.getChannel(request, signal));
+      },
+      getPlaylist(request) {
+        return runCatalog("detail", signal => youtubeCatalog.getPlaylist(request, signal));
+      },
+      getPlaylistItems(request) {
+        return runCatalog("detail", signal => youtubeCatalog.getPlaylistItems(request, signal));
       },
     },
 

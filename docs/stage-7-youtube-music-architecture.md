@@ -1,7 +1,7 @@
 # Stage 7 — Integrated YouTube Music Architecture and Feasibility Gate
 
 **Date:** 2 November 2026  
-**Status:** Research complete; implementation of a final playback integration is **waiting for explicit approval**.  
+**Status:** **Option A approved.** Phase A is implemented and offline-tested; Gate 0 (real Windows/real-video acceptance) is still pending before Now Playing deep integration, the unified queue, playlists, or History/database work.
 **Scope decision used here:** the later “fully integrated Cadence UI” requirement supersedes the earlier suggestion of a separate YouTube Music section. YouTube must be a provider inside Cadence’s existing Search, Home, detail, Now Playing, Queue, History, Playlist, artwork, and lyrics surfaces.
 
 ## Executive decision
@@ -385,6 +385,33 @@ Run the existing `Cadence-7-phase-b.exe` on Windows and verify real embeddable/n
 - Channel uploads and clearly labelled related-search shelves.
 - Region/language refinement and cache-management UI.
 
+## Implementation record
+
+### 2026-11-02 — Option A / Phase A foundation
+
+Implemented incrementally, without a database/schema change:
+
+- Local Settings for the user's own YouTube Data API v3 key, catalog enablement, blank/system or explicit region, connection test, key removal, and in-memory cache clearing. Cadence still ships no shared API key and contains no Google login/OAuth/cookie flow.
+- `YouTubeCatalogCore` over documented Data API endpoints only: Music-category embeddable video search enriched through `videos.list`, channel search/detail, public playlist search/detail/items, channel uploads, and regional `mostPopular` Music-category trending videos.
+- Typed handling for disabled/missing/invalid key, API-not-enabled, quota, rate limits, offline/timeout, not-found, server, malformed, unavailable, and aborted requests. API keys are not copied into user-facing error messages.
+- Bounded request concurrency (2), bridge-level search/detail/Home cancellation groups, 650 ms Search debounce, one remote Search tab at a time, explicit pagination, and short-lived in-memory TTL caches (search 15 minutes, videos/details 24 hours, trending 6 hours). Catalog metadata is not written to SQLite in Phase A.
+- Discriminated `TrackSource`, `MediaItem`, a bounded in-memory remote registry, and `SourceBadge`. Data API items are `youtube`; only genuine `music.youtube.com` links produce `youtube-music`. Remote IDs remain strings and no fake local track/path is created.
+- Existing Search now keeps local results/counts first and adds lazy YouTube music-video/channel/public-playlist tabs plus direct video/public-playlist/stable-channel link routing. Home adds a lazy regional trending shelf only when configured. Channel and playlist detail reuse Cadence hero/card/row patterns.
+- Opening a playable catalog video cues it in the existing Phase B official visible IFrame view with its catalog metadata/channel/source. The paste-link form now routes playlist/channel links to the integrated detail pages. Phase A deliberately adds no unified queue, mixed playlist entries, remote History, favorites, scrobbling, Play All for remote collections, or background playback.
+
+Offline verification completed on 2026-11-02:
+
+- Web production build and `tsconfig.web.json` typecheck: passed.
+- Full Vitest suite: **457/457** tests passed, including Data API request/mapping/cache/quota/cancellation tests and settings migration/persistence tests.
+- Lyrics browser decorations suite: **40/40** checks passed.
+- Deterministic fake-IFrame/Data API browser suite: **45/45** checks passed, covering local playback before/after remote work, official-player sizes/visibility/cleanup, lyrics clock/decorations, no remote local-history write, catalog setup, settings masking/test, Home trending, Search tabs, source badges, playlist/channel detail, direct YouTube Music provenance, quota isolation, and CSP/page-error checks. Screenshots are in `.artifacts/youtube-phase-b/`.
+
+Not verified yet:
+
+- A real user-supplied Data API key or a live Google quota/error response.
+- Launching the packaged Windows build containing Phase A.
+- Any real YouTube video, embed restriction, Tauri Referer/origin behavior, provider result, or lyric drift in the desktop runtime (Gate 0 remains open).
+
 ## Required QA before claiming any phase works
 
 - Unit tests for URL/source identity, Data API mapping, quota/error handling, cache expiry, queue ordering, and history migration.
@@ -397,6 +424,8 @@ Run the existing `Cadence-7-phase-b.exe` on Windows and verify real embeddable/n
 - Responsive checks including 1040×680 and a normal desktop size.
 
 ## Approval options
+
+**Selected by the user: A.**
 
 ### A — Recommended compliant integrated path
 

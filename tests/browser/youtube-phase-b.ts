@@ -1,15 +1,16 @@
 /**
- * Browser QA for Stage 7 Phase B (official YouTube IFrame player + Cadence lyrics).
+ * Browser QA for Stage 7 Phase A + Phase B (official Data API catalog, IFrame player + Cadence lyrics).
  *
  * This boots the real production renderer, real local audio fixtures, real settings defaults,
  * real Braccato renderer, and the shipped YouTube view/clock adapter in headless Chromium.
  *
- * The sandbox used for Cadence development cannot reach youtube.com, so only the IFrame API
- * script and the cross-origin embed document are intercepted with a deterministic test double.
- * That means this script proves Cadence's wrapper calls, clock/lyrics behaviour, sizes, cleanup,
- * CSP routing for the allowed hosts, and local-player interplay. It does NOT prove that a real
- * YouTube video plays; that still requires the packaged desktop app on a network that can reach
- * YouTube.
+ * The sandbox used for Cadence development cannot reach youtube.com, so the IFrame API
+ * script/cross-origin embed document are intercepted with a deterministic test double and the
+ * desktop bridge's Data API returns deterministic catalog fixtures. That means this script
+ * proves Cadence's catalog/player wrapper calls, clock/lyrics behaviour, sizes, cleanup, CSP
+ * routing for the allowed hosts, and local-player interplay. It does NOT prove that a real
+ * YouTube video or API key works; that still requires the packaged desktop app on a network
+ * that can reach YouTube.
  *
  * Usage:
  *   npm run build:web
@@ -378,6 +379,104 @@ try {
       (window as any).__translateCalls = [];
       (window as any).__romanizeCalls = [];
       (window as any).__openedExternal = [];
+      (window as any).__catalogCalls = [] as string[];
+      (window as any).__catalogMode = "success";
+      const catalogNow = Date.now();
+      const catalogChannel = {
+        id: "UCqa000000000000000001",
+        title: "Rick Astley",
+        handle: "@RickAstley",
+        description: "Offline QA channel fixture for the integrated YouTube catalog.",
+        artworkUrl: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+        canonicalUrl: "https://www.youtube.com/channel/UCqa000000000000000001",
+        uploadsPlaylistId: "UUqa000000000000000001",
+        fetchedAt: catalogNow,
+      };
+      const catalogPlaylist = {
+        id: "PLqa000000000001",
+        title: "QA Public Playlist",
+        description: "Offline QA playlist fixture.",
+        channelId: catalogChannel.id,
+        channelTitle: "Rick Astley",
+        artworkUrl: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+        itemCount: 2,
+        canonicalUrl: "https://www.youtube.com/playlist?list=PLqa000000000001",
+        publishedAt: "2026-01-01T00:00:00Z",
+        fetchedAt: catalogNow,
+      };
+      const catalogVideos = [
+        {
+          source: {
+            kind: "youtube",
+            remoteId: "dQw4w9WgXcQ",
+            canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+          },
+          title: "Never Gonna Give You Up (Official Video)",
+          artistLabel: "Rick Astley",
+          channelId: catalogChannel.id,
+          channelTitle: "Rick Astley - Topic",
+          albumLabel: null,
+          durationSeconds: 212,
+          artworkUrl: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+          publishedAt: "2009-10-25T00:00:00Z",
+          availability: "ready",
+          fetchedAt: catalogNow,
+        },
+        {
+          source: {
+            kind: "youtube",
+            remoteId: "video000002",
+            canonicalUrl: "https://www.youtube.com/watch?v=video000002",
+          },
+          title: "Catalog Second Video",
+          artistLabel: "Rick Astley",
+          channelId: catalogChannel.id,
+          channelTitle: "Rick Astley - Topic",
+          albumLabel: null,
+          durationSeconds: 180,
+          artworkUrl: "https://i.ytimg.com/vi/video000002/hqdefault.jpg",
+          publishedAt: "2026-01-02T00:00:00Z",
+          availability: "not-embeddable",
+          fetchedAt: catalogNow,
+        },
+      ];
+      const catalogPage = (items: unknown[]) => ({
+        ok: true,
+        data: {
+          items: structuredClone(items),
+          nextPageToken: null,
+          totalResults: items.length,
+          cached: false,
+          fetchedAt: catalogNow,
+        },
+      });
+      const catalogGate = (name: string) => {
+        (window as any).__catalogCalls.push(name);
+        if ((window as any).__catalogMode === "quota" && name.startsWith("search")) {
+          return {
+            ok: false,
+            error: {
+              kind: "quota-exceeded",
+              message: "This API key has reached its YouTube Data API quota. Local music is unaffected.",
+              status: 403,
+            },
+          };
+        }
+        const catalogSettings = (settings as any).youtubeCatalog ?? {};
+        if (!catalogSettings.enabled) {
+          return {
+            ok: false,
+            error: { kind: "disabled", message: "The YouTube catalog is off. Turn it on in Settings → Library." },
+          };
+        }
+        if (!catalogSettings.apiKey) {
+          return {
+            ok: false,
+            error: { kind: "missing-key", message: "Add your YouTube Data API v3 key in Settings → Library." },
+          };
+        }
+        return null;
+      };
       const chromeInfo = { undecorated: false, maximized: false, fullscreen: false, focused: true };
 
       (window as any).cadence = {
@@ -588,6 +687,62 @@ try {
             onProgress: () => () => undefined,
           },
         }),
+        youtubeCatalog: section({
+          status: async () => {
+            const catalogSettings = (settings as any).youtubeCatalog ?? {};
+            return {
+              enabled: Boolean(catalogSettings.enabled),
+              configured: Boolean(catalogSettings.enabled && catalogSettings.apiKey),
+              region: catalogSettings.region || "US",
+              cacheEntries: (window as any).__catalogCalls.length,
+            };
+          },
+          clearCache: async () => {
+            const cleared = (window as any).__catalogCalls.length;
+            (window as any).__catalogCalls = [];
+            return { cleared };
+          },
+          searchMusicVideos: async () => catalogGate("searchMusicVideos") ?? catalogPage(catalogVideos),
+          searchChannels: async () => catalogGate("searchChannels") ?? catalogPage([catalogChannel]),
+          searchPlaylists: async () => catalogGate("searchPlaylists") ?? catalogPage([catalogPlaylist]),
+          trending: async () => catalogGate("trending") ?? catalogPage(catalogVideos),
+          getChannel: async (request: { channelId: string }) => {
+            const gate = catalogGate("getChannel");
+            if (gate) return gate;
+            if (request.channelId !== catalogChannel.id) {
+              return { ok: false, error: { kind: "not-found", message: "QA channel not found.", status: 404 } };
+            }
+            return {
+              ok: true,
+              data: {
+                channel: structuredClone(catalogChannel),
+                playlists: [structuredClone(catalogPlaylist)],
+                uploads: catalogPage(catalogVideos).data,
+                cached: false,
+                fetchedAt: catalogNow,
+              },
+            };
+          },
+          getPlaylist: async (request: { playlistId: string }) => {
+            const gate = catalogGate("getPlaylist");
+            if (gate) return gate;
+            if (request.playlistId !== catalogPlaylist.id) {
+              return { ok: false, error: { kind: "not-found", message: "QA playlist not found.", status: 404 } };
+            }
+            return {
+              ok: true,
+              data: { playlist: structuredClone(catalogPlaylist), cached: false, fetchedAt: catalogNow },
+            };
+          },
+          getPlaylistItems: async (request: { playlistId: string }) => {
+            const gate = catalogGate("getPlaylistItems");
+            if (gate) return gate;
+            if (![catalogPlaylist.id, catalogChannel.uploadsPlaylistId].includes(request.playlistId)) {
+              return { ok: false, error: { kind: "not-found", message: "QA playlist items not found.", status: 404 } };
+            }
+            return catalogPage(catalogVideos);
+          },
+        }),
         player: section({
           prepareAlacSource: async () => "/audio/fixture.wav",
           reportState: async () => undefined,
@@ -753,11 +908,19 @@ try {
 
   await page.type('[data-testid="youtube-url-input"]', "https://music.youtube.com/playlist?list=PL1234567890");
   await page.click('[data-testid="youtube-load-button"]');
-  await page.waitForSelector('[data-testid="youtube-url-error"]');
+  await page.waitForSelector('[data-testid="youtube-playlist-view"]', { timeout: 10_000 });
+  await page.waitForSelector('[data-testid="youtube-detail-error"]', { timeout: 10_000 });
   check(
-    "playlist-only-url-is-rejected-in-ui",
-    ((await page.$eval('[data-testid="youtube-url-error"]', node => node.textContent)) ?? "").includes("supported YouTube video link")
+    "playlist-only-url-opens-integrated-playlist-page",
+    (await page.evaluate(() => location.hash)).includes("youtube-playlist/PL1234567890") &&
+      ((await page.$eval('[data-testid="youtube-detail-error"]', node => node.textContent)) ?? "").includes(
+        "catalog is off"
+      ),
+    await page.evaluate(() => location.hash)
   );
+  await shot("01b-playlist-link-catalog-off");
+  await nav("YouTube");
+  await page.waitForSelector('[data-testid="youtube-url-input"]');
 
   await page.$eval('[data-testid="youtube-url-input"]', node => {
     const input = node as HTMLInputElement;
@@ -992,6 +1155,212 @@ try {
   check("local-playback-still-works-after-remote", localTitle === "Fixture MP3", localTitle);
   await page.evaluate(() => document.querySelector("audio")?.pause());
 
+  // ---- Stage 7 Phase A: official Data API catalog, integrated into existing Cadence surfaces.
+  // The bridge below returns deterministic Data API-shaped fixtures through Cadence's real
+  // renderer components. This proves setup/search/detail/player wiring, not Google acceptance
+  // of a real API key.
+  const catalogCalls = () => page!.evaluate(() => [...(window as any).__catalogCalls] as string[]);
+  const gotoHash = async (hash: string) => {
+    await page!.evaluate(nextHash => {
+      location.hash = nextHash;
+    }, hash);
+    await wait(250);
+  };
+
+  await gotoHash("#/search/Rick%20Astley");
+  await page.waitForSelector('[data-testid="search-view"]', { timeout: 15_000 });
+  await page.waitForSelector('[data-testid="youtube-catalog-setup"]', { timeout: 15_000 });
+  const callsBeforeSetup = await catalogCalls();
+  check(
+    "search-without-key-shows-catalog-setup-without-searching-online",
+    !callsBeforeSetup.some(call => call.startsWith("search")),
+    callsBeforeSetup.join(", ")
+  );
+  await shot("06-search-catalog-setup");
+
+  await page.click('[data-testid="youtube-catalog-setup"] button.primary');
+  await page.waitForSelector('[data-testid="settings-view"]', { timeout: 15_000 });
+  await clickText(".settings-tabs button", "Library");
+  await page.waitForSelector('[data-testid="settings-youtube-catalog"]', { timeout: 15_000 });
+  await page.type('[data-testid="youtube-catalog-api-key"]', "AIza-offline-qa-key");
+  await page.type('[data-testid="youtube-catalog-region"]', "ID");
+  await page.click('[data-testid="youtube-catalog-test"]');
+  await page.waitForSelector('[data-testid="youtube-catalog-message"]', { timeout: 15_000 });
+  const settingsCatalogState = await page.evaluate(() => ({
+    inputType: document.querySelector('[data-testid="youtube-catalog-api-key"]')?.getAttribute("type"),
+    enabled: (document.querySelector('[data-testid="youtube-catalog-enabled"]') as HTMLInputElement | null)?.checked,
+    message: document.querySelector('[data-testid="youtube-catalog-message"]')?.textContent ?? "",
+    bodyHasKey: document.body.innerText.includes("AIza-offline-qa-key"),
+  }));
+  check(
+    "catalog-settings-save-test-and-mask-key",
+    settingsCatalogState.inputType === "password" &&
+      settingsCatalogState.enabled === true &&
+      settingsCatalogState.message.includes("Catalog connected") &&
+      !settingsCatalogState.bodyHasKey,
+    JSON.stringify(settingsCatalogState)
+  );
+  await shot("07-settings-youtube-catalog");
+
+  await nav("Home");
+  await page.waitForSelector('[data-testid="home-view"]', { timeout: 15_000 });
+  await page.waitForSelector('[data-testid="youtube-trending-shelf"]', { timeout: 15_000 });
+  await page.evaluate(() => {
+    document.querySelector('[data-testid="youtube-trending-shelf"]')?.scrollIntoView({ block: "center" });
+  });
+  await page.waitForSelector('[data-testid="youtube-trending-list"] [data-testid="remote-track-row"]', {
+    timeout: 15_000,
+  });
+  const trendingBadgeKinds = await page.$$eval(
+    '[data-testid="youtube-trending-list"] [data-testid="source-badge"]',
+    nodes => nodes.map(node => node.getAttribute("data-source-kind"))
+  );
+  check(
+    "home-trending-shelf-is-lazy-and-source-badged",
+    trendingBadgeKinds.length > 0 && trendingBadgeKinds.every(kind => kind === "youtube"),
+    trendingBadgeKinds.join(", ")
+  );
+  await shot("08-home-youtube-trending");
+
+  const searchCallsBeforeCatalogSearch = (await catalogCalls()).filter(call => call.startsWith("search")).length;
+  await gotoHash("#/search/Rick%20Astley");
+  await page.waitForSelector('[data-testid="youtube-search-videos"] [data-testid="remote-track-row"]', {
+    timeout: 20_000,
+  });
+  const integratedSearch = await page.evaluate(() => ({
+    heading: document.querySelector('[data-testid="search-view"] .view-heading')?.textContent ?? "",
+    remoteIds: [...document.querySelectorAll('[data-testid="youtube-search-videos"] [data-testid="remote-track-row"]')].map(
+      node => node.getAttribute("data-remote-id")
+    ),
+    badgeText: document.querySelector('[data-testid="youtube-search-videos"] [data-testid="source-badge"]')?.textContent ?? "",
+  }));
+  const searchCallsAfterCatalogSearch = (await catalogCalls()).filter(call => call.startsWith("search")).length;
+  check(
+    "integrated-search-remote-videos-are-debounced-and-badged",
+    integratedSearch.heading.includes("local songs") &&
+      integratedSearch.remoteIds.includes("dQw4w9WgXcQ") &&
+      integratedSearch.badgeText.includes("YouTube") &&
+      searchCallsAfterCatalogSearch === searchCallsBeforeCatalogSearch + 1,
+    JSON.stringify({ integratedSearch, searchCallsBeforeCatalogSearch, searchCallsAfterCatalogSearch })
+  );
+  await shot("09-search-youtube-videos");
+
+  await page.click('[data-testid="youtube-search-tab-channels"]');
+  await page.waitForSelector('[data-testid="youtube-search-channels"] [data-testid="youtube-channel-card"]', {
+    timeout: 15_000,
+  });
+  check(
+    "integrated-search-channels-load-only-on-tab",
+    (await catalogCalls()).filter(call => call === "searchChannels").length === 1
+  );
+  await page.click('[data-testid="youtube-search-tab-playlists"]');
+  await page.waitForSelector('[data-testid="youtube-search-playlists"] [data-testid="youtube-playlist-card"]', {
+    timeout: 15_000,
+  });
+  await page.click('[data-testid="youtube-playlist-card"]');
+  await page.waitForSelector('[data-testid="youtube-playlist-view"]', { timeout: 15_000 });
+  await page.waitForSelector('[data-testid="youtube-playlist-items"] [data-testid="remote-track-row"]', {
+    timeout: 15_000,
+  });
+  check(
+    "public-playlist-detail-uses-cadence-rows-and-badges",
+    (await page.evaluate(() => location.hash)).includes("youtube-playlist/PLqa000000000001") &&
+      (await page.$$eval('[data-testid="youtube-playlist-items"] [data-testid="source-badge"]', nodes => nodes.length)) > 0
+  );
+  await shot("10-youtube-playlist-detail");
+
+  const historyBeforeCatalogOpen = await page.evaluate(() => (window as any).__historyAdds.length as number);
+  await clickText('[data-testid="youtube-playlist-view"] .detail-hero button', "Open first video");
+  await page.waitForSelector('[data-testid="youtube-now-playing"]', { timeout: 15_000 });
+  await page.waitForSelector('[data-testid="youtube-iframe"]', { timeout: 15_000 });
+  await waitForFakeState(5, 10_000);
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="youtube-title"]')?.textContent?.includes("Never Gonna Give You Up"),
+    { timeout: 10_000 }
+  );
+  const historyAfterCatalogOpen = await page.evaluate(() => (window as any).__historyAdds.length as number);
+  const catalogPlayerBadge = await page.evaluate(
+    () => document.querySelector(".youtube-track-summary [data-testid='source-badge']")?.getAttribute("data-source-kind")
+  );
+  check(
+    "catalog-result-cues-existing-official-player-without-history-write",
+    (await fakeState())?.videoId === "dQw4w9WgXcQ" &&
+      (await fakeState())?.state === 5 &&
+      catalogPlayerBadge === "youtube" &&
+      historyAfterCatalogOpen === historyBeforeCatalogOpen,
+    JSON.stringify({ catalogPlayerBadge, historyBeforeCatalogOpen, historyAfterCatalogOpen, state: await fakeState() })
+  );
+
+  await page.click('[data-testid="youtube-artist"] button');
+  await page.waitForSelector('[data-testid="youtube-channel-view"]', { timeout: 15_000 });
+  await page.waitForSelector('[data-testid="youtube-channel-uploads"] [data-testid="remote-track-row"]', {
+    timeout: 15_000,
+  });
+  check(
+    "channel-detail-loads-uploads-and-public-playlists",
+    (await page.$$eval('[data-testid="youtube-channel-playlists"] [data-testid="youtube-playlist-card"]', nodes => nodes.length)) === 1
+  );
+  await shot("11-youtube-channel-detail");
+
+  const searchCallsBeforeDirectLink = (await catalogCalls()).filter(call => call.startsWith("search")).length;
+  await gotoHash("#/search/https%3A%2F%2Fmusic.youtube.com%2Fwatch%3Fv%3DdQw4w9WgXcQ");
+  await page.waitForSelector('[data-testid="youtube-direct-link"]', { timeout: 15_000 });
+  const searchCallsAfterDirectLink = (await catalogCalls()).filter(call => call.startsWith("search")).length;
+  check(
+    "direct-music-link-in-search-uses-no-search-quota",
+    searchCallsAfterDirectLink === searchCallsBeforeDirectLink,
+    `${searchCallsBeforeDirectLink} -> ${searchCallsAfterDirectLink}`
+  );
+  await clickText('[data-testid="youtube-direct-link"] button', "Open video");
+  await page.waitForSelector('[data-testid="youtube-now-playing"]', { timeout: 15_000 });
+  await page.waitForSelector('[data-testid="youtube-iframe"]', { timeout: 15_000 });
+  await waitForFakeState(5, 10_000);
+  const musicBadge = await page.evaluate(
+    () => document.querySelector(".youtube-track-summary [data-testid='source-badge']")?.getAttribute("data-source-kind")
+  );
+  check(
+    "actual-youtube-music-link-keeps-youtube-music-provenance",
+    musicBadge === "youtube-music",
+    String(musicBadge)
+  );
+  await shot("12-direct-youtube-music-link");
+
+  await page.evaluate(() => {
+    (window as any).__catalogMode = "quota";
+  });
+  await gotoHash("#/search/Fixture");
+  await page.waitForSelector('[data-testid="youtube-catalog-error-state"]', { timeout: 20_000 });
+  const quotaState = await page.evaluate(() => ({
+    error: document.querySelector('[data-testid="youtube-catalog-error-state"]')?.textContent ?? "",
+    localSearchPresent: Boolean(document.querySelector('[data-testid="search-track-list"]')),
+    searchHeading: document.querySelector('[data-testid="search-view"] .view-heading')?.textContent ?? "",
+  }));
+  check(
+    "quota-error-is-isolated-to-remote-search-section",
+    quotaState.error.includes("quota") && quotaState.localSearchPresent && quotaState.searchHeading.includes("local songs"),
+    JSON.stringify(quotaState)
+  );
+  await shot("13-search-quota-error");
+  await page.evaluate(() => {
+    (window as any).__catalogMode = "success";
+  });
+
+  // Catalog browsing must not damage the local engine or library surface.
+  await nav("Songs");
+  await page.waitForSelector('[data-testid="track-row"]', { timeout: 15_000 });
+  await page.evaluate(() => {
+    const row = [...document.querySelectorAll('[data-testid="track-row"]')].find(node =>
+      node.textContent?.includes("Fixture FLAC")
+    ) as HTMLElement | undefined;
+    row?.click();
+  });
+  await page.waitForFunction(() => {
+    const audio = document.querySelector("audio");
+    return Boolean(audio && !audio.paused && audio.currentTime > 0.25);
+  }, { timeout: 15_000 });
+  check("local-playback-still-works-after-catalog", !(await audioState()).paused, JSON.stringify(await audioState()));
+  await page.evaluate(() => document.querySelector("audio")?.pause());
+
   const pageErrors = logs.filter(line => line.startsWith("[pageerror]"));
   const cspErrors = logs.filter(line => /content security policy/i.test(line));
   check("no-page-errors", pageErrors.length === 0, pageErrors.join(" | "));
@@ -1003,7 +1372,7 @@ try {
 }
 
 const failed = Object.entries(results).filter(([, result]) => !result.value);
-console.log(`\nYouTube Phase B browser QA: ${Object.keys(results).length - failed.length}/${Object.keys(results).length} checks passed`);
+console.log(`\nYouTube Phase A+B browser QA: ${Object.keys(results).length - failed.length}/${Object.keys(results).length} checks passed`);
 if (logs.length) {
   console.log("\nBrowser logs (last 30):");
   for (const line of logs.slice(-30)) console.log(line);

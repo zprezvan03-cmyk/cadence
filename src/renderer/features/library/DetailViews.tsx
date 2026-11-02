@@ -2,7 +2,7 @@
  * Album, artist, playlist and search views. Written for Cadence.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Clock3, Mic2, Play, Plus, Search, Shuffle, Sparkles, Trash2, X } from "lucide-react";
 import type { Playlist, SmartPlaylistPreset, SmartPlaylistRule, Track } from "../../../shared/types";
 import {
@@ -19,6 +19,12 @@ import { TrackList } from "../../components/TrackList";
 import { usePresence } from "../../app/usePresence";
 import { AlbumCard, ArtistCard } from "../../components/Cards";
 import { Artwork } from "../../components/Artwork";
+
+const YouTubeCatalogSearch = lazy(() =>
+  import("../youtube/YouTubeCatalogSearch").then(module => ({
+    default: module.YouTubeCatalogSearch,
+  }))
+);
 
 function Hero({
   artworkUrl,
@@ -187,7 +193,7 @@ export function SearchView({ query }: { query: string }) {
         <div>
           <p className="eyebrow">Search</p>
           <h1>{query ? `“${query}”` : "Search your library"}</h1>
-          <p className="muted">{searching ? "Searching…" : `${tracks.length} songs · ${albums.length} albums · ${artists.length} artists`}</p>
+          <p className="muted">{searching ? "Searching…" : `${tracks.length} local songs · ${albums.length} albums · ${artists.length} artists`}</p>
         </div>
       </header>
 
@@ -236,6 +242,12 @@ export function SearchView({ query }: { query: string }) {
           </div>
         )}
       </section>
+
+      {query.trim() ? (
+        <Suspense fallback={<div className="empty-state">Loading YouTube catalog…</div>}>
+          <YouTubeCatalogSearch query={query} />
+        </Suspense>
+      ) : null}
     </div>
   );
 }

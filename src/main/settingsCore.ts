@@ -84,6 +84,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
     sessionKey: "",
     username: "",
   },
+  youtubeCatalog: {
+    enabled: false,
+    apiKey: "",
+    region: "",
+  },
 };
 
 type AnyRecord = Record<string, unknown>;
@@ -162,6 +167,23 @@ function normalizeSettings(settings: AppSettings): AppSettings {
     apiSecret: credential(scrobblingSource.apiSecret),
     sessionKey: credential(scrobblingSource.sessionKey),
     username: credential(scrobblingSource.username),
+  };
+  const youtubeCatalogSource: AnyRecord = isPlainObject(settings.youtubeCatalog)
+    ? settings.youtubeCatalog
+    : {};
+  const region =
+    typeof youtubeCatalogSource.region === "string"
+      ? youtubeCatalogSource.region.trim().toUpperCase()
+      : "";
+  settings.youtubeCatalog = {
+    enabled: youtubeCatalogSource.enabled === true,
+    // Data API keys contain no whitespace. Removing it makes a pasted key with an accidental
+    // line break usable without accepting arbitrary long credential blobs into settings.
+    apiKey:
+      typeof youtubeCatalogSource.apiKey === "string"
+        ? youtubeCatalogSource.apiKey.replace(/\s+/g, "").slice(0, 512)
+        : "",
+    region: /^[A-Z]{2}$/.test(region) ? region : "",
   };
   return settings;
 }

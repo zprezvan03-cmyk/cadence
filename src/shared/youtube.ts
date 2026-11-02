@@ -18,6 +18,37 @@ const WATCH_HOSTS = new Set([
 ]);
 
 const SHORT_HOSTS = new Set(["youtu.be", "www.youtu.be"]);
+const PLAYLIST_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
+const CHANNEL_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
+
+export type YouTubeLinkSourceKind = "youtube" | "youtube-music";
+
+export interface ParsedYouTubeVideoLink {
+  videoId: string;
+  sourceKind: YouTubeLinkSourceKind;
+  canonicalUrl: string;
+  playlistId: string | null;
+}
+
+export type ParsedYouTubeLink =
+  | ({ kind: "video" } & ParsedYouTubeVideoLink)
+  | { kind: "playlist"; playlistId: string; sourceKind: YouTubeLinkSourceKind; canonicalUrl: string }
+  | { kind: "channel"; channelId: string; sourceKind: YouTubeLinkSourceKind; canonicalUrl: string };
+
+function parseYouTubeUrl(input: string): URL | null {
+  const raw = input.trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
+    return url.protocol === "http:" || url.protocol === "https:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+function validPlaylistId(value: string | null | undefined): string | null {
+  return value && PLAYLIST_ID_PATTERN.test(value) ? value : null;
+}
 
 /**
  * Extract the 11-character video ID from every link shape YouTube itself accepts:
@@ -28,35 +59,104 @@ const SHORT_HOSTS = new Set(["youtu.be", "www.youtu.be"]);
  * Returns null for anything else: non-YouTube hosts, malformed URLs or IDs of the wrong length.
  */
 export function parseYouTubeVideoId(input: string): string | null {
-  const raw = input.trim();
-  if (!raw) return null;
+  return parseYouTubeVideoLink(input)?.videoId ?? null;
+}
 
-  let url: URL;
-  try {
-    url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
-  } catch {
-    return null;
-  }
+/**
+ * Parse a video link while preserving whether its actual provenance is YouTube Music. Only the
+ * `music.youtube.com` host earns the `youtube-music` source kind; every other supported YouTube
+ * host remains generic `youtube`.
+ */
+export function parseYouTubeVideoLink(input: string): ParsedYouTubeVideoLink | null {
+  const url = parseYouTubeUrl(input);
+  if (!url) return null;
 
   const host = url.hostname.toLowerCase();
+  const sourceKind: YouTubeLinkSourceKind = host === "music.youtube.com" ? "youtube-music" : "youtube";
+  const playlistId = validPlaylistId(url.searchParams.get("list"));
   const idFromPath = (prefix: string): string | null => {
     const match = url.pathname.match(new RegExp(`^/${prefix}/([A-Za-z0-9_-]{11})(?:/|$)`));
     return match ? match[1] : null;
   };
 
+  let videoId: string | null = null;
   if (SHORT_HOSTS.has(host)) {
     const id = url.pathname.split("/").filter(Boolean)[0];
-    return id && VIDEO_ID_PATTERN.test(id) ? id : null;
+    videoId = id && VIDEO_ID_PATTERN.test(id) ? id : null;
+  } else if (WATCH_HOSTS.has(host)) {
+    if (url.pathname === "/watch") {
+      const id = url.searchParams.get("v");
+      videoId = id && VIDEO_ID_PATTERN.test(id) ? id : null;
+    } else {
+      videoId = idFromPath("shorts") ?? idFromPath("embed") ?? idFromPath("live") ?? idFromPath("v");
+    }
   }
 
+  if (!videoId) return null;
+  return {
+    videoId,
+    sourceKind,
+    canonicalUrl:
+      sourceKind === "youtube-music"
+        ? `https://music.youtube.com/watch?v=${videoId}`
+        : `https://www.youtube.com/watch?v=${videoId}`,
+    playlistId,
+  };
+}
+
+/** Extract a public playlist ID from a YouTube/YouTube Music playlist or watch URL. */
+export function parseYouTubePlaylistId(input: string): string | null {
+  const url = parseYouTubeUrl(input);
+  if (!url) return null;
+  const host = url.hostname.toLowerCase();
+  if (!WATCH_HOSTS.has(host) && !SHORT_HOSTS.has(host)) return null;
+  return validPlaylistId(url.searchParams.get("list"));
+}
+
+/** Extract a channel ID only from the stable `/channel/UC…` URL form (not a display handle). */
+export function parseYouTubeChannelId(input: string): string | null {
+  const url = parseYouTubeUrl(input);
+  if (!url) return null;
+  const host = url.hostname.toLowerCase();
   if (!WATCH_HOSTS.has(host)) return null;
+  const match = url.pathname.match(/^\/channel\/([A-Za-z0-9_-]{8,64})(?:\/|$)/);
+  return match && CHANNEL_ID_PATTERN.test(match[1]) ? match[1] : null;
+}
 
-  if (url.pathname === "/watch") {
-    const id = url.searchParams.get("v");
-    return id && VIDEO_ID_PATTERN.test(id) ? id : null;
+/** Parse the three link kinds Cadence can route without guessing or executing user input. */
+export function parseYouTubeLink(input: string): ParsedYouTubeLink | null {
+  const video = parseYouTubeVideoLink(input);
+  if (video) return { kind: "video", ...video };
+
+  const url = parseYouTubeUrl(input);
+  if (!url) return null;
+  const host = url.hostname.toLowerCase();
+  const sourceKind: YouTubeLinkSourceKind = host === "music.youtube.com" ? "youtube-music" : "youtube";
+
+  const playlistId = parseYouTubePlaylistId(input);
+  if (playlistId) {
+    return {
+      kind: "playlist",
+      playlistId,
+      sourceKind,
+      canonicalUrl:
+        sourceKind === "youtube-music"
+          ? `https://music.youtube.com/playlist?list=${playlistId}`
+          : `https://www.youtube.com/playlist?list=${playlistId}`,
+    };
   }
 
-  return idFromPath("shorts") ?? idFromPath("embed") ?? idFromPath("live") ?? idFromPath("v");
+  const channelId = parseYouTubeChannelId(input);
+  if (channelId) {
+    return {
+      kind: "channel",
+      channelId,
+      sourceKind,
+      canonicalUrl: `https://www.youtube.com/channel/${channelId}`,
+    };
+  }
+
+  return null;
 }
 
 /**

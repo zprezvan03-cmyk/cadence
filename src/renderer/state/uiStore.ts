@@ -7,6 +7,8 @@ export type Route =
   | { name: "history" }
   | { name: "stats" }
   | { name: "youtube" }
+  | { name: "youtube-channel"; channelId: string }
+  | { name: "youtube-playlist"; playlistId: string }
   | { name: "library"; tab: LibraryTab }
   | { name: "search"; query: string }
   | { name: "album"; albumId: string }
@@ -57,6 +59,10 @@ export function routeToHash(route: Route): string {
       return "#/stats";
     case "youtube":
       return "#/youtube";
+    case "youtube-channel":
+      return `#/youtube-channel/${encodeURIComponent(route.channelId)}`;
+    case "youtube-playlist":
+      return `#/youtube-playlist/${encodeURIComponent(route.playlistId)}`;
     case "library":
       return `#/library/${route.tab}`;
     case "search":
@@ -111,6 +117,10 @@ export function hashToRoute(hash: string): Route {
       return { name: "stats" };
     case "youtube":
       return { name: "youtube" };
+    case "youtube-channel":
+      return { name: "youtube-channel", channelId: decodeURIComponent(value) };
+    case "youtube-playlist":
+      return { name: "youtube-playlist", playlistId: decodeURIComponent(value) };
     default:
       return { name: "home" };
   }

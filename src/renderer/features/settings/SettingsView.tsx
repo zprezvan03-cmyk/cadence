@@ -27,6 +27,7 @@ import { THEMES } from "../../upstream/better-lyrics/themes";
 import { TRANSLATION_LANGUAGES } from "../lyrics/translationLanguages";
 import { invalidateLyricsResolution } from "../lyrics/useLyrics";
 import { LastFmSettings } from "./LastFmSettings";
+import { YouTubeCatalogSettings } from "./YouTubeCatalogSettings";
 import { LyricsCachePanel } from "./LyricsCachePanel";
 import { FetchAllSettings } from "../lyrics-fetch/FetchAllSettings";
 import { useOnboarding } from "../../state/onboardingStore";
@@ -563,6 +564,11 @@ export function SettingsView() {
               </ul>
             </details>
           ) : null}
+          <YouTubeCatalogSettings
+            settings={settings.youtubeCatalog}
+            patchSettings={patch => patchSettings(patch)}
+            showToast={showToast}
+          />
           <p className="muted">
             Database engine: <strong>{info?.dbEngine ?? "…"}</strong> · supported: FLAC, MP3, AAC/M4A, WAV, Ogg
             Vorbis, Opus.

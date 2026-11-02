@@ -375,6 +375,352 @@
   font-size: 20px;
 }
 
+/* ------------------------------------------------------ Phase A catalog */
+
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border: 1px solid rgba(255, 77, 109, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 0, 51, 0.13);
+  color: #ff9db0;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.source-badge.compact {
+  padding: 2px 6px;
+  font-size: 10px;
+}
+
+.detail-meta .source-badge {
+  align-self: flex-start;
+}
+
+.remote-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.remote-title-line .title-text {
+  min-width: 0;
+}
+
+.remote-channel-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.remote-channel-link:hover {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.remote-track-row {
+  cursor: pointer;
+}
+
+.remote-track-row.unavailable {
+  opacity: 0.58;
+}
+
+.remote-media-card .source-badge {
+  align-self: flex-start;
+  margin-top: 7px;
+}
+
+.catalog-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin: 8px 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.catalog-tabs button {
+  position: relative;
+  padding: 9px 12px;
+  border-radius: 8px 8px 0 0;
+  color: var(--text-dim);
+}
+
+.catalog-tabs button.active {
+  color: var(--text);
+}
+
+.catalog-tabs button.active::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.catalog-search-note,
+.catalog-setup-note {
+  margin: 0 0 12px;
+  line-height: 1.55;
+}
+
+.catalog-direct-link,
+.catalog-state.setup {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.catalog-direct-link > span:nth-child(2),
+.catalog-state.setup > span:nth-child(2) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.catalog-direct-link em,
+.catalog-state.setup em {
+  color: var(--text-dim);
+  font-size: 12.5px;
+  font-style: normal;
+  line-height: 1.5;
+}
+
+.catalog-direct-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: rgba(255, 0, 51, 0.14);
+  color: #ff9db0;
+}
+
+.catalog-state.error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 14px;
+  border: 1px solid rgba(217, 45, 32, 0.38);
+  border-radius: var(--radius-md);
+  background: rgba(217, 45, 32, 0.08);
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.catalog-state.error strong {
+  color: var(--text);
+}
+
+.catalog-state.error p {
+  margin: 0;
+}
+
+.catalog-state.error.compact {
+  margin-bottom: 0;
+}
+
+.catalog-load-more {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.remote-description {
+  max-width: 900px;
+  margin: -8px 0 22px;
+  color: var(--text-dim);
+  line-height: 1.65;
+}
+
+.remote-description summary {
+  width: fit-content;
+  color: var(--text);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.remote-description p {
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.remote-phase-note {
+  max-width: 860px;
+  margin: -6px 0 18px;
+  line-height: 1.55;
+}
+
+.remote-back-link {
+  align-self: flex-start;
+  margin-top: 8px;
+}
+
+.remote-skeleton-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 10px;
+}
+
+.remote-skeleton-row {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 54px;
+  align-items: center;
+  gap: 12px;
+  height: 58px;
+}
+
+.remote-skeleton-art,
+.remote-skeleton-lines span,
+.remote-skeleton-time {
+  display: block;
+  border-radius: 8px;
+  background: linear-gradient(100deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.055));
+  background-size: 220% 100%;
+  animation: remote-skeleton 1.35s ease-in-out infinite;
+}
+
+.remote-skeleton-art {
+  width: 42px;
+  height: 42px;
+}
+
+.remote-skeleton-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.remote-skeleton-lines span:first-child {
+  width: min(420px, 72%);
+  height: 13px;
+}
+
+.remote-skeleton-lines span:last-child {
+  width: min(260px, 48%);
+  height: 11px;
+}
+
+.remote-skeleton-time {
+  width: 42px;
+  height: 11px;
+  justify-self: end;
+}
+
+@keyframes remote-skeleton {
+  from { background-position: 120% 0; }
+  to { background-position: -120% 0; }
+}
+
+.home-empty .youtube-trending-shelf {
+  width: min(980px, 100%);
+  margin-top: 28px;
+  text-align: left;
+}
+
+.youtube-catalog-field input:not([type="checkbox"]) {
+  width: min(380px, 42vw);
+  min-width: 220px;
+}
+
+.youtube-key-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.youtube-key-input input {
+  flex: 1;
+}
+
+.youtube-catalog-buttons {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.youtube-catalog-buttons button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.youtube-catalog-quota-note {
+  margin: 10px 4px 0;
+  line-height: 1.55;
+}
+
+.youtube-catalog-message {
+  margin: 8px 4px 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.youtube-catalog-message.error {
+  border-color: rgba(217, 45, 32, 0.45);
+  color: #ff9b94;
+}
+
+@media (max-width: 720px) {
+  .catalog-direct-link,
+  .catalog-state.setup,
+  .youtube-catalog-field,
+  .youtube-catalog-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .youtube-catalog-field input:not([type="checkbox"]),
+  .youtube-key-input {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .youtube-catalog-buttons {
+    justify-content: flex-start;
+  }
+}
+
 @container (max-width: 1020px) {
   .youtube-layout {
     grid-template-columns: minmax(0, 1fr);

@@ -2,7 +2,7 @@
  * Home: recent activity, quick access and library shortcuts. Written for Cadence.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { Clock3, FolderPlus, Heart, Mic2, Play, Shuffle } from "lucide-react";
 import type { HistoryPayload } from "../../../shared/types";
 import { useLibrary } from "../../state/libraryStore";
@@ -15,6 +15,9 @@ import { AlbumCard } from "../../components/Cards";
 import { Artwork } from "../../components/Artwork";
 import { shuffle } from "../../player/queue";
 import { onRepeatTracks, rediscoverTracks, topLibraryTracks } from "../stats/listeningStats";
+import { useSettings } from "../../state/settingsStore";
+
+const YouTubeTrendingShelf = lazy(() => import("../youtube/YouTubeTrendingShelf"));
 
 function greeting(): string {
   const hour = new Date().getHours();
@@ -41,6 +44,9 @@ export function HomeView() {
   const playQueue = usePlayer(state => state.playQueue);
   const playShuffled = usePlayer(state => state.playShuffled);
   const playTrack = usePlayer(state => state.playTrack);
+  const youtubeCatalogConfigured = useSettings(state =>
+    Boolean(state.settings?.youtubeCatalog.enabled && state.settings.youtubeCatalog.apiKey)
+  );
   const { entries: historyEntries, load: loadHistory } = useHistory(state => state);
   const [now] = useState(() => Date.now());
 
@@ -124,6 +130,11 @@ export function HomeView() {
         </div>
         {snapshot.scan.errors.length > 0 ? (
           <p className="error-text">{snapshot.scan.errors.length} files could not be read during the last scan.</p>
+        ) : null}
+        {youtubeCatalogConfigured ? (
+          <Suspense fallback={null}>
+            <YouTubeTrendingShelf />
+          </Suspense>
         ) : null}
       </div>
     );
@@ -286,6 +297,12 @@ export function HomeView() {
             ))}
           </div>
         </section>
+      ) : null}
+
+      {youtubeCatalogConfigured ? (
+        <Suspense fallback={null}>
+          <YouTubeTrendingShelf />
+        </Suspense>
       ) : null}
 
       <section className="shelf">
