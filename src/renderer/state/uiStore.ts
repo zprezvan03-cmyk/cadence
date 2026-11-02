@@ -6,6 +6,7 @@ export type Route =
   | { name: "home" }
   | { name: "history" }
   | { name: "stats" }
+  | { name: "youtube" }
   | { name: "library"; tab: LibraryTab }
   | { name: "search"; query: string }
   | { name: "album"; albumId: string }
@@ -54,6 +55,8 @@ export function routeToHash(route: Route): string {
       return "#/history";
     case "stats":
       return "#/stats";
+    case "youtube":
+      return "#/youtube";
     case "library":
       return `#/library/${route.tab}`;
     case "search":
@@ -106,6 +109,8 @@ export function hashToRoute(hash: string): Route {
       return { name: "history" };
     case "stats":
       return { name: "stats" };
+    case "youtube":
+      return { name: "youtube" };
     default:
       return { name: "home" };
   }

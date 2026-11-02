@@ -16,6 +16,7 @@ import {
   Plus,
   Settings,
   Users,
+  Youtube,
 } from "lucide-react";
 import { EMPTY_PLAYLISTS, useLibrary } from "../state/libraryStore";
 import { useUi, type LibraryTab } from "../state/uiStore";
@@ -24,6 +25,7 @@ const NAV: { label: string; icon: React.ReactNode; route: Parameters<ReturnType<
   { label: "Home", icon: <Home size={18} />, route: { name: "home" } },
   { label: "History", icon: <History size={18} />, route: { name: "history" } },
   { label: "Stats", icon: <ChartColumn size={18} />, route: { name: "stats" } },
+  { label: "YouTube", icon: <Youtube size={18} />, route: { name: "youtube" } },
   { label: "Songs", icon: <Music2 size={18} />, route: { name: "library", tab: "songs" } },
   { label: "Albums", icon: <AlbumIcon size={18} />, route: { name: "library", tab: "albums" } },
   { label: "Artists", icon: <Users size={18} />, route: { name: "library", tab: "artists" } },

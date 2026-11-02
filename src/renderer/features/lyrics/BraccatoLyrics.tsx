@@ -17,6 +17,7 @@ import { injectRomanization, injectTranslation, type Lyric, type LyricsRenderer 
 import type { LyricsSyncType } from "../../../shared/types";
 import { audioEngine } from "../../audio/engine";
 import { MOTION_DURATION_MS } from "../../app/motion";
+import type { RemotePlaybackClockSource } from "../../player/playbackClock";
 import { shouldCrossfadeUpgrade, type LyricsRenderIdentity } from "./upgrade";
 
 export interface BraccatoLyricsProps {
@@ -36,9 +37,16 @@ export interface BraccatoLyricsProps {
   loaderVisible?: boolean;
   noLyrics?: boolean;
   className?: string;
+  /**
+   * External clock for a player with no HTML media element (the YouTube iframe prototype).
+   * When supplied, the local audio element is deliberately not bound and the element's documented
+   * manual `currentTime` / `playing` properties are driven from this source instead.
+   */
+  remoteClockSource?: RemotePlaybackClockSource | null;
   onLoaded?: (detail: { lineCount: number; syncType: LyricsSyncType }) => void;
   onError?: (message: string) => void;
   onScrollState?: (userScrolling: boolean) => void;
+  onLineClick?: (timeS: number) => void;
 }
 
 /**
@@ -129,14 +137,16 @@ export function BraccatoLyrics({
   loaderVisible = false,
   noLyrics = false,
   className,
+  remoteClockSource = null,
   onLoaded,
   onError,
   onScrollState,
+  onLineClick,
 }: BraccatoLyricsProps) {
   const ref = useRef<BraccatoElement | null>(null);
   const measuredFont = useRef(fontFamily);
-  const callbacks = useRef({ onLoaded, onError, onScrollState });
-  callbacks.current = { onLoaded, onError, onScrollState };
+  const callbacks = useRef({ onLoaded, onError, onScrollState, onLineClick });
+  callbacks.current = { onLoaded, onError, onScrollState, onLineClick };
   // The decoration pass reads the latest lyrics and tick settings, so it can run from the element's
   // own build events (which fire while a lyrics assignment is still on the stack) as well as from the
   // effect that assigns them.
@@ -187,7 +197,9 @@ export function BraccatoLyrics({
 
   // The Braccato element, not React, owns the per-frame clock while a media element is bound.
   // With gapless/crossfade decks the active media element can be promoted, so rebind on that
-  // explicit engine event; ordinary cuts keep the same element and do not rebind.
+  // explicit engine event; ordinary cuts keep the same element and do not rebind. A remote
+  // clock source is the one exception: it means "no media element exists", so nothing local is
+  // bound and the manual-clock effect below is authoritative.
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
@@ -207,35 +219,108 @@ export function BraccatoLyrics({
       const detail = (event as CustomEvent<{ userScrolling: boolean }>).detail;
       callbacks.current.onScrollState?.(Boolean(detail?.userScrolling));
     };
+    const handleLineClick = (event: Event) => {
+      const detail = (event as CustomEvent<{ timeS: number }>).detail;
+      if (Number.isFinite(detail?.timeS)) callbacks.current.onLineClick?.(Math.max(0, detail.timeS));
+    };
 
     element.addEventListener("braccato:lyrics-loaded", handleLoaded);
     element.addEventListener("braccato:error", handleError);
     element.addEventListener("braccato:scroll-state", handleScroll);
+    element.addEventListener("braccato:line-click", handleLineClick);
 
-    const bindSource = (sourceElement: HTMLAudioElement) => {
+    let unsubscribeSource: () => void = () => undefined;
+    if (remoteClockSource) {
       try {
-        if (element.source !== sourceElement) element.source = sourceElement;
+        element.source = null;
       } catch (error) {
         callbacks.current.onError?.(`source: ${(error as Error).message}`);
       }
-    };
-    bindSource(audioEngine.element);
-    const unsubscribeSource = audioEngine.on("source", ({ element: sourceElement }) => {
-      bindSource(sourceElement);
-    });
+    } else {
+      const bindSource = (sourceElement: HTMLAudioElement) => {
+        try {
+          if (element.source !== sourceElement) element.source = sourceElement;
+        } catch (error) {
+          callbacks.current.onError?.(`source: ${(error as Error).message}`);
+        }
+      };
+      bindSource(audioEngine.element);
+      unsubscribeSource = audioEngine.on("source", ({ element: sourceElement }) => {
+        bindSource(sourceElement);
+      });
+    }
 
     return () => {
       unsubscribeSource();
       element.removeEventListener("braccato:lyrics-loaded", handleLoaded);
       element.removeEventListener("braccato:error", handleError);
       element.removeEventListener("braccato:scroll-state", handleScroll);
+      element.removeEventListener("braccato:line-click", handleLineClick);
       try {
         element.source = null;
       } catch {
         /* element may already be gone */
       }
     };
-  }, []);
+  }, [remoteClockSource]);
+
+  // Manual clock adapter for the YouTube iframe. The player itself is sampled at 250 ms by its
+  // owner; between samples this effect projects the last sample at the iframe's playback rate
+  // and writes the custom element's documented clock properties directly (no React state and
+  // no fabricated HTMLAudioElement). Paused/ended samples write once and stop the frame loop.
+  useEffect(() => {
+    const element = ref.current;
+    if (!element || !remoteClockSource) return;
+
+    let frame: number | undefined;
+    let stopped = false;
+
+    const writeClock = () => {
+      const projected = remoteClockSource.projectedAt();
+      const { offsetMs: offset, passiveScroll: passive } = latest.current;
+      element.tickOptions = {
+        globalLyricOffset: offset / 1000,
+        passiveScrollEnabled: passive,
+        playbackRate: projected.playbackRate,
+      };
+      element.currentTime = projected.currentTime;
+      if (element.playing !== projected.isPlaying) element.playing = projected.isPlaying;
+    };
+
+    const schedule = () => {
+      if (stopped || frame !== undefined) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = undefined;
+        if (stopped || !element.isConnected) return;
+        writeClock();
+        if (remoteClockSource.getSnapshot().isPlaying) schedule();
+      });
+    };
+
+    const unsubscribe = remoteClockSource.subscribe(() => {
+      writeClock();
+      if (remoteClockSource.getSnapshot().isPlaying) {
+        schedule();
+      } else if (frame !== undefined) {
+        window.cancelAnimationFrame(frame);
+        frame = undefined;
+      }
+    });
+
+    writeClock();
+    if (remoteClockSource.getSnapshot().isPlaying) schedule();
+
+    return () => {
+      stopped = true;
+      unsubscribe();
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      try {
+        element.playing = false;
+      } catch {
+        /* The element may already be disconnected. */
+      }
+    };
+  }, [remoteClockSource]);
 
   useEffect(() => {
     const element = ref.current;

@@ -29,6 +29,7 @@ import { PlayerBar } from "./features/player/PlayerBar";
 import { QueuePanel } from "./features/player/QueuePanel";
 import { SettingsView } from "./features/settings/SettingsView";
 import { StatsView } from "./features/stats/StatsView";
+import { YouTubeNowPlayingView } from "./features/youtube/YouTubeNowPlayingView";
 import { usePlayer } from "./state/playerStore";
 import { useUi } from "./state/uiStore";
 
@@ -47,6 +48,8 @@ function RouteContent() {
       return <HistoryView />;
     case "stats":
       return <StatsView />;
+    case "youtube":
+      return <YouTubeNowPlayingView />;
     case "library":
       return <LibraryView tab={route.tab} />;
     case "search":
