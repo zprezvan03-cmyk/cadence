@@ -16,6 +16,7 @@ import { TrackEditor } from "./features/library/TrackEditor";
 import { Sidebar } from "./app/Sidebar";
 import { TopBar } from "./app/TopBar";
 import { useWindowChrome, WindowTitleBar } from "./app/WindowTitleBar";
+import { ViewErrorBoundary } from "./app/ViewErrorBoundary";
 import { useBootstrap } from "./app/useBootstrap";
 import { useLastNonNull, usePresence } from "./app/usePresence";
 import { DecodeTesterView } from "./features/decode-tester/DecodeTesterView";
@@ -211,7 +212,9 @@ export function App() {
           ref={contentRef}
           onScroll={event => scrollMemory.set(viewKey, event.currentTarget.scrollTop)}
         >
-          <RouteContent />
+          <ViewErrorBoundary key={viewKey}>
+            <RouteContent />
+          </ViewErrorBoundary>
         </div>
         {!immersive ? <PlayerBar /> : null}
       </main>

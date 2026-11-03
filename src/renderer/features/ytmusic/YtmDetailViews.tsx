@@ -98,6 +98,11 @@ export function YtmAlbumView({ albumId }: { albumId: string }) {
   const loadAlbum = useYtm(state => state.loadAlbum);
   const goBack = useUi(state => state.goBack);
   const { activeVideoId, playingVideoId } = usePlayingVideoId();
+  // Hooks must run unconditionally, before any early return: calling usePlayer after the
+  // loading/error returns crashed React ("rendered more hooks than during the previous render")
+  // the moment the page finished loading, black-screening the whole app.
+  const playMediaQueue = usePlayer(state => state.playMediaQueue);
+  const playMediaShuffled = usePlayer(state => state.playMediaShuffled);
 
   useEffect(() => {
     void loadAlbum(albumId);
@@ -116,8 +121,6 @@ export function YtmAlbumView({ albumId }: { albumId: string }) {
     );
   }
   const data = page.data;
-  const playMediaQueue = usePlayer(state => state.playMediaQueue);
-  const playMediaShuffled = usePlayer(state => state.playMediaShuffled);
 
   return (
     <div className="view detail-view" data-testid="ytm-album-view">
