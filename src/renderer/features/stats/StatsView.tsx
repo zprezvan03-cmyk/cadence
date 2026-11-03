@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChartColumn, Clock3, Flame, History, Music2, Play } from "lucide-react";
 import { Artwork } from "../../components/Artwork";
+import { SourceBadge } from "../../components/SourceBadge";
 import { useHistory } from "../../state/historyStore";
 import { useLibrary } from "../../state/libraryStore";
 import { usePlayer } from "../../state/playerStore";
@@ -93,6 +94,7 @@ export function StatsView() {
   const navigate = useUi(state => state.navigate);
   const playQueue = usePlayer(state => state.playQueue);
   const playTrack = usePlayer(state => state.playTrack);
+  const playMediaItem = usePlayer(state => state.playMediaItem);
   const showToast = useUi(state => state.showToast);
   const [now] = useState(() => Date.now());
 
@@ -126,6 +128,15 @@ export function StatsView() {
   };
 
   const playRankedTrack = (ranked: RankedHistoryTrack) => {
+    if (ranked.source.kind !== "local") {
+      if (!ranked.mediaItem) {
+        showToast("This remote history entry is incomplete.");
+        return;
+      }
+      void playMediaItem(ranked.mediaItem);
+      navigate({ name: "lyrics" });
+      return;
+    }
     if (!ranked.track) {
       showToast("This track is no longer in your library.");
       return;
@@ -277,14 +288,17 @@ export function StatsView() {
             </div>
           </div>
           <div className="stats-rank-list" data-testid="stats-top-tracks">
-            {stats.topTracks.map((ranked, index) => (
+            {stats.topTracks.map((ranked, index) => {
+              const available = ranked.source.kind === "local" ? ranked.track : ranked.mediaItem;
+              return (
               <button
                 type="button"
-                className={`stats-rank-row${ranked.track ? "" : " stats-rank-row-unavailable"}`}
-                key={ranked.trackId}
-                disabled={!ranked.track}
+                className={`stats-rank-row${available ? "" : " stats-rank-row-unavailable"}`}
+                key={ranked.sourceKey}
+                disabled={!available}
                 onClick={() => playRankedTrack(ranked)}
-                title={ranked.track ? `Play ${ranked.title}` : "No longer in your library"}
+                title={available ? `Play ${ranked.title}` : "Unavailable"}
+                data-source-kind={ranked.source.kind}
               >
                 <span className="stats-rank-number">{index + 1}</span>
                 <Artwork src={ranked.artworkUrl} alt={ranked.album || ranked.title} size="xs" />
@@ -292,12 +306,14 @@ export function StatsView() {
                   <strong>{ranked.title}</strong>
                   <em>{ranked.artist}</em>
                 </span>
+                <SourceBadge source={ranked.source} />
                 <span className="stats-rank-count">
                   <strong>{playLabel(ranked.playCount)}</strong>
                   <em>{formatDate(ranked.lastPlayedAt)}</em>
                 </span>
               </button>
-            ))}
+              );
+            })}
           </div>
         </article>
 

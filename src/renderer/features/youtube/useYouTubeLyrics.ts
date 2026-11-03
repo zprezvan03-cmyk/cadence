@@ -1,5 +1,5 @@
 /**
- * Lyrics lookup for the isolated YouTube prototype.
+ * Lyrics lookup for a remote item in Cadence's unified player queue.
  *
  * It intentionally does not reuse the local-track `useLyrics` store: that store is keyed by a
  * numeric library ID and would require inventing one for a remote video. Instead, remote metadata
@@ -14,9 +14,19 @@ import type {
   LyricsCandidate,
   LyricsSearchResponse,
   LyricsSettings,
+  YouTubeMetadataResult,
 } from "../../../shared/types";
+import {
+  parseYouTubeVideoId,
+  resolveSearchFields,
+  type ManualSearchInput,
+} from "../../../shared/youtube";
 import { bridge, hasBridge } from "../../state/bridge";
-import type { YouTubeRemoteMetadata } from "../../state/youtubeStore";
+import type {
+  ManualSearchState,
+  SearchDraft,
+  YouTubeResolveState,
+} from "../../state/lyricsStore";
 import {
   applyRomanization,
   applyTranslations,
@@ -33,6 +43,18 @@ import {
 
 export type YouTubeLyricsStatus = "idle" | "loading" | "ready" | "empty" | "error";
 
+/** Metadata-only identity for one remote queue item; deliberately has no local track ID. */
+export interface YouTubeLyricsMetadataInput {
+  videoId: string;
+  sourceId: string;
+  title: string;
+  artist: string;
+  album: string;
+  duration: number;
+  artworkUrl: string;
+  sourceUrl: string;
+}
+
 export interface YouTubeLyricsResult {
   status: YouTubeLyricsStatus;
   candidates: LyricsCandidate[];
@@ -46,8 +68,19 @@ export interface YouTubeLyricsResult {
   decorationError: string | null;
   translating: boolean;
   romanizing: boolean;
+  activeSource: string | null;
+  hasLyrics: boolean;
   selectCandidate: (index: number) => void;
+  selectSource: (source: string) => void;
   reload: () => void;
+  searchDraft: SearchDraft;
+  patchDraft: (patch: Partial<SearchDraft>) => void;
+  clearSearch: () => void;
+  manualSearchState: ManualSearchState;
+  manualSearch: (input: ManualSearchInput) => Promise<void>;
+  selectSearchResult: (candidate: LyricsCandidate) => void;
+  youtubeState: YouTubeResolveState;
+  resolveYouTube: (url: string) => Promise<YouTubeMetadataResult | null>;
 }
 
 interface SearchState {
@@ -71,6 +104,14 @@ const IDLE_SEARCH: SearchState = {
   error: null,
 };
 
+const EMPTY_MANUAL_SEARCH: ManualSearchState = { status: "idle", results: [], error: null };
+const IDLE_YOUTUBE: YouTubeResolveState = {
+  status: "idle",
+  videoId: null,
+  metadata: null,
+  detail: null,
+};
+
 function textHash(value: string): string {
   let hash = 0x811c9dc5;
   for (let i = 0; i < value.length; i += 1) {
@@ -92,7 +133,7 @@ function candidateKey(candidate: LyricsCandidate): string {
 }
 
 export function useYouTubeLyrics(
-  metadata: YouTubeRemoteMetadata | null,
+  metadata: YouTubeLyricsMetadataInput | null,
   settings: LyricsSettings
 ): YouTubeLyricsResult {
   const [search, setSearch] = useState<SearchState>(IDLE_SEARCH);
@@ -103,7 +144,18 @@ export function useYouTubeLyrics(
   const [translating, setTranslating] = useState(false);
   const [romanizing, setRomanizing] = useState(false);
   const [decorationError, setDecorationError] = useState<string | null>(null);
+  const [searchDraft, setSearchDraft] = useState<SearchDraft>({
+    title: "",
+    artist: "",
+    album: "",
+    youtubeUrl: "",
+  });
+  const [manualSearchState, setManualSearchState] =
+    useState<ManualSearchState>(EMPTY_MANUAL_SEARCH);
+  const [youtubeState, setYoutubeState] = useState<YouTubeResolveState>(IDLE_YOUTUBE);
   const generationRef = useRef(0);
+  const manualGenerationRef = useRef(0);
+  const youtubeGenerationRef = useRef(0);
   const selectedCandidateKeyRef = useRef<string | null>(null);
 
   const providerOrderKey = settings.providerOrder.join(",");
@@ -113,7 +165,17 @@ export function useYouTubeLyrics(
 
   useEffect(() => {
     selectedCandidateKeyRef.current = null;
+    manualGenerationRef.current += 1;
+    youtubeGenerationRef.current += 1;
     setActiveIndex(0);
+    setSearchDraft({
+      title: metadata?.title ?? "",
+      artist: metadata?.artist ?? "",
+      album: metadata?.album ?? "",
+      youtubeUrl: metadata?.sourceUrl ?? "",
+    });
+    setManualSearchState(EMPTY_MANUAL_SEARCH);
+    setYoutubeState(IDLE_YOUTUBE);
   }, [metadata?.sourceId]);
 
   useEffect(() => {
@@ -369,6 +431,119 @@ export function useYouTubeLyrics(
     translationValues,
   ]);
 
+  const patchDraft = useCallback((patch: Partial<SearchDraft>) => {
+    setSearchDraft(previous => ({ ...previous, ...patch }));
+  }, []);
+
+  const clearSearch = useCallback(() => {
+    manualGenerationRef.current += 1;
+    youtubeGenerationRef.current += 1;
+    setSearchDraft({
+      title: metadata?.title ?? "",
+      artist: metadata?.artist ?? "",
+      album: metadata?.album ?? "",
+      youtubeUrl: metadata?.sourceUrl ?? "",
+    });
+    setManualSearchState(EMPTY_MANUAL_SEARCH);
+    setYoutubeState(IDLE_YOUTUBE);
+  }, [metadata?.album, metadata?.artist, metadata?.sourceUrl, metadata?.title]);
+
+  const resolveYouTube = useCallback(
+    async (url: string): Promise<YouTubeMetadataResult | null> => {
+      if (!metadata) return null;
+      const trimmed = url.trim();
+      const videoId = parseYouTubeVideoId(trimmed);
+      if (!videoId) {
+        setYoutubeState(
+          trimmed ? { status: "invalid", videoId: null, metadata: null, detail: null } : IDLE_YOUTUBE
+        );
+        return null;
+      }
+      const token = ++youtubeGenerationRef.current;
+      setYoutubeState({ status: "resolving", videoId, metadata: null, detail: null });
+      try {
+        const result = await bridge.lyrics.youtubeMetadata({ url: trimmed });
+        if (token !== youtubeGenerationRef.current) return result;
+        setYoutubeState(
+          result.ok
+            ? { status: "ready", videoId, metadata: result.metadata, detail: null }
+            : {
+                status: result.reason === "invalid" ? "invalid" : result.reason,
+                videoId,
+                metadata: null,
+                detail: result.detail,
+              }
+        );
+        return result;
+      } catch (error) {
+        if (token !== youtubeGenerationRef.current) return null;
+        setYoutubeState({
+          status: "error",
+          videoId,
+          metadata: null,
+          detail: (error as Error).message || "Metadata lookup failed",
+        });
+        return null;
+      }
+    },
+    [metadata]
+  );
+
+  const manualSearch = useCallback(
+    async (input: ManualSearchInput) => {
+      if (!metadata) return;
+      const effective = resolveSearchFields(
+        input,
+        youtubeState.status === "ready" ? youtubeState.metadata : null,
+        metadata.duration
+      );
+      if (!effective.title) return;
+      const token = ++manualGenerationRef.current;
+      setManualSearchState({ status: "loading", results: [], error: null });
+      try {
+        const response = await bridge.lyrics.search({
+          title: effective.title,
+          artist: effective.artist,
+          album: effective.album,
+          duration: effective.duration ?? undefined,
+        });
+        if (token !== manualGenerationRef.current) return;
+        setManualSearchState(
+          response.results.length
+            ? { status: "ready", results: response.results, error: null }
+            : { status: "empty", results: [], error: null }
+        );
+      } catch (error) {
+        if (token !== manualGenerationRef.current) return;
+        setManualSearchState({
+          status: "error",
+          results: [],
+          error: (error as Error).message || "Lyrics search failed",
+        });
+      }
+    },
+    [metadata, youtubeState]
+  );
+
+  const selectSearchResult = useCallback(
+    (candidate: LyricsCandidate) => {
+      if (!metadata) return;
+      selectedCandidateKeyRef.current = candidateKey(candidate);
+      setSearch(previous => ({
+        sourceId: metadata.sourceId,
+        status: "ready",
+        candidates: [
+          candidate,
+          ...previous.candidates.filter(entry => candidateKey(entry) !== candidateKey(candidate)),
+        ],
+        providerStatus: previous.sourceId === metadata.sourceId ? previous.providerStatus : [],
+        error: null,
+      }));
+      setActiveIndex(0);
+    },
+    [metadata]
+  );
+
   const selectCandidate = useCallback(
     (index: number) => {
       const candidate = candidates[index];
@@ -377,6 +552,14 @@ export function useYouTubeLyrics(
       setActiveIndex(index);
     },
     [candidates]
+  );
+
+  const selectSource = useCallback(
+    (source: string) => {
+      const index = candidates.findIndex(candidate => candidate.source === source);
+      if (index >= 0) selectCandidate(index);
+    },
+    [candidates, selectCandidate]
   );
 
   const reload = useCallback(() => {
@@ -405,7 +588,18 @@ export function useYouTubeLyrics(
     decorationError,
     translating,
     romanizing,
+    activeSource: activeCandidate?.source ?? null,
+    hasLyrics: Boolean(decoratedLyrics && decoratedLyrics.length > 0),
     selectCandidate,
+    selectSource,
     reload,
+    searchDraft,
+    patchDraft,
+    clearSearch,
+    manualSearchState,
+    manualSearch,
+    selectSearchResult,
+    youtubeState,
+    resolveYouTube,
   };
 }

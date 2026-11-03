@@ -7,7 +7,8 @@
 
 import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Minimize2, Music4, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
-import type { AppSettings, NowPlayingProfile, Track } from "../../../shared/types";
+import { remoteVideoId, trackSourceKey } from "../../../shared/media";
+import type { AppSettings, MediaItem, NowPlayingProfile, Track } from "../../../shared/types";
 import { DEFAULT_PROVIDER_ORDER } from "../../../shared/upstream/better-lyrics/constants";
 import {
   cloneNowPlayingProfile,
@@ -19,7 +20,16 @@ import {
 } from "../../../shared/nowPlayingProfiles";
 import { fontStack } from "../../../shared/fonts";
 import { useSettings } from "../../state/settingsStore";
+import { usePlayer } from "../../state/playerStore";
 import { useUi } from "../../state/uiStore";
+import { SourceBadge } from "../../components/SourceBadge";
+import { youtubePlaybackClock } from "../../player/youtubePlayerAdapter";
+import { IntegratedYouTubePlayerStage } from "../youtube/IntegratedYouTubePlayerStage";
+import { YouTubeLinkForm } from "../youtube/YouTubeLinkForm";
+import {
+  useYouTubeLyrics,
+  type YouTubeLyricsMetadataInput,
+} from "../youtube/useYouTubeLyrics";
 import { BraccatoLyrics } from "./BraccatoLyrics";
 import { LyricsDock } from "./LyricsDock";
 import { FullscreenControls } from "./FullscreenControls";
@@ -32,7 +42,10 @@ import { buildThemeCss } from "../../upstream/better-lyrics/themes";
 import { useLastNonNull, usePresence } from "../../app/usePresence";
 
 export interface LyricsViewProps {
+  /** Non-null only for the current local media item; remote items never receive a fake Track. */
   track: Track | null;
+  /** Unified current item from playerStore, for either local or remote playback. */
+  item: MediaItem | null;
   playing: boolean;
   fullscreen: boolean;
   onToggleFullscreen: () => void;
@@ -43,7 +56,7 @@ function clampFinite(value: number | undefined, fallback: number, min: number, m
   return Number.isFinite(value) ? Math.min(max, Math.max(min, value as number)) : fallback;
 }
 
-export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onOpenSearch }: LyricsViewProps) {
+export function LyricsView({ track, item, playing, fullscreen, onToggleFullscreen, onOpenSearch }: LyricsViewProps) {
   const settings = useSettings(state => state.settings);
   const patchSettings = useSettings(state => state.patch);
   const [toast, setToast] = useState<string | null>(null);
@@ -54,6 +67,10 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   const [syncLabel, setSyncLabel] = useState("No lyrics");
   const [dockPopoverOpen, setDockPopoverOpen] = useState(false);
   const queueOpen = useUi(state => state.queueOpen);
+  const playerDuration = usePlayer(state => state.duration);
+  const seek = usePlayer(state => state.seek);
+  const isRemote = Boolean(item && item.source.kind !== "local");
+  const itemIdentity = item ? trackSourceKey(item.source) : null;
   const viewRef = useRef<HTMLDivElement | null>(null);
   const footerRef = useRef<HTMLDivElement | null>(null);
   const fsArtworkRef = useRef<HTMLDivElement | null>(null);
@@ -88,14 +105,14 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   // Restart only the artwork wrapper's entrance on a real track change. The Artwork component
   // itself stays mounted, so its decode/fallback state and layout do not jump.
   useLayoutEffect(() => {
-    if (track?.id === undefined || track?.id === null) return;
+    if (!itemIdentity) return;
     for (const node of [fsArtworkRef.current, fsPanelArtRef.current]) {
       if (!node) continue;
       node.classList.remove("is-swapping");
       void node.offsetWidth;
       node.classList.add("is-swapping");
     }
-  }, [track?.id]);
+  }, [itemIdentity]);
 
   const lyricsSettings = settings?.lyrics;
   const shaderSettings = settings?.shaders;
@@ -130,7 +147,49 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   // The toggle only applies in fullscreen; the normal page always shows lyrics.
   const lyricsVisible = !fullscreen || showLyrics;
 
-  const lyrics = useLyrics(track ?? null, lyricsSettings ?? fallbackLyricsSettings);
+  const remoteLyricsMetadata = useMemo<YouTubeLyricsMetadataInput | null>(() => {
+    if (!item || item.source.kind === "local") return null;
+    const videoId = remoteVideoId(item);
+    if (!videoId) return null;
+    return {
+      videoId,
+      sourceId: trackSourceKey(item.source),
+      title: item.title,
+      artist: item.artistLabel,
+      album: item.albumLabel ?? "",
+      duration:
+        Number.isFinite(playerDuration) && playerDuration > 0
+          ? playerDuration
+          : item.durationSeconds ?? 0,
+      artworkUrl: item.artworkUrl ?? "",
+      sourceUrl: item.source.canonicalUrl,
+    };
+  }, [item, playerDuration]);
+
+  const localLyrics = useLyrics(
+    isRemote ? null : track ?? null,
+    lyricsSettings ?? fallbackLyricsSettings
+  );
+  const remoteLyrics = useYouTubeLyrics(
+    remoteLyricsMetadata,
+    lyricsSettings ?? fallbackLyricsSettings
+  );
+
+  // One narrow view-model lets the existing body, dock, profiles and translation controls render
+  // either source. Local-only file actions are inert for remote items and are hidden by the dock.
+  const lyrics = useMemo(() => {
+    if (!isRemote) return localLyrics;
+    return {
+      ...remoteLyrics,
+      status: remoteLyrics.status === "idle" ? ("loading" as const) : remoteLyrics.status,
+      error: remoteLyrics.error ?? remoteLyrics.decorationError,
+      chooseFile: async (): Promise<void> => undefined,
+      saveSidecar: async (): Promise<string | null> => null,
+      manualSearch: remoteLyrics.manualSearch,
+      resolveYouTube: remoteLyrics.resolveYouTube,
+      selectSearchResult: remoteLyrics.selectSearchResult,
+    };
+  }, [isRemote, localLyrics, remoteLyrics]);
 
   useEffect(() => {
     if (lyrics.status !== "loading") {
@@ -139,7 +198,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
     }
     const timer = window.setTimeout(() => setSlowLoading(true), 350);
     return () => window.clearTimeout(timer);
-  }, [lyrics.status, track?.id]);
+  }, [lyrics.status, itemIdentity]);
 
   // The renderer caches every CSS value it reads into JS — karaoke swipe/glow
   // switches, glow radius, letter emphasis, active-line scale — and only
@@ -335,9 +394,18 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   // The title block: in fullscreen it sits under the artwork in the left column; on the normal page it
   // is the header's heading.
   const heading = (
-    <div className="lyrics-heading" key={track?.id ?? "none"}>
-      <h1>{track?.title ?? "Nothing playing"}</h1>
-      <p>{track ? [track.artist, track.album].filter(Boolean).join(" · ") : "Pick a song from your library"}</p>
+    <div className="lyrics-heading" key={itemIdentity ?? "none"}>
+      <h1>{item?.title ?? "Nothing playing"}</h1>
+      <p>
+        {item
+          ? [item.artistLabel, item.albumLabel].filter(Boolean).join(" · ")
+          : "Pick a song from your library or YouTube catalog"}
+      </p>
+      {item ? (
+        <div className="lyrics-heading-source">
+          <SourceBadge source={item} />
+        </div>
+      ) : null}
     </div>
   );
 
@@ -346,7 +414,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
   // previous track's lines on screen while the new track resolves). A same-track Autofetch
   // upgrade pass is *not* a status panel: fallback lyrics stay on screen while it runs.
   const statusPanel =
-    track !== null &&
+    item !== null &&
     ((slowLoading && !lyrics.hasLyrics) || lyrics.status === "empty" || lyrics.status === "error");
 
   const headingInSide =
@@ -366,9 +434,12 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
         panelMode ? "is-lyrics-off" : "",
         profileConfig.artworkSlot === "right" ? "artwork-right" : "",
         fullscreen && showLyricsSetting && !showSide ? "has-no-side" : "",
+        isRemote ? "has-remote-player" : "",
       ].join(" ")}
       style={nowPlayingScaleStyle}
       data-testid="lyrics-view"
+      data-current-source={item?.source.kind ?? "none"}
+      data-current-source-key={itemIdentity ?? ""}
       data-now-playing-profile={activeNowPlayingProfile.id}
       data-profile-mode={fullscreen ? "fullscreen" : "windowed"}
       data-profile-artwork={profileConfig.artworkVisible ? "visible" : "hidden"}
@@ -381,7 +452,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
     >
       <NowPlayingBackground
         mode={profileConfig.backgroundMode}
-        artworkUrl={track?.artworkUrl ?? null}
+        artworkUrl={item?.artworkUrl ?? null}
         animatedArtUrl={track?.animatedArtUrl ?? null}
         shaderSettings={shaderSettings ?? settings.shaders}
         playing={playing}
@@ -397,7 +468,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
       {showSide ? (
         <div className="fs-side">
           <div className="fs-artwork" ref={fsArtworkRef}>
-            <Artwork src={track?.artworkUrl} alt={track?.album ?? "Artwork"} size="hero" />
+            <Artwork src={item?.artworkUrl} alt={item?.albumLabel ?? item?.title ?? "Artwork"} size="hero" />
           </div>
           {headingInSide ? heading : null}
         </div>
@@ -430,10 +501,12 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
         {panelMode ? <span className="eyebrow fs-eyebrow">Now playing</span> : null}
       </div>
 
+      {isRemote && item ? <IntegratedYouTubePlayerStage item={item} /> : null}
+
       {panelMode ? (
         <div className="fs-panel-layout">
           <div className="fs-panel-art" ref={fsPanelArtRef}>
-            <Artwork src={track?.artworkUrl} alt={track?.album ?? "Artwork"} size="hero" />
+            <Artwork src={item?.artworkUrl} alt={item?.albumLabel ?? item?.title ?? "Artwork"} size="hero" />
           </div>
           <div className="fs-panel">
             {profileConfig.metadataVisible ? heading : null}
@@ -452,10 +525,12 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
           statusPanel ? "has-status-panel" : ""
         }`}
       >
-        {track ? (
+        {item ? (
           <BraccatoLyrics
             lyrics={lyricsSettings?.hideInstrumentalOnly && lyrics.parsed?.instrumentalOnly ? [] : lyrics.lyrics}
-            trackId={track.id}
+            trackId={isRemote ? itemIdentity ?? item.title : track?.id ?? itemIdentity ?? item.title}
+            remoteClockSource={isRemote ? youtubePlaybackClock : null}
+            onLineClick={isRemote ? time => seek(time) : undefined}
             sourceKey={lyrics.activeSource}
             themeCss={themeCss}
             offsetMs={lyricsSettings?.offsetMs ?? 0}
@@ -471,28 +546,45 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
           <div className="lyrics-empty">
             <Music4 size={40} />
             <h2>Your lyrics live here</h2>
-            <p>Play something from your library and the lyrics will follow the audio clock.</p>
+            <p>
+              Play something from your library or YouTube catalog and the lyrics will follow the
+              active playback clock.
+            </p>
+            <YouTubeLinkForm />
           </div>
         )}
 
-        {track && lyrics.status === "loading" && slowLoading && !lyrics.hasLyrics ? (
+        {item && lyrics.status === "loading" && slowLoading && !lyrics.hasLyrics ? (
           <div className="lyrics-empty-panel loading" role="status" data-testid="lyrics-loading-panel">
             <div className="lyrics-empty-icon" aria-hidden="true">
               <RefreshCw size={20} className="spin" />
             </div>
             <h2>Finding lyrics…</h2>
-            <p>Checking local files, embedded tags and your enabled providers.</p>
+            <p>
+              {isRemote
+                ? "Using this item's title and artist to check your enabled lyrics providers."
+                : "Checking local files, embedded tags and your enabled providers."}
+            </p>
           </div>
         ) : null}
 
-        {track && lyrics.status === "empty" ? (
+        {item && lyrics.status === "empty" ? (
           <div className="lyrics-empty-panel" data-testid="lyrics-empty-panel">
             <div className="lyrics-empty-icon" aria-hidden="true">
               <Music4 size={20} />
             </div>
             <h2>No lyrics found</h2>
             <p>
-              {lyricsSettings?.autoFetch ? (
+              {isRemote ? (
+                <>
+                  Cadence used this remote item&apos;s title and artist metadata with your enabled
+                  online providers (Better Lyrics, Unison, BiniLyrics, LRCLIB). Use the lyrics
+                  dock below to search with different metadata.
+                  {lyrics.providerStatus.some(entry => entry.status === "error")
+                    ? ` Some providers reported an issue (${lyrics.providerStatus.find(entry => entry.status === "error")?.detail ?? "request failed"}).`
+                    : ""}
+                </>
+              ) : lyricsSettings?.autoFetch ? (
                 <>
                   Cadence checked sidecar <code>.lrc</code>/<code>.ttml</code>/<code>.qrc</code> files, embedded
                   tags, and enabled online providers (Better Lyrics, Unison, BiniLyrics, LRCLIB).
@@ -508,9 +600,11 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
               )}
             </p>
             <div className="empty-actions">
-              <button type="button" className="primary" onClick={() => void lyrics.chooseFile()}>
-                <Search size={16} /> Choose a lyrics file
-              </button>
+              {!isRemote ? (
+                <button type="button" className="primary" onClick={() => void lyrics.chooseFile()}>
+                  <Search size={16} /> Choose a lyrics file
+                </button>
+              ) : null}
               <button type="button" onClick={lyrics.reload}>
                 <RefreshCw size={16} /> Try again
               </button>
@@ -523,7 +617,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
           </div>
         ) : null}
 
-        {track && lyrics.status === "error" ? (
+        {item && lyrics.status === "error" ? (
           <div className="lyrics-empty-panel error" data-testid="lyrics-error-panel">
             <div className="lyrics-empty-icon" aria-hidden="true">
               <RefreshCw size={20} />
@@ -550,7 +644,7 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
           />
         ) : null}
 
-        {track ? (
+        {item ? (
           <LyricsDock
             settings={lyricsSettings ?? fallbackLyricsSettings}
             onPatch={patchLyrics}
@@ -564,7 +658,14 @@ export function LyricsView({ track, playing, fullscreen, onToggleFullscreen, onO
             onReload={lyrics.reload}
             onSaveSidecar={() => void handleSave()}
             onChooseFile={() => void lyrics.chooseFile()}
-            trackDuration={track?.duration ?? 0}
+            localFileActions={!isRemote}
+            trackDuration={
+              isRemote
+                ? Number.isFinite(playerDuration) && playerDuration > 0
+                  ? playerDuration
+                  : item.durationSeconds ?? 0
+                : track?.duration ?? 0
+            }
             searchDraft={lyrics.searchDraft}
             onDraftChange={lyrics.patchDraft}
             onClearSearch={lyrics.clearSearch}

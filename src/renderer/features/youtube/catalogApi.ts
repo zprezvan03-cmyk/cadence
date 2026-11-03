@@ -13,6 +13,7 @@ import type {
   MediaItem,
   YouTubeCatalogPageRequest,
   YouTubeCatalogResult,
+  YouTubeCatalogSearchOrder,
   YouTubeCatalogSearchRequest,
   YouTubeCatalogStatus,
   YouTubeChannelDetail,
@@ -94,10 +95,26 @@ export async function searchYouTubePlaylists(
   return result;
 }
 
+export async function searchYouTubeAlbumCollections(
+  request: YouTubeCatalogSearchRequest
+): Promise<YouTubeCatalogResult<CatalogPage<YouTubePlaylistSummary>>> {
+  const result = await callCatalog(api => api.searchAlbumCollections(request));
+  if (result.ok) useRemoteMedia.getState().rememberPlaylists(result.data.items);
+  return result;
+}
+
 export async function getYouTubeTrending(
   request: YouTubeCatalogPageRequest = {}
 ): Promise<YouTubeCatalogResult<CatalogPage<MediaItem>>> {
   const result = await callCatalog(api => api.trending(request));
+  if (result.ok) useRemoteMedia.getState().rememberVideos(result.data.items);
+  return result;
+}
+
+export async function getYouTubeNewReleases(
+  request: YouTubeCatalogPageRequest = {}
+): Promise<YouTubeCatalogResult<CatalogPage<MediaItem>>> {
+  const result = await callCatalog(api => api.newReleases(request));
   if (result.ok) useRemoteMedia.getState().rememberVideos(result.data.items);
   return result;
 }
@@ -112,6 +129,31 @@ export async function getYouTubeChannel(
     registry.rememberPlaylists(result.data.playlists);
     registry.rememberVideos(result.data.uploads.items);
   }
+  return result;
+}
+
+export async function getYouTubeChannelPlaylists(
+  channelId: string,
+  pageToken?: string | null,
+  maxResults?: number
+): Promise<YouTubeCatalogResult<CatalogPage<YouTubePlaylistSummary>>> {
+  const result = await callCatalog(api =>
+    api.getChannelPlaylists({ channelId, pageToken, maxResults })
+  );
+  if (result.ok) useRemoteMedia.getState().rememberPlaylists(result.data.items);
+  return result;
+}
+
+export async function getYouTubeChannelVideos(
+  channelId: string,
+  pageToken?: string | null,
+  maxResults?: number,
+  order?: YouTubeCatalogSearchOrder
+): Promise<YouTubeCatalogResult<CatalogPage<MediaItem>>> {
+  const result = await callCatalog(api =>
+    api.getChannelVideos({ channelId, pageToken, maxResults, order })
+  );
+  if (result.ok) useRemoteMedia.getState().rememberVideos(result.data.items);
   return result;
 }
 

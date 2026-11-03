@@ -11,11 +11,20 @@ import { audioEngine } from "../audio/engine";
 import { computeReplayGain } from "../audio/replayGain";
 import { applyFontFamily } from "./fonts";
 import { useLibrary } from "../state/libraryStore";
-import { readSession, usePlayer, currentTrackId } from "../state/playerStore";
+import {
+  currentMediaItem as currentPlayerMediaItem,
+  currentQueueEntry,
+  pruneSessionQueue,
+  readSession,
+  usePlayer,
+  currentTrackId,
+} from "../state/playerStore";
 import { getTrackById } from "../state/trackRegistry";
 import { useSettings } from "../state/settingsStore";
 import { useUi } from "../state/uiStore";
 import { useHistory } from "../state/historyStore";
+import { useRemoteMedia } from "../state/remoteMediaStore";
+import { mediaItemFromLocalTrack, trackSourceKey } from "../../shared/media";
 import { formatTime } from "../player/queue";
 import {
   explainPlaybackFailure,
@@ -62,14 +71,20 @@ export function useBootstrap(): void {
       if (settings.playback.shuffle !== player.shuffle) player.toggleShuffle();
 
       if (settings.playback.resumeOnLaunch && savedSession) {
-        // Drop queue entries whose files no longer exist in the library.
-        const available = useLibrary.getState().tracksById;
-        const queue = savedSession.queue.filter(id => available.has(id));
-        if (queue.length > 0) {
-          await usePlayer.getState().restore({ ...savedSession, queue });
+        // Drop local entries whose files no longer exist and stale remote snapshots, remapping
+        // the playback order/current occurrence in the same operation.
+        const available = new Set(useLibrary.getState().tracksById.keys());
+        const session = pruneSessionQueue(savedSession, available);
+        if (session.queue.length > 0) {
+          await usePlayer.getState().restore(session);
         }
       }
     })();
+
+    const isLocalCurrent = (): boolean => {
+      const entry = currentQueueEntry(usePlayer.getState());
+      return !entry || entry.item.source.kind === "local";
+    };
 
     const unsubscribers = [
       audioEngine.on("time", ({ position, duration, buffered }) => {
@@ -79,9 +94,10 @@ export function useBootstrap(): void {
         usePlayer.getState().syncState(state);
       }),
       audioEngine.on("metadata", ({ duration }) => {
-        if (duration > 0) usePlayer.setState({ duration });
+        if (duration > 0 && isLocalCurrent()) usePlayer.setState({ duration });
       }),
       audioEngine.on("error", ({ message, code, mediaMessage, src }) => {
+        if (!isLocalCurrent()) return;
         // Turn a bare media error code into something the listener can act on, while keeping
         // file-access errors (403/404) separate from unsupported-codec and decode errors.
         const trackId = currentTrackId(usePlayer.getState());
@@ -115,10 +131,10 @@ export function useBootstrap(): void {
         }
       }),
       audioEngine.on("volume", ({ volume, muted }) => {
-        usePlayer.setState({ volume, muted });
+        if (isLocalCurrent()) usePlayer.setState({ volume, muted });
       }),
       audioEngine.on("rate", ({ rate }) => {
-        usePlayer.setState({ rate });
+        if (isLocalCurrent()) usePlayer.setState({ rate });
       }),
     ];
 
@@ -140,9 +156,18 @@ export function useBootstrap(): void {
 
       const player = usePlayer.getState();
       switch (command) {
-        case "play-pause":
+        case "play-pause": {
+          const current = currentQueueEntry(player);
+          const needsVisiblePlayer =
+            current?.item.source.kind !== "local" && !player.isPlaying && !player.remotePlayerMounted;
           void player.toggle();
+          if (needsVisiblePlayer) {
+            const ui = useUi.getState();
+            if (ui.miniPlayer) ui.toggleMiniPlayer();
+            ui.navigate({ name: "lyrics" });
+          }
           break;
+        }
         case "next":
           void player.next(false);
           break;
@@ -150,7 +175,8 @@ export function useBootstrap(): void {
           player.previous();
           break;
         case "stop":
-          audioEngine.pause();
+          if (!isLocalCurrent() && player.isPlaying) void player.toggle();
+          else audioEngine.pause();
           break;
         case "seek-forward":
           player.seekBy(SEEK_STEP);
@@ -195,15 +221,28 @@ export function useBootstrap(): void {
 
     const updateMediaSession = () => {
       const state = usePlayer.getState();
+      const entry = currentQueueEntry(state);
       const trackId = currentTrackId(state);
       const track = trackId === null ? null : useLibrary.getState().tracksById.get(trackId) ?? null;
+      const queuedItem = currentPlayerMediaItem(state);
+      const item = !entry
+        ? null
+        : entry.item.source.kind === "local"
+          ? track
+            ? mediaItemFromLocalTrack(track, entry.item.fetchedAt || Date.now())
+            : queuedItem
+          : useRemoteMedia.getState().videosByKey[trackSourceKey(entry.item.source)] ?? queuedItem;
+      const source = item?.source ?? null;
+      const sourceKey = source ? trackSourceKey(source) : "none";
 
-      // Report discrete state transitions to the desktop bridge without spamming 10 Hz ticks.
-      const reportKey = `${trackId ?? "none"}|${state.isPlaying}|${state.repeat}|${state.shuffle}|${state.orderPosition}`;
+      // Report discrete state transitions to the desktop bridge without spamming clock ticks.
+      const reportKey = `${entry?.occurrenceId ?? "none"}|${sourceKey}|${state.isPlaying}|${state.playbackMechanism}|${state.repeat}|${state.shuffle}|${state.orderPosition}`;
       if (reportKey !== lastReportedKey) {
         lastReportedKey = reportKey;
         void window.cadence?.player?.reportState?.({
           trackId,
+          source,
+          playbackMechanism: state.playbackMechanism,
           position: state.position,
           duration: state.duration,
           playing: state.isPlaying,
@@ -212,14 +251,14 @@ export function useBootstrap(): void {
           playbackRate: state.rate,
           shuffle: state.shuffle,
           repeat: state.repeat,
-          queue: state.queue,
+          queue: state.queue.map(queueEntry => queueEntry.item.source),
           queueIndex: state.orderPosition,
         });
       }
 
       if (!("mediaSession" in navigator)) return;
 
-      if (!track) {
+      if (!item) {
         if (lastMetadataSignature !== "") {
           lastMetadataSignature = "";
           try {
@@ -233,19 +272,19 @@ export function useBootstrap(): void {
       }
 
       try {
-        const signature = `${track.id}\u0000${track.title}\u0000${track.artist}\u0000${track.album}\u0000${track.artworkUrl ?? ""}`;
+        const signature = `${sourceKey}\u0000${item.title}\u0000${item.artistLabel}\u0000${item.albumLabel ?? ""}\u0000${item.artworkUrl ?? ""}`;
         if (signature !== lastMetadataSignature && typeof MediaMetadata !== "undefined") {
           lastMetadataSignature = signature;
           navigator.mediaSession.metadata = new MediaMetadata({
-            title: track.title,
-            artist: track.artist,
-            album: track.album,
-            artwork: track.artworkUrl
+            title: item.title,
+            artist: item.artistLabel,
+            album: item.albumLabel ?? "",
+            artwork: item.artworkUrl
               ? [
                   {
-                    src: track.artworkUrl,
+                    src: item.artworkUrl,
                     sizes: "512x512",
-                    type: inferArtworkMimeType(track.artworkUrl),
+                    type: inferArtworkMimeType(item.artworkUrl),
                   },
                 ]
               : [],
@@ -268,23 +307,16 @@ export function useBootstrap(): void {
       [
         "play",
         () => {
-          if (performance.now() - lastHardwareCommandAt < MEDIA_ACTION_DEDUP_MS) return;
-          if (!usePlayer.getState().isPlaying) void usePlayer.getState().toggle();
+          if (!usePlayer.getState().isPlaying) dispatchMediaCommand("play-pause", false);
         },
       ],
       [
         "pause",
         () => {
-          if (performance.now() - lastHardwareCommandAt < MEDIA_ACTION_DEDUP_MS) return;
-          if (usePlayer.getState().isPlaying) void usePlayer.getState().toggle();
+          if (usePlayer.getState().isPlaying) dispatchMediaCommand("play-pause", false);
         },
       ],
-      [
-        "stop",
-        () => {
-          audioEngine.pause();
-        },
-      ],
+      ["stop", () => dispatchMediaCommand("stop", false)],
       ["previoustrack", () => dispatchMediaCommand("previous", false)],
       ["nexttrack", () => dispatchMediaCommand("next", false)],
       ["seekbackward", () => dispatchMediaCommand("seek-back", false)],
@@ -615,10 +647,9 @@ export function useBootstrap(): void {
   // Document title, so the taskbar and window capture reflect the current song.
   useEffect(() => {
     return usePlayer.subscribe(state => {
-      const trackId = currentTrackId(state);
-      const track = trackId === null ? null : useLibrary.getState().tracksById.get(trackId);
-      document.title = track ? `${track.title} · ${track.artist} — Cadence` : "Cadence";
-      if (track && state.duration > 0) {
+      const item = currentPlayerMediaItem(state);
+      document.title = item ? `${item.title} · ${item.artistLabel} — Cadence` : "Cadence";
+      if (item && state.duration > 0) {
         document.body.dataset.playback = state.isPlaying ? "playing" : "paused";
         document.body.dataset.position = formatTime(state.position);
       }

@@ -5,9 +5,11 @@
  * Original:   contents/lib/artworkBrightness.ts
  * License:    GPL-3.0
  *
- * Changes for Cadence: logging goes to the renderer console instead of the extension logger, and
- * `pageFetch` is a plain `fetch` because Cadence's artwork is served same-app. The luminance maths
- * (Rec.709, 90th percentile highlight, 0.8 maximum reduction) is unchanged.
+ * Changes for Cadence: logging goes to the renderer console instead of the extension logger.
+ * Same-app artwork is fetched, while cross-origin remote thumbnails are loaded as CORS images
+ * (governed by `img-src`, not `connect-src`); if the image host does not grant CORS, pixel
+ * measurement is skipped. The luminance maths (Rec.709, 90th percentile highlight, 0.8 maximum
+ * reduction) is unchanged.
  */
 
 const SAMPLE_SIZE = 32;
@@ -34,29 +36,80 @@ export const brightnessForHighlight = (highlightLuminance: number, dimStrength: 
   return targetHighlightLuminance / highlightLuminance;
 };
 
-export const measureArtworkHighlight = async (imageUrl: string): Promise<number | null> => {
+export function isCrossOriginRemoteArtwork(imageUrl: string): boolean {
   try {
-    const response = await fetch(imageUrl);
-    if (!response.ok) {
-      console.warn("[Cadence] Artwork brightness request failed:", response.status, imageUrl);
+    const url = new URL(imageUrl, window.location.href);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    if (url.hostname === "cadence-media.localhost") return false;
+    return url.origin !== window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
+export function shouldLoadArtworkAsImage(imageUrl: string): boolean {
+  try {
+    const url = new URL(imageUrl, window.location.href);
+    return url.protocol === "data:" || url.protocol === "blob:" || isCrossOriginRemoteArtwork(imageUrl);
+  } catch {
+    return false;
+  }
+}
+
+async function loadArtworkBitmap(
+  imageUrl: string,
+  resizeQuality: ResizeQuality
+): Promise<ImageBitmap | null> {
+  const options: ImageBitmapOptions = {
+    resizeWidth: SAMPLE_SIZE,
+    resizeHeight: SAMPLE_SIZE,
+    resizeQuality,
+  };
+
+  if (shouldLoadArtworkAsImage(imageUrl)) {
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.decoding = "async";
+    image.src = imageUrl;
+    try {
+      await image.decode();
+      return await createImageBitmap(image, options);
+    } catch {
+      // Brightness/accent extraction is decorative. A thumbnail host that does not grant CORS
+      // can still be displayed normally; it just cannot be read back from a canvas.
       return null;
     }
+  }
 
-    const bitmap = await createImageBitmap(await response.blob(), {
-      resizeWidth: SAMPLE_SIZE,
-      resizeHeight: SAMPLE_SIZE,
-      resizeQuality: "high",
-    });
+  const response = await fetch(imageUrl);
+  if (!response.ok) {
+    console.warn("[Cadence] Artwork brightness request failed:", response.status, imageUrl);
+    return null;
+  }
+  return createImageBitmap(await response.blob(), options);
+}
+
+async function loadArtworkPixels(
+  imageUrl: string,
+  resizeQuality: ResizeQuality
+): Promise<Uint8ClampedArray | null> {
+  const bitmap = await loadArtworkBitmap(imageUrl, resizeQuality);
+  if (!bitmap) return null;
+  try {
     const canvas = new OffscreenCanvas(SAMPLE_SIZE, SAMPLE_SIZE);
     const context = canvas.getContext("2d");
-    if (!context) {
-      bitmap.close();
-      return null;
-    }
+    if (!context) return null;
     context.drawImage(bitmap, 0, 0);
+    return context.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data;
+  } finally {
     bitmap.close();
+  }
+}
 
-    return measureHighlightLuminance(context.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data);
+export const measureArtworkHighlight = async (imageUrl: string): Promise<number | null> => {
+  try {
+    const pixels = await loadArtworkPixels(imageUrl, "high");
+    return pixels ? measureHighlightLuminance(pixels) : null;
   } catch (error) {
     console.error("[Cadence] Failed to measure artwork brightness:", error);
     return null;
@@ -66,22 +119,8 @@ export const measureArtworkHighlight = async (imageUrl: string): Promise<number 
 /** Dominant colour, used by the UI for per-album accents. Not part of the upstream module. */
 export const measureArtworkAccent = async (imageUrl: string): Promise<string | null> => {
   try {
-    const response = await fetch(imageUrl);
-    if (!response.ok) return null;
-    const bitmap = await createImageBitmap(await response.blob(), {
-      resizeWidth: SAMPLE_SIZE,
-      resizeHeight: SAMPLE_SIZE,
-      resizeQuality: "low",
-    });
-    const canvas = new OffscreenCanvas(SAMPLE_SIZE, SAMPLE_SIZE);
-    const context = canvas.getContext("2d");
-    if (!context) {
-      bitmap.close();
-      return null;
-    }
-    context.drawImage(bitmap, 0, 0);
-    bitmap.close();
-    const { data } = context.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+    const data = await loadArtworkPixels(imageUrl, "low");
+    if (!data) return null;
 
     let r = 0;
     let g = 0;

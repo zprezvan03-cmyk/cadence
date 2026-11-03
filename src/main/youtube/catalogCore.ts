@@ -13,7 +13,7 @@
 
 import { CLIENT_NAME, ConcurrencyLimiter, runtimeFetch } from "../lyrics/http";
 import { normalizeYouTubeArtist } from "../../shared/youtube";
-import { youtubeMediaItem } from "../../shared/media";
+import { isYouTubeMusicAlbumPlaylistId, youtubeMediaItem } from "../../shared/media";
 import type {
   CatalogPage,
   MediaAvailability,
@@ -22,6 +22,7 @@ import type {
   YouTubeCatalogErrorKind,
   YouTubeCatalogPageRequest,
   YouTubeCatalogResult,
+  YouTubeCatalogSearchOrder,
   YouTubeCatalogSearchRequest,
   YouTubeCatalogSettings,
   YouTubeCatalogStatus,
@@ -225,6 +226,14 @@ function normalizeQuery(query: string): string {
   return query.trim().replace(/\s+/g, " ");
 }
 
+function normalizeSearchOrder(
+  value: YouTubeCatalogSearchOrder | undefined
+): YouTubeCatalogSearchOrder {
+  return value === "date" || value === "viewCount" || value === "rating" || value === "title"
+    ? value
+    : "relevance";
+}
+
 function hashSettingsIdentity(value: string): string {
   let hash = 0x811c9dc5;
   for (let index = 0; index < value.length; index += 1) {
@@ -292,6 +301,7 @@ function mapChannelResource(value: unknown, fetchedAt: number): YouTubeChannelIt
   const snippet = asRecord(resource.snippet);
   const contentDetails = asRecord(resource.contentDetails);
   const relatedPlaylists = asRecord(contentDetails?.relatedPlaylists);
+  const statistics = asRecord(resource.statistics);
   return {
     id,
     title: decodeYouTubeText(snippet?.title) || "Untitled YouTube channel",
@@ -300,6 +310,10 @@ function mapChannelResource(value: unknown, fetchedAt: number): YouTubeChannelIt
     artworkUrl: thumbnailUrl(snippet?.thumbnails, ["high", "medium", "default"]),
     canonicalUrl: `https://www.youtube.com/channel/${id}`,
     uploadsPlaylistId: validPlaylistId(relatedPlaylists?.uploads),
+    subscriberCount:
+      statistics?.hiddenSubscriberCount === true ? null : numberValue(statistics?.subscriberCount),
+    videoCount: numberValue(statistics?.videoCount),
+    viewCount: numberValue(statistics?.viewCount),
     fetchedAt,
   };
 }
@@ -310,16 +324,22 @@ function mapPlaylistResource(value: unknown, fetchedAt: number): YouTubePlaylist
   if (!resource || !id) return null;
   const snippet = asRecord(resource.snippet);
   const contentDetails = asRecord(resource.contentDetails);
+  const channelTitle = decodeYouTubeText(snippet?.channelTitle) || null;
+  const isAlbumCollection = isYouTubeMusicAlbumPlaylistId(id);
   return {
     id,
     title: decodeYouTubeText(snippet?.title) || "Untitled YouTube playlist",
     description: descriptionText(snippet?.description),
     channelId: validChannelId(snippet?.channelId),
-    channelTitle: decodeYouTubeText(snippet?.channelTitle) || null,
+    channelTitle,
+    artistLabel: normalizeYouTubeArtist(channelTitle) ?? channelTitle,
     artworkUrl: thumbnailUrl(snippet?.thumbnails, ["high", "medium", "standard", "default"]),
     itemCount: numberValue(contentDetails?.itemCount),
-    canonicalUrl: `https://www.youtube.com/playlist?list=${id}`,
+    canonicalUrl: isAlbumCollection
+      ? `https://music.youtube.com/playlist?list=${id}`
+      : `https://www.youtube.com/playlist?list=${id}`,
     publishedAt: stringValue(snippet?.publishedAt),
+    isAlbumCollection,
     fetchedAt,
   };
 }
@@ -382,9 +402,10 @@ export class YouTubeCatalogCore {
     return this.asResult(signal, async () => {
       const query = normalizeQuery(request.query);
       this.requireQuery(query);
-      const maxResults = clampMaxResults(request.maxResults, 25);
+      const maxResults = clampMaxResults(request.maxResults, 50);
+      const order = normalizeSearchOrder(request.order);
       const { region } = this.requireSettings();
-      const cacheKey = `search:video:${region}:${maxResults}:${request.pageToken ?? ""}:${query.toLowerCase()}`;
+      const cacheKey = `search:video:${region}:${order}:${maxResults}:${request.pageToken ?? ""}:${query.toLowerCase()}`;
       const cached = this.searchCache.get(cacheKey, this.now()) as CatalogPage<MediaItem> | undefined;
       if (cached) return { ...cached, cached: true };
 
@@ -395,7 +416,7 @@ export class YouTubeCatalogCore {
           type: "video",
           q: query,
           maxResults,
-          order: "relevance",
+          order,
           videoCategoryId: YOUTUBE_MUSIC_CATEGORY_ID,
           videoEmbeddable: "true",
           regionCode: region,
@@ -426,9 +447,10 @@ export class YouTubeCatalogCore {
     return this.asResult(signal, async () => {
       const query = normalizeQuery(request.query);
       this.requireQuery(query);
-      const maxResults = clampMaxResults(request.maxResults, 25);
+      const maxResults = clampMaxResults(request.maxResults, 50);
+      const order = normalizeSearchOrder(request.order);
       const { region } = this.requireSettings();
-      const cacheKey = `search:channel:${region}:${maxResults}:${request.pageToken ?? ""}:${query.toLowerCase()}`;
+      const cacheKey = `search:channel:${region}:${order}:${maxResults}:${request.pageToken ?? ""}:${query.toLowerCase()}`;
       const cached = this.searchCache.get(cacheKey, this.now()) as
         | CatalogPage<YouTubeChannelItem>
         | undefined;
@@ -441,7 +463,7 @@ export class YouTubeCatalogCore {
           type: "channel",
           q: query,
           maxResults,
-          order: "relevance",
+          order,
           regionCode: region,
           pageToken: request.pageToken ?? undefined,
         },
@@ -456,7 +478,7 @@ export class YouTubeCatalogCore {
       if (ids.length > 0) {
         const channelsRoot = await this.requestJson(
           "channels",
-          { part: "snippet,contentDetails", id: ids.join(","), maxResults: ids.length },
+          { part: "snippet,contentDetails,statistics", id: ids.join(","), maxResults: ids.length },
           signal
         );
         byId = new Map(
@@ -503,9 +525,10 @@ export class YouTubeCatalogCore {
     return this.asResult(signal, async () => {
       const query = normalizeQuery(request.query);
       this.requireQuery(query);
-      const maxResults = clampMaxResults(request.maxResults, 25);
+      const maxResults = clampMaxResults(request.maxResults, 50);
+      const order = normalizeSearchOrder(request.order);
       const { region } = this.requireSettings();
-      const cacheKey = `search:playlist:${region}:${maxResults}:${request.pageToken ?? ""}:${query.toLowerCase()}`;
+      const cacheKey = `search:playlist:${region}:${order}:${maxResults}:${request.pageToken ?? ""}:${query.toLowerCase()}`;
       const cached = this.searchCache.get(cacheKey, this.now()) as
         | CatalogPage<YouTubePlaylistSummary>
         | undefined;
@@ -518,7 +541,7 @@ export class YouTubeCatalogCore {
           type: "playlist",
           q: query,
           maxResults,
-          order: "relevance",
+          order,
           regionCode: region,
           pageToken: request.pageToken ?? undefined,
         },
@@ -549,16 +572,22 @@ export class YouTubeCatalogCore {
         const id = validPlaylistId(asRecord(record?.id)?.playlistId);
         if (!id) continue;
         const snippet = asRecord(record?.snippet);
+        const channelTitle = decodeYouTubeText(snippet?.channelTitle) || null;
+        const isAlbumCollection = isYouTubeMusicAlbumPlaylistId(id);
         fallbackById.set(id, {
           id,
           title: decodeYouTubeText(snippet?.title) || "Untitled YouTube playlist",
           description: descriptionText(snippet?.description),
           channelId: validChannelId(snippet?.channelId),
-          channelTitle: decodeYouTubeText(snippet?.channelTitle) || null,
+          channelTitle,
+          artistLabel: normalizeYouTubeArtist(channelTitle) ?? channelTitle,
           artworkUrl: thumbnailUrl(snippet?.thumbnails, ["high", "medium", "default"]),
           itemCount: null,
-          canonicalUrl: `https://www.youtube.com/playlist?list=${id}`,
+          canonicalUrl: isAlbumCollection
+            ? `https://music.youtube.com/playlist?list=${id}`
+            : `https://www.youtube.com/playlist?list=${id}`,
           publishedAt: stringValue(snippet?.publishedAt),
+          isAlbumCollection,
           fetchedAt,
         });
       }
@@ -575,12 +604,62 @@ export class YouTubeCatalogCore {
     });
   }
 
+  /**
+   * Finds verified YouTube Music album collections within ordinary playlist search results.
+   * The Data API has no album endpoint, so this method scans at most three playlist-search
+   * pages per user action and only accepts the explicit `OLAK5uy…` album-playlist namespace.
+   * The returned token points at the first unscanned raw search page.
+   */
+  async searchAlbumCollections(
+    request: YouTubeCatalogSearchRequest,
+    signal?: AbortSignal
+  ): Promise<YouTubeCatalogResult<CatalogPage<YouTubePlaylistSummary>>> {
+    const maxResults = clampMaxResults(request.maxResults, 50);
+    const items: YouTubePlaylistSummary[] = [];
+    let pageToken = request.pageToken ?? null;
+    let fetchedAt = this.now();
+    let cached = true;
+
+    for (let scannedPages = 0; scannedPages < 3 && items.length < maxResults; scannedPages += 1) {
+      const result = await this.searchPlaylists(
+        {
+          query: request.query,
+          pageToken,
+          maxResults: 50,
+          order: normalizeSearchOrder(request.order),
+        },
+        signal
+      );
+      if (!result.ok) return result;
+      fetchedAt = result.data.fetchedAt;
+      cached = cached && result.data.cached;
+      items.push(
+        ...result.data.items.filter(
+          item => item.isAlbumCollection || isYouTubeMusicAlbumPlaylistId(item.id)
+        )
+      );
+      pageToken = result.data.nextPageToken;
+      if (!pageToken) break;
+    }
+
+    return {
+      ok: true,
+      data: {
+        items: items.slice(0, maxResults),
+        nextPageToken: pageToken,
+        totalResults: null,
+        cached,
+        fetchedAt,
+      },
+    };
+  }
+
   async trending(
     request: YouTubeCatalogPageRequest = {},
     signal?: AbortSignal
   ): Promise<YouTubeCatalogResult<CatalogPage<MediaItem>>> {
     return this.asResult(signal, async () => {
-      const maxResults = clampMaxResults(request.maxResults, 25);
+      const maxResults = clampMaxResults(request.maxResults, 50);
       const { region } = this.requireSettings();
       const cacheKey = `trending:${region}:${maxResults}:${request.pageToken ?? ""}`;
       const cached = this.detailCache.get(cacheKey, this.now()) as CatalogPage<MediaItem> | undefined;
@@ -618,6 +697,53 @@ export class YouTubeCatalogCore {
     });
   }
 
+  /**
+   * Recent embeddable Music-category uploads. This intentionally uses `search.list`, whose
+   * separate 100-calls/day project bucket makes it an explicit user-loaded discovery shelf,
+   * not a background home refresh.
+   */
+  async newReleases(
+    request: YouTubeCatalogPageRequest = {},
+    signal?: AbortSignal
+  ): Promise<YouTubeCatalogResult<CatalogPage<MediaItem>>> {
+    return this.asResult(signal, async () => {
+      const maxResults = clampMaxResults(request.maxResults, 50);
+      const { region } = this.requireSettings();
+      const cacheKey = `new-releases:${region}:${maxResults}:${request.pageToken ?? ""}`;
+      const cached = this.searchCache.get(cacheKey, this.now()) as CatalogPage<MediaItem> | undefined;
+      if (cached) return { ...cached, cached: true };
+
+      const publishedAfter = new Date(this.now() - 30 * 24 * 60 * 60_1000).toISOString();
+      const root = await this.requestJson(
+        "search",
+        {
+          part: "snippet",
+          type: "video",
+          maxResults,
+          order: "date",
+          videoCategoryId: YOUTUBE_MUSIC_CATEGORY_ID,
+          videoEmbeddable: "true",
+          publishedAfter,
+          regionCode: region,
+          pageToken: request.pageToken ?? undefined,
+        },
+        signal
+      );
+      const ids = listItems(root)
+        .map(item => validVideoId(asRecord(asRecord(item)?.id)?.videoId))
+        .filter((id): id is string => Boolean(id));
+      const fetchedAt = this.now();
+      const page: CatalogPage<MediaItem> = {
+        items: await this.fetchVideos(ids, signal),
+        ...pageInfo(root),
+        cached: false,
+        fetchedAt,
+      };
+      this.searchCache.set(cacheKey, page, fetchedAt + YOUTUBE_CATALOG_CACHE_TTLS.searchMs);
+      return page;
+    });
+  }
+
   async getChannel(
     request: { channelId: string },
     signal?: AbortSignal
@@ -635,7 +761,7 @@ export class YouTubeCatalogCore {
       const fetchedAt = this.now();
       const root = await this.requestJson(
         "channels",
-        { part: "snippet,contentDetails", id: channelId, maxResults: 1 },
+        { part: "snippet,contentDetails,statistics", id: channelId, maxResults: 1 },
         signal
       );
       const channel = listItems(root)
@@ -647,7 +773,7 @@ export class YouTubeCatalogCore {
 
       const playlistsRoot = await this.requestJson(
         "playlists",
-        { part: "snippet,contentDetails,status", channelId, maxResults: 12 },
+        { part: "snippet,contentDetails,status", channelId, maxResults: 50 },
         signal
       );
       const playlists = listItems(playlistsRoot)
@@ -655,7 +781,7 @@ export class YouTubeCatalogCore {
         .filter((item): item is YouTubePlaylistSummary => Boolean(item));
 
       const uploads = channel.uploadsPlaylistId
-        ? await this.fetchPlaylistItems(channel.uploadsPlaylistId, null, 25, signal)
+        ? await this.fetchPlaylistItems(channel.uploadsPlaylistId, null, 50, signal)
         : ({
             items: [],
             nextPageToken: null,
@@ -667,12 +793,138 @@ export class YouTubeCatalogCore {
       const detail: YouTubeChannelDetail = {
         channel,
         playlists,
+        playlistsNextPageToken: pageInfo(playlistsRoot).nextPageToken,
         uploads,
         cached: false,
         fetchedAt,
       };
       this.detailCache.set(cacheKey, detail, fetchedAt + YOUTUBE_CATALOG_CACHE_TTLS.detailMs);
       return detail;
+    });
+  }
+
+  async getChannelPlaylists(
+    request: { channelId: string; pageToken?: string | null; maxResults?: number },
+    signal?: AbortSignal
+  ): Promise<YouTubeCatalogResult<CatalogPage<YouTubePlaylistSummary>>> {
+    return this.asResult(signal, async () => {
+      const channelId = validChannelId(request.channelId.trim());
+      if (!channelId) {
+        throw new CatalogFailure("malformed", "That YouTube channel link does not contain a valid channel ID.");
+      }
+      this.requireSettings();
+      const maxResults = clampMaxResults(request.maxResults, 50);
+      const cacheKey = `channel-playlists:${channelId}:${maxResults}:${request.pageToken ?? ""}`;
+      const cached = this.detailCache.get(cacheKey, this.now()) as
+        | CatalogPage<YouTubePlaylistSummary>
+        | undefined;
+      if (cached) return { ...cached, cached: true };
+
+      const root = await this.requestJson(
+        "playlists",
+        {
+          part: "snippet,contentDetails,status",
+          channelId,
+          maxResults,
+          pageToken: request.pageToken ?? undefined,
+        },
+        signal
+      );
+      const fetchedAt = this.now();
+      const page: CatalogPage<YouTubePlaylistSummary> = {
+        items: listItems(root)
+          .map(item => mapPlaylistResource(item, fetchedAt))
+          .filter((item): item is YouTubePlaylistSummary => Boolean(item)),
+        ...pageInfo(root),
+        cached: false,
+        fetchedAt,
+      };
+      this.detailCache.set(cacheKey, page, fetchedAt + YOUTUBE_CATALOG_CACHE_TTLS.detailMs);
+      return page;
+    });
+  }
+
+  async getChannelVideos(
+    request: {
+      channelId: string;
+      pageToken?: string | null;
+      maxResults?: number;
+      order?: YouTubeCatalogSearchOrder;
+    },
+    signal?: AbortSignal
+  ): Promise<YouTubeCatalogResult<CatalogPage<MediaItem>>> {
+    return this.asResult(signal, async () => {
+      const channelId = validChannelId(request.channelId.trim());
+      if (!channelId) {
+        throw new CatalogFailure("malformed", "That YouTube channel link does not contain a valid channel ID.");
+      }
+      this.requireSettings();
+      const maxResults = clampMaxResults(request.maxResults, 50);
+      const order = normalizeSearchOrder(request.order);
+
+      // Latest uploads use the channel's documented uploads playlist: complete, ordered and
+      // only one quota unit per page. Popular/rating/title ordering has no playlist equivalent,
+      // so those explicit modes use channel-scoped search and inherit its search-call quota.
+      if (order === "date" || order === "relevance") {
+        const uploadsCacheKey = `channel-uploads-playlist:${channelId}`;
+        let uploadsPlaylistId = this.detailCache.get(uploadsCacheKey, this.now()) as
+          | string
+          | undefined;
+        if (!uploadsPlaylistId) {
+          const root = await this.requestJson(
+            "channels",
+            { part: "contentDetails", id: channelId, maxResults: 1 },
+            signal
+          );
+          const channel = listItems(root)
+            .map(item => mapChannelResource(item, this.now()))
+            .find((item): item is YouTubeChannelItem => Boolean(item));
+          uploadsPlaylistId = channel?.uploadsPlaylistId ?? undefined;
+          if (!uploadsPlaylistId) {
+            throw new CatalogFailure("not-found", "That public YouTube channel has no uploads playlist.", 404);
+          }
+          this.detailCache.set(
+            uploadsCacheKey,
+            uploadsPlaylistId,
+            this.now() + YOUTUBE_CATALOG_CACHE_TTLS.detailMs
+          );
+        }
+        return this.fetchPlaylistItems(
+          uploadsPlaylistId,
+          request.pageToken ?? null,
+          maxResults,
+          signal
+        );
+      }
+
+      const cacheKey = `channel-videos:${channelId}:${order}:${maxResults}:${request.pageToken ?? ""}`;
+      const cached = this.searchCache.get(cacheKey, this.now()) as CatalogPage<MediaItem> | undefined;
+      if (cached) return { ...cached, cached: true };
+      const root = await this.requestJson(
+        "search",
+        {
+          part: "snippet",
+          channelId,
+          type: "video",
+          maxResults,
+          order,
+          videoEmbeddable: "true",
+          pageToken: request.pageToken ?? undefined,
+        },
+        signal
+      );
+      const ids = listItems(root)
+        .map(item => validVideoId(asRecord(asRecord(item)?.id)?.videoId))
+        .filter((id): id is string => Boolean(id));
+      const fetchedAt = this.now();
+      const page: CatalogPage<MediaItem> = {
+        items: await this.fetchVideos(ids, signal),
+        ...pageInfo(root),
+        cached: false,
+        fetchedAt,
+      };
+      this.searchCache.set(cacheKey, page, fetchedAt + YOUTUBE_CATALOG_CACHE_TTLS.searchMs);
+      return page;
     });
   }
 
@@ -770,8 +1022,28 @@ export class YouTubeCatalogCore {
         .filter(item => item.source.kind !== "local")
         .map(item => [(item.source as Extract<MediaItem["source"], { remoteId: string }>).remoteId, item])
     );
+    let items = entries.map(
+      entry => byId.get(entry.videoId) ?? fallbackPlaylistVideo(entry.videoId, entry.snippet, fetchedAt)
+    );
+    if (isYouTubeMusicAlbumPlaylistId(playlistId)) {
+      const playlistResult = await this.getPlaylist({ playlistId }, signal);
+      const albumTitle = playlistResult.ok ? playlistResult.data.playlist.title : null;
+      items = items.map(item => {
+        if (item.source.kind === "local") return item;
+        const remoteId = item.source.remoteId;
+        return {
+          ...item,
+          source: {
+            kind: "youtube-music" as const,
+            remoteId,
+            canonicalUrl: `https://music.youtube.com/watch?v=${encodeURIComponent(remoteId)}`,
+          },
+          albumLabel: albumTitle ?? item.albumLabel,
+        };
+      });
+    }
     const page: CatalogPage<MediaItem> = {
-      items: entries.map(entry => byId.get(entry.videoId) ?? fallbackPlaylistVideo(entry.videoId, entry.snippet, fetchedAt)),
+      items,
       ...pageInfo(root),
       cached: false,
       fetchedAt,

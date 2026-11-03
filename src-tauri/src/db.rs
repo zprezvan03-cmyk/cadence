@@ -40,7 +40,10 @@ impl Default for DbSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct HistoryEntry {
     pub id: i64,
-    pub track_id: i64,
+    pub source_kind: String,
+    pub track_id: Option<i64>,
+    pub remote_id: Option<String>,
+    pub canonical_url: Option<String>,
     pub played_at: i64,
     pub payload: Value,
 }
@@ -86,6 +89,60 @@ pub enum DbMutation {
     },
 }
 
+/// Rebuilds the pre-Stage-7 history table in place. Existing IDs, timestamps and payloads are
+/// copied verbatim; local rows gain `source_kind='local'`, while the new nullable identity
+/// columns let remote rows exist without a fake local track ID.
+fn migrate_history_schema(conn: &mut Connection) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(listening_history)")
+        .map_err(|e| e.to_string())?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| e.to_string())?;
+    let mut names = Vec::new();
+    for column in columns.flatten() {
+        names.push(column);
+    }
+    drop(stmt);
+    if names.iter().any(|name| name == "source_kind") {
+        return Ok(());
+    }
+    if !names.iter().any(|name| name == "track_id") {
+        return Err("Listening history table has an unrecognized schema".to_string());
+    }
+
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute_batch(
+        "
+        ALTER TABLE listening_history RENAME TO listening_history_legacy_stage7;
+        CREATE TABLE listening_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          source_kind TEXT NOT NULL DEFAULT 'local',
+          track_id INTEGER,
+          remote_id TEXT,
+          canonical_url TEXT,
+          played_at INTEGER NOT NULL,
+          payload TEXT NOT NULL,
+          CHECK (
+            (source_kind = 'local' AND track_id IS NOT NULL AND remote_id IS NULL)
+            OR
+            (source_kind IN ('youtube', 'youtube-music') AND track_id IS NULL AND remote_id IS NOT NULL)
+          )
+        );
+        INSERT INTO listening_history
+          (id, source_kind, track_id, remote_id, canonical_url, played_at, payload)
+        SELECT id, 'local', track_id, NULL, NULL, played_at, payload
+          FROM listening_history_legacy_stage7;
+        DROP TABLE listening_history_legacy_stage7;
+        CREATE INDEX IF NOT EXISTS idx_listening_history_played_at
+          ON listening_history(played_at DESC, id DESC);
+        ",
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub struct LibraryDb {
     conn: Mutex<Connection>,
 }
@@ -95,7 +152,7 @@ impl LibraryDb {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+        let mut conn = Connection::open(db_path).map_err(|e| e.to_string())?;
         conn.execute_batch(
             "
             PRAGMA journal_mode = WAL;
@@ -121,15 +178,24 @@ impl LibraryDb {
             );
             CREATE TABLE IF NOT EXISTS listening_history (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
-              track_id INTEGER NOT NULL,
+              source_kind TEXT NOT NULL DEFAULT 'local',
+              track_id INTEGER,
+              remote_id TEXT,
+              canonical_url TEXT,
               played_at INTEGER NOT NULL,
-              payload TEXT NOT NULL
+              payload TEXT NOT NULL,
+              CHECK (
+                (source_kind = 'local' AND track_id IS NOT NULL AND remote_id IS NULL)
+                OR
+                (source_kind IN ('youtube', 'youtube-music') AND track_id IS NULL AND remote_id IS NOT NULL)
+              )
             );
             CREATE INDEX IF NOT EXISTS idx_listening_history_played_at
               ON listening_history(played_at DESC, id DESC);
             ",
         )
         .map_err(|e| e.to_string())?;
+        migrate_history_schema(&mut conn)?;
 
         let db = Self {
             conn: Mutex::new(conn),
@@ -266,12 +332,30 @@ impl LibraryDb {
             .transpose()
     }
 
-    pub fn add_history_entry(&self, track_id: i64, played_at: i64, payload: &str) -> Result<i64, String> {
+    pub fn add_history_entry(
+        &self,
+        source_kind: &str,
+        track_id: Option<i64>,
+        remote_id: Option<&str>,
+        canonical_url: Option<&str>,
+        played_at: i64,
+        payload: &str,
+    ) -> Result<i64, String> {
+        let valid = match source_kind {
+            "local" => track_id.is_some() && remote_id.is_none(),
+            "youtube" | "youtube-music" => track_id.is_none() && remote_id.is_some(),
+            _ => false,
+        };
+        if !valid {
+            return Err("Invalid listening-history source identity".to_string());
+        }
         let mut conn = self.conn.lock().map_err(|_| "DB mutex poisoned")?;
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         tx.execute(
-            "INSERT INTO listening_history (track_id, played_at, payload) VALUES (?1, ?2, ?3)",
-            params![track_id, played_at, payload],
+            "INSERT INTO listening_history
+               (source_kind, track_id, remote_id, canonical_url, played_at, payload)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![source_kind, track_id, remote_id, canonical_url, played_at, payload],
         )
         .map_err(|e| e.to_string())?;
         // Bound growth: keep the most recent plays, drop the rest.
@@ -291,23 +375,35 @@ impl LibraryDb {
         let conn = self.conn.lock().map_err(|_| "DB mutex poisoned")?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, track_id, played_at, payload FROM listening_history
-                 ORDER BY played_at DESC, id DESC LIMIT ?1",
+                "SELECT id, source_kind, track_id, remote_id, canonical_url, played_at, payload
+                   FROM listening_history
+                  ORDER BY played_at DESC, id DESC LIMIT ?1",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map(params![limit as i64], |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, String>(6)?,
                 ))
             })
             .map_err(|e| e.to_string())?;
         let mut out = Vec::new();
         for row in rows.flatten() {
-            let (id, track_id, played_at, payload) = row;
+            let (id, source_kind, track_id, remote_id, canonical_url, played_at, payload) = row;
+            let valid = match source_kind.as_str() {
+                "local" => track_id.is_some() && remote_id.is_none(),
+                "youtube" | "youtube-music" => track_id.is_none() && remote_id.is_some(),
+                _ => false,
+            };
+            if !valid {
+                continue;
+            }
             // Skip a row whose payload no longer parses instead of failing the whole
             // restore: one corrupt entry must never blank the user's entire history.
             let Ok(payload) = serde_json::from_str(&payload) else {
@@ -315,7 +411,10 @@ impl LibraryDb {
             };
             out.push(HistoryEntry {
                 id,
+                source_kind,
                 track_id,
+                remote_id,
+                canonical_url,
                 played_at,
                 payload,
             });

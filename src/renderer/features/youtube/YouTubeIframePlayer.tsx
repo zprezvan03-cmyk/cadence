@@ -43,7 +43,7 @@ export type {
 } from "./youtubePlayerUtils";
 
 export interface YouTubePlayerHandle {
-  play: () => boolean;
+  play: (expectedVideoId?: string) => boolean;
   pause: () => void;
   toggle: () => boolean;
   seekTo: (seconds: number, allowSeekAhead?: boolean) => void;
@@ -226,6 +226,7 @@ export const YouTubeIframePlayer = forwardRef<YouTubePlayerHandle, YouTubeIframe
     const readyRef = useRef(false);
     const fatalRef = useRef(false);
     const requestedVideoIdRef = useRef<string | null>(videoId);
+    const cuePendingVideoIdRef = useRef<string | null>(null);
     const cuedVideoIdRef = useRef<string | null>(null);
     const stateCodeRef = useRef(-1);
     const visibilityRatioRef = useRef(0);
@@ -240,6 +241,15 @@ export const YouTubeIframePlayer = forwardRef<YouTubePlayerHandle, YouTubeIframe
       if (pollTimerRef.current !== undefined) {
         window.clearInterval(pollTimerRef.current);
         pollTimerRef.current = undefined;
+      }
+    };
+
+    const readVideoDataId = (player: YTPlayer): string | null => {
+      if (typeof player.getVideoData !== "function") return null;
+      try {
+        return cleanMetadataText(player.getVideoData().video_id, 32) || null;
+      } catch {
+        return null;
       }
     };
 
@@ -267,10 +277,35 @@ export const YouTubeIframePlayer = forwardRef<YouTubePlayerHandle, YouTubeIframe
       const player = playerRef.current;
       if (!player || !readyRef.current) return null;
 
+      const pendingCueVideoId = cuePendingVideoIdRef.current;
+      if (pendingCueVideoId) {
+        // `cueVideoById` is asynchronous. Until the player confirms that cue, polling or a
+        // control-triggered sample can still read the previous video's PLAYING state and
+        // falsely attribute it to the new queue item (clearing autoplay intent and potentially
+        // recording history). Only explicit state events may settle a pending cue: CUED is
+        // definitive, while buffering/playing/paused must also identify the pending video.
+        if (override?.stateCode === undefined) return null;
+        if (override.stateCode === 5) {
+          cuedVideoIdRef.current = pendingCueVideoId;
+          cuePendingVideoIdRef.current = null;
+        } else if (override.stateCode === 1 || override.stateCode === 2 || override.stateCode === 3) {
+          if (readVideoDataId(player) !== pendingCueVideoId) return null;
+          cuedVideoIdRef.current = pendingCueVideoId;
+          cuePendingVideoIdRef.current = null;
+        } else if (override.stateCode !== -1) {
+          return null;
+        }
+        // An explicit UNSTARTED sample is only a readiness signal while the cue is pending;
+        // it deliberately carries no stale position/duration from the previous video below.
+      }
+
       const stateCode = override?.stateCode ?? safeNumber(() => player.getPlayerState(), stateCodeRef.current);
       stateCodeRef.current = stateCode;
-      const duration = safeNumber(() => player.getDuration(), 0);
-      const currentTime = override?.currentTime ?? safeNumber(() => player.getCurrentTime(), 0);
+      const pendingUnstarted = Boolean(pendingCueVideoId && stateCode === -1);
+      const duration = pendingUnstarted ? 0 : safeNumber(() => player.getDuration(), 0);
+      const currentTime = pendingUnstarted
+        ? 0
+        : override?.currentTime ?? safeNumber(() => player.getCurrentTime(), 0);
       const snapshot: YouTubePlayerSnapshot = {
         ...normalizeRemotePlaybackClock({
           currentTime,
@@ -319,18 +354,21 @@ export const YouTubeIframePlayer = forwardRef<YouTubePlayerHandle, YouTubeIframe
       const requestedVideoId = requestedVideoIdRef.current;
       if (!player || !readyRef.current || !requestedVideoId || fatalRef.current) return false;
       if (cuedVideoIdRef.current === requestedVideoId) return true;
+      if (cuePendingVideoIdRef.current === requestedVideoId) return true;
       // Scripted cue/play calls wait until at least half of the official player is on screen.
       if (visibilityRatioRef.current < MIN_VISIBLE_RATIO_FOR_SCRIPTED_PLAYBACK) return false;
       try {
         stopPolling();
         stateCodeRef.current = -1;
+        cuedVideoIdRef.current = null;
+        cuePendingVideoIdRef.current = requestedVideoId;
         metadataRef.current = null;
         clockSource.reset();
         player.cueVideoById(requestedVideoId, 0);
-        cuedVideoIdRef.current = requestedVideoId;
         window.setTimeout(() => sample(), 0);
         return true;
       } catch (error) {
+        cuePendingVideoIdRef.current = null;
         callbacksRef.current.onError?.({
           code: null,
           kind: "player",
@@ -341,9 +379,13 @@ export const YouTubeIframePlayer = forwardRef<YouTubePlayerHandle, YouTubeIframe
     };
 
     useImperativeHandle(ref, () => ({
-      play: () => {
+      play: expectedVideoId => {
         const player = playerRef.current;
         if (!player || !readyRef.current || fatalRef.current) return false;
+        // Queue state can advance before React has delivered the new videoId prop/effect to
+        // this already-mounted player. Refuse to play the stale video in that interval; the
+        // caller keeps its pending intent and retries after the new video reports CUED.
+        if (expectedVideoId && requestedVideoIdRef.current !== expectedVideoId) return false;
         if (visibilityRatioRef.current < MIN_VISIBLE_RATIO_FOR_SCRIPTED_PLAYBACK) return false;
         if (!cueRequestedVideo()) return false;
         try {
@@ -435,6 +477,7 @@ export const YouTubeIframePlayer = forwardRef<YouTubePlayerHandle, YouTubeIframe
     useEffect(() => {
       requestedVideoIdRef.current = videoId;
       if (!videoId) {
+        cuePendingVideoIdRef.current = null;
         cuedVideoIdRef.current = null;
         metadataRef.current = null;
         clockSource.reset();
@@ -517,7 +560,7 @@ export const YouTubeIframePlayer = forwardRef<YouTubePlayerHandle, YouTubeIframe
                   /* Volume/size are conveniences; readiness itself has already succeeded. */
                 }
                 cueRequestedVideo();
-                const snapshot = sample();
+                const snapshot = sample({ stateCode: -1, currentTime: 0 });
                 if (snapshot) callbacksRef.current.onReady?.(snapshot);
               },
               onStateChange: event => {
@@ -537,6 +580,8 @@ export const YouTubeIframePlayer = forwardRef<YouTubePlayerHandle, YouTubeIframe
               onError: event => {
                 if (cancelled) return;
                 fatalRef.current = true;
+                cuePendingVideoIdRef.current = null;
+                cuedVideoIdRef.current = null;
                 stopPolling();
                 const code = typeof event.data === "number" ? event.data : null;
                 const info = mapYouTubePlayerError(code);
@@ -566,6 +611,7 @@ export const YouTubeIframePlayer = forwardRef<YouTubePlayerHandle, YouTubeIframe
         const player = playerRef.current;
         playerRef.current = null;
         readyRef.current = false;
+        cuePendingVideoIdRef.current = null;
         cuedVideoIdRef.current = null;
         stateCodeRef.current = -1;
         clockSource.setSnapshot({

@@ -6,8 +6,9 @@
 
 import { Heart, Maximize2, Minus, X } from "lucide-react";
 import type { WindowAction } from "../../../shared/types";
-import { useCurrentTrack } from "../../app/hooks";
+import { useCurrentMediaItem, useCurrentTrack } from "../../app/hooks";
 import { Artwork } from "../../components/Artwork";
+import { SourceBadge } from "../../components/SourceBadge";
 import { useLibrary } from "../../state/libraryStore";
 import { useUi } from "../../state/uiStore";
 import { SeekRow, TransportButtons } from "./PlaybackControls";
@@ -18,6 +19,7 @@ function windowAction(action: WindowAction): void {
 
 export function MiniPlayer() {
   const track = useCurrentTrack();
+  const item = useCurrentMediaItem();
   const setMiniPlayer = useUi(state => state.setMiniPlayer);
   const navigate = useUi(state => state.navigate);
   const setFavorite = useLibrary(state => state.setFavorite);
@@ -75,15 +77,16 @@ export function MiniPlayer() {
           title="Open Now Playing"
           onClick={openNowPlaying}
         >
-          <Artwork src={track?.artworkUrl} alt={track?.album ?? "No track"} size="sm" />
+          <Artwork src={item?.artworkUrl} alt={item?.albumLabel ?? item?.title ?? "No track"} size="sm" />
         </button>
         <div className="mini-player-meta" data-tauri-drag-region>
-          <div className="mini-player-title" title={track?.title} data-tauri-drag-region>
-            {track?.title ?? "Nothing playing"}
+          <div className="mini-player-title" title={item?.title} data-tauri-drag-region>
+            {item?.title ?? "Nothing playing"}
           </div>
-          <div className="mini-player-artist" title={track?.artist} data-tauri-drag-region>
-            {track?.artist ?? "Choose a song in the full player"}
+          <div className="mini-player-artist" title={item?.artistLabel} data-tauri-drag-region>
+            {item?.artistLabel ?? "Choose a song in the full player"}
           </div>
+          {item ? <SourceBadge source={item.source} compact /> : null}
         </div>
         {track ? (
           <button

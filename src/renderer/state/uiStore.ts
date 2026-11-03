@@ -6,7 +6,6 @@ export type Route =
   | { name: "home" }
   | { name: "history" }
   | { name: "stats" }
-  | { name: "youtube" }
   | { name: "youtube-channel"; channelId: string }
   | { name: "youtube-playlist"; playlistId: string }
   | { name: "library"; tab: LibraryTab }
@@ -57,8 +56,6 @@ export function routeToHash(route: Route): string {
       return "#/history";
     case "stats":
       return "#/stats";
-    case "youtube":
-      return "#/youtube";
     case "youtube-channel":
       return `#/youtube-channel/${encodeURIComponent(route.channelId)}`;
     case "youtube-playlist":
@@ -116,7 +113,8 @@ export function hashToRoute(hash: string): Route {
     case "stats":
       return { name: "stats" };
     case "youtube":
-      return { name: "youtube" };
+      // Legacy deep links from the rejected isolated prototype now open Cadence's one Now Playing view.
+      return { name: "lyrics" };
     case "youtube-channel":
       return { name: "youtube-channel", channelId: decodeURIComponent(value) };
     case "youtube-playlist":

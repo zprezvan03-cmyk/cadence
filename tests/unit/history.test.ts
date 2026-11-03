@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { useHistory } from "../../src/renderer/state/historyStore";
-import type { HistoryEntry } from "../../src/shared/types";
+import { youtubeMediaItem } from "../../src/shared/media";
+import type { HistoryEntry, HistoryPayload, TrackSource } from "../../src/shared/types";
 
 const track = (overrides: Partial<{ id: number; title: string; artist: string; album: string }> = {}): import("../../src/shared/types").Track => ({
   id: overrides.id ?? 42,
@@ -38,22 +39,40 @@ const track = (overrides: Partial<{ id: number; title: string; artist: string; a
   playable: true,
 });
 
+function localSeedPayload(trackId: number, payload: unknown): HistoryPayload {
+  const title =
+    payload && typeof payload === "object" && "title" in payload
+      ? String((payload as { title?: unknown }).title ?? "Song")
+      : "Song";
+  return {
+    source: { kind: "local", trackId },
+    trackId,
+    path: `/music/${title}.mp3`,
+    title,
+    artist: "Artist",
+    albumArtist: "Artist",
+    album: "Album",
+    artworkUrl: null,
+    duration: 210,
+  };
+}
+
 function installBridge(seed: Array<{ trackId: number; playedAt: number; payload: unknown }> = []): void {
-  const entries: Array<{
-    id: number;
-    trackId: number;
-    playedAt: number;
-    payload: unknown;
-  }> = seed.map((row, index) => ({ id: index + 1, playedAt: row.playedAt, trackId: row.trackId, payload: row.payload }));
+  const entries: HistoryEntry[] = seed.map((row, index) => ({
+    id: index + 1,
+    source: { kind: "local", trackId: row.trackId },
+    playedAt: row.playedAt,
+    payload: localSeedPayload(row.trackId, row.payload),
+  }));
   (globalThis as { window?: { cadence?: unknown } }).window = {
     cadence: {
       history: {
-        add: async (args: { trackId: number; playedAt: number; payload: string }) => {
+        add: async (args: { source: TrackSource; playedAt: number; payload: HistoryPayload }) => {
           entries.push({
             id: entries.length + 1,
-            trackId: args.trackId,
+            source: args.source,
             playedAt: args.playedAt,
-            payload: JSON.parse(args.payload),
+            payload: args.payload,
           });
         },
         list: async () =>
@@ -91,7 +110,7 @@ describe("history store", () => {
     await useHistory.getState().add(track({ id: 7, title: "New track" }));
     const state = useHistory.getState();
     expect(state.entries).toHaveLength(1);
-    expect(state.entries[0].trackId).toBe(7);
+    expect(state.entries[0].source).toEqual({ kind: "local", trackId: 7 });
     expect(state.entries[0].payload.title).toBe("New track");
     expect(state.entries[0].playedAt).toBeGreaterThan(0);
   });
@@ -143,6 +162,34 @@ describe("history store", () => {
       "Track A",
     ]);
     expect(useHistory.getState().loaded).toBe(true);
+  });
+
+  it("adds an observed remote play without inventing a local track ID", async () => {
+    installBridge();
+    await useHistory.getState().addRemote(
+      youtubeMediaItem({
+        videoId: "remoteVideo1",
+        title: "Remote song",
+        artistLabel: "Remote artist",
+        channelId: "UCremote",
+        channelTitle: "Remote artist",
+        durationSeconds: 181,
+      })
+    );
+    const entry = useHistory.getState().entries[0];
+    expect(entry.source).toEqual({
+      kind: "youtube",
+      remoteId: "remoteVideo1",
+      canonicalUrl: "https://www.youtube.com/watch?v=remoteVideo1",
+    });
+    expect(entry.payload).toMatchObject({
+      title: "Remote song",
+      artist: "Remote artist",
+      channelId: "UCremote",
+      playbackMechanism: "youtube-iframe",
+    });
+    expect(entry.payload).not.toHaveProperty("trackId");
+    expect(entry.payload).not.toHaveProperty("path");
   });
 
   it("plays the same track twice without collapsing sessions", async () => {

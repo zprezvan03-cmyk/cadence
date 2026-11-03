@@ -7,7 +7,14 @@
  * this module only describes where an item came from.
  */
 
-import type { MediaItem, Track, TrackSource } from "./types";
+import type {
+  HistoryPayload,
+  LocalHistoryPayload,
+  MediaItem,
+  RemoteHistoryPayload,
+  Track,
+  TrackSource,
+} from "./types";
 
 export function trackSourceKey(source: TrackSource): string {
   return source.kind === "local" ? `local:${source.trackId}` : `${source.kind}:${source.remoteId}`;
@@ -23,8 +30,9 @@ export function isRemoteSource(
   return source.kind !== "local";
 }
 
-export function remoteVideoId(item: MediaItem): string | null {
-  return isRemoteSource(item.source) ? item.source.remoteId : null;
+export function remoteVideoId(itemOrSource: MediaItem | TrackSource): string | null {
+  const source = "source" in itemOrSource ? itemOrSource.source : itemOrSource;
+  return isRemoteSource(source) ? source.remoteId : null;
 }
 
 export function sourceDisplayName(source: TrackSource): string | null {
@@ -101,4 +109,63 @@ export function youtubeMediaItem(input: {
 /** Data API embed flags are useful, but the official player remains the final authority. */
 export function canOpenInYouTubePlayer(item: MediaItem): boolean {
   return isRemoteSource(item.source) && item.availability !== "not-embeddable" && item.availability !== "unavailable";
+}
+
+/**
+ * YouTube Music album playlists live in the public `OLAK5uy…` playlist-ID namespace. Cadence
+ * uses that explicit identity only to label a playlist as a verified album collection; it is
+ * not treated as a Data API album object and no album metadata is invented from titles.
+ */
+export function isYouTubeMusicAlbumPlaylistId(playlistId: string | null | undefined): boolean {
+  return typeof playlistId === "string" && /^OLAK5uy[A-Za-z0-9_-]+$/.test(playlistId);
+}
+
+export function historyPayloadFromLocalTrack(track: Track): LocalHistoryPayload {
+  return {
+    source: localTrackSource(track) as Extract<TrackSource, { kind: "local" }>,
+    trackId: track.id,
+    path: track.path,
+    title: track.title,
+    artist: track.artist,
+    albumArtist: track.albumArtist,
+    album: track.album,
+    artworkUrl: track.artworkUrl,
+    duration: track.duration,
+  };
+}
+
+export function historyPayloadFromMediaItem(item: MediaItem): HistoryPayload | null {
+  if (!isRemoteSource(item.source)) return null;
+  return {
+    source: item.source,
+    title: item.title,
+    artist: item.artistLabel,
+    albumArtist: item.artistLabel,
+    album: item.albumLabel ?? "",
+    artworkUrl: item.artworkUrl,
+    duration: item.durationSeconds ?? 0,
+    channelId: item.channelId,
+    channelTitle: item.channelTitle,
+    canonicalUrl: item.source.canonicalUrl,
+    playbackMechanism: "youtube-iframe",
+    fetchedAt: item.fetchedAt,
+  };
+}
+
+export function mediaItemFromHistoryPayload(payload: HistoryPayload): MediaItem | null {
+  if (payload.source.kind === "local") return null;
+  const remote = payload as RemoteHistoryPayload;
+  return {
+    source: remote.source,
+    title: remote.title,
+    artistLabel: remote.artist,
+    channelId: remote.channelId,
+    channelTitle: remote.channelTitle,
+    albumLabel: remote.album || null,
+    durationSeconds: remote.duration > 0 ? remote.duration : null,
+    artworkUrl: remote.artworkUrl,
+    publishedAt: null,
+    availability: "unknown",
+    fetchedAt: remote.fetchedAt,
+  };
 }

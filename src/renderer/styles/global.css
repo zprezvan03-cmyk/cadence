@@ -1134,6 +1134,7 @@ a {
 
 .player-track-meta {
   min-width: 0;
+  overflow: hidden;
 }
 
 .player-track-meta.is-swapping {
@@ -1176,11 +1177,52 @@ a {
   text-overflow: ellipsis;
 }
 
+.player-source-line {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin-top: 2px;
+}
+
+.player-open-now-playing {
+  display: block;
+  max-width: 100%;
+  margin-top: 2px;
+  padding: 0;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-open-now-playing:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.player-remote-error {
+  max-width: 100%;
+  margin-top: 2px;
+  color: #ff9c9c;
+  font-size: 11px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Native ALAC decode before playback: subtle, and only shown when the wait is perceptible. */
 .player-preparing {
+  max-width: 100%;
   font-size: 11px;
   color: rgba(255, 255, 255, 0.62);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   animation: player-preparing-pulse 1.4s ease-in-out infinite;
 }
 

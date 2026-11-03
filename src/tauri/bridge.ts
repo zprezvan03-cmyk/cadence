@@ -22,6 +22,7 @@ import type {
   PlayerSnapshot,
   ScanProgress,
   Track,
+  TrackSource,
   WindowChromeState,
 } from "../shared/types";
 import { isPathInside, type PathPlatform } from "../main/media/allowlist";
@@ -80,13 +81,85 @@ interface HttpFetchResponse {
   body: string;
 }
 
-/** The shape Rust returns from `cmd_history_list` (camelCase keys). */
+/** The shape Rust returns from `cmd_history_list` (camelCase keys). Payloads written before
+ * source-aware history may omit `source`, so the bridge normalizes them from the row columns. */
 type HistoryRow = {
   id: number;
-  trackId: number;
+  sourceKind: string;
+  trackId: number | null;
+  remoteId: string | null;
+  canonicalUrl: string | null;
   playedAt: number;
-  payload: HistoryPayload;
+  payload: {
+    source?: TrackSource;
+    trackId?: number;
+    path?: string;
+    title?: string;
+    artist?: string;
+    albumArtist?: string;
+    album?: string;
+    artworkUrl?: string | null;
+    duration?: number;
+    channelId?: string | null;
+    channelTitle?: string | null;
+    canonicalUrl?: string;
+    fetchedAt?: number;
+  };
 };
+
+function historySourceFromRow(row: HistoryRow): TrackSource | null {
+  if (row.sourceKind === "local" && typeof row.trackId === "number") {
+    return { kind: "local", trackId: row.trackId };
+  }
+  if (
+    (row.sourceKind === "youtube" || row.sourceKind === "youtube-music") &&
+    typeof row.remoteId === "string"
+  ) {
+    return {
+      kind: row.sourceKind,
+      remoteId: row.remoteId,
+      canonicalUrl:
+        row.canonicalUrl ??
+        (row.sourceKind === "youtube-music"
+          ? `https://music.youtube.com/watch?v=${encodeURIComponent(row.remoteId)}`
+          : `https://www.youtube.com/watch?v=${encodeURIComponent(row.remoteId)}`),
+    };
+  }
+  return null;
+}
+
+function normalizeHistoryPayload(row: HistoryRow, source: TrackSource): HistoryPayload {
+  const payload = row.payload;
+  if (source.kind === "local") {
+    return {
+      source,
+      trackId: source.trackId,
+      path: payload.path ?? "",
+      title: payload.title ?? "",
+      artist: payload.artist ?? "",
+      albumArtist: payload.albumArtist ?? payload.artist ?? "",
+      album: payload.album ?? "",
+      artworkUrl: payload.artworkUrl ?? null,
+      duration: payload.duration ?? 0,
+      fetchedAt: payload.fetchedAt,
+    };
+  }
+  const remotePayload = payload.source?.kind === "local" ? null : payload;
+  return {
+    source,
+    title: payload.title ?? "",
+    artist: payload.artist ?? "",
+    albumArtist: payload.albumArtist ?? payload.artist ?? "",
+    album: payload.album ?? "",
+    artworkUrl: payload.artworkUrl ?? null,
+    duration: payload.duration ?? 0,
+    channelId: remotePayload?.channelId ?? null,
+    channelTitle: remotePayload?.channelTitle ?? null,
+    canonicalUrl: source.canonicalUrl,
+    playbackMechanism: "youtube-iframe",
+    fetchedAt: remotePayload?.fetchedAt ?? row.playedAt,
+  };
+}
 
 type DbMutation =
   | { op: "upsertTrack"; id: number; path: string; payload: string }
@@ -394,7 +467,9 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         let historyTrackIds: number[] = [];
         try {
           const rows = await invoke<HistoryRow[]>("cmd_history_list");
-          historyTrackIds = (rows ?? []).map(row => row.trackId);
+          historyTrackIds = (rows ?? [])
+            .map(row => row.trackId)
+            .filter((trackId): trackId is number => typeof trackId === "number");
         } catch {
           historyTrackIds = [];
         }
@@ -751,12 +826,15 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
 
     history: {
       async add(args: {
-        trackId: number;
+        source: TrackSource;
         playedAt: number;
         payload: HistoryPayload;
       }): Promise<void> {
         await invoke<void>("cmd_history_add", {
-          trackId: args.trackId,
+          sourceKind: args.source.kind,
+          trackId: args.source.kind === "local" ? args.source.trackId : null,
+          remoteId: args.source.kind === "local" ? null : args.source.remoteId,
+          canonicalUrl: args.source.kind === "local" ? null : args.source.canonicalUrl,
           playedAt: args.playedAt,
           payload: JSON.stringify(args.payload),
         });
@@ -764,12 +842,18 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
 
       async list(): Promise<HistoryEntry[]> {
         const rows = await invoke<HistoryRow[]>("cmd_history_list");
-        return (rows ?? []).map(row => ({
-          id: row.id,
-          trackId: row.trackId,
-          playedAt: row.playedAt,
-          payload: row.payload,
-        }));
+        return (rows ?? []).flatMap(row => {
+          const source = historySourceFromRow(row);
+          if (!source) return [];
+          return [
+            {
+              id: row.id,
+              source,
+              playedAt: row.playedAt,
+              payload: normalizeHistoryPayload(row, source),
+            },
+          ];
+        });
       },
 
       async clear(): Promise<void> {
@@ -1103,11 +1187,23 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
       searchPlaylists(request) {
         return runCatalog("search", signal => youtubeCatalog.searchPlaylists(request, signal));
       },
+      searchAlbumCollections(request) {
+        return runCatalog("search", signal => youtubeCatalog.searchAlbumCollections(request, signal));
+      },
       trending(request) {
         return runCatalog("home", signal => youtubeCatalog.trending(request ?? {}, signal));
       },
+      newReleases(request) {
+        return runCatalog("home", signal => youtubeCatalog.newReleases(request ?? {}, signal));
+      },
       getChannel(request) {
         return runCatalog("detail", signal => youtubeCatalog.getChannel(request, signal));
+      },
+      getChannelPlaylists(request) {
+        return runCatalog("detail", signal => youtubeCatalog.getChannelPlaylists(request, signal));
+      },
+      getChannelVideos(request) {
+        return runCatalog("detail", signal => youtubeCatalog.getChannelVideos(request, signal));
       },
       getPlaylist(request) {
         return runCatalog("detail", signal => youtubeCatalog.getPlaylist(request, signal));

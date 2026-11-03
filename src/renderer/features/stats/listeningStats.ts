@@ -1,9 +1,15 @@
-import type { HistoryEntry, Track } from "../../../shared/types";
+import { mediaItemFromHistoryPayload, trackSourceKey } from "../../../shared/media";
+import type { HistoryEntry, MediaItem, Track, TrackSource } from "../../../shared/types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface RankedHistoryTrack {
-  trackId: number;
+  source: TrackSource;
+  sourceKey: string;
+  /** Present only for local history; remote rankings never receive a fake library ID. */
+  trackId: number | null;
+  /** Replayable remote snapshot reconstructed from the history payload, when applicable. */
+  mediaItem: MediaItem | null;
   title: string;
   artist: string;
   albumArtist: string;
@@ -125,9 +131,9 @@ export function computeListeningStats(
   const sorted = sortedEntries(entries);
   const tracksById = new Map(tracks.map(track => [track.id, track] as const));
 
-  const trackRank = new Map<number, RankedHistoryTrack>();
-  const artistRank = new Map<string, RankedArtist & { trackIds: Set<number> }>();
-  const albumRank = new Map<string, RankedAlbum & { trackIds: Set<number> }>();
+  const trackRank = new Map<string, RankedHistoryTrack>();
+  const artistRank = new Map<string, RankedArtist & { sourceKeys: Set<string> }>();
+  const albumRank = new Map<string, RankedAlbum & { sourceKeys: Set<string> }>();
   const genreRank = new Map<string, RankedGenre>();
   const dayCounts = new Map<string, number>();
   const playsByHour = Array.from({ length: 24 }, () => 0);
@@ -138,11 +144,14 @@ export function computeListeningStats(
 
   for (const entry of sorted) {
     const payload = entry.payload;
-    const joinedTrack = tracksById.get(entry.trackId) ?? null;
+    const sourceKey = trackSourceKey(entry.source);
+    const joinedTrack =
+      entry.source.kind === "local" ? tracksById.get(entry.source.trackId) ?? null : null;
     const title = cleanText(joinedTrack?.title ?? payload.title, "Unknown title");
     const artist = cleanText(joinedTrack?.artist ?? payload.artist, "Unknown artist");
     const albumArtist = cleanText(joinedTrack?.albumArtist ?? payload.albumArtist ?? artist, artist);
     const album = cleanText(joinedTrack?.album ?? payload.album, "Unknown album");
+    const hasAlbumMetadata = Boolean((joinedTrack?.album ?? payload.album)?.trim());
     const artworkUrl = joinedTrack?.artworkUrl ?? payload.artworkUrl ?? null;
     const duration = finiteNonNegative(joinedTrack?.duration ?? payload.duration);
 
@@ -150,12 +159,15 @@ export function computeListeningStats(
     if (entry.playedAt > now - 7 * DAY_MS && entry.playedAt <= now) playsLast7Days += 1;
     if (entry.playedAt > now - 30 * DAY_MS && entry.playedAt <= now) playsLast30Days += 1;
 
-    const existingTrack = trackRank.get(entry.trackId);
+    const existingTrack = trackRank.get(sourceKey);
     if (existingTrack) {
       existingTrack.playCount += 1;
     } else {
-      trackRank.set(entry.trackId, {
-        trackId: entry.trackId,
+      trackRank.set(sourceKey, {
+        source: entry.source,
+        sourceKey,
+        trackId: entry.source.kind === "local" ? entry.source.trackId : null,
+        mediaItem: mediaItemFromHistoryPayload(payload),
         title,
         artist,
         albumArtist,
@@ -172,7 +184,7 @@ export function computeListeningStats(
     const existingArtist = artistRank.get(artistKey);
     if (existingArtist) {
       existingArtist.playCount += 1;
-      existingArtist.trackIds.add(entry.trackId);
+      existingArtist.sourceKeys.add(sourceKey);
     } else {
       artistRank.set(artistKey, {
         artist,
@@ -180,33 +192,41 @@ export function computeListeningStats(
         uniqueTrackCount: 1,
         lastPlayedAt: entry.playedAt,
         artworkUrl,
-        trackIds: new Set([entry.trackId]),
+        sourceKeys: new Set([sourceKey]),
       });
     }
 
-    const albumKey = `${albumArtist}\u0000${album}`.toLocaleLowerCase();
-    const existingAlbum = albumRank.get(albumKey);
-    if (existingAlbum) {
-      existingAlbum.playCount += 1;
-      existingAlbum.trackIds.add(entry.trackId);
-    } else {
-      albumRank.set(albumKey, {
-        key: `${albumArtist}\u0000${album}`,
-        album,
-        albumArtist,
-        playCount: 1,
-        uniqueTrackCount: 1,
-        lastPlayedAt: entry.playedAt,
-        artworkUrl,
-        trackIds: new Set([entry.trackId]),
-      });
+    if (hasAlbumMetadata) {
+      const albumKey = `${albumArtist}\u0000${album}`.toLocaleLowerCase();
+      const existingAlbum = albumRank.get(albumKey);
+      if (existingAlbum) {
+        existingAlbum.playCount += 1;
+        existingAlbum.sourceKeys.add(sourceKey);
+      } else {
+        albumRank.set(albumKey, {
+          key: `${albumArtist}\u0000${album}`,
+          album,
+          albumArtist,
+          playCount: 1,
+          uniqueTrackCount: 1,
+          lastPlayedAt: entry.playedAt,
+          artworkUrl,
+          sourceKeys: new Set([sourceKey]),
+        });
+      }
     }
 
-    const genres = cleanText(joinedTrack?.genre, "Unknown genre")
-      .split(/[,;/]/)
-      .map(genre => genre.trim())
-      .filter(Boolean);
-    for (const genre of genres.length ? genres : ["Unknown genre"]) {
+    const genres = joinedTrack
+      ? cleanText(joinedTrack.genre, "Unknown genre")
+          .split(/[,;/]/)
+          .map(genre => genre.trim())
+          .filter(Boolean)
+      : [];
+    for (const genre of genres.length
+      ? genres
+      : entry.source.kind === "local"
+        ? ["Unknown genre"]
+        : []) {
       const key = genre.toLocaleLowerCase();
       const existingGenre = genreRank.get(key);
       if (existingGenre) existingGenre.playCount += 1;
@@ -247,11 +267,11 @@ export function computeListeningStats(
       .sort((a, b) => byRankThenRecency(a, b, item => item.title))
       .slice(0, topLimit),
     topArtists: [...artistRank.values()]
-      .map(({ trackIds, ...artist }) => ({ ...artist, uniqueTrackCount: trackIds.size }))
+      .map(({ sourceKeys, ...artist }) => ({ ...artist, uniqueTrackCount: sourceKeys.size }))
       .sort((a, b) => byRankThenRecency(a, b, item => item.artist))
       .slice(0, topLimit),
     topAlbums: [...albumRank.values()]
-      .map(({ trackIds, ...album }) => ({ ...album, uniqueTrackCount: trackIds.size }))
+      .map(({ sourceKeys, ...album }) => ({ ...album, uniqueTrackCount: sourceKeys.size }))
       .sort((a, b) => byRankThenRecency(a, b, item => item.album))
       .slice(0, topLimit),
     genres: [...genreRank.values()]
@@ -274,14 +294,15 @@ function aggregateHistoryByTrack(
 ): Map<number, HistoryTrackAggregate> {
   const aggregates = new Map<number, HistoryTrackAggregate>();
   for (const entry of entries) {
-    if (!Number.isFinite(entry.playedAt)) continue;
-    const existing = aggregates.get(entry.trackId);
+    if (!Number.isFinite(entry.playedAt) || entry.source.kind !== "local") continue;
+    const trackId = entry.source.trackId;
+    const existing = aggregates.get(trackId);
     if (existing) {
       existing.count += 1;
       if (entry.playedAt >= recentCutoff) existing.recentCount += 1;
       existing.lastPlayedAt = Math.max(existing.lastPlayedAt, entry.playedAt);
     } else {
-      aggregates.set(entry.trackId, {
+      aggregates.set(trackId, {
         count: 1,
         recentCount: entry.playedAt >= recentCutoff ? 1 : 0,
         lastPlayedAt: entry.playedAt,

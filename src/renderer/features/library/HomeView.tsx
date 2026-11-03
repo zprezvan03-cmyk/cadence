@@ -4,6 +4,7 @@
 
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { Clock3, FolderPlus, Heart, Mic2, Play, Shuffle } from "lucide-react";
+import { mediaItemFromHistoryPayload, trackSourceKey } from "../../../shared/media";
 import type { HistoryPayload } from "../../../shared/types";
 import { useLibrary } from "../../state/libraryStore";
 import { useHistory } from "../../state/historyStore";
@@ -13,11 +14,17 @@ import { formatTime } from "../../player/queue";
 import { TrackList } from "../../components/TrackList";
 import { AlbumCard } from "../../components/Cards";
 import { Artwork } from "../../components/Artwork";
+import { SourceBadge } from "../../components/SourceBadge";
 import { shuffle } from "../../player/queue";
 import { onRepeatTracks, rediscoverTracks, topLibraryTracks } from "../stats/listeningStats";
 import { useSettings } from "../../state/settingsStore";
 
 const YouTubeTrendingShelf = lazy(() => import("../youtube/YouTubeTrendingShelf"));
+const YouTubeNewReleasesShelf = lazy(() =>
+  import("../youtube/YouTubeTrendingShelf").then(module => ({
+    default: module.YouTubeNewReleasesShelf,
+  }))
+);
 
 function greeting(): string {
   const hour = new Date().getHours();
@@ -44,8 +51,9 @@ export function HomeView() {
   const playQueue = usePlayer(state => state.playQueue);
   const playShuffled = usePlayer(state => state.playShuffled);
   const playTrack = usePlayer(state => state.playTrack);
+  const playMediaItem = usePlayer(state => state.playMediaItem);
   const youtubeCatalogConfigured = useSettings(state =>
-    Boolean(state.settings?.youtubeCatalog.enabled && state.settings.youtubeCatalog.apiKey)
+    Boolean(state.settings?.youtubeCatalog?.enabled && state.settings.youtubeCatalog.apiKey)
   );
   const { entries: historyEntries, load: loadHistory } = useHistory(state => state);
   const [now] = useState(() => Date.now());
@@ -58,13 +66,14 @@ export function HomeView() {
   }, [loadHistory]);
 
   const recentlyPlayed = useMemo(() => {
-    const seen = new Set<number>();
+    const seen = new Set<string>();
     const result: HistoryPayload[] = [];
     for (const entry of [...historyEntries].sort(
       (a, b) => b.playedAt - a.playedAt || b.id - a.id,
     )) {
-      if (seen.has(entry.trackId)) continue;
-      seen.add(entry.trackId);
+      const key = trackSourceKey(entry.source);
+      if (seen.has(key)) continue;
+      seen.add(key);
       result.push(entry.payload);
       if (result.length >= 6) break;
     }
@@ -134,6 +143,7 @@ export function HomeView() {
         {youtubeCatalogConfigured ? (
           <Suspense fallback={null}>
             <YouTubeTrendingShelf />
+            <YouTubeNewReleasesShelf />
           </Suspense>
         ) : null}
       </div>
@@ -207,16 +217,27 @@ export function HomeView() {
             {recentlyPlayed.map(track => (
               <button
                 type="button"
-                key={track.trackId}
+                key={trackSourceKey(track.source)}
                 className="quick-track"
                 data-testid="recently-played-item"
-                onClick={() => void playTrack(track.trackId)}
+                data-source-kind={track.source.kind}
+                onClick={() => {
+                  if (track.source.kind === "local") {
+                    void playTrack(track.source.trackId);
+                    return;
+                  }
+                  const item = mediaItemFromHistoryPayload(track);
+                  if (!item) return;
+                  void playMediaItem(item);
+                  navigate({ name: "lyrics" });
+                }}
               >
                 <Artwork src={track.artworkUrl ?? null} alt={track.album || track.title} size="xs" />
                 <span>
                   <strong>{track.title}</strong>
                   <em>{track.artist}</em>
                 </span>
+                <SourceBadge source={track.source} />
               </button>
             ))}
           </div>
@@ -302,6 +323,7 @@ export function HomeView() {
       {youtubeCatalogConfigured ? (
         <Suspense fallback={null}>
           <YouTubeTrendingShelf />
+          <YouTubeNewReleasesShelf />
         </Suspense>
       ) : null}
 

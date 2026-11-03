@@ -1418,7 +1418,7 @@ const kxBrightRatio = async () => {
     const rect = node.getBoundingClientRect();
     return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
   });
-  const png = PNG.sync.read(await page.screenshot({ clip: box }));
+  const png = PNG.sync.read(Buffer.from(await page.screenshot({ clip: box })));
   let bright = 0;
   let glyph = 0;
   for (let i = 0; i < png.data.length; i += 4) {

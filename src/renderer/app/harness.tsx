@@ -24,6 +24,7 @@ import { LyricsView } from "../features/lyrics/LyricsView";
 import { KawarpBackground } from "../features/shaders/KawarpBackground";
 import { useSettings } from "../state/settingsStore";
 import { useLyricsStore } from "../state/lyricsStore";
+import { mediaItemFromLocalTrack } from "../../shared/media";
 import { DEFAULT_PROVIDER_ORDER } from "../../shared/upstream/better-lyrics/constants";
 import { createDefaultNowPlayingProfilesSettings } from "../../shared/nowPlayingProfiles";
 import type {
@@ -438,6 +439,7 @@ const harness = {
     lyricsViewRoot.render(
       createElement(LyricsView, {
         track,
+        item: mediaItemFromLocalTrack(track),
         playing: false,
         fullscreen: false,
         onToggleFullscreen: () => undefined,

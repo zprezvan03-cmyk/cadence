@@ -4,18 +4,21 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Heart, ListMusic, Maximize2, Mic2, PictureInPicture2 } from "lucide-react";
-import { useCurrentTrack } from "../../app/hooks";
+import { trackSourceKey } from "../../../shared/media";
+import { useCurrentMediaItem, useCurrentTrack } from "../../app/hooks";
 import { useLibrary } from "../../state/libraryStore";
 import { usePlayer } from "../../state/playerStore";
 import { useUi } from "../../state/uiStore";
 import { Artwork } from "../../components/Artwork";
+import { SourceBadge } from "../../components/SourceBadge";
 import { SeekRow, TransportButtons, VolumeControl } from "./PlaybackControls";
 
 export function PlayerBar() {
   const track = useCurrentTrack();
+  const item = useCurrentMediaItem();
   const artRef = useRef<HTMLDivElement | null>(null);
   const metaRef = useRef<HTMLDivElement | null>(null);
-  const trackId = track?.id ?? null;
+  const itemKey = item ? trackSourceKey(item.source) : null;
   const toggleQueue = useUi(state => state.toggleQueue);
   const queueOpen = useUi(state => state.queueOpen);
   const navigate = useUi(state => state.navigate);
@@ -24,6 +27,9 @@ export function PlayerBar() {
   const setMiniPlayer = useUi(state => state.setMiniPlayer);
   const buffering = usePlayer(state => state.buffering);
   const isPlaying = usePlayer(state => state.isPlaying);
+  const playbackMechanism = usePlayer(state => state.playbackMechanism);
+  const remoteStatus = usePlayer(state => state.remoteStatus);
+  const remoteError = usePlayer(state => state.remoteError);
   // Apple Lossless is decoded before it can play, which can take a moment. Show that work only
   // once it is clearly not instant, so ordinary formats never flash a label.
   const [slowStart, setSlowStart] = useState(false);
@@ -32,14 +38,14 @@ export function PlayerBar() {
   // on the existing nodes rather than remounting them: remounting the artwork made React stack
   // duplicate covers in the player bar, and a class toggle touches nothing else.
   useLayoutEffect(() => {
-    if (trackId === null) return;
+    if (itemKey === null) return;
     for (const node of [artRef.current, metaRef.current]) {
       if (!node) continue;
       node.classList.remove("is-swapping");
       void node.offsetWidth; // flush the removed class so the animation can start again
       node.classList.add("is-swapping");
     }
-  }, [trackId]);
+  }, [itemKey]);
 
   useEffect(() => {
     if (!buffering || isPlaying) {
@@ -52,24 +58,49 @@ export function PlayerBar() {
 
   return (
     <footer
-      className={`player-bar ${track ? "" : "is-empty"}`}
+      className={`player-bar ${item ? "" : "is-empty"}`}
       data-testid="player-bar"
-      style={track?.artworkUrl ? { ["--player-artwork" as string]: `url("${track.artworkUrl}")` } : undefined}
+      data-playback-mechanism={playbackMechanism}
+      data-source-kind={item?.source.kind ?? "none"}
+      style={item?.artworkUrl ? { ["--player-artwork" as string]: `url("${item.artworkUrl}")` } : undefined}
     >
       <div className="player-track">
         <div className="player-artwork-swap" ref={artRef}>
-          <Artwork src={track?.artworkUrl} alt={track?.album ?? "No track"} size="sm" />
+          <Artwork src={item?.artworkUrl} alt={item?.albumLabel ?? item?.title ?? "No track"} size="sm" />
         </div>
         <div className="player-track-meta" ref={metaRef}>
-          <div className="player-title" title={track?.title}>
-            {track?.title ?? "Nothing playing"}
+          <div className="player-title" title={item?.title}>
+            {item?.title ?? "Nothing playing"}
           </div>
-          <div className="player-artist" title={track?.artist}>
-            {track?.artist ?? "Choose a song to begin"}
+          <div className="player-artist" title={item?.artistLabel}>
+            {item?.artistLabel ?? "Choose a song to begin"}
           </div>
-          {slowStart ? (
+          {item ? (
+            <div className="player-source-line">
+              <SourceBadge source={item.source} compact />
+            </div>
+          ) : null}
+          {remoteStatus === "needs-now-playing" && item?.source.kind !== "local" ? (
+            <button
+              type="button"
+              className="player-open-now-playing"
+              data-testid="player-open-now-playing"
+              onClick={() => navigate({ name: "lyrics" })}
+            >
+              Open Now Playing to continue
+            </button>
+          ) : remoteError && item?.source.kind !== "local" ? (
+            <div
+              className="player-remote-error"
+              role="status"
+              title={remoteError}
+              data-testid="player-remote-error"
+            >
+              {remoteError}
+            </div>
+          ) : slowStart ? (
             <div className="player-preparing" role="status" data-testid="player-preparing">
-              Preparing audio…
+              {item?.source.kind === "local" || !item ? "Preparing audio…" : "Loading YouTube player…"}
             </div>
           ) : null}
         </div>

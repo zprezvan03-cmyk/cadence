@@ -401,6 +401,64 @@
   }
 }
 
+/* The official remote player is a stable direct child of Now Playing. It gets its own grid row
+   instead of being nested in the artwork/panel branches, so profile and fullscreen toggles do
+   not remount it. The entrance transform is disabled while it is present: its layout box stays
+   at the exact 480×270 or 200×200 size selected by the stage. */
+.lyrics-view.has-remote-player {
+  animation: none;
+}
+
+.lyrics-view.is-fullscreen.has-remote-player {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.lyrics-view.is-fullscreen.has-remote-player .integrated-youtube-stage {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: center;
+  margin: 6px 0 2px;
+}
+
+.lyrics-view.is-fullscreen.has-remote-player .lyrics-body {
+  grid-row: 3;
+}
+
+.lyrics-view.is-fullscreen.is-lyrics-off.has-remote-player .integrated-youtube-stage {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+.lyrics-view.is-fullscreen.is-lyrics-off.has-remote-player .fs-panel-layout {
+  grid-row: 3;
+}
+
+.lyrics-view.is-fullscreen.is-lyrics-off.has-remote-player .lyrics-body {
+  grid-row: 3;
+}
+
+@container app-content (min-width: 901px) {
+  .lyrics-view.is-fullscreen.artwork-right.has-remote-player .integrated-youtube-stage {
+    grid-column: 1;
+  }
+
+  .lyrics-view.is-fullscreen.has-no-side.has-remote-player .integrated-youtube-stage {
+    grid-column: 1;
+  }
+}
+
+@container app-content (max-width: 900px) {
+  .lyrics-view.is-fullscreen.has-remote-player .integrated-youtube-stage {
+    grid-column: 1;
+    grid-row: 2;
+    width: min(100%, 240px);
+  }
+
+  .lyrics-view.is-fullscreen.has-remote-player .lyrics-body {
+    grid-row: 3;
+  }
+}
+
 /* Footer: the fullscreen controls and the lyrics dock. On the normal page it is a plain column below the
    lyrics body. In fullscreen it is pinned over the bottom of the body: the body runs to the bottom edge
    of the viewport and the controls overlay it. The footer takes no pointer input of its own, so the
@@ -463,6 +521,10 @@
   margin-top: clamp(4px, 0.8cqh, 10px);
   color: rgba(255, 255, 255, 0.62);
   font-size: var(--np-meta-size);
+}
+
+.lyrics-heading-source {
+  margin-top: 8px;
 }
 
 .dock-status {
@@ -592,6 +654,16 @@ braccato-lyrics[data-upgrading="true"] {
   max-width: 440px;
   color: rgba(255, 255, 255, 0.55);
   line-height: 1.6;
+}
+
+.lyrics-empty .youtube-url-form {
+  width: min(560px, 100%);
+  margin-top: 10px;
+  text-align: left;
+}
+
+.lyrics-empty .youtube-url-form p {
+  max-width: none;
 }
 
 /* When there are no lyrics to show, the empty/error card *is* the lyrics area: the body centres it

@@ -1,7 +1,7 @@
 # Stage 7 — Integrated YouTube Music Architecture and Feasibility Gate
 
-**Date:** 2 November 2026  
-**Status:** **Option A approved.** Phase A is implemented and offline-tested; Gate 0 (real Windows/real-video acceptance) is still pending before Now Playing deep integration, the unified queue, playlists, or History/database work.
+**Date:** 2 November 2026; implementation record updated 3 November 2026  
+**Status:** **Option A approved.** The native-integration correction is implemented and offline-tested: one `playerStore`, one main Now Playing surface, an occurrence-based mixed queue, source-aware History in the existing database, integrated catalog/Search/detail surfaces, and the official visible IFrame as the remote playback mechanism. Gate 0 (real Windows, real API key, and real-video acceptance) remains pending, so no live YouTube behavior is claimed from the offline harnesses.
 **Scope decision used here:** the later “fully integrated Cadence UI” requirement supersedes the earlier suggestion of a separate YouTube Music section. YouTube must be a provider inside Cadence’s existing Search, Home, detail, Now Playing, Queue, History, Playlist, artwork, and lyrics surfaces.
 
 ## Executive decision
@@ -406,10 +406,30 @@ Offline verification completed on 2026-11-02:
 - Lyrics browser decorations suite: **40/40** checks passed.
 - Deterministic fake-IFrame/Data API browser suite: **45/45** checks passed, covering local playback before/after remote work, official-player sizes/visibility/cleanup, lyrics clock/decorations, no remote local-history write, catalog setup, settings masking/test, Home trending, Search tabs, source badges, playlist/channel detail, direct YouTube Music provenance, quota isolation, and CSP/page-error checks. Screenshots are in `.artifacts/youtube-phase-b/`.
 
+### 2026-11-03 — Native Cadence integration correction
+
+The isolated Phase B product shape was retired rather than visually patched:
+
+- `playerStore` is the only playback/Now Playing authority. The queue now stores backward-compatible occurrence entries: local entries retain numeric track IDs, while YouTube entries retain string video IDs and canonical URLs. Pre-Stage-7 numeric sessions are normalized instead of being discarded.
+- The dedicated `YouTubeNowPlayingView` and second `youtubeStore` were deleted. Legacy `#/youtube` routes open Cadence's existing main Now Playing (`lyrics`) route, and the official player is mounted only inside that surface's integrated stage.
+- The stage uses the documented visible IFrame at exactly 480×270 or 200×200, requires more than 50% visibility before scripted play, destroys the player on unmount, and never presents remote audio as Cadence's local engine. Away from Now Playing, PlayerBar remains the shared metadata/transport surface and asks the user to open Now Playing before remote playback can continue.
+- Search, Home discovery, channel pages, public playlists, and verified `OLAK5uy…` album collections use Cadence's existing rows, heroes, context actions, queue, PlayerBar, lyrics, History, and Recently Played surfaces. Catalog calls remain documented Data API endpoints with lazy tabs, explicit pagination, ordering where supported, bounded concurrency, cancellation, and TTL/LRU caching.
+- Remote lyrics use the existing provider order/settings/parsers and translation/romanization pipeline through a projecting IFrame playback-clock adapter. Local-file lyric actions are hidden for remote items; no fake local audio element or path is created.
+- Listening History remains the existing `listening_history` table. Its source-aware migration adds `source_kind`, `remote_id`, and `canonical_url` while preserving local rows; remote rows are written only after the official player reports an observed PLAYING state for a new load. Recently Played reads the same store and deduplicates by full source key, so `youtube:` and `youtube-music:` provenance stay distinct.
+- Remote session snapshots older than 30 days are pruned on restore. Cross-origin, `data:`, and `blob:` artwork are loaded through image elements under `img-src` for decorative sampling/shader use instead of broadening `connect-src`.
+- User-created Cadence playlists remain local-only in this correction. Public YouTube playlists and verified album collections can be browsed and played as queue contexts, but remote entries are not yet persistable inside a user-created mixed playlist.
+
+Offline verification completed on 2026-11-03:
+
+- Full Vitest suite: **459/459** tests across 36 files, including a same-table SQLite reopen test containing both a local row and a `youtube-music` row with no invented local ID/path.
+- Integrated fake-IFrame/Data API browser suite: **67/67** checks, including unified Next/Previous, mixed local↔remote queue crossings, catalog pagination/details, source badges, lyrics clock/decorations, non-embeddable handling, source-aware History/Recently Played, and a reload check that restores the remote session cued (not autoplaying) without adding a duplicate History row.
+- Dedicated local regression suites: History **22/22**, lyrics UI **40/40**, Now Playing layout **120/120** with zero CSP errors in its console tail, and audio engine **11/11**.
+- The broad legacy `test:ui` harness boots after its settings fixture was updated, but its long fullscreen section remains timing-sensitive: the six-second fixture can advance to the next track before the post-toggle assertions. It is therefore not counted as a passing suite here; the dedicated suites above are the regression evidence for this correction.
+
 Not verified yet:
 
 - A real user-supplied Data API key or a live Google quota/error response.
-- Launching the packaged Windows build containing Phase A.
+- Launching the packaged Windows build containing this correction.
 - Any real YouTube video, embed restriction, Tauri Referer/origin behavior, provider result, or lyric drift in the desktop runtime (Gate 0 remains open).
 
 ## Required QA before claiming any phase works

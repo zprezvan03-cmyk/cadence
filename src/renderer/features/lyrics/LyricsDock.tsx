@@ -47,6 +47,8 @@ interface LyricsDockProps {
   onReload: () => void;
   onSaveSidecar: () => void;
   onChooseFile: () => void;
+  /** Remote queue items have no local file/sidecar; all other dock controls still apply. */
+  localFileActions?: boolean;
   syncLabel: string;
   busy: boolean;
   /** Playing track's duration, used for the effective-search preview and provider matching. */
@@ -90,6 +92,7 @@ export function LyricsDock({
   onReload,
   onSaveSidecar,
   onChooseFile,
+  localFileActions = true,
   syncLabel,
   busy,
   trackDuration,
@@ -212,12 +215,16 @@ export function LyricsDock({
         <button type="button" className="dock-icon" onClick={onReload} title="Reload lyrics" disabled={busy}>
           <RefreshCw size={16} className={busy ? "spin" : undefined} />
         </button>
-        <button type="button" className="dock-icon" onClick={onChooseFile} title="Open a lyrics file">
-          <FolderOpen size={16} />
-        </button>
-        <button type="button" className="dock-icon" onClick={onSaveSidecar} title="Save lyrics next to the track">
-          <Download size={16} />
-        </button>
+        {localFileActions ? (
+          <>
+            <button type="button" className="dock-icon" onClick={onChooseFile} title="Open a lyrics file">
+              <FolderOpen size={16} />
+            </button>
+            <button type="button" className="dock-icon" onClick={onSaveSidecar} title="Save lyrics next to the track">
+              <Download size={16} />
+            </button>
+          </>
+        ) : null}
       </div>
 
       {sourcesPresence.mounted ? (

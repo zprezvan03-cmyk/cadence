@@ -56,9 +56,10 @@ let nextEntryId = 1;
 function makeEntry(track: Track, playedAt: number): HistoryEntry {
   return {
     id: nextEntryId++,
-    trackId: track.id,
+    source: { kind: "local", trackId: track.id },
     playedAt,
     payload: {
+      source: { kind: "local", trackId: track.id },
       trackId: track.id,
       path: track.path,
       title: track.title,

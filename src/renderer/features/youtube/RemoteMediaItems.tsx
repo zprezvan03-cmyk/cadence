@@ -1,39 +1,83 @@
 /**
  * Cadence-native rows and cards for source-aware YouTube catalog media.
  *
- * These components intentionally mirror the local TrackList/card language while keeping the
- * data model remote and string-identified. Opening a video cues it in the existing official
- * IFrame view; it does not add it to the local queue, database, playlists or History in
- * Phase A.
+ * These components mirror the local TrackList/card language while preserving string remote
+ * identities. Selecting a video installs it in Cadence's one unified player queue and opens
+ * the main Now Playing view, where the official IFrame is visibly mounted.
  */
 
 import { memo } from "react";
-import { Play } from "lucide-react";
-import { canOpenInYouTubePlayer, mediaItemKey } from "../../../shared/media";
+import { ListPlus, Play, Plus } from "lucide-react";
+import { canOpenInYouTubePlayer, mediaItemKey, trackSourceKey } from "../../../shared/media";
 import type { MediaItem, YouTubeChannelItem, YouTubePlaylistSummary } from "../../../shared/types";
 import { Artwork } from "../../components/Artwork";
 import { SourceBadge } from "../../components/SourceBadge";
 import { formatTime } from "../../player/queue";
+import { currentQueueEntry, usePlayer } from "../../state/playerStore";
 import { useRemoteMedia } from "../../state/remoteMediaStore";
 import { useUi } from "../../state/uiStore";
-import { useYouTubeRemote } from "../../state/youtubeStore";
 
-export function openRemoteMediaItem(item: MediaItem): boolean {
+function remoteUnavailableMessage(item: MediaItem): string {
+  return item.availability === "not-embeddable"
+    ? "YouTube does not allow this video to play in embedded players."
+    : "That YouTube video is unavailable.";
+}
+
+export function openRemoteMediaItem(
+  item: MediaItem,
+  context?: { items: readonly MediaItem[]; startIndex?: number }
+): boolean {
   const ui = useUi.getState();
   if (!canOpenInYouTubePlayer(item)) {
-    ui.showToast(
-      item.availability === "not-embeddable"
-        ? "YouTube does not allow this video to play in embedded players."
-        : "That YouTube video is unavailable."
+    ui.showToast(remoteUnavailableMessage(item));
+    return false;
+  }
+  const items = context?.items?.length ? context.items : [item];
+  const startIndex = Math.max(
+    0,
+    Math.min(context?.startIndex ?? items.indexOf(item), items.length - 1)
+  );
+  useRemoteMedia.getState().rememberVideos(items);
+  if (items.length > 1) void usePlayer.getState().playMediaQueue(items, startIndex);
+  else void usePlayer.getState().playMediaItem(item);
+  ui.navigate({ name: "lyrics" });
+  return true;
+}
+
+export function playRemoteContext(
+  items: readonly MediaItem[],
+  startIndex = 0,
+  shuffled = false
+): boolean {
+  const playable = items.filter(canOpenInYouTubePlayer);
+  if (playable.length === 0) {
+    useUi.getState().showToast("No embeddable YouTube videos are loaded in this list yet.");
+    return false;
+  }
+  const requested = items[startIndex];
+  const start = requested ? Math.max(0, playable.indexOf(requested)) : 0;
+  useRemoteMedia.getState().rememberVideos(playable);
+  if (shuffled) void usePlayer.getState().playMediaShuffled(playable, start);
+  else void usePlayer.getState().playMediaQueue(playable, start);
+  useUi.getState().navigate({ name: "lyrics" });
+  return true;
+}
+
+export function queueRemoteItems(
+  items: readonly MediaItem[],
+  placement: "next" | "end" = "end"
+): boolean {
+  const playable = items.filter(canOpenInYouTubePlayer);
+  if (playable.length === 0) return false;
+  useRemoteMedia.getState().rememberVideos(playable);
+  usePlayer.getState().addMediaToQueue(playable, placement);
+  useUi
+    .getState()
+    .showToast(
+      placement === "next"
+        ? `Playing next: ${playable[0].title}`
+        : `${playable.length} YouTube video${playable.length === 1 ? "" : "s"} added to the queue.`
     );
-    return false;
-  }
-  useRemoteMedia.getState().rememberVideos([item]);
-  if (!useYouTubeRemote.getState().loadMediaItem(item)) {
-    ui.showToast("That item does not contain a valid YouTube video ID.");
-    return false;
-  }
-  ui.navigate({ name: "youtube" });
   return true;
 }
 
@@ -55,14 +99,21 @@ export const RemoteTrackList = memo(function RemoteTrackList({
   emptyMessage = "No YouTube videos here yet.",
   testId,
   startIndex = 0,
+  contextItems,
 }: {
   items: MediaItem[];
   emptyMessage?: string;
   testId?: string;
   startIndex?: number;
+  /** Full loaded context when this list is only a visible slice of it (for example Home). */
+  contextItems?: readonly MediaItem[];
 }) {
   const navigate = useUi(state => state.navigate);
+  const currentEntry = usePlayer(currentQueueEntry);
+  const isPlaying = usePlayer(state => state.isPlaying);
+  const currentSourceKey = currentEntry ? trackSourceKey(currentEntry.item.source) : null;
   if (items.length === 0) return <div className="empty-state">{emptyMessage}</div>;
+  const queueContext = contextItems?.length ? contextItems : items;
 
   return (
     <div className="track-list compact remote-track-list" data-testid={testId}>
@@ -76,13 +127,23 @@ export const RemoteTrackList = memo(function RemoteTrackList({
         const index = startIndex + offset;
         const availability = availabilityLabel(item);
         const disabled = !canOpenInYouTubePlayer(item);
+        const isCurrent = currentSourceKey === trackSourceKey(item.source);
+        const contextIndex = queueContext.indexOf(item);
         return (
           <div
-            className={`track-row remote-track-row ${disabled ? "unavailable" : ""}`}
+            className={`track-row remote-track-row ${disabled ? "unavailable" : ""} ${isCurrent ? "current" : ""}`}
             key={`${mediaItemKey(item)}:${index}`}
             data-testid="remote-track-row"
             data-remote-id={item.source.kind === "local" ? undefined : item.source.remoteId}
-            onClick={() => openRemoteMediaItem(item)}
+            data-source-kind={item.source.kind}
+            data-current={isCurrent ? "true" : undefined}
+            data-playing={isCurrent && isPlaying ? "true" : undefined}
+            onClick={() =>
+              openRemoteMediaItem(item, {
+                items: queueContext,
+                startIndex: contextIndex >= 0 ? contextIndex : offset,
+              })
+            }
           >
             <span className="col-index">
               <span className="index-number">{index + 1}</span>
@@ -114,6 +175,7 @@ export const RemoteTrackList = memo(function RemoteTrackList({
                   ) : (
                     item.artistLabel
                   )}
+                  {item.albumLabel ? ` · ${item.albumLabel}` : ""}
                 </span>
               </span>
               {availability ? <span className="badge warn">{availability}</span> : null}
@@ -121,15 +183,45 @@ export const RemoteTrackList = memo(function RemoteTrackList({
             <span className="col-duration">
               {item.durationSeconds ? formatTime(item.durationSeconds) : "—"}
             </span>
-            <span className="col-actions">
+            <span className="col-actions remote-track-actions">
               <button
                 type="button"
                 className="icon-button"
-                aria-label={`Open ${item.title} in the YouTube player`}
+                aria-label={`Play ${item.title} next`}
+                title="Play next"
                 disabled={disabled}
                 onClick={event => {
                   event.stopPropagation();
-                  openRemoteMediaItem(item);
+                  queueRemoteItems([item], "next");
+                }}
+              >
+                <ListPlus size={16} />
+              </button>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={`Add ${item.title} to queue`}
+                title="Add to queue"
+                disabled={disabled}
+                onClick={event => {
+                  event.stopPropagation();
+                  queueRemoteItems([item], "end");
+                }}
+              >
+                <Plus size={16} />
+              </button>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={`Play ${item.title} in Cadence Now Playing`}
+                title="Play"
+                disabled={disabled}
+                onClick={event => {
+                  event.stopPropagation();
+                  openRemoteMediaItem(item, {
+                    items: queueContext,
+                    startIndex: contextIndex >= 0 ? contextIndex : offset,
+                  });
                 }}
               >
                 <Play size={16} />
@@ -141,6 +233,11 @@ export const RemoteTrackList = memo(function RemoteTrackList({
     </div>
   );
 });
+
+function formatCompactCount(value: number | null | undefined): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value);
+}
 
 export function YouTubeChannelCard({ channel }: { channel: YouTubeChannelItem }) {
   const navigate = useUi(state => state.navigate);
@@ -162,7 +259,13 @@ export function YouTubeChannelCard({ channel }: { channel: YouTubeChannelItem })
       <div className="card-title" title={channel.title}>
         {channel.title}
       </div>
-      <div className="card-subtitle">{channel.handle || "YouTube channel"}</div>
+      <div className="card-subtitle">
+        {channel.handle || "YouTube channel"}
+        {formatCompactCount(channel.subscriberCount)
+          ? ` · ${formatCompactCount(channel.subscriberCount)} subscribers`
+          : ""}
+        {formatCompactCount(channel.videoCount) ? ` · ${formatCompactCount(channel.videoCount)} videos` : ""}
+      </div>
       <SourceBadge
         source={{ kind: "youtube", remoteId: channel.id, canonicalUrl: channel.canonicalUrl }}
         compact
@@ -178,6 +281,7 @@ export function YouTubePlaylistCard({ playlist }: { playlist: YouTubePlaylistSum
     <article
       className="media-card remote-media-card"
       data-testid="youtube-playlist-card"
+      data-album-collection={playlist.isAlbumCollection ? "true" : undefined}
       role="button"
       tabIndex={0}
       onClick={open}
@@ -194,13 +298,20 @@ export function YouTubePlaylistCard({ playlist }: { playlist: YouTubePlaylistSum
         {playlist.title}
       </div>
       <div className="card-subtitle">
+        {playlist.isAlbumCollection ? "Album collection" : "Public playlist"}
         {playlist.itemCount !== null
-          ? `${playlist.itemCount} video${playlist.itemCount === 1 ? "" : "s"}`
-          : "Public playlist"}
-        {playlist.channelTitle ? ` · ${playlist.channelTitle}` : ""}
+          ? ` · ${playlist.itemCount} track${playlist.itemCount === 1 ? "" : "s"}`
+          : ""}
+        {(playlist.artistLabel ?? playlist.channelTitle)
+          ? ` · ${playlist.artistLabel ?? playlist.channelTitle}`
+          : ""}
       </div>
       <SourceBadge
-        source={{ kind: "youtube", remoteId: playlist.id, canonicalUrl: playlist.canonicalUrl }}
+        source={{
+          kind: playlist.isAlbumCollection ? "youtube-music" : "youtube",
+          remoteId: playlist.id,
+          canonicalUrl: playlist.canonicalUrl,
+        }}
         compact
       />
     </article>

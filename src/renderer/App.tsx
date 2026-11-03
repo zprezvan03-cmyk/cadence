@@ -3,7 +3,7 @@
  */
 
 import { Suspense, lazy, useEffect, useLayoutEffect, useRef } from "react";
-import { useCurrentTrack } from "./app/hooks";
+import { useCurrentMediaItem, useCurrentTrack } from "./app/hooks";
 import { useAutofetchLyrics } from "./features/lyrics/useAutofetch";
 import { useLastFmScrobbler } from "./features/scrobble/useLastFmScrobbler";
 import { Onboarding } from "./features/onboarding/Onboarding";
@@ -29,7 +29,6 @@ import { PlayerBar } from "./features/player/PlayerBar";
 import { QueuePanel } from "./features/player/QueuePanel";
 import { SettingsView } from "./features/settings/SettingsView";
 import { StatsView } from "./features/stats/StatsView";
-import { YouTubeNowPlayingView } from "./features/youtube/YouTubeNowPlayingView";
 import { usePlayer } from "./state/playerStore";
 import { useUi } from "./state/uiStore";
 
@@ -47,6 +46,7 @@ const YouTubePlaylistView = lazy(() =>
 function RouteContent() {
   const route = useUi(state => state.route);
   const track = useCurrentTrack();
+  const item = useCurrentMediaItem();
   const isPlaying = usePlayer(state => state.isPlaying);
   const fullscreenLyrics = useUi(state => state.fullscreenLyrics);
   const setFullscreenLyrics = useUi(state => state.setFullscreenLyrics);
@@ -59,8 +59,6 @@ function RouteContent() {
       return <HistoryView />;
     case "stats":
       return <StatsView />;
-    case "youtube":
-      return <YouTubeNowPlayingView />;
     case "youtube-channel":
       return (
         <Suspense fallback={<div className="view-loading">Loading YouTube channel…</div>}>
@@ -87,6 +85,7 @@ function RouteContent() {
       return (
         <LyricsView
           track={track}
+          item={item}
           playing={isPlaying}
           fullscreen={fullscreenLyrics}
           onToggleFullscreen={() => setFullscreenLyrics(!fullscreenLyrics)}

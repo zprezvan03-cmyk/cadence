@@ -15,6 +15,7 @@ import type {
   MediaItem,
   YouTubeCatalogError,
   YouTubeCatalogResult,
+  YouTubeCatalogSearchOrder,
   YouTubeChannelItem,
   YouTubePlaylistSummary,
 } from "../../../shared/types";
@@ -22,6 +23,7 @@ import { parseYouTubeLink } from "../../../shared/youtube";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
 import {
+  searchYouTubeAlbumCollections,
   searchYouTubeChannels,
   searchYouTubeMusicVideos,
   searchYouTubePlaylists,
@@ -34,7 +36,7 @@ import {
   openRemoteMediaItem,
 } from "./RemoteMediaItems";
 
-type CatalogTab = "videos" | "channels" | "playlists";
+type CatalogTab = "videos" | "channels" | "albums" | "playlists";
 
 interface PageState<T> {
   items: T[];
@@ -141,6 +143,23 @@ function CatalogErrorState({
   );
 }
 
+function PageSummary({
+  loaded,
+  total,
+  label,
+}: {
+  loaded: number;
+  total: number | null;
+  label: string;
+}) {
+  return (
+    <p className="muted catalog-result-count" data-testid="youtube-catalog-result-count">
+      {loaded.toLocaleString()} {label} loaded
+      {total !== null ? ` · about ${total.toLocaleString()} total results` : ""}
+    </p>
+  );
+}
+
 function LoadMore({ visible, loading, onClick }: { visible: boolean; loading: boolean; onClick: () => void }) {
   if (!visible) return null;
   return (
@@ -153,15 +172,24 @@ function LoadMore({ visible, loading, onClick }: { visible: boolean; loading: bo
   );
 }
 
-function VideoResults({ query, resetKey }: { query: string; resetKey: string }) {
+function VideoResults({
+  query,
+  order,
+  resetKey,
+}: {
+  query: string;
+  order: YouTubeCatalogSearchOrder;
+  resetKey: string;
+}) {
   const page = useCatalogPage<MediaItem>(
-    pageToken => searchYouTubeMusicVideos({ query, pageToken, maxResults: 25 }),
+    pageToken => searchYouTubeMusicVideos({ query, pageToken, maxResults: 50, order }),
     resetKey
   );
   if (page.loading) return <CatalogSkeletonRows />;
   if (page.error) return <CatalogErrorState error={page.error} onRetry={page.retry} />;
   return (
     <>
+      <PageSummary loaded={page.items.length} total={page.totalResults} label="music videos" />
       <RemoteTrackList
         items={page.items}
         testId="youtube-search-videos"
@@ -172,9 +200,17 @@ function VideoResults({ query, resetKey }: { query: string; resetKey: string }) 
   );
 }
 
-function ChannelResults({ query, resetKey }: { query: string; resetKey: string }) {
+function ChannelResults({
+  query,
+  order,
+  resetKey,
+}: {
+  query: string;
+  order: YouTubeCatalogSearchOrder;
+  resetKey: string;
+}) {
   const page = useCatalogPage<YouTubeChannelItem>(
-    pageToken => searchYouTubeChannels({ query, pageToken, maxResults: 24 }),
+    pageToken => searchYouTubeChannels({ query, pageToken, maxResults: 50, order }),
     resetKey
   );
   if (page.loading) return <CatalogSkeletonRows />;
@@ -184,6 +220,7 @@ function ChannelResults({ query, resetKey }: { query: string; resetKey: string }
   }
   return (
     <>
+      <PageSummary loaded={page.items.length} total={page.totalResults} label="channels" />
       <div className="card-grid artist-grid" data-testid="youtube-search-channels">
         {page.items.map(channel => (
           <YouTubeChannelCard key={channel.id} channel={channel} />
@@ -194,9 +231,17 @@ function ChannelResults({ query, resetKey }: { query: string; resetKey: string }
   );
 }
 
-function PlaylistResults({ query, resetKey }: { query: string; resetKey: string }) {
+function PlaylistResults({
+  query,
+  order,
+  resetKey,
+}: {
+  query: string;
+  order: YouTubeCatalogSearchOrder;
+  resetKey: string;
+}) {
   const page = useCatalogPage<YouTubePlaylistSummary>(
-    pageToken => searchYouTubePlaylists({ query, pageToken, maxResults: 24 }),
+    pageToken => searchYouTubePlaylists({ query, pageToken, maxResults: 50, order }),
     resetKey
   );
   if (page.loading) return <CatalogSkeletonRows />;
@@ -206,7 +251,44 @@ function PlaylistResults({ query, resetKey }: { query: string; resetKey: string 
   }
   return (
     <>
+      <PageSummary loaded={page.items.length} total={page.totalResults} label="playlists" />
       <div className="card-grid" data-testid="youtube-search-playlists">
+        {page.items.map(playlist => (
+          <YouTubePlaylistCard key={playlist.id} playlist={playlist} />
+        ))}
+      </div>
+      <LoadMore visible={Boolean(page.nextPageToken)} loading={page.loadingMore} onClick={page.loadMore} />
+    </>
+  );
+}
+
+function AlbumCollectionResults({
+  query,
+  order,
+  resetKey,
+}: {
+  query: string;
+  order: YouTubeCatalogSearchOrder;
+  resetKey: string;
+}) {
+  const page = useCatalogPage<YouTubePlaylistSummary>(
+    pageToken => searchYouTubeAlbumCollections({ query, pageToken, maxResults: 50, order }),
+    resetKey
+  );
+  if (page.loading) return <CatalogSkeletonRows />;
+  if (page.error) return <CatalogErrorState error={page.error} onRetry={page.retry} />;
+  if (page.items.length === 0) {
+    return (
+      <div className="empty-state">
+        No verified YouTube Music album collections were found in the scanned playlist results.
+        The Data API has no native album search, so Cadence does not guess albums from titles.
+      </div>
+    );
+  }
+  return (
+    <>
+      <PageSummary loaded={page.items.length} total={null} label="verified album collections" />
+      <div className="card-grid" data-testid="youtube-search-albums">
         {page.items.map(playlist => (
           <YouTubePlaylistCard key={playlist.id} playlist={playlist} />
         ))}
@@ -237,7 +319,7 @@ function DirectLinkCard({ query }: { query: string }) {
         </span>
         <span>
           <strong>Open this {link.sourceKind === "youtube-music" ? "YouTube Music" : "YouTube"} link</strong>
-          <em>The official visible player will cue it in Cadence. No API search quota is used.</em>
+          <em>It will open in Cadence’s main Now Playing with the official visible player. No API search quota is used.</em>
         </span>
         <span className="heading-actions">
           {link.playlistId ? (
@@ -301,6 +383,7 @@ export function YouTubeCatalogSearch({ query }: { query: string }) {
   const settings = useSettings(state => state.settings);
   const navigate = useUi(state => state.navigate);
   const [activeTab, setActiveTab] = useState<CatalogTab>("videos");
+  const [searchOrder, setSearchOrder] = useState<YouTubeCatalogSearchOrder>("relevance");
   const [debouncedQuery, setDebouncedQuery] = useState(() => query.trim());
 
   useEffect(() => {
@@ -311,7 +394,7 @@ export function YouTubeCatalogSearch({ query }: { query: string }) {
   const directLink = parseYouTubeLink(query);
   const catalogSettings = settings?.youtubeCatalog;
   const configured = Boolean(catalogSettings?.enabled && catalogSettings.apiKey);
-  const resetKey = `${debouncedQuery}\u0000${catalogSettings?.region ?? ""}\u0000${catalogSettings?.enabled ? "on" : "off"}`;
+  const resetKey = `${debouncedQuery}\u0000${searchOrder}\u0000${catalogSettings?.region ?? ""}\u0000${catalogSettings?.enabled ? "on" : "off"}`;
 
   return (
     <section className="shelf remote-search-section" data-testid="youtube-catalog-search">
@@ -358,37 +441,57 @@ export function YouTubeCatalogSearch({ query }: { query: string }) {
         <div className="empty-state">Type at least two characters to search YouTube.</div>
       ) : (
         <>
-          <nav className="catalog-tabs" aria-label="YouTube search type">
-            {(
-              [
-                ["videos", "Music videos"],
-                ["channels", "Channels"],
-                ["playlists", "Public playlists"],
-              ] as [CatalogTab, string][]
-            ).map(([tab, label]) => (
-              <button
-                type="button"
-                key={tab}
-                className={activeTab === tab ? "active" : ""}
-                data-testid={`youtube-search-tab-${tab}`}
-                onClick={() => setActiveTab(tab)}
+          <div className="catalog-search-controls">
+            <nav className="catalog-tabs" aria-label="YouTube search type">
+              {(
+                [
+                  ["videos", "Music videos"],
+                  ["channels", "Channels"],
+                  ["albums", "Album collections"],
+                  ["playlists", "Public playlists"],
+                ] as [CatalogTab, string][]
+              ).map(([tab, label]) => (
+                <button
+                  type="button"
+                  key={tab}
+                  className={activeTab === tab ? "active" : ""}
+                  data-testid={`youtube-search-tab-${tab}`}
+                  onClick={() => setActiveTab(tab)}
+                >
+                  {label}
+                </button>
+              ))}
+            </nav>
+            <label className="catalog-order-control">
+              <span>Order</span>
+              <select
+                value={searchOrder}
+                data-testid="youtube-search-order"
+                onChange={event => setSearchOrder(event.target.value as YouTubeCatalogSearchOrder)}
               >
-                {label}
-              </button>
-            ))}
-          </nav>
+                <option value="relevance">Relevance</option>
+                <option value="date">Newest</option>
+                <option value="viewCount">Most viewed</option>
+                <option value="rating">Highest rated</option>
+                <option value="title">Title</option>
+              </select>
+            </label>
+          </div>
           <p className="muted catalog-search-note">
-            YouTube Data API results are videos, channels and public playlists. Cadence does not
-            relabel them as native YouTube Music albums or account library items.
+            The official Data API returns videos, channels and public playlists. “Album
+            collections” only includes playlists in YouTube Music’s verified album-playlist ID
+            namespace; Cadence does not invent native album objects or account library items.
           </p>
           {query.trim() !== debouncedQuery ? (
             <CatalogSkeletonRows count={3} />
           ) : activeTab === "videos" ? (
-            <VideoResults key={`videos:${resetKey}`} query={debouncedQuery} resetKey={resetKey} />
+            <VideoResults key={`videos:${resetKey}`} query={debouncedQuery} order={searchOrder} resetKey={resetKey} />
           ) : activeTab === "channels" ? (
-            <ChannelResults key={`channels:${resetKey}`} query={debouncedQuery} resetKey={resetKey} />
+            <ChannelResults key={`channels:${resetKey}`} query={debouncedQuery} order={searchOrder} resetKey={resetKey} />
+          ) : activeTab === "albums" ? (
+            <AlbumCollectionResults key={`albums:${resetKey}`} query={debouncedQuery} order={searchOrder} resetKey={resetKey} />
           ) : (
-            <PlaylistResults key={`playlists:${resetKey}`} query={debouncedQuery} resetKey={resetKey} />
+            <PlaylistResults key={`playlists:${resetKey}`} query={debouncedQuery} order={searchOrder} resetKey={resetKey} />
           )}
         </>
       )}

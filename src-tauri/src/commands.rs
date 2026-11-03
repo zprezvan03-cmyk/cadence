@@ -387,7 +387,10 @@ pub async fn cmd_db_mutate(
 #[serde(rename_all = "camelCase")]
 pub struct HistoryEntry {
     pub id: i64,
-    pub track_id: i64,
+    pub source_kind: String,
+    pub track_id: Option<i64>,
+    pub remote_id: Option<String>,
+    pub canonical_url: Option<String>,
     pub played_at: i64,
     pub payload: Value,
 }
@@ -404,7 +407,10 @@ pub struct HistoryEntry {
 /// session and vanished on restart. The contract is pinned by tests/unit/ipcContract.test.ts.
 #[tauri::command]
 pub async fn cmd_history_add(
-    track_id: i64,
+    source_kind: String,
+    track_id: Option<i64>,
+    remote_id: Option<String>,
+    canonical_url: Option<String>,
     played_at: i64,
     payload: String,
     state: State<'_, AppState>,
@@ -413,7 +419,16 @@ pub async fn cmd_history_add(
     // The write runs on the blocking pool so playback never waits on disk I/O, but its
     // result is propagated: a failed insert must reach the bridge caller (which logs it)
     // instead of being silently dropped.
-    tauri::async_runtime::spawn_blocking(move || db.add_history_entry(track_id, played_at, &payload))
+    tauri::async_runtime::spawn_blocking(move || {
+        db.add_history_entry(
+            &source_kind,
+            track_id,
+            remote_id.as_deref(),
+            canonical_url.as_deref(),
+            played_at,
+            &payload,
+        )
+    })
         .await
         .map_err(|e| e.to_string())??;
     Ok(())
@@ -430,7 +445,10 @@ pub async fn cmd_history_list(state: State<'_, AppState>) -> Result<Vec<HistoryE
         .into_iter()
         .map(|row| HistoryEntry {
             id: row.id,
+            source_kind: row.source_kind,
             track_id: row.track_id,
+            remote_id: row.remote_id,
+            canonical_url: row.canonical_url,
             played_at: row.played_at,
             payload: row.payload,
         })

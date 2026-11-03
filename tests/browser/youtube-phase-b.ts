@@ -1,8 +1,9 @@
 /**
- * Browser QA for Stage 7 Phase A + Phase B (official Data API catalog, IFrame player + Cadence lyrics).
+ * Browser QA for Stage 7's integrated YouTube provider (official Data API catalog + visible
+ * IFrame mechanism inside Cadence's one queue, PlayerBar, Now Playing view, lyrics, and History).
  *
  * This boots the real production renderer, real local audio fixtures, real settings defaults,
- * real Braccato renderer, and the shipped YouTube view/clock adapter in headless Chromium.
+ * real Braccato renderer, and the shipped unified player/clock adapter in headless Chromium.
  *
  * The sandbox used for Cadence development cannot reach youtube.com, so the IFrame API
  * script/cross-origin embed document are intercepted with a deterministic test double and the
@@ -136,6 +137,16 @@ const fakeYouTubeApi = String.raw`
       title: "Never Gonna Give You Up (Official Video)",
       author: "Rick Astley - Topic",
       duration: 212,
+    },
+    video000003: {
+      title: "Catalog Third Video",
+      author: "Rick Astley - Topic",
+      duration: 180,
+    },
+    video000004: {
+      title: "Catalog Fourth Video",
+      author: "Rick Astley - Topic",
+      duration: 180,
     },
   };
   window.__fakeYouTubePlayers = [];
@@ -374,7 +385,22 @@ try {
       ].join("\n");
       const plainLyrics = "Plain remote lyric one\nPlain remote lyric two";
 
-      (window as any).__historyAdds = [];
+      const qaHistoryStorageKey = "cadence.qa.history.v1";
+      let persistedHistory: unknown[] = [];
+      try {
+        const parsed = JSON.parse(localStorage.getItem(qaHistoryStorageKey) ?? "[]") as unknown;
+        if (Array.isArray(parsed)) persistedHistory = parsed;
+      } catch {
+        persistedHistory = [];
+      }
+      (window as any).__historyAdds = persistedHistory;
+      (window as any).__persistQaHistory = () => {
+        try {
+          localStorage.setItem(qaHistoryStorageKey, JSON.stringify((window as any).__historyAdds));
+        } catch {
+          /* the reload assertion below will fail loudly if storage is unavailable */
+        }
+      };
       (window as any).__lyricsSearches = [];
       (window as any).__translateCalls = [];
       (window as any).__romanizeCalls = [];
@@ -390,6 +416,9 @@ try {
         artworkUrl: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
         canonicalUrl: "https://www.youtube.com/channel/UCqa000000000000000001",
         uploadsPlaylistId: "UUqa000000000000000001",
+        subscriberCount: 1234567,
+        videoCount: 432,
+        viewCount: 987654321,
         fetchedAt: catalogNow,
       };
       const catalogPlaylist = {
@@ -398,11 +427,30 @@ try {
         description: "Offline QA playlist fixture.",
         channelId: catalogChannel.id,
         channelTitle: "Rick Astley",
+        artistLabel: "Rick Astley",
+        albumLabel: null,
+        isAlbumCollection: false,
         artworkUrl: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
-        itemCount: 2,
+        itemCount: 4,
         canonicalUrl: "https://www.youtube.com/playlist?list=PLqa000000000001",
         publishedAt: "2026-01-01T00:00:00Z",
         fetchedAt: catalogNow,
+      };
+      const catalogSecondPlaylist = {
+        ...catalogPlaylist,
+        id: "PLqa000000000002",
+        title: "QA Second Public Playlist",
+        canonicalUrl: "https://www.youtube.com/playlist?list=PLqa000000000002",
+      };
+      const catalogAlbumPlaylist = {
+        ...catalogPlaylist,
+        id: "OLAK5uy_qaAlbum123",
+        title: "Whenever You Need Somebody",
+        description: "Verified YouTube Music album-playlist fixture (OLAK5uy namespace).",
+        albumLabel: "Whenever You Need Somebody",
+        isAlbumCollection: true,
+        itemCount: 3,
+        canonicalUrl: "https://music.youtube.com/playlist?list=OLAK5uy_qaAlbum123",
       };
       const catalogVideos = [
         {
@@ -439,7 +487,52 @@ try {
           availability: "not-embeddable",
           fetchedAt: catalogNow,
         },
+        {
+          source: {
+            kind: "youtube",
+            remoteId: "video000003",
+            canonicalUrl: "https://www.youtube.com/watch?v=video000003",
+          },
+          title: "Catalog Third Video",
+          artistLabel: "Rick Astley",
+          channelId: catalogChannel.id,
+          channelTitle: "Rick Astley - Topic",
+          albumLabel: null,
+          durationSeconds: 180,
+          artworkUrl: "https://i.ytimg.com/vi/video000003/hqdefault.jpg",
+          publishedAt: "2026-01-03T00:00:00Z",
+          availability: "ready",
+          fetchedAt: catalogNow,
+        },
+        {
+          source: {
+            kind: "youtube",
+            remoteId: "video000004",
+            canonicalUrl: "https://www.youtube.com/watch?v=video000004",
+          },
+          title: "Catalog Fourth Video",
+          artistLabel: "Rick Astley",
+          channelId: catalogChannel.id,
+          channelTitle: "Rick Astley - Topic",
+          albumLabel: null,
+          durationSeconds: 180,
+          artworkUrl: "https://i.ytimg.com/vi/video000004/hqdefault.jpg",
+          publishedAt: "2026-01-04T00:00:00Z",
+          availability: "ready",
+          fetchedAt: catalogNow,
+        },
       ];
+      const catalogSecondChannel = {
+        ...catalogChannel,
+        id: "UCqa000000000000000002",
+        title: "Cadence QA Channel",
+        handle: "@CadenceQA",
+        canonicalUrl: "https://www.youtube.com/channel/UCqa000000000000000002",
+        uploadsPlaylistId: "UUqa000000000000000002",
+        subscriberCount: 1200,
+        videoCount: 12,
+        viewCount: 34567,
+      };
       const catalogPage = (items: unknown[]) => ({
         ok: true,
         data: {
@@ -450,6 +543,20 @@ try {
           fetchedAt: catalogNow,
         },
       });
+      const catalogPaged = (items: unknown[], pageToken?: string | null, pageSize = 2) => {
+        const start = pageToken ? Number(pageToken.replace("qa-page-", "")) * pageSize : 0;
+        const slice = items.slice(start, start + pageSize);
+        return {
+          ok: true,
+          data: {
+            items: structuredClone(slice),
+            nextPageToken: start + pageSize < items.length ? `qa-page-${start / pageSize + 1}` : null,
+            totalResults: items.length,
+            cached: false,
+            fetchedAt: catalogNow,
+          },
+        };
+      };
       const catalogGate = (name: string) => {
         (window as any).__catalogCalls.push(name);
         if ((window as any).__catalogMode === "quota" && name.startsWith("search")) {
@@ -509,12 +616,19 @@ try {
           onChanged: () => () => undefined,
         }),
         history: section({
-          list: async () => [],
+          list: async () =>
+            ((window as any).__historyAdds as any[])
+              .map((entry, index) => ({ id: index + 1, ...structuredClone(entry) }))
+              .sort((a, b) => b.playedAt - a.playedAt || b.id - a.id),
           add: async (entry: unknown) => {
-            (window as any).__historyAdds.push(entry);
+            (window as any).__historyAdds.push(structuredClone(entry));
+            (window as any).__persistQaHistory();
             return { id: (window as any).__historyAdds.length };
           },
-          clear: async () => undefined,
+          clear: async () => {
+            (window as any).__historyAdds = [];
+            (window as any).__persistQaHistory();
+          },
         }),
         playlists: section({
           list: async () => [],
@@ -702,10 +816,21 @@ try {
             (window as any).__catalogCalls = [];
             return { cleared };
           },
-          searchMusicVideos: async () => catalogGate("searchMusicVideos") ?? catalogPage(catalogVideos),
-          searchChannels: async () => catalogGate("searchChannels") ?? catalogPage([catalogChannel]),
-          searchPlaylists: async () => catalogGate("searchPlaylists") ?? catalogPage([catalogPlaylist]),
-          trending: async () => catalogGate("trending") ?? catalogPage(catalogVideos),
+          searchMusicVideos: async (request: { pageToken?: string | null } = {}) =>
+            catalogGate("searchMusicVideos") ?? catalogPaged(catalogVideos, request.pageToken, 2),
+          searchChannels: async (request: { pageToken?: string | null } = {}) =>
+            catalogGate("searchChannels") ??
+            catalogPaged([catalogChannel, catalogSecondChannel], request.pageToken, 1),
+          searchPlaylists: async (request: { pageToken?: string | null } = {}) =>
+            catalogGate("searchPlaylists") ??
+            catalogPaged([catalogPlaylist, catalogSecondPlaylist], request.pageToken, 1),
+          searchAlbumCollections: async (request: { pageToken?: string | null } = {}) =>
+            catalogGate("searchAlbumCollections") ??
+            catalogPaged([catalogAlbumPlaylist], request.pageToken, 1),
+          trending: async (request: { pageToken?: string | null } = {}) =>
+            catalogGate("trending") ?? catalogPaged(catalogVideos, request.pageToken, 2),
+          newReleases: async (request: { pageToken?: string | null } = {}) =>
+            catalogGate("newReleases") ?? catalogPaged([...catalogVideos].reverse(), request.pageToken, 2),
           getChannel: async (request: { channelId: string }) => {
             const gate = catalogGate("getChannel");
             if (gate) return gate;
@@ -716,31 +841,76 @@ try {
               ok: true,
               data: {
                 channel: structuredClone(catalogChannel),
-                playlists: [structuredClone(catalogPlaylist)],
-                uploads: catalogPage(catalogVideos).data,
+                playlists: [structuredClone(catalogPlaylist), structuredClone(catalogAlbumPlaylist)],
+                playlistsNextPageToken: "qa-page-1",
+                uploads: catalogPaged(catalogVideos, null, 2).data,
                 cached: false,
                 fetchedAt: catalogNow,
               },
             };
           },
+          getChannelPlaylists: async (request: { channelId: string; pageToken?: string | null }) => {
+            const gate = catalogGate("getChannelPlaylists");
+            if (gate) return gate;
+            if (request.channelId !== catalogChannel.id) {
+              return { ok: false, error: { kind: "not-found", message: "QA channel playlists not found.", status: 404 } };
+            }
+            return catalogPaged(
+              [catalogPlaylist, catalogAlbumPlaylist, catalogSecondPlaylist],
+              request.pageToken,
+              2
+            );
+          },
+          getChannelVideos: async (request: { channelId: string; pageToken?: string | null }) => {
+            const gate = catalogGate("getChannelVideos");
+            if (gate) return gate;
+            if (request.channelId !== catalogChannel.id) {
+              return { ok: false, error: { kind: "not-found", message: "QA channel videos not found.", status: 404 } };
+            }
+            return catalogPaged([...catalogVideos].reverse(), request.pageToken, 2);
+          },
           getPlaylist: async (request: { playlistId: string }) => {
             const gate = catalogGate("getPlaylist");
             if (gate) return gate;
-            if (request.playlistId !== catalogPlaylist.id) {
+            const playlist = [catalogPlaylist, catalogSecondPlaylist, catalogAlbumPlaylist].find(
+              candidate => candidate.id === request.playlistId
+            );
+            if (!playlist) {
               return { ok: false, error: { kind: "not-found", message: "QA playlist not found.", status: 404 } };
             }
             return {
               ok: true,
-              data: { playlist: structuredClone(catalogPlaylist), cached: false, fetchedAt: catalogNow },
+              data: { playlist: structuredClone(playlist), cached: false, fetchedAt: catalogNow },
             };
           },
-          getPlaylistItems: async (request: { playlistId: string }) => {
+          getPlaylistItems: async (request: { playlistId: string; pageToken?: string | null }) => {
             const gate = catalogGate("getPlaylistItems");
             if (gate) return gate;
-            if (![catalogPlaylist.id, catalogChannel.uploadsPlaylistId].includes(request.playlistId)) {
+            if (
+              ![
+                catalogPlaylist.id,
+                catalogSecondPlaylist.id,
+                catalogAlbumPlaylist.id,
+                catalogChannel.uploadsPlaylistId,
+              ].includes(request.playlistId)
+            ) {
               return { ok: false, error: { kind: "not-found", message: "QA playlist items not found.", status: 404 } };
             }
-            return catalogPage(catalogVideos);
+            if (request.playlistId === catalogAlbumPlaylist.id) {
+              const albumItems = catalogVideos
+                .filter(video => video.availability === "ready")
+                .map(video => ({
+                  ...structuredClone(video),
+                  source: {
+                    kind: "youtube-music",
+                    remoteId: video.source.remoteId,
+                    canonicalUrl: `https://music.youtube.com/watch?v=${video.source.remoteId}`,
+                  },
+                  albumLabel: catalogAlbumPlaylist.albumLabel,
+                }));
+              return catalogPaged(albumItems, request.pageToken, 2);
+            }
+            return catalogPaged(catalogVideos, request.pageToken, 2);
           },
         }),
         player: section({
@@ -853,18 +1023,51 @@ try {
     });
   const activeLyric = () =>
     page!.evaluate(
-      () => document.querySelector(".youtube-lyrics-body .blyrics--active")?.textContent?.replace(/\s+/g, " ").trim() ?? null
+      () => document.querySelector(".lyrics-body .blyrics--active")?.textContent?.replace(/\s+/g, " ").trim() ?? null
     );
   const waitForFakeState = async (state: number, timeout = 5_000) => {
-    await page!.waitForFunction(
-      wanted => {
-        const player = (window as any).__fakeYouTubePlayers?.at(-1);
-        return player?.getPlayerState() === wanted;
-      },
-      { timeout },
-      state
-    );
+    try {
+      await page!.waitForFunction(
+        wanted => {
+          const player = (window as any).__fakeYouTubePlayers?.at(-1);
+          return player?.getPlayerState() === wanted;
+        },
+        { timeout },
+        state
+      );
+    } catch (error) {
+      const diagnostics = await page!
+        .evaluate(() => {
+          const player = (window as any).__fakeYouTubePlayers?.at(-1);
+          return {
+            hash: location.hash,
+            fake: player
+              ? {
+                  state: player.getPlayerState(),
+                  videoId: player.videoId,
+                  currentTime: player.getCurrentTime(),
+                  duration: player.getDuration(),
+                  calls: player.calls,
+                  destroyed: player.destroyed,
+                }
+              : null,
+            stage: document.querySelector('[data-testid="integrated-youtube-player"]')?.textContent ?? null,
+            playerBar: document.querySelector('[data-testid="player-bar"]')?.textContent ?? null,
+            body: document.body.innerText.slice(0, 1600),
+          };
+        })
+        .catch(() => null);
+      console.log(`FAKE PLAYER TIMEOUT waiting for state ${state}:`, JSON.stringify(diagnostics, null, 2));
+      console.log("Browser logs (last 40):\n" + logs.slice(-40).join("\n"));
+      await shot("debug-fake-player-timeout").catch(() => undefined);
+      throw error;
+    }
   };
+  const historyAdds = () => page!.evaluate(() => structuredClone((window as any).__historyAdds ?? []));
+  const remoteHistoryAdds = async () =>
+    (await historyAdds()).filter((entry: any) => entry?.source?.kind && entry.source.kind !== "local");
+  const clickMainPlayToggle = () =>
+    page!.click('[data-testid="player-bar"] [data-testid="play-toggle"]');
 
   await page.goto(base, { waitUntil: "networkidle2" });
   await page.waitForSelector("aside.sidebar .nav-item", { timeout: 30_000 }).catch(async error => {
@@ -878,7 +1081,53 @@ try {
   const navLabels = await page.$$eval("aside.sidebar .nav-item", nodes =>
     nodes.map(node => node.textContent?.replace(/\s+/g, " ").trim())
   );
-  check("app-boots-with-youtube-nav", navLabels.includes("YouTube"), navLabels.join(", "));
+  check(
+    "app-boots-without-separate-youtube-page",
+    !navLabels.includes("YouTube") && navLabels.includes("Now Playing"),
+    navLabels.join(", ")
+  );
+
+  // The empty state of the one Now Playing view owns direct-link entry. A playlist-only link
+  // opens the catalog detail route (and honestly reports that the catalog is still off).
+  await nav("Now Playing");
+  await page.waitForSelector('[data-testid="lyrics-view"]', { timeout: 15_000 });
+  await page.waitForSelector('[data-testid="youtube-url-form"]', { timeout: 15_000 });
+  await shot("01-main-now-playing-empty");
+  check(
+    "empty-main-now-playing-has-direct-link-and-no-player",
+    (await page.evaluate(
+      () =>
+        Boolean(document.querySelector('[data-testid="youtube-url-form"]')) &&
+        !document.querySelector('[data-testid="integrated-youtube-player"]') &&
+        !document.querySelector('[data-testid="youtube-now-playing"]')
+    )) === true
+  );
+  await page.type(
+    '[data-testid="youtube-url-input"]',
+    "https://music.youtube.com/playlist?list=PL1234567890"
+  );
+  await page.click('[data-testid="youtube-url-submit"]');
+  await page.waitForSelector('[data-testid="youtube-playlist-view"]', { timeout: 10_000 });
+  await page.waitForSelector('[data-testid="youtube-detail-error"]', { timeout: 10_000 });
+  check(
+    "playlist-only-url-opens-integrated-playlist-page",
+    (await page.evaluate(() => location.hash)).includes("youtube-playlist/PL1234567890") &&
+      ((await page.$eval('[data-testid="youtube-detail-error"]', node => node.textContent)) ?? "").includes(
+        "catalog is off"
+      ),
+    await page.evaluate(() => location.hash)
+  );
+  await shot("01b-playlist-link-catalog-off");
+  await page.evaluate(() => {
+    location.hash = "#/youtube";
+  });
+  await page.waitForSelector('[data-testid="lyrics-view"]', { timeout: 15_000 });
+  await page.waitForSelector('[data-testid="youtube-url-form"]', { timeout: 15_000 });
+  check(
+    "legacy-youtube-hash-opens-main-now-playing",
+    (await page.evaluate(() => location.hash)) === "#/youtube" &&
+      (await page.evaluate(() => document.querySelector('[data-testid="lyrics-view"]')?.getAttribute("data-current-source"))) === "none"
+  );
 
   // Start a real local fixture first so the remote-play transition has something real to pause.
   await nav("Songs");
@@ -897,52 +1146,66 @@ try {
   const historyAfterLocal = await page.evaluate(() => (window as any).__historyAdds.length as number);
   check("local-fixture-plays-before-remote", !localBeforeRemote.paused && localBeforeRemote.currentTime > 0.25, JSON.stringify(localBeforeRemote));
 
-  await nav("YouTube");
-  await page.waitForSelector('[data-testid="youtube-now-playing"]');
-  await shot("01-youtube-empty");
-  const placeholder = await page.evaluate(() => {
-    const box = document.querySelector('[data-testid="youtube-player-placeholder"]')?.getBoundingClientRect();
-    return box ? { width: box.width, height: box.height } : null;
+  const remoteHistoryBeforeOpen = (await remoteHistoryAdds()).length;
+  await page.evaluate(() => {
+    location.hash =
+      "#/search/" +
+      encodeURIComponent("https://music.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ");
   });
-  check("compact-placeholder-is-200x200", placeholder?.width === 200 && placeholder.height === 200, JSON.stringify(placeholder));
-
-  await page.type('[data-testid="youtube-url-input"]', "https://music.youtube.com/playlist?list=PL1234567890");
-  await page.click('[data-testid="youtube-load-button"]');
-  await page.waitForSelector('[data-testid="youtube-playlist-view"]', { timeout: 10_000 });
-  await page.waitForSelector('[data-testid="youtube-detail-error"]', { timeout: 10_000 });
-  check(
-    "playlist-only-url-opens-integrated-playlist-page",
-    (await page.evaluate(() => location.hash)).includes("youtube-playlist/PL1234567890") &&
-      ((await page.$eval('[data-testid="youtube-detail-error"]', node => node.textContent)) ?? "").includes(
-        "catalog is off"
-      ),
-    await page.evaluate(() => location.hash)
-  );
-  await shot("01b-playlist-link-catalog-off");
-  await nav("YouTube");
-  await page.waitForSelector('[data-testid="youtube-url-input"]');
-
-  await page.$eval('[data-testid="youtube-url-input"]', node => {
-    const input = node as HTMLInputElement;
-    input.focus();
-    input.select();
-  });
-  await page.keyboard.press("Backspace");
-  await page.type('[data-testid="youtube-url-input"]', "https://music.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ");
-  await page.click('[data-testid="youtube-load-button"]');
+  await page.waitForSelector('[data-testid="youtube-direct-link"]', { timeout: 15_000 });
+  await clickText('[data-testid="youtube-direct-link"] button', "Open video");
+  await page.waitForSelector('[data-testid="lyrics-view"]', { timeout: 15_000 });
+  await page.waitForSelector('[data-testid="integrated-youtube-player"]', { timeout: 15_000 });
   await page.waitForSelector('[data-testid="youtube-iframe"]', { timeout: 15_000 });
-  await waitForFakeState(5);
+  await waitForFakeState(1, 15_000);
   await page.waitForFunction(
-    () => document.querySelector('[data-testid="youtube-title"]')?.textContent?.includes("Never Gonna Give You Up"),
+    () => document.querySelector(".lyrics-heading h1")?.textContent?.includes("Never Gonna Give You Up"),
     { timeout: 10_000 }
   );
-  await page.waitForSelector(".youtube-lyrics-body .blyrics--line", { timeout: 15_000 });
+  await page.waitForSelector(".lyrics-body .blyrics--line", { timeout: 15_000 });
   await wait(700);
 
   const loaded = await fakeState();
   const box = await playerBox();
   const searches = await page.evaluate(() => (window as any).__lyricsSearches);
-  check("watch-url-with-playlist-cues-only-video", loaded?.videoId === "dQw4w9WgXcQ" && loaded.state === 5, JSON.stringify(loaded));
+  check(
+    "watch-url-with-playlist-loads-only-video-in-main-now-playing",
+    loaded?.videoId === "dQw4w9WgXcQ" && loaded.state === 1,
+    JSON.stringify(loaded)
+  );
+  // Assert the opening line while the fake IFrame clock is still in its first five seconds.
+  // Later size/dock interactions legitimately advance playback into the second timed line.
+  check(
+    "lyrics-follow-iframe-clock-at-start",
+    ((await activeLyric()) ?? "").includes("First"),
+    (await activeLyric()) ?? "none"
+  );
+  const mainNowPlayingState = await page.evaluate(() => ({
+    source: document.querySelector('[data-testid="lyrics-view"]')?.getAttribute("data-current-source"),
+    sourceKey: document.querySelector('[data-testid="lyrics-view"]')?.getAttribute("data-current-source-key"),
+    heading: document.querySelector(".lyrics-heading")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+    playerTitle: document.querySelector('[data-testid="player-bar"] .player-title')?.textContent?.trim() ?? "",
+    playerBadge:
+      document
+        .querySelector('[data-testid="player-bar"] [data-testid="source-badge"]')
+        ?.getAttribute("data-source-kind") ?? null,
+    stageBadge:
+      document
+        .querySelector('[data-testid="integrated-youtube-player"] [data-testid="source-badge"]')
+        ?.getAttribute("data-source-kind") ?? null,
+    separatePage: Boolean(document.querySelector('[data-testid="youtube-now-playing"]')),
+  }));
+  check(
+    "main-now-playing-and-player-bar-recognize-youtube-music-item",
+    mainNowPlayingState.source === "youtube-music" &&
+      mainNowPlayingState.sourceKey === "youtube-music:dQw4w9WgXcQ" &&
+      mainNowPlayingState.heading.includes("Never Gonna Give You Up") &&
+      mainNowPlayingState.playerTitle.includes("Never Gonna Give You Up") &&
+      mainNowPlayingState.playerBadge === "youtube-music" &&
+      mainNowPlayingState.stageBadge === "youtube-music" &&
+      !mainNowPlayingState.separatePage,
+    JSON.stringify(mainNowPlayingState)
+  );
   check(
     "official-player-options-are-visible-and-non-autoplay",
     loaded?.options.host === "https://www.youtube-nocookie.com" &&
@@ -952,7 +1215,22 @@ try {
       loaded.options.playerVars.origin === base,
     JSON.stringify(loaded?.options)
   );
-  check("compact-player-is-exactly-200x200", box.shell?.width === 200 && box.shell.height === 200 && box.iframe?.width === 200 && box.iframe.height === 200, JSON.stringify(box));
+  check(
+    "default-integrated-player-is-exactly-480x270",
+    box.shell?.width === 480 && box.shell.height === 270 && box.iframe?.width === 480 && box.iframe.height === 270,
+    JSON.stringify(box)
+  );
+  await page.click('[data-testid="integrated-youtube-size-toggle"]');
+  await wait(250);
+  const compactBox = await playerBox();
+  check(
+    "compact-integrated-player-is-exactly-200x200",
+    compactBox.shell?.width === 200 &&
+      compactBox.shell.height === 200 &&
+      compactBox.iframe?.width === 200 &&
+      compactBox.iframe.height === 200,
+    JSON.stringify(compactBox)
+  );
   check("player-center-is-not-covered", box.centerTag === "IFRAME" && box.centerTestId === "youtube-iframe", JSON.stringify(box));
   check("nocookie-frame-was-allowed-by-csp-and-intercepted", interceptedEmbeds.some(url => url.includes("/embed/dQw4w9WgXcQ")), interceptedEmbeds.join(" | "));
   check(
@@ -962,55 +1240,83 @@ try {
   );
   check(
     "rich-lyrics-are-labelled-word-synced",
-    ((await page.$eval('[data-testid="youtube-lyrics-sync-label"]', node => node.textContent)) ?? "").includes("Word synced")
+    ((await page.$eval('[data-testid="sync-label"]', node => node.textContent)) ?? "").includes("Word synced")
   );
   const decorations = await page.evaluate(() => ({
-    translated: document.querySelector(".youtube-lyrics-body .blyrics--translated")?.textContent ?? "",
-    romanized: document.querySelector(".youtube-lyrics-body .blyrics--romanized")?.textContent ?? "",
+    translated: document.querySelector(".lyrics-body .blyrics--translated")?.textContent ?? "",
+    romanized: document.querySelector(".lyrics-body .blyrics--romanized")?.textContent ?? "",
     translateCalls: (window as any).__translateCalls.length,
     romanizeCalls: (window as any).__romanizeCalls.length,
   }));
   check("translation-decoration-is-rendered", decorations.translated.includes("[es]") && decorations.translateCalls > 0, JSON.stringify(decorations));
   check("romanization-decoration-is-rendered", decorations.romanized.includes("[romaji]") && decorations.romanizeCalls > 0, JSON.stringify(decorations));
-  await shot("02-youtube-cued-compact");
+  await shot("02-integrated-now-playing-compact");
 
-  // Provider selection: a plain candidate must stay explicitly unsynchronized.
-  await page.select('[data-testid="youtube-lyrics-source-select"]', "1");
-  await wait(300);
+  // Provider selection through Cadence's existing lyrics dock: a plain candidate must stay
+  // explicitly unsynchronized. Remote items must not gain local sidecar/file actions.
+  const chooseLyricsCandidate = async (provider: string) => {
+    await page!.evaluate(() => {
+      const button = document.querySelector(
+        '[data-testid="lyrics-dock"] button[title="Lyrics source"]'
+      ) as HTMLButtonElement | null;
+      button?.click();
+    });
+    await page!.waitForSelector('[data-testid="lyrics-dock"] .dock-sources .source-row', {
+      timeout: 5_000,
+    });
+    await page!.evaluate(wanted => {
+      const row = [...document.querySelectorAll('[data-testid="lyrics-dock"] .dock-sources .source-row')].find(
+        node => node.textContent?.includes(wanted)
+      ) as HTMLElement | undefined;
+      row?.click();
+    }, provider);
+    await wait(300);
+  };
+  await chooseLyricsCandidate("QA plain text");
   check(
     "plain-candidate-is-labelled-unsynchronized",
-    ((await page.$eval('[data-testid="youtube-lyrics-sync-label"]', node => node.textContent)) ?? "").includes("Unsynchronized")
+    ((await page.$eval('[data-testid="sync-label"]', node => node.textContent)) ?? "").includes("Unsynced")
   );
-  await page.select('[data-testid="youtube-lyrics-source-select"]', "0");
-  await wait(300);
-
-  // Re-baseline immediately before remote Play: the six-second local fixture may legitimately
-  // auto-advance (and add local history) while the YouTube view is loading. The assertion below
-  // is only about whether the remote transition itself writes a local history row.
-  const historyBeforeRemotePlay = await page.evaluate(() => (window as any).__historyAdds.length as number);
-  await page.click('[data-testid="youtube-play-toggle"]');
-  await waitForFakeState(1);
-  await wait(1200);
-  const localAfterRemotePlay = await audioState();
-  const historyAfterRemote = await page.evaluate(() => (window as any).__historyAdds.length as number);
-  check("remote-play-pauses-local-audio", localAfterRemotePlay.paused, JSON.stringify(localAfterRemotePlay));
+  await chooseLyricsCandidate("QA rich LRC");
   check(
-    "remote-play-does-not-write-local-history",
-    historyAfterRemote === historyBeforeRemotePlay,
-    `${historyAfterLocal} after first local start; ${historyBeforeRemotePlay} immediately before remote Play -> ${historyAfterRemote}`
+    "remote-lyrics-dock-hides-local-file-actions",
+    (await page.evaluate(
+      () =>
+        !document.querySelector('[data-testid="lyrics-dock"] button[title="Open a lyrics file"]') &&
+        !document.querySelector('[data-testid="lyrics-dock"] button[title="Save lyrics next to the track"]')
+    )) === true
   );
-  check("lyrics-follow-iframe-clock-at-start", ((await activeLyric()) ?? "").includes("First"), (await activeLyric()) ?? "none");
 
-  await page.click('[data-testid="youtube-play-toggle"]');
+  await wait(400);
+  const localAfterRemotePlay = await audioState();
+  const remoteHistoryAfterPlay = await remoteHistoryAdds();
+  check("remote-selection-pauses-local-audio", localAfterRemotePlay.paused, JSON.stringify(localAfterRemotePlay));
+  check(
+    "observed-remote-playing-writes-one-source-aware-history-row",
+    remoteHistoryAfterPlay.length === remoteHistoryBeforeOpen + 1 &&
+      remoteHistoryAfterPlay.at(-1)?.source?.kind === "youtube-music" &&
+      remoteHistoryAfterPlay.at(-1)?.source?.remoteId === "dQw4w9WgXcQ" &&
+      remoteHistoryAfterPlay.at(-1)?.payload?.playbackMechanism === "youtube-iframe" &&
+      !("trackId" in (remoteHistoryAfterPlay.at(-1)?.payload ?? {})) &&
+      !("path" in (remoteHistoryAfterPlay.at(-1)?.payload ?? {})),
+    JSON.stringify(remoteHistoryAfterPlay)
+  );
+  await clickMainPlayToggle();
   await waitForFakeState(2);
   const pausedAt = (await fakeState())?.currentTime ?? -1;
   await wait(650);
   const stillPausedAt = (await fakeState())?.currentTime ?? -1;
   check("pause-freezes-remote-clock", Math.abs(stillPausedAt - pausedAt) < 0.02, `${pausedAt} -> ${stillPausedAt}`);
 
-  await page.click('[data-testid="youtube-play-toggle"]');
+  await clickMainPlayToggle();
   await waitForFakeState(1);
-  await setRange('[data-testid="youtube-seek"]', 65);
+  await wait(350);
+  check(
+    "pause-resume-does-not-duplicate-remote-history",
+    (await remoteHistoryAdds()).length === remoteHistoryAfterPlay.length,
+    JSON.stringify(await remoteHistoryAdds())
+  );
+  await setRange('[data-testid="player-bar"] input.seek', 65);
   await page.waitForFunction(() => {
     const player = (window as any).__fakeYouTubePlayers?.at(-1);
     return player?.getCurrentTime() >= 64.8;
@@ -1019,7 +1325,7 @@ try {
   check("cadence-seek-retargets-lyrics-immediately", ((await activeLyric()) ?? "").includes("One minute"), (await activeLyric()) ?? "none");
 
   await page.evaluate(() => {
-    const line = [...document.querySelectorAll(".youtube-lyrics-body .blyrics--line")].find(node =>
+    const line = [...document.querySelectorAll(".lyrics-body .blyrics--line")].find(node =>
       node.textContent?.includes("Second")
     ) as HTMLElement | undefined;
     line?.click();
@@ -1031,83 +1337,87 @@ try {
   }, { timeout: 5_000 });
   check("lyrics-line-click-seeks-iframe", true, `fake time ${(await fakeState())?.currentTime.toFixed(2)}s`);
 
-  await setRange('[data-testid="youtube-volume"]', 0.25);
+  await setRange('[data-testid="player-bar"] input.volume', 0.25);
   await wait(250);
-  check("cadence-volume-controls-iframe", (await fakeState())?.volume === 25, JSON.stringify(await fakeState()));
-  await page.click('button[aria-label="Mute YouTube playback"]');
+  check("main-player-volume-controls-iframe", (await fakeState())?.volume === 25, JSON.stringify(await fakeState()));
+  await page.click('[data-testid="player-bar"] button[aria-label="Mute"]');
   await wait(200);
-  check("cadence-mute-controls-iframe", (await fakeState())?.muted === true);
-  await page.click('button[aria-label="Unmute YouTube playback"]');
+  check("main-player-mute-controls-iframe", (await fakeState())?.muted === true);
+  await page.click('[data-testid="player-bar"] button[aria-label="Unmute"]');
   await wait(200);
 
-  await page.select('[data-testid="youtube-playback-rate"]', "1.5");
-  await wait(250);
+  await page.evaluate(() => {
+    (window as any).__fakeYouTubePlayers?.at(-1)?.setPlaybackRate(1.5);
+  });
+  await wait(350);
   const rateStart = (await fakeState())?.currentTime ?? 0;
   await wait(850);
   const rateEnd = (await fakeState())?.currentTime ?? 0;
-  check("playback-rate-is-applied-and-clock-advances-at-rate", (await fakeState())?.rate === 1.5 && rateEnd - rateStart > 1.0, `${rateStart.toFixed(2)} -> ${rateEnd.toFixed(2)}`);
+  check(
+    "iframe-rate-change-is-reflected-in-remote-clock",
+    (await fakeState())?.rate === 1.5 && rateEnd - rateStart > 1.0,
+    `${rateStart.toFixed(2)} -> ${rateEnd.toFixed(2)}`
+  );
+  await page.evaluate(() => {
+    (window as any).__fakeYouTubePlayers?.at(-1)?.setPlaybackRate(1);
+  });
+  await wait(300);
 
-  await page.click('[data-testid="youtube-size-expanded"]');
+  await page.click('[data-testid="integrated-youtube-size-toggle"]');
   await wait(300);
   const expanded = await playerBox();
-  check("expanded-player-is-exactly-480x270", expanded.shell?.width === 480 && expanded.shell.height === 270 && expanded.iframe?.width === 480 && expanded.iframe.height === 270, JSON.stringify(expanded));
-  await shot("03-youtube-expanded-playing");
-  await page.click('[data-testid="youtube-size-compact"]');
+  check("expanded-integrated-player-is-exactly-480x270", expanded.shell?.width === 480 && expanded.shell.height === 270 && expanded.iframe?.width === 480 && expanded.iframe.height === 270, JSON.stringify(expanded));
+  await shot("03-integrated-now-playing-expanded");
+  await page.click('[data-testid="integrated-youtube-size-toggle"]');
   await wait(250);
 
-  await page.select('[data-testid="youtube-playback-rate"]', "2");
-  await setRange('[data-testid="youtube-seek"]', 211.55);
+  await page.evaluate(() => {
+    (window as any).__fakeYouTubePlayers?.at(-1)?.setPlaybackRate(2);
+  });
+  await setRange('[data-testid="player-bar"] input.seek', 211.55);
   await waitForFakeState(0, 5_000);
   await wait(300);
-  const endedText = await page.$eval(".youtube-size-row > span", node => node.textContent ?? "");
-  check("ended-state-is-surfaced", endedText.includes("Ended"), endedText);
-  await page.click('[data-testid="youtube-play-toggle"]');
+  const endedText =
+    (await page.$eval('[data-testid="integrated-youtube-status"]', node => node.textContent ?? "")) ?? "";
+  check("ended-state-is-surfaced-in-integrated-stage", endedText.includes("Ended"), endedText);
+  await page.evaluate(() => {
+    (window as any).__fakeYouTubePlayers?.at(-1)?.setPlaybackRate(1);
+  });
+  await clickMainPlayToggle();
   await waitForFakeState(1);
 
-  // Starting local playback from the always-visible Cadence bar pauses the iframe.
+  // Pause through the one Cadence transport, then prove scripted Play is refused while less
+  // than half of the official player is visible in a very short viewport.
+  await clickMainPlayToggle();
+  await waitForFakeState(2);
+  await page.setViewport({ width: 1040, height: 180 });
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector(".integrated-youtube-note")
+        ?.textContent?.includes("Keep more than half of the player visible"),
+    { timeout: 8_000 }
+  );
   await page.evaluate(() => {
-    const button = document.querySelector('[data-testid="player-bar"] button[aria-label="Play"]') as HTMLButtonElement | null;
-    button?.click();
-  });
-  await page.waitForFunction(() => {
-    const audio = document.querySelector("audio");
-    const player = (window as any).__fakeYouTubePlayers?.at(-1);
-    return Boolean(audio && !audio.paused && player?.getPlayerState() === 2);
-  }, { timeout: 8_000 });
-  check("local-play-pauses-remote-iframe", true, JSON.stringify(await fakeState()));
-  await page.evaluate(() => document.querySelectorAll("audio").forEach(audio => audio.pause()));
-  await wait(300);
-
-  // Visibility guard in a short viewport: scripted Cadence Play is refused while the official
-  // player is scrolled mostly out of view. Wait for Cadence's own visibility note, which is
-  // rendered from the same IntersectionObserver ratio the guard consumes, instead of assuming a
-  // fixed scroll offset is far enough in this layout.
-  await page.setViewport({ width: 1040, height: 360 });
-  await wait(400);
-  await page.evaluate(() => {
-    const scroller = document.querySelector(".content-scroll");
-    if (scroller) scroller.scrollTop = scroller.scrollHeight;
-  });
-  await page.waitForSelector(".youtube-visibility-note", { timeout: 8_000 });
-  await page.evaluate(() => {
-    (document.querySelector('[data-testid="youtube-play-toggle"]') as HTMLButtonElement | null)?.click();
+    (document.querySelector('[data-testid="player-bar"] [data-testid="play-toggle"]') as HTMLButtonElement | null)?.click();
   });
   await wait(250);
   const guardState = await fakeState();
-  const guardText = await page.evaluate(() => document.body.innerText.includes("at least half of the official player must be visible"));
+  const guardText = await page.evaluate(() =>
+    document.body.innerText.includes("Keep more than half of the player visible")
+  );
   check("scripted-play-requires-half-visibility", guardState?.state === 2 && guardText, JSON.stringify(guardState));
-  await shot("04-youtube-small-viewport-guard");
+  await shot("04-integrated-small-viewport-guard");
   await page.setViewport({ width: 1440, height: 900 });
-  await page.evaluate(() => {
-    const scroller = document.querySelector(".content-scroll");
-    if (scroller) scroller.scrollTop = 0;
-    // The local fixture is only six seconds long; if it auto-advances here, Cadence correctly
-    // pauses the iframe again. Pause local playback so this step isolates remote resume.
-    document.querySelectorAll("audio").forEach(audio => audio.pause());
-  });
-  await wait(400);
-  await page.waitForFunction(() => !document.querySelector(".youtube-visibility-note"), { timeout: 8_000 });
-  if ((await fakeState())?.state !== 1) await page.click('[data-testid="youtube-play-toggle"]');
+  await page.waitForFunction(
+    () =>
+      !document
+        .querySelector(".integrated-youtube-note")
+        ?.textContent?.includes("Keep more than half of the player visible"),
+    { timeout: 8_000 }
+  );
+  await wait(250);
+  if ((await fakeState())?.state !== 1) await clickMainPlayToggle();
   await waitForFakeState(1, 10_000);
 
   const playerCountBeforeNav = (await fakeState())?.count ?? 0;
@@ -1118,25 +1428,42 @@ try {
     return { destroyed: player?.destroyed ?? false, iframePresent: Boolean(document.querySelector('[data-testid="youtube-iframe"]')) };
   });
   check("navigating-away-destroys-player", destroyedAfterNav.destroyed && !destroyedAfterNav.iframePresent, JSON.stringify(destroyedAfterNav));
-  await nav("YouTube");
+  await nav("Now Playing");
+  await page.waitForSelector('[data-testid="integrated-youtube-player"]', { timeout: 15_000 });
   await page.waitForSelector('[data-testid="youtube-iframe"]', { timeout: 15_000 });
   await waitForFakeState(5);
   const afterReturn = await fakeState();
   check("returning-recreates-player-cued-not-autoplaying", (afterReturn?.count ?? 0) > playerCountBeforeNav && afterReturn?.state === 5, JSON.stringify(afterReturn));
 
-  // Non-embeddable video error (official code 101 in the test double).
-  await page.$eval('[data-testid="youtube-url-input"]', node => {
-    const input = node as HTMLInputElement;
-    input.focus();
-    input.select();
+  // Non-embeddable video error (official code 101 in the test double), opened through Search's
+  // direct-link card because the Now Playing paste form is only for the empty queue state.
+  const remoteHistoryBeforeError = (await remoteHistoryAdds()).length;
+  await page.evaluate(() => {
+    location.hash = "#/search/" + encodeURIComponent("https://youtu.be/error101XYZ");
   });
-  await page.keyboard.press("Backspace");
-  await page.type('[data-testid="youtube-url-input"]', "https://youtu.be/error101XYZ");
-  await page.click('[data-testid="youtube-load-button"]');
-  await page.waitForSelector('[data-testid="youtube-player-error"]', { timeout: 10_000 });
-  const errorText = await page.$eval('[data-testid="youtube-player-error"]', node => node.textContent ?? "");
-  check("non-embeddable-error-is-actionable", errorText.includes("does not allow") && errorText.includes("Open on YouTube"), errorText);
-  await shot("05-youtube-non-embeddable");
+  await page.waitForSelector('[data-testid="youtube-direct-link"]', { timeout: 15_000 });
+  await clickText('[data-testid="youtube-direct-link"] button', "Open video");
+  await page.waitForSelector('[data-testid="integrated-youtube-player"]', { timeout: 15_000 });
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector('[data-testid="integrated-youtube-status"]')
+        ?.textContent?.includes("does not allow"),
+    { timeout: 10_000 }
+  );
+  const errorText =
+    (await page.$eval('[data-testid="integrated-youtube-status"]', node => node.textContent ?? "")) ?? "";
+  const hasSourceAction = await page.evaluate(
+    () => Boolean(document.querySelector('[data-testid="integrated-youtube-open-source"]'))
+  );
+  check(
+    "non-embeddable-error-is-actionable-and-writes-no-history",
+    errorText.includes("does not allow") &&
+      hasSourceAction &&
+      (await remoteHistoryAdds()).length === remoteHistoryBeforeError,
+    errorText
+  );
+  await shot("05-integrated-non-embeddable");
 
   // Local regression: after all remote work, a local fixture still plays through Cadence's engine.
   await nav("Songs");
@@ -1155,7 +1482,7 @@ try {
   check("local-playback-still-works-after-remote", localTitle === "Fixture MP3", localTitle);
   await page.evaluate(() => document.querySelector("audio")?.pause());
 
-  // ---- Stage 7 Phase A: official Data API catalog, integrated into existing Cadence surfaces.
+  // ---- Official Data API catalog, integrated into Cadence's existing Search/Home/details.
   // The bridge below returns deterministic Data API-shaped fixtures through Cadence's real
   // renderer components. This proves setup/search/detail/player wiring, not Google acceptance
   // of a real API key.
@@ -1208,25 +1535,63 @@ try {
   await page.evaluate(() => {
     document.querySelector('[data-testid="youtube-trending-shelf"]')?.scrollIntoView({ block: "center" });
   });
-  await page.waitForSelector('[data-testid="youtube-trending-list"] [data-testid="remote-track-row"]', {
+  await page.waitForSelector('[data-testid="youtube-trending-shelf-list"] [data-testid="remote-track-row"]', {
     timeout: 15_000,
   });
+  const trendingCountBeforeMore = await page.$$eval(
+    '[data-testid="youtube-trending-shelf-list"] [data-testid="remote-track-row"]',
+    nodes => nodes.length
+  );
+  await page.click('[data-testid="youtube-trending-shelf-load-more"]');
+  await page.waitForFunction(
+    previous =>
+      document.querySelectorAll('[data-testid="youtube-trending-shelf-list"] [data-testid="remote-track-row"]')
+        .length > previous,
+    { timeout: 15_000 },
+    trendingCountBeforeMore
+  );
   const trendingBadgeKinds = await page.$$eval(
-    '[data-testid="youtube-trending-list"] [data-testid="source-badge"]',
+    '[data-testid="youtube-trending-shelf-list"] [data-testid="source-badge"]',
     nodes => nodes.map(node => node.getAttribute("data-source-kind"))
   );
   check(
-    "home-trending-shelf-is-lazy-and-source-badged",
-    trendingBadgeKinds.length > 0 && trendingBadgeKinds.every(kind => kind === "youtube"),
+    "home-trending-shelf-paginates-and-badges-every-row",
+    trendingCountBeforeMore === 2 &&
+      trendingBadgeKinds.length === 4 &&
+      trendingBadgeKinds.every(kind => kind === "youtube"),
     trendingBadgeKinds.join(", ")
   );
-  await shot("08-home-youtube-trending");
+  await page.evaluate(() => {
+    document.querySelector('[data-testid="youtube-new-releases-shelf"]')?.scrollIntoView({ block: "center" });
+  });
+  await page.waitForSelector('[data-testid="youtube-new-releases-shelf-load"]', { timeout: 15_000 });
+  const newReleaseCallsBefore = (await catalogCalls()).filter(call => call === "newReleases").length;
+  await page.click('[data-testid="youtube-new-releases-shelf-load"]');
+  await page.waitForSelector('[data-testid="youtube-new-releases-shelf-list"] [data-testid="remote-track-row"]', {
+    timeout: 15_000,
+  });
+  check(
+    "home-new-releases-load-only-on-explicit-request",
+    newReleaseCallsBefore === 0 &&
+      (await catalogCalls()).filter(call => call === "newReleases").length === 1,
+    (await catalogCalls()).join(", ")
+  );
+  await shot("08-home-youtube-discovery");
 
   const searchCallsBeforeCatalogSearch = (await catalogCalls()).filter(call => call.startsWith("search")).length;
   await gotoHash("#/search/Rick%20Astley");
   await page.waitForSelector('[data-testid="youtube-search-videos"] [data-testid="remote-track-row"]', {
     timeout: 20_000,
   });
+  const videoResultCountBeforeMore =
+    (await page.$eval('[data-testid="youtube-catalog-result-count"]', node => node.textContent ?? "")) ?? "";
+  await page.click('[data-testid="youtube-catalog-load-more"]');
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll('[data-testid="youtube-search-videos"] [data-testid="remote-track-row"]')
+        .length === 4,
+    { timeout: 15_000 }
+  );
   const integratedSearch = await page.evaluate(() => ({
     heading: document.querySelector('[data-testid="search-view"] .view-heading')?.textContent ?? "",
     remoteIds: [...document.querySelectorAll('[data-testid="youtube-search-videos"] [data-testid="remote-track-row"]')].map(
@@ -1236,12 +1601,33 @@ try {
   }));
   const searchCallsAfterCatalogSearch = (await catalogCalls()).filter(call => call.startsWith("search")).length;
   check(
-    "integrated-search-remote-videos-are-debounced-and-badged",
+    "integrated-search-videos-paginate-with-counts-and-badges",
     integratedSearch.heading.includes("local songs") &&
-      integratedSearch.remoteIds.includes("dQw4w9WgXcQ") &&
+      videoResultCountBeforeMore.includes("2 music videos loaded") &&
+      videoResultCountBeforeMore.includes("about 4 total results") &&
+      integratedSearch.remoteIds.join(",") === "dQw4w9WgXcQ,video000002,video000003,video000004" &&
       integratedSearch.badgeText.includes("YouTube") &&
-      searchCallsAfterCatalogSearch === searchCallsBeforeCatalogSearch + 1,
-    JSON.stringify({ integratedSearch, searchCallsBeforeCatalogSearch, searchCallsAfterCatalogSearch })
+      searchCallsAfterCatalogSearch === searchCallsBeforeCatalogSearch + 2,
+    JSON.stringify({
+      integratedSearch,
+      videoResultCountBeforeMore,
+      searchCallsBeforeCatalogSearch,
+      searchCallsAfterCatalogSearch,
+    })
+  );
+  const searchCallsBeforeOrder = (await catalogCalls()).filter(call => call === "searchMusicVideos").length;
+  await page.select('[data-testid="youtube-search-order"]', "date");
+  await page.waitForFunction(
+    previous => {
+      const calls = (window as any).__catalogCalls as string[];
+      return calls.filter(call => call === "searchMusicVideos").length > previous;
+    },
+    { timeout: 15_000 },
+    searchCallsBeforeOrder
+  );
+  check(
+    "integrated-search-order-control-requeries-active-category",
+    (await catalogCalls()).filter(call => call === "searchMusicVideos").length === searchCallsBeforeOrder + 1
   );
   await shot("09-search-youtube-videos");
 
@@ -1253,15 +1639,73 @@ try {
     "integrated-search-channels-load-only-on-tab",
     (await catalogCalls()).filter(call => call === "searchChannels").length === 1
   );
+  await page.click('[data-testid="youtube-catalog-load-more"]');
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll('[data-testid="youtube-search-channels"] [data-testid="youtube-channel-card"]')
+        .length === 2,
+    { timeout: 15_000 }
+  );
+  check(
+    "integrated-search-channels-paginate-with-stats",
+    (await page.evaluate(
+      () =>
+        document
+          .querySelector('[data-testid="youtube-search-channels"]')
+          ?.textContent?.includes("subscribers") ?? false
+    )) === true
+  );
   await page.click('[data-testid="youtube-search-tab-playlists"]');
   await page.waitForSelector('[data-testid="youtube-search-playlists"] [data-testid="youtube-playlist-card"]', {
     timeout: 15_000,
   });
-  await page.click('[data-testid="youtube-playlist-card"]');
+  await page.click('[data-testid="youtube-catalog-load-more"]');
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll('[data-testid="youtube-search-playlists"] [data-testid="youtube-playlist-card"]')
+        .length === 2,
+    { timeout: 15_000 }
+  );
+  check(
+    "integrated-search-playlists-paginate",
+    (await catalogCalls()).filter(call => call === "searchPlaylists").length === 2
+  );
+  await page.click('[data-testid="youtube-search-tab-albums"]');
+  await page.waitForSelector('[data-testid="youtube-search-albums"] [data-testid="youtube-playlist-card"]', {
+    timeout: 15_000,
+  });
+  const albumSearchState = await page.evaluate(() => ({
+    text: document.querySelector('[data-testid="youtube-search-albums"]')?.textContent ?? "",
+    badge:
+      document
+        .querySelector('[data-testid="youtube-search-albums"] [data-testid="source-badge"]')
+        ?.getAttribute("data-source-kind") ?? null,
+  }));
+  check(
+    "integrated-search-album-tab-shows-only-verified-album-collections",
+    albumSearchState.text.includes("Whenever You Need Somebody") && albumSearchState.badge === "youtube-music",
+    JSON.stringify(albumSearchState)
+  );
+  await page.click('[data-testid="youtube-search-tab-playlists"]');
+  await page.waitForSelector('[data-testid="youtube-search-playlists"] [data-testid="youtube-playlist-card"]', {
+    timeout: 15_000,
+  });
+  await page.click('[data-testid="youtube-search-playlists"] [data-testid="youtube-playlist-card"]');
   await page.waitForSelector('[data-testid="youtube-playlist-view"]', { timeout: 15_000 });
   await page.waitForSelector('[data-testid="youtube-playlist-items"] [data-testid="remote-track-row"]', {
     timeout: 15_000,
   });
+  await clickText('[data-testid="youtube-playlist-view"] .catalog-load-more button', "Load more videos");
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll('[data-testid="youtube-playlist-items"] [data-testid="remote-track-row"]')
+        .length === 4,
+    { timeout: 15_000 }
+  );
+  check(
+    "public-playlist-detail-paginates-loaded-context",
+    (await catalogCalls()).filter(call => call === "getPlaylistItems").length >= 2
+  );
   check(
     "public-playlist-detail-uses-cadence-rows-and-badges",
     (await page.evaluate(() => location.hash)).includes("youtube-playlist/PLqa000000000001") &&
@@ -1269,38 +1713,184 @@ try {
   );
   await shot("10-youtube-playlist-detail");
 
-  const historyBeforeCatalogOpen = await page.evaluate(() => (window as any).__historyAdds.length as number);
-  await clickText('[data-testid="youtube-playlist-view"] .detail-hero button', "Open first video");
-  await page.waitForSelector('[data-testid="youtube-now-playing"]', { timeout: 15_000 });
+  const remoteHistoryBeforeCatalogPlay = (await remoteHistoryAdds()).length;
+  await page.click('[data-testid="youtube-context-play"]');
+  await page.waitForSelector('[data-testid="lyrics-view"]', { timeout: 15_000 });
+  await page.waitForSelector('[data-testid="integrated-youtube-player"]', { timeout: 15_000 });
   await page.waitForSelector('[data-testid="youtube-iframe"]', { timeout: 15_000 });
-  await waitForFakeState(5, 10_000);
+  await waitForFakeState(1, 15_000);
   await page.waitForFunction(
-    () => document.querySelector('[data-testid="youtube-title"]')?.textContent?.includes("Never Gonna Give You Up"),
+    () => document.querySelector(".lyrics-heading h1")?.textContent?.includes("Never Gonna Give You Up"),
     { timeout: 10_000 }
   );
-  const historyAfterCatalogOpen = await page.evaluate(() => (window as any).__historyAdds.length as number);
+  await wait(350);
   const catalogPlayerBadge = await page.evaluate(
-    () => document.querySelector(".youtube-track-summary [data-testid='source-badge']")?.getAttribute("data-source-kind")
+    () =>
+      document
+        .querySelector('[data-testid="player-bar"] [data-testid="source-badge"]')
+        ?.getAttribute("data-source-kind") ?? null
   );
   check(
-    "catalog-result-cues-existing-official-player-without-history-write",
+    "catalog-context-plays-in-main-now-playing-and-records-observed-play",
     (await fakeState())?.videoId === "dQw4w9WgXcQ" &&
-      (await fakeState())?.state === 5 &&
+      (await fakeState())?.state === 1 &&
       catalogPlayerBadge === "youtube" &&
-      historyAfterCatalogOpen === historyBeforeCatalogOpen,
-    JSON.stringify({ catalogPlayerBadge, historyBeforeCatalogOpen, historyAfterCatalogOpen, state: await fakeState() })
+      (await remoteHistoryAdds()).length === remoteHistoryBeforeCatalogPlay + 1,
+    JSON.stringify({
+      catalogPlayerBadge,
+      remoteHistoryBeforeCatalogPlay,
+      remoteHistoryAfterCatalogPlay: (await remoteHistoryAdds()).length,
+      state: await fakeState(),
+    })
   );
 
-  await page.click('[data-testid="youtube-artist"] button');
+  await page.click('[data-testid="player-bar"] button[aria-label="Queue"]');
+  await page.waitForSelector('[data-testid="queue-panel"]', { timeout: 10_000 });
+  const queueState = await page.evaluate(() => ({
+    entries: [...document.querySelectorAll('[data-testid="queue-entry"]')].map(node => ({
+      source: node.getAttribute("data-source-kind"),
+      occurrence: node.getAttribute("data-occurrence-id"),
+      current: node.classList.contains("current"),
+      text: node.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      badge:
+        node.querySelector('[data-testid="source-badge"]')?.getAttribute("data-source-kind") ?? null,
+    })),
+  }));
+  check(
+    "queue-shows-loaded-playable-context-with-occurrences-and-badges",
+    queueState.entries.length === 3 &&
+      queueState.entries[0].current &&
+      queueState.entries.every(entry => entry.source === "youtube" && entry.badge === "youtube" && entry.occurrence) &&
+      new Set(queueState.entries.map(entry => entry.occurrence)).size === 3 &&
+      !queueState.entries.some(entry => entry.text.includes("Catalog Second Video")),
+    JSON.stringify(queueState)
+  );
+  await shot("10b-unified-queue-remote-context");
+  await page.click('[data-testid="queue-panel"] button[aria-label="Close queue"]');
+  await wait(250);
+
+  const remoteHistoryBeforeNext = (await remoteHistoryAdds()).length;
+  await page.click('[data-testid="player-bar"] button[aria-label="Next track"]');
+  await page.waitForFunction(
+    () => (window as any).__fakeYouTubePlayers?.at(-1)?.videoId === "video000003",
+    { timeout: 15_000 }
+  );
+  await waitForFakeState(1, 15_000);
+  await wait(350);
+  check(
+    "next-advances-within-remote-context-and-records-new-occurrence",
+    (await fakeState())?.videoId === "video000003" &&
+      (await fakeState())?.state === 1 &&
+      (await page.evaluate(() => document.querySelector(".lyrics-heading h1")?.textContent ?? "")).includes(
+        "Catalog Third Video"
+      ) &&
+      (await remoteHistoryAdds()).length === remoteHistoryBeforeNext + 1,
+    JSON.stringify(await fakeState())
+  );
+  await page.click('[data-testid="player-bar"] button[aria-label="Previous track"]');
+  await page.waitForFunction(
+    () => (window as any).__fakeYouTubePlayers?.at(-1)?.videoId === "dQw4w9WgXcQ",
+    { timeout: 15_000 }
+  );
+  await waitForFakeState(1, 15_000);
+  await wait(350);
+  check(
+    "previous-returns-within-remote-context",
+    (await fakeState())?.videoId === "dQw4w9WgXcQ" &&
+      (await fakeState())?.state === 1 &&
+      (await page.evaluate(() => document.querySelector(".lyrics-heading h1")?.textContent ?? "")).includes(
+        "Never Gonna Give You Up"
+      ),
+    JSON.stringify(await fakeState())
+  );
+  await clickMainPlayToggle();
+  await waitForFakeState(2);
+
+  await gotoHash("#/youtube-playlist/PLqa000000000001");
+  await page.waitForSelector('[data-testid="youtube-playlist-view"]', { timeout: 15_000 });
+  await clickText('[data-testid="youtube-playlist-view"] .detail-hero button', "Channel");
   await page.waitForSelector('[data-testid="youtube-channel-view"]', { timeout: 15_000 });
   await page.waitForSelector('[data-testid="youtube-channel-uploads"] [data-testid="remote-track-row"]', {
     timeout: 15_000,
   });
+  const channelHeroText =
+    (await page.$eval('[data-testid="youtube-channel-view"] .detail-hero', node => node.textContent ?? "")) ?? "";
   check(
-    "channel-detail-loads-uploads-and-public-playlists",
-    (await page.$$eval('[data-testid="youtube-channel-playlists"] [data-testid="youtube-playlist-card"]', nodes => nodes.length)) === 1
+    "channel-detail-shows-handle-and-public-stats",
+    channelHeroText.includes("@RickAstley") &&
+      channelHeroText.includes("subscribers") &&
+      channelHeroText.includes("432 videos") &&
+      channelHeroText.includes("views"),
+    channelHeroText
+  );
+  await clickText('[data-testid="youtube-channel-view"] button', "Load more uploads");
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll('[data-testid="youtube-channel-uploads"] [data-testid="remote-track-row"]')
+        .length === 4,
+    { timeout: 15_000 }
+  );
+  await page.click('[data-testid="youtube-channel-playlists-load-more"]');
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll('[data-testid="youtube-channel-playlists"] [data-testid="youtube-playlist-card"]')
+        .length === 2,
+    { timeout: 15_000 }
+  );
+  const popularCallsBefore = (await catalogCalls()).filter(call => call === "getChannelVideos").length;
+  await page.click('[data-testid="youtube-channel-load-popular"]');
+  await page.waitForSelector('[data-testid="youtube-channel-popular"] [data-testid="remote-track-row"]', {
+    timeout: 15_000,
+  });
+  await page.click('[data-testid="youtube-channel-popular-load-more"]');
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll('[data-testid="youtube-channel-popular"] [data-testid="remote-track-row"]')
+        .length === 4,
+    { timeout: 15_000 }
+  );
+  check(
+    "channel-detail-paginates-uploads-playlists-and-explicit-popular-videos",
+    popularCallsBefore === 0 &&
+      (await catalogCalls()).filter(call => call === "getChannelVideos").length === 2 &&
+      (await page.$$eval('[data-testid="youtube-channel-album-collections"] [data-testid="youtube-playlist-card"]', nodes => nodes.length)) === 1,
+    (await catalogCalls()).join(", ")
   );
   await shot("11-youtube-channel-detail");
+
+  await page.click('[data-testid="youtube-channel-album-collections"] [data-testid="youtube-playlist-card"]');
+  await page.waitForSelector('[data-testid="youtube-playlist-view"]', { timeout: 15_000 });
+  await page.waitForSelector('[data-testid="youtube-playlist-items"] [data-testid="remote-track-row"]', {
+    timeout: 15_000,
+  });
+  await clickText('[data-testid="youtube-playlist-view"] .catalog-load-more button', "Load more videos");
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll('[data-testid="youtube-playlist-items"] [data-testid="remote-track-row"]')
+        .length === 3,
+    { timeout: 15_000 }
+  );
+  const albumDetailState = await page.evaluate(() => ({
+    hero: document.querySelector('[data-testid="youtube-playlist-view"] .detail-hero')?.textContent ?? "",
+    heroBadge:
+      document
+        .querySelector('[data-testid="youtube-playlist-view"] .detail-hero [data-testid="source-badge"]')
+        ?.getAttribute("data-source-kind") ?? null,
+    rowKinds: [...document.querySelectorAll('[data-testid="youtube-playlist-items"] [data-testid="remote-track-row"]')].map(
+      node => node.getAttribute("data-source-kind")
+    ),
+    rowsText: document.querySelector('[data-testid="youtube-playlist-items"]')?.textContent ?? "",
+  }));
+  check(
+    "verified-album-collection-detail-uses-music-sources-and-actual-album-label",
+    albumDetailState.hero.includes("YouTube Music album collection") &&
+      albumDetailState.heroBadge === "youtube-music" &&
+      albumDetailState.rowKinds.length === 3 &&
+      albumDetailState.rowKinds.every(kind => kind === "youtube-music") &&
+      albumDetailState.rowsText.includes("Whenever You Need Somebody"),
+    JSON.stringify(albumDetailState)
+  );
+  await shot("11b-youtube-album-collection-detail");
 
   const searchCallsBeforeDirectLink = (await catalogCalls()).filter(call => call.startsWith("search")).length;
   await gotoHash("#/search/https%3A%2F%2Fmusic.youtube.com%2Fwatch%3Fv%3DdQw4w9WgXcQ");
@@ -1311,18 +1901,28 @@ try {
     searchCallsAfterDirectLink === searchCallsBeforeDirectLink,
     `${searchCallsBeforeDirectLink} -> ${searchCallsAfterDirectLink}`
   );
+  const remoteHistoryBeforeMusicLink = (await remoteHistoryAdds()).length;
   await clickText('[data-testid="youtube-direct-link"] button', "Open video");
-  await page.waitForSelector('[data-testid="youtube-now-playing"]', { timeout: 15_000 });
+  await page.waitForSelector('[data-testid="lyrics-view"]', { timeout: 15_000 });
+  await page.waitForSelector('[data-testid="integrated-youtube-player"]', { timeout: 15_000 });
   await page.waitForSelector('[data-testid="youtube-iframe"]', { timeout: 15_000 });
-  await waitForFakeState(5, 10_000);
+  await waitForFakeState(1, 15_000);
+  await wait(350);
   const musicBadge = await page.evaluate(
-    () => document.querySelector(".youtube-track-summary [data-testid='source-badge']")?.getAttribute("data-source-kind")
+    () =>
+      document
+        .querySelector('[data-testid="player-bar"] [data-testid="source-badge"]')
+        ?.getAttribute("data-source-kind") ?? null
   );
   check(
-    "actual-youtube-music-link-keeps-youtube-music-provenance",
-    musicBadge === "youtube-music",
+    "actual-youtube-music-link-keeps-youtube-music-provenance-in-main-player",
+    musicBadge === "youtube-music" &&
+      (await remoteHistoryAdds()).length === remoteHistoryBeforeMusicLink + 1 &&
+      (await remoteHistoryAdds()).at(-1)?.source?.kind === "youtube-music",
     String(musicBadge)
   );
+  await clickMainPlayToggle();
+  await waitForFakeState(2);
   await shot("12-direct-youtube-music-link");
 
   await page.evaluate(() => {
@@ -1345,7 +1945,8 @@ try {
     (window as any).__catalogMode = "success";
   });
 
-  // Catalog browsing must not damage the local engine or library surface.
+  // Mixed queue: start the local Songs queue, insert a catalog video with Play Next, then cross
+  // local -> remote -> local -> remote through the same transport and queue occurrences.
   await nav("Songs");
   await page.waitForSelector('[data-testid="track-row"]', { timeout: 15_000 });
   await page.evaluate(() => {
@@ -1359,7 +1960,183 @@ try {
     return Boolean(audio && !audio.paused && audio.currentTime > 0.25);
   }, { timeout: 15_000 });
   check("local-playback-still-works-after-catalog", !(await audioState()).paused, JSON.stringify(await audioState()));
-  await page.evaluate(() => document.querySelector("audio")?.pause());
+  await clickMainPlayToggle();
+  await page.waitForFunction(() => document.querySelector("audio")?.paused === true, { timeout: 10_000 });
+
+  await gotoHash("#/search/Rick%20Astley");
+  await page.waitForSelector('[data-testid="youtube-search-videos"] [data-testid="remote-track-row"]', {
+    timeout: 20_000,
+  });
+  await page.click(
+    '[data-testid="youtube-search-videos"] button[aria-label="Play Never Gonna Give You Up (Official Video) next"]'
+  );
+  await wait(250);
+  await page.click('[data-testid="player-bar"] button[aria-label="Queue"]');
+  await page.waitForSelector('[data-testid="queue-panel"]', { timeout: 10_000 });
+  const mixedQueueState = await page.evaluate(() => ({
+    entries: [...document.querySelectorAll('[data-testid="queue-entry"]')].map(node => ({
+      source: node.getAttribute("data-source-kind"),
+      current: node.classList.contains("current"),
+      text: node.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      badge:
+        node.querySelector('[data-testid="source-badge"]')?.getAttribute("data-source-kind") ?? null,
+    })),
+  }));
+  const mixedCurrentIndex = mixedQueueState.entries.findIndex(entry => entry.current);
+  const mixedRemoteIndex = mixedQueueState.entries.findIndex(entry => entry.source === "youtube");
+  check(
+    "play-next-inserts-remote-occurrence-after-current-local-track",
+    mixedCurrentIndex >= 0 &&
+      mixedRemoteIndex === mixedCurrentIndex + 1 &&
+      mixedQueueState.entries[mixedCurrentIndex]?.source === "local" &&
+      mixedQueueState.entries[mixedCurrentIndex]?.badge === null &&
+      mixedQueueState.entries[mixedRemoteIndex]?.badge === "youtube",
+    JSON.stringify(mixedQueueState)
+  );
+  await shot("14-mixed-local-remote-queue");
+  await page.evaluate(() => {
+    const entry = [...document.querySelectorAll('[data-testid="queue-entry"]')].find(
+      node => node.getAttribute("data-source-kind") === "youtube"
+    );
+    (entry?.querySelector(".queue-track") as HTMLButtonElement | null)?.click();
+  });
+  await page.waitForSelector('[data-testid="lyrics-view"]', { timeout: 15_000 });
+  await page.waitForSelector('[data-testid="integrated-youtube-player"]', { timeout: 15_000 });
+  await waitForFakeState(1, 15_000);
+  check(
+    "queue-jump-crosses-local-to-remote-and-pauses-local-engine",
+    (await audioState()).paused &&
+      (await page.evaluate(() => document.querySelector(".lyrics-heading h1")?.textContent ?? "")).includes(
+        "Never Gonna Give You Up"
+      ),
+    JSON.stringify({ audio: await audioState(), fake: await fakeState() })
+  );
+
+  await page.click('[data-testid="player-bar"] button[aria-label="Previous track"]');
+  await page.waitForFunction(() => {
+    const audio = document.querySelector("audio");
+    return Boolean(audio && !audio.paused && audio.currentTime > 0.1);
+  }, { timeout: 15_000 });
+  const localAfterPrevious = await page.evaluate(() => ({
+    source: document.querySelector('[data-testid="lyrics-view"]')?.getAttribute("data-current-source"),
+    heading: document.querySelector(".lyrics-heading h1")?.textContent ?? "",
+    badge: Boolean(document.querySelector('[data-testid="player-bar"] [data-testid="source-badge"]')),
+    stage: Boolean(document.querySelector('[data-testid="integrated-youtube-player"]')),
+  }));
+  check(
+    "previous-crosses-remote-back-to-local-without-fake-badge-or-stage",
+    localAfterPrevious.source === "local" &&
+      localAfterPrevious.heading.includes("Fixture FLAC") &&
+      !localAfterPrevious.badge &&
+      !localAfterPrevious.stage,
+    JSON.stringify(localAfterPrevious)
+  );
+
+  await page.click('[data-testid="player-bar"] button[aria-label="Next track"]');
+  await page.waitForSelector('[data-testid="integrated-youtube-player"]', { timeout: 15_000 });
+  await waitForFakeState(1, 15_000);
+  check(
+    "next-crosses-local-back-to-same-remote-occurrence",
+    (await audioState()).paused &&
+      (await page.evaluate(() => document.querySelector(".lyrics-heading h1")?.textContent ?? "")).includes(
+        "Never Gonna Give You Up"
+      ),
+    JSON.stringify({ audio: await audioState(), fake: await fakeState() })
+  );
+  await clickMainPlayToggle();
+  await waitForFakeState(2);
+
+  await nav("History");
+  await page.waitForSelector('[data-testid="history-view"]', { timeout: 15_000 });
+  await page.waitForSelector('[data-testid="history-entry"]', { timeout: 15_000 });
+  const historyViewState = await page.evaluate(() => ({
+    entries: [...document.querySelectorAll('[data-testid="history-entry"]')].map(node => ({
+      source: node.getAttribute("data-source-kind"),
+      badge:
+        node.querySelector('[data-testid="source-badge"]')?.getAttribute("data-source-kind") ?? null,
+      text: node.textContent?.replace(/\s+/g, " ").trim() ?? "",
+    })),
+  }));
+  check(
+    "history-is-one-source-aware-list-with-remote-badges",
+    historyViewState.entries.some(entry => entry.source === "local" && entry.badge === null) &&
+      historyViewState.entries.some(
+        entry => entry.source === "youtube" && entry.badge === "youtube" && entry.text.includes("Never Gonna")
+      ) &&
+      historyViewState.entries.some(entry => entry.source === "youtube-music" && entry.badge === "youtube-music"),
+    JSON.stringify(historyViewState.entries.slice(0, 8))
+  );
+  await shot("15-history-source-aware");
+
+  await nav("Home");
+  await page.waitForSelector('[data-testid="home-recently-played"]', { timeout: 15_000 });
+  const recentlyPlayedState = await page.evaluate(() => ({
+    items: [...document.querySelectorAll('[data-testid="recently-played-item"]')].map(node => ({
+      source: node.getAttribute("data-source-kind"),
+      badge:
+        node.querySelector('[data-testid="source-badge"]')?.getAttribute("data-source-kind") ?? null,
+      text: node.textContent?.replace(/\s+/g, " ").trim() ?? "",
+    })),
+  }));
+  const recentlyPlayedKeys = recentlyPlayedState.items.map(item => `${item.source}:${item.text}`);
+  check(
+    "recently-played-uses-same-history-deduped-by-source",
+    recentlyPlayedState.items.some(item => item.source === "local" && item.badge === null) &&
+      recentlyPlayedState.items.some(item => item.source === "youtube" && item.badge === "youtube") &&
+      recentlyPlayedState.items.some(item => item.source === "youtube-music" && item.badge === "youtube-music") &&
+      new Set(recentlyPlayedKeys).size === recentlyPlayedKeys.length,
+    JSON.stringify(recentlyPlayedState)
+  );
+  await shot("16-home-recently-played-source-aware");
+
+  const historyBeforeRestart = await historyAdds();
+  const sessionBeforeRestart = await page.evaluate(() =>
+    localStorage.getItem("cadence.session.v1")
+  );
+  await page.reload({ waitUntil: "networkidle0", timeout: 30_000 });
+  await page.waitForSelector('[data-testid="player-bar"] [data-testid="source-badge"]', {
+    timeout: 20_000,
+  });
+  await wait(750);
+  const restartedPlayer = await page.evaluate(() => ({
+    title:
+      document
+        .querySelector('[data-testid="player-bar"] .player-title')
+        ?.textContent?.replace(/\s+/g, " ")
+        .trim() ?? "",
+    badge:
+      document
+        .querySelector('[data-testid="player-bar"] [data-testid="source-badge"]')
+        ?.getAttribute("data-source-kind") ?? null,
+    playLabel:
+      document
+        .querySelector('[data-testid="player-bar"] .play-button')
+        ?.getAttribute("aria-label") ?? null,
+    historyCount: ((window as any).__historyAdds ?? []).length,
+  }));
+  await nav("Now Playing");
+  await page.waitForSelector('[data-testid="integrated-youtube-player"]', { timeout: 20_000 });
+  await waitForFakeState(5, 20_000);
+  const restartedFake = await fakeState();
+  await nav("History");
+  await page.waitForSelector('[data-testid="history-entry"][data-source-kind="youtube"]', {
+    timeout: 20_000,
+  });
+  const historyAfterRestart = await historyAdds();
+  check(
+    "restart-restores-remote-session-cued-and-history-without-duplicates",
+    Boolean(sessionBeforeRestart) &&
+      restartedPlayer.title.includes("Never Gonna Give You Up") &&
+      restartedPlayer.badge === "youtube" &&
+      restartedPlayer.playLabel === "Play" &&
+      restartedFake?.videoId === "dQw4w9WgXcQ" &&
+      restartedFake.state === 5 &&
+      historyAfterRestart.length === historyBeforeRestart.length &&
+      historyAfterRestart.some((entry: any) => entry?.source?.kind === "youtube-music") &&
+      historyAfterRestart.some((entry: any) => entry?.source?.kind === "local"),
+    JSON.stringify({ restartedPlayer, restartedFake, historyAfterRestart: historyAfterRestart.length })
+  );
+  await shot("17-restart-restored-remote-session-and-history");
 
   const pageErrors = logs.filter(line => line.startsWith("[pageerror]"));
   const cspErrors = logs.filter(line => /content security policy/i.test(line));
@@ -1372,7 +2149,7 @@ try {
 }
 
 const failed = Object.entries(results).filter(([, result]) => !result.value);
-console.log(`\nYouTube Phase A+B browser QA: ${Object.keys(results).length - failed.length}/${Object.keys(results).length} checks passed`);
+console.log(`\nIntegrated YouTube browser QA: ${Object.keys(results).length - failed.length}/${Object.keys(results).length} checks passed`);
 if (logs.length) {
   console.log("\nBrowser logs (last 30):");
   for (const line of logs.slice(-30)) console.log(line);

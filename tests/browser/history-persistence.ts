@@ -79,7 +79,10 @@ const restartBackend = (nextVersion = appVersion) => {
 /** Reads the raw `listening_history` rows directly from the on-disk SQLite `library.db` file. */
 const readSqliteHistoryRows = (): Array<{
   id: number;
-  track_id: number;
+  source_kind: string;
+  track_id: number | null;
+  remote_id: string | null;
+  canonical_url: string | null;
   played_at: number;
   payload: string;
 }> => {
@@ -87,8 +90,18 @@ const readSqliteHistoryRows = (): Array<{
   const db = new DatabaseSync(dbPath);
   try {
     return db
-      .prepare("SELECT id, track_id, played_at, payload FROM listening_history ORDER BY played_at DESC, id DESC")
-      .all() as Array<{ id: number; track_id: number; played_at: number; payload: string }>;
+      .prepare(
+        "SELECT id, source_kind, track_id, remote_id, canonical_url, played_at, payload FROM listening_history ORDER BY played_at DESC, id DESC"
+      )
+      .all() as Array<{
+        id: number;
+        source_kind: string;
+        track_id: number | null;
+        remote_id: string | null;
+        canonical_url: string | null;
+        played_at: number;
+        payload: string;
+      }>;
   } finally {
     db.close();
   }
@@ -99,8 +112,13 @@ const injectMalformedSqliteRow = () => {
   store.close();
   const db = new DatabaseSync(dbPath);
   try {
-    db.prepare("INSERT INTO listening_history (track_id, played_at, payload) VALUES (?, ?, ?)").run(
+    db.prepare(
+      "INSERT INTO listening_history (source_kind, track_id, remote_id, canonical_url, played_at, payload) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(
+      "local",
       999999,
+      null,
+      null,
       Date.now() + 5000,
       "{corrupt-json-payload",
     );
@@ -235,24 +253,51 @@ const server = createServer(async (req, res) => {
           return sendTrack(id);
         }
         case "/api/history/add": {
-          // Enforce the exact Tauri v2 IPC contract: { trackId, playedAt, payload }
+          // Enforce the exact flat Tauri v2 IPC contract. `payload` is a JSON string, matching
+          // Rust `cmd_history_add(..., payload: String)`; remote rows use remoteId/canonicalUrl
+          // and must never borrow a local trackId.
           const args = (body ?? {}) as {
-            trackId?: number;
-            playedAt?: number;
+            sourceKind?: unknown;
+            trackId?: unknown;
+            remoteId?: unknown;
+            canonicalUrl?: unknown;
+            playedAt?: unknown;
             payload?: unknown;
           };
+          let payload: unknown = null;
+          try {
+            payload = typeof args.payload === "string" ? JSON.parse(args.payload) : null;
+          } catch {
+            payload = null;
+          }
+          const source =
+            args.sourceKind === "local" && typeof args.trackId === "number"
+              ? ({ kind: "local", trackId: args.trackId } as const)
+              : (args.sourceKind === "youtube" || args.sourceKind === "youtube-music") &&
+                  typeof args.remoteId === "string" &&
+                  args.remoteId.length > 0 &&
+                  typeof args.canonicalUrl === "string" &&
+                  args.canonicalUrl.length > 0
+                ? ({
+                    kind: args.sourceKind,
+                    remoteId: args.remoteId,
+                    canonicalUrl: args.canonicalUrl,
+                  } as const)
+                : null;
           if (
-            typeof args.trackId !== "number" ||
+            !source ||
+            (source.kind === "local" && args.remoteId !== null) ||
+            (source.kind !== "local" && args.trackId !== null) ||
             typeof args.playedAt !== "number" ||
-            !args.payload ||
-            typeof args.payload !== "object"
+            !payload ||
+            typeof payload !== "object"
           ) {
             return sendJson({ error: "Invalid cmd_history_add arguments" }, 400);
           }
           if (failAdd) {
             return sendJson({ error: "Disk full (os error 112)" }, 500);
           }
-          const entry = store.addHistoryEntry(args.trackId, args.playedAt, args.payload as any);
+          const entry = store.addHistoryEntry(source, args.playedAt, payload as any);
           return sendJson({ id: entry.id });
         }
         case "/api/history/list":
@@ -473,8 +518,22 @@ const launchAppPage = async (): Promise<Page> => {
         onChanged: () => () => {},
       },
       history: {
-        add: async (args: { trackId: number; playedAt: number; payload: unknown }) => {
-          const res = await call("/api/history/add", args);
+        add: async (args: {
+          source:
+            | { kind: "local"; trackId: number }
+            | { kind: "youtube" | "youtube-music"; remoteId: string; canonicalUrl: string };
+          playedAt: number;
+          payload: unknown;
+        }) => {
+          // Mirror src/tauri/bridge.ts: high-level Cadence API in, flat Tauri IPC fields out.
+          const res = await call("/api/history/add", {
+            sourceKind: args.source.kind,
+            trackId: args.source.kind === "local" ? args.source.trackId : null,
+            remoteId: args.source.kind === "local" ? null : args.source.remoteId,
+            canonicalUrl: args.source.kind === "local" ? null : args.source.canonicalUrl,
+            playedAt: args.playedAt,
+            payload: JSON.stringify(args.payload),
+          });
           return res?.id;
         },
         list: () => call("/api/history/list"),
@@ -806,7 +865,8 @@ try {
   const seedPlay = (title: string, playedAt: number) => {
     const t = libraryTracks.find(candidate => candidate.title === title);
     if (!t) throw new Error(`Fixture track not found: ${title}`);
-    store.addHistoryEntry(t.id, playedAt, {
+    store.addHistoryEntry({ kind: "local", trackId: t.id }, playedAt, {
+      source: { kind: "local", trackId: t.id },
       trackId: t.id,
       path: t.path,
       title: t.title,

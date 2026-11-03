@@ -13,10 +13,75 @@ import {
   type PlaylistRow,
   type StoredTrack,
 } from "./storeCore";
-import type { HistoryEntry, HistoryPayload } from "../../shared/types";
+import type {
+  HistoryEntry,
+  HistoryPayload,
+  RemoteHistoryPayload,
+  TrackSource,
+} from "../../shared/types";
 
 /** The most history rows to keep, mirroring `HISTORY_CAP` in src-tauri/src/db.rs. */
 const HISTORY_CAP = 1000;
+
+function historySourceFromColumns(
+  sourceKind: string,
+  trackId: number | null,
+  remoteId: string | null,
+  canonicalUrl: string | null
+): TrackSource | null {
+  if (sourceKind === "local" && typeof trackId === "number") {
+    return { kind: "local", trackId };
+  }
+  if ((sourceKind === "youtube" || sourceKind === "youtube-music") && remoteId) {
+    return {
+      kind: sourceKind,
+      remoteId,
+      canonicalUrl:
+        canonicalUrl ??
+        (sourceKind === "youtube-music"
+          ? `https://music.youtube.com/watch?v=${encodeURIComponent(remoteId)}`
+          : `https://www.youtube.com/watch?v=${encodeURIComponent(remoteId)}`),
+    };
+  }
+  return null;
+}
+
+function normalizeHistoryPayload(
+  raw: HistoryPayload & { trackId?: number; path?: string },
+  source: TrackSource,
+  playedAt: number
+): HistoryPayload {
+  if (source.kind === "local") {
+    return {
+      source,
+      trackId: source.trackId,
+      path: raw.path ?? "",
+      title: raw.title ?? "",
+      artist: raw.artist ?? "",
+      albumArtist: raw.albumArtist ?? raw.artist ?? "",
+      album: raw.album ?? "",
+      artworkUrl: raw.artworkUrl ?? null,
+      duration: raw.duration ?? 0,
+      fetchedAt: raw.fetchedAt,
+    };
+  }
+  const remote: RemoteHistoryPayload | null =
+    raw.source && raw.source.kind !== "local" ? (raw as RemoteHistoryPayload) : null;
+  return {
+    source,
+    title: raw.title ?? "",
+    artist: raw.artist ?? "",
+    albumArtist: raw.albumArtist ?? raw.artist ?? "",
+    album: raw.album ?? "",
+    artworkUrl: raw.artworkUrl ?? null,
+    duration: raw.duration ?? 0,
+    channelId: remote?.channelId ?? null,
+    channelTitle: remote?.channelTitle ?? null,
+    canonicalUrl: source.canonicalUrl,
+    playbackMechanism: "youtube-iframe",
+    fetchedAt: remote?.fetchedAt ?? playedAt,
+  };
+}
 
 export type { StoredTrack, NewTrack };
 
@@ -138,13 +203,52 @@ export class LibraryStore extends LibraryStoreCore {
             );
             CREATE TABLE IF NOT EXISTS listening_history (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
-              track_id INTEGER NOT NULL,
+              source_kind TEXT NOT NULL DEFAULT 'local',
+              track_id INTEGER,
+              remote_id TEXT,
+              canonical_url TEXT,
               played_at INTEGER NOT NULL,
-              payload TEXT NOT NULL
+              payload TEXT NOT NULL,
+              CHECK (
+                (source_kind = 'local' AND track_id IS NOT NULL AND remote_id IS NULL)
+                OR
+                (source_kind IN ('youtube', 'youtube-music') AND track_id IS NULL AND remote_id IS NOT NULL)
+              )
             );
             CREATE INDEX IF NOT EXISTS idx_listening_history_played_at
               ON listening_history(played_at DESC, id DESC);
           `);
+          const historyColumns = sqlite
+            .prepare("PRAGMA table_info(listening_history)")
+            .all() as Array<{ name: string }>;
+          if (!historyColumns.some(column => column.name === "source_kind")) {
+            sqlite.exec(`
+              BEGIN IMMEDIATE;
+              ALTER TABLE listening_history RENAME TO listening_history_legacy_stage7;
+              CREATE TABLE listening_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_kind TEXT NOT NULL DEFAULT 'local',
+                track_id INTEGER,
+                remote_id TEXT,
+                canonical_url TEXT,
+                played_at INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                CHECK (
+                  (source_kind = 'local' AND track_id IS NOT NULL AND remote_id IS NULL)
+                  OR
+                  (source_kind IN ('youtube', 'youtube-music') AND track_id IS NULL AND remote_id IS NOT NULL)
+                )
+              );
+              INSERT INTO listening_history
+                (id, source_kind, track_id, remote_id, canonical_url, played_at, payload)
+              SELECT id, 'local', track_id, NULL, NULL, played_at, payload
+                FROM listening_history_legacy_stage7;
+              DROP TABLE listening_history_legacy_stage7;
+              CREATE INDEX IF NOT EXISTS idx_listening_history_played_at
+                ON listening_history(played_at DESC, id DESC);
+              COMMIT;
+            `);
+          }
         }
       } catch (error) {
         console.warn("[Cadence] node:sqlite unavailable, falling back to JSON library store:", error);
@@ -224,11 +328,11 @@ export class LibraryStore extends LibraryStoreCore {
    * harnesses exercise the real persistence semantics: transactional insert, prune to the
    * newest HISTORY_CAP rows, corrupt-payload rows skipped on read.
    */
-  addHistoryEntry(trackId: number, playedAt: number, payload: HistoryPayload): HistoryEntry {
+  addHistoryEntry(source: TrackSource, playedAt: number, payload: HistoryPayload): HistoryEntry {
     if (!this.sqliteDb) {
       const entry: HistoryEntry = {
         id: this.memoryHistory.reduce((max, e) => Math.max(max, e.id), 0) + 1,
-        trackId,
+        source,
         playedAt,
         payload,
       };
@@ -239,15 +343,24 @@ export class LibraryStore extends LibraryStoreCore {
     db.exec("BEGIN IMMEDIATE");
     try {
       const result = db
-        .prepare("INSERT INTO listening_history (track_id, played_at, payload) VALUES (?, ?, ?)")
-        .run(trackId, playedAt, JSON.stringify(payload)) as { lastInsertRowid?: number | bigint };
+        .prepare(
+          "INSERT INTO listening_history (source_kind, track_id, remote_id, canonical_url, played_at, payload) VALUES (?, ?, ?, ?, ?, ?)"
+        )
+        .run(
+          source.kind,
+          source.kind === "local" ? source.trackId : null,
+          source.kind === "local" ? null : source.remoteId,
+          source.kind === "local" ? null : source.canonicalUrl,
+          playedAt,
+          JSON.stringify(payload)
+        ) as { lastInsertRowid?: number | bigint };
       db.prepare(
         `DELETE FROM listening_history WHERE id NOT IN (
            SELECT id FROM listening_history ORDER BY played_at DESC, id DESC LIMIT ?
          )`
       ).run(HISTORY_CAP);
       db.exec("COMMIT");
-      return { id: Number(result.lastInsertRowid ?? 0), trackId, playedAt, payload };
+      return { id: Number(result.lastInsertRowid ?? 0), source, playedAt, payload };
     } catch (error) {
       db.exec("ROLLBACK");
       throw error;
@@ -258,17 +371,36 @@ export class LibraryStore extends LibraryStoreCore {
     if (!this.sqliteDb) return [...this.memoryHistory];
     const rows = this.sqliteDb
       .prepare(
-        "SELECT id, track_id, played_at, payload FROM listening_history ORDER BY played_at DESC, id DESC LIMIT ?"
+        "SELECT id, source_kind, track_id, remote_id, canonical_url, played_at, payload FROM listening_history ORDER BY played_at DESC, id DESC LIMIT ?"
       )
-      .all(limit) as Array<{ id: number; track_id: number; played_at: number; payload: string }>;
+      .all(limit) as Array<{
+      id: number;
+      source_kind: string;
+      track_id: number | null;
+      remote_id: string | null;
+      canonical_url: string | null;
+      played_at: number;
+      payload: string;
+    }>;
     const entries: HistoryEntry[] = [];
     for (const row of rows) {
       try {
+        const source = historySourceFromColumns(
+          row.source_kind,
+          row.track_id,
+          row.remote_id,
+          row.canonical_url
+        );
+        if (!source) continue;
+        const rawPayload = JSON.parse(row.payload) as HistoryPayload & {
+          trackId?: number;
+          path?: string;
+        };
         entries.push({
           id: row.id,
-          trackId: row.track_id,
+          source,
           playedAt: row.played_at,
-          payload: JSON.parse(row.payload) as HistoryPayload,
+          payload: normalizeHistoryPayload(rawPayload, source, row.played_at),
         });
       } catch {
         /* skip corrupt row: one bad payload must never blank the whole history */

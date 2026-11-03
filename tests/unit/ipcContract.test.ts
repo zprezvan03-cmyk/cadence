@@ -242,9 +242,23 @@ describe("tauri IPC argument contract", () => {
   it("pins the history write contract that regressed (flat keys, no wrapper)", () => {
     const rust = rustByName.get("cmd_history_add");
     expect(rust).toBeDefined();
-    expect(rust?.flatKeys.sort()).toEqual(["payload", "playedAt", "trackId"]);
+    expect(rust?.flatKeys.sort()).toEqual([
+      "canonicalUrl",
+      "payload",
+      "playedAt",
+      "remoteId",
+      "sourceKind",
+      "trackId",
+    ]);
     expect(rust?.nestedKeys).toEqual({});
     const call = invokeCalls.find(c => c.command === "cmd_history_add");
-    expect(call?.keys.sort()).toEqual(["payload", "playedAt", "trackId"]);
+    expect(call?.keys.sort()).toEqual([
+      "canonicalUrl",
+      "payload",
+      "playedAt",
+      "remoteId",
+      "sourceKind",
+      "trackId",
+    ]);
   });
 });

@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect } from "react";
 import { Trash2 } from "lucide-react";
+import { mediaItemFromHistoryPayload } from "../../../shared/media";
 import type { HistoryEntry } from "../../../shared/types";
 import { useHistory } from "../../state/historyStore";
 import { selectTrack } from "../../state/libraryStore";
@@ -12,11 +13,14 @@ import { usePlayer } from "../../state/playerStore";
 import { useUi } from "../../state/uiStore";
 import { formatTime } from "../../player/queue";
 import { Artwork } from "../../components/Artwork";
+import { SourceBadge } from "../../components/SourceBadge";
 
 export function HistoryView() {
   const { entries, loading, error, load, clear } = useHistory(state => state);
   const playTrack = usePlayer(state => state.playTrack);
+  const playMediaItem = usePlayer(state => state.playMediaItem);
   const showToast = useUi(state => state.showToast);
+  const navigate = useUi(state => state.navigate);
 
   useEffect(() => {
     void load();
@@ -24,14 +28,24 @@ export function HistoryView() {
 
   const handlePlay = useCallback(
     (entry: HistoryEntry) => {
-      const track = selectTrack(entry.trackId);
-      if (!track) {
-        void showToast("This track is no longer in your library.");
+      if (entry.source.kind === "local") {
+        const track = selectTrack(entry.source.trackId);
+        if (!track) {
+          void showToast("This track is no longer in your library.");
+          return;
+        }
+        void playTrack(entry.source.trackId);
         return;
       }
-      void playTrack(entry.trackId);
+      const item = mediaItemFromHistoryPayload(entry.payload);
+      if (!item) {
+        void showToast("This remote history entry is incomplete.");
+        return;
+      }
+      void playMediaItem(item);
+      navigate({ name: "lyrics" });
     },
-    [playTrack, showToast],
+    [navigate, playMediaItem, playTrack, showToast],
   );
 
   const handleClear = useCallback(() => {
@@ -103,8 +117,8 @@ export function HistoryView() {
 
       <div className="history-list">
         {entries.map(entry => {
-          const track = selectTrack(entry.trackId);
-          const available = track !== null;
+          const track = entry.source.kind === "local" ? selectTrack(entry.source.trackId) : null;
+          const available = entry.source.kind !== "local" || track !== null;
           const payload = entry.payload;
           const title = payload.title || "Unknown title";
           return (
@@ -114,6 +128,7 @@ export function HistoryView() {
               className={`history-row${available ? "" : " history-row-unavailable"}`}
               onClick={() => void handlePlay(entry)}
               data-testid="history-entry"
+              data-source-kind={entry.source.kind}
             >
               <div className="history-artwork">
                 <Artwork src={payload.artworkUrl ?? null} alt={payload.album || title} size="xs" />
@@ -124,6 +139,7 @@ export function HistoryView() {
                   {payload.artist}{payload.album ? ` · ${payload.album}` : ""}
                 </span>
               </div>
+              <SourceBadge source={entry.source} />
               <span className="history-time">{formatTime(payload.duration)}</span>
               {!available ? (
                 <span className="history-muted" title="This file was removed from the library.">

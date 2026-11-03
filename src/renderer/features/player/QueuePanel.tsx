@@ -4,23 +4,29 @@
 
 import { useEffect } from "react";
 import { ListMusic, Trash2, X } from "lucide-react";
-import { useQueueTracks } from "../../app/hooks";
+import { mediaItemFromLocalTrack, trackSourceKey } from "../../../shared/media";
+import type { MediaItem, QueueEntry } from "../../../shared/types";
 import { usePresence } from "../../app/usePresence";
+import { useLibrary } from "../../state/libraryStore";
 import { usePlayer } from "../../state/playerStore";
+import { useRemoteMedia } from "../../state/remoteMediaStore";
 import { useUi } from "../../state/uiStore";
 import { Artwork } from "../../components/Artwork";
+import { SourceBadge } from "../../components/SourceBadge";
 import { formatTime } from "../../player/queue";
 
 export function QueuePanel() {
   const open = useUi(state => state.queueOpen);
   const toggleQueue = useUi(state => state.toggleQueue);
-  const tracks = useQueueTracks();
+  const navigate = useUi(state => state.navigate);
   const order = usePlayer(state => state.order);
   const orderPosition = usePlayer(state => state.orderPosition);
   const queue = usePlayer(state => state.queue);
   const jumpTo = usePlayer(state => state.jumpTo);
-  const removeFromQueue = usePlayer(state => state.removeFromQueue);
+  const removeQueueEntry = usePlayer(state => state.removeQueueEntry);
   const clearQueue = usePlayer(state => state.clearQueue);
+  const tracksById = useLibrary(state => state.tracksById);
+  const videosByKey = useRemoteMedia(state => state.videosByKey);
   // Closing flips `open` immediately; presence keeps the drawer mounted for its fast
   // slide-out (and it keeps owning Escape until it is actually gone).
   const presence = usePresence(open);
@@ -41,9 +47,26 @@ export function QueuePanel() {
 
   if (!presence.mounted) return null;
 
-  const ordered = order
-    .map((queueIndex, position) => ({ track: tracks[queueIndex], position }))
-    .filter(entry => entry.track);
+  const resolveItem = (entry: QueueEntry): MediaItem => {
+    if (entry.item.source.kind === "local") {
+      const track = tracksById.get(entry.item.source.trackId);
+      return track ? mediaItemFromLocalTrack(track, entry.item.fetchedAt || Date.now()) : entry.item;
+    }
+    return videosByKey[trackSourceKey(entry.item.source)] ?? entry.item;
+  };
+
+  const ordered = order.flatMap((queueIndex, position) => {
+    const entry = queue[queueIndex];
+    return entry ? [{ entry, item: resolveItem(entry), position }] : [];
+  });
+
+  const handleJump = (entry: QueueEntry, position: number) => {
+    void jumpTo(position);
+    if (entry.item.source.kind !== "local") {
+      toggleQueue(false);
+      navigate({ name: "lyrics" });
+    }
+  };
 
   return (
     <aside className={`queue-panel ${presence.phaseClass}`} data-presence={presence.phase} data-testid="queue-panel">
@@ -69,21 +92,28 @@ export function QueuePanel() {
         </div>
       ) : (
         <ol className="queue-list">
-          {ordered.map(({ track, position }) => (
-            <li key={`${track.id}-${position}`} className={position === orderPosition ? "current" : undefined}>
-              <button type="button" className="queue-track" onClick={() => void jumpTo(position)}>
-                <Artwork src={track.artworkUrl} alt={track.album} size="xs" />
+          {ordered.map(({ entry, item, position }) => (
+            <li
+              key={entry.occurrenceId}
+              className={position === orderPosition ? "current" : undefined}
+              data-testid="queue-entry"
+              data-source-kind={item.source.kind}
+              data-occurrence-id={entry.occurrenceId}
+            >
+              <button type="button" className="queue-track" onClick={() => handleJump(entry, position)}>
+                <Artwork src={item.artworkUrl} alt={item.albumLabel ?? item.title} size="xs" />
                 <span>
-                  <strong>{track.title}</strong>
-                  <em>{track.artist}</em>
+                  <strong>{item.title}</strong>
+                  <em>{item.artistLabel}</em>
                 </span>
-                <span className="muted">{formatTime(track.duration)}</span>
+                <SourceBadge source={item.source} compact />
+                <span className="muted">{item.durationSeconds ? formatTime(item.durationSeconds) : "--:--"}</span>
               </button>
               <button
                 type="button"
                 className="icon-button"
-                aria-label={`Remove ${track.title} from queue`}
-                onClick={() => removeFromQueue(track.id)}
+                aria-label={`Remove ${item.title} from queue`}
+                onClick={() => removeQueueEntry(entry.occurrenceId)}
               >
                 <X size={14} />
               </button>

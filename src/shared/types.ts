@@ -132,6 +132,17 @@ export interface MediaItem {
   fetchedAt: number;
 }
 
+/**
+ * One occurrence of a media item in Cadence's single playback queue. The occurrence ID is
+ * deliberately distinct from the item's source identity: the same local or remote item may
+ * appear more than once, and history/transition guards are keyed by the occurrence plus the
+ * playback load, never by inventing a local numeric ID for remote media.
+ */
+export interface QueueEntry {
+  occurrenceId: string;
+  item: MediaItem;
+}
+
 export interface YouTubeChannelItem {
   id: string;
   title: string;
@@ -140,6 +151,9 @@ export interface YouTubeChannelItem {
   artworkUrl: string | null;
   canonicalUrl: string;
   uploadsPlaylistId: string | null;
+  subscriberCount?: number | null;
+  videoCount?: number | null;
+  viewCount?: number | null;
   fetchedAt: number;
 }
 
@@ -149,10 +163,18 @@ export interface YouTubePlaylistSummary {
   description: string;
   channelId: string | null;
   channelTitle: string | null;
+  /** Channel title with YouTube's auto-generated `- Topic` suffix removed, when present. */
+  artistLabel?: string | null;
   artworkUrl: string | null;
   itemCount: number | null;
   canonicalUrl: string;
   publishedAt: string | null;
+  /**
+   * True only for a public playlist whose ID is in YouTube Music's album-playlist namespace
+   * (`OLAK5uy…`). The Data API has no album resource, so Cadence presents these honestly as
+   * verified album collections rather than native album objects.
+   */
+  isAlbumCollection?: boolean;
   fetchedAt: number;
 }
 
@@ -167,6 +189,7 @@ export interface CatalogPage<T> {
 export interface YouTubeChannelDetail {
   channel: YouTubeChannelItem;
   playlists: YouTubePlaylistSummary[];
+  playlistsNextPageToken?: string | null;
   uploads: CatalogPage<MediaItem>;
   cached: boolean;
   fetchedAt: number;
@@ -204,10 +227,13 @@ export type YouTubeCatalogResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: YouTubeCatalogError };
 
+export type YouTubeCatalogSearchOrder = "relevance" | "date" | "viewCount" | "rating" | "title";
+
 export interface YouTubeCatalogSearchRequest {
   query: string;
   pageToken?: string | null;
   maxResults?: number;
+  order?: YouTubeCatalogSearchOrder;
 }
 
 export interface YouTubeCatalogPageRequest {
@@ -781,27 +807,50 @@ export interface YouTubeCatalogSettings {
 /** One completed listening session, newest first when listed. */
 export interface HistoryEntry {
   id: number;
-  trackId: number;
+  /** Discriminated content origin; remote plays never borrow a local numeric track ID. */
+  source: TrackSource;
   /** When playback started, ms since epoch. */
   playedAt: number;
   /** Track metadata snapshot as it was when playback started; survives file removal. */
   payload: HistoryPayload;
 }
 
-/** Stored snapshot of a played track, kept small so history rows stay cheap. */
-export interface HistoryPayload {
-  trackId: number;
-  path: string;
+interface HistoryPayloadBase {
   title: string;
   artist: string;
   albumArtist: string;
   album: string;
   artworkUrl: string | null;
   duration: number;
+  /** When remote catalog metadata was fetched; local snapshots use their play time if absent. */
+  fetchedAt?: number;
 }
 
+/** Stored snapshot of a local play, kept small so history rows stay cheap. */
+export interface LocalHistoryPayload extends HistoryPayloadBase {
+  source: Extract<TrackSource, { kind: "local" }>;
+  trackId: number;
+  path: string;
+}
+
+/** Stored snapshot of an observed official-IFrame play start. */
+export interface RemoteHistoryPayload extends HistoryPayloadBase {
+  source: Extract<TrackSource, { kind: "youtube" | "youtube-music" }>;
+  channelId: string | null;
+  channelTitle: string | null;
+  canonicalUrl: string;
+  playbackMechanism: Extract<PlaybackMechanism, "youtube-iframe">;
+  fetchedAt: number;
+}
+
+/** Stored snapshot of a played item, discriminated by the same source model as the queue. */
+export type HistoryPayload = LocalHistoryPayload | RemoteHistoryPayload;
+
 export interface PlayerSnapshot {
+  /** Local library ID for local playback; null for remote playback (never a fake ID). */
   trackId: number | null;
+  source: TrackSource | null;
+  playbackMechanism: PlaybackMechanism;
   position: number;
   duration: number;
   playing: boolean;
@@ -810,7 +859,7 @@ export interface PlayerSnapshot {
   playbackRate: number;
   shuffle: boolean;
   repeat: RepeatMode;
-  queue: number[];
+  queue: TrackSource[];
   queueIndex: number;
 }
 
@@ -869,7 +918,7 @@ export interface CadenceApi {
   info(): Promise<AppInfo>;
   history: {
     add(args: {
-      trackId: number;
+      source: TrackSource;
       playedAt: number;
       payload: HistoryPayload;
     }): Promise<void>;
@@ -983,10 +1032,29 @@ export interface CadenceApi {
     searchPlaylists(
       request: YouTubeCatalogSearchRequest
     ): Promise<YouTubeCatalogResult<CatalogPage<YouTubePlaylistSummary>>>;
+    /** Verified YouTube Music album-playlist collections only; Data API has no album resource. */
+    searchAlbumCollections(
+      request: YouTubeCatalogSearchRequest
+    ): Promise<YouTubeCatalogResult<CatalogPage<YouTubePlaylistSummary>>>;
     trending(
       request?: YouTubeCatalogPageRequest
     ): Promise<YouTubeCatalogResult<CatalogPage<MediaItem>>>;
+    /** Recent Music-category uploads. This is a search call, so callers must load it explicitly. */
+    newReleases(
+      request?: YouTubeCatalogPageRequest
+    ): Promise<YouTubeCatalogResult<CatalogPage<MediaItem>>>;
     getChannel(request: { channelId: string }): Promise<YouTubeCatalogResult<YouTubeChannelDetail>>;
+    getChannelPlaylists(request: {
+      channelId: string;
+      pageToken?: string | null;
+      maxResults?: number;
+    }): Promise<YouTubeCatalogResult<CatalogPage<YouTubePlaylistSummary>>>;
+    getChannelVideos(request: {
+      channelId: string;
+      pageToken?: string | null;
+      maxResults?: number;
+      order?: YouTubeCatalogSearchOrder;
+    }): Promise<YouTubeCatalogResult<CatalogPage<MediaItem>>>;
     getPlaylist(request: {
       playlistId: string;
     }): Promise<YouTubeCatalogResult<YouTubePlaylistDetail>>;

@@ -7,11 +7,27 @@
 import type { ReactNode } from "react";
 import { Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from "lucide-react";
 import { formatTime } from "../../player/queue";
-import { usePlayer } from "../../state/playerStore";
+import { currentQueueEntry, usePlayer } from "../../state/playerStore";
+import { useUi } from "../../state/uiStore";
 
 /** `trailing` is placed after the repeat button, in the same row (used by the fullscreen panel). */
 export function TransportButtons({ trailing }: { trailing?: ReactNode } = {}) {
   const { isPlaying, shuffle, repeat, toggle, next, previous, toggleShuffle, cycleRepeat } = usePlayer();
+  const currentEntry = usePlayer(currentQueueEntry);
+  const remotePlayerMounted = usePlayer(state => state.remotePlayerMounted);
+  const navigate = useUi(state => state.navigate);
+  const miniPlayer = useUi(state => state.miniPlayer);
+  const setMiniPlayer = useUi(state => state.setMiniPlayer);
+
+  const handleToggle = () => {
+    const needsVisiblePlayer =
+      currentEntry?.item.source.kind !== "local" && !isPlaying && !remotePlayerMounted;
+    void toggle();
+    if (needsVisiblePlayer) {
+      if (miniPlayer) setMiniPlayer(false);
+      navigate({ name: "lyrics" });
+    }
+  };
 
   return (
     <div className="transport">
@@ -31,7 +47,7 @@ export function TransportButtons({ trailing }: { trailing?: ReactNode } = {}) {
         type="button"
         className="play-button"
         aria-label={isPlaying ? "Pause" : "Play"}
-        onClick={() => void toggle()}
+        onClick={handleToggle}
         data-testid="play-toggle"
       >
         <span className="play-icon" key={isPlaying ? "pause" : "play"} aria-hidden="true">
