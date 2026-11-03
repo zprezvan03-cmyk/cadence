@@ -60,6 +60,7 @@ pub struct BootstrapPayload {
     pub tauri_version: &'static str,
     pub settings_json: Option<String>,
     pub lyrics_cache_json: Option<String>,
+    pub lyrics_fetch_job_json: Option<String>,
     pub db_snapshot: DbSnapshot,
     pub startup_files: Vec<String>,
     /// False when the OS draws no window frame, so the renderer draws its own title bar.
@@ -139,6 +140,12 @@ pub struct HttpFetchArgs {
     pub url: String,
     pub headers: HashMap<String, String>,
     pub timeout_ms: u64,
+    /// HTTP method; absent keeps the historical GET-only behaviour.
+    #[serde(default)]
+    pub method: Option<String>,
+    /// Optional request body for POST-style calls (e.g. last.fm scrobbling).
+    #[serde(default)]
+    pub body: Option<String>,
 }
 
 fn atomic_write_utf8(target: &Path, content: &str) -> Result<(), String> {
@@ -317,9 +324,11 @@ pub fn cmd_bootstrap(
 ) -> Result<BootstrapPayload, String> {
     let settings_path = state.app_data_dir.join("settings.json");
     let lyrics_cache_path = state.app_data_dir.join("lyrics-cache.json");
+    let lyrics_fetch_job_path = state.app_data_dir.join("lyrics-fetch-job.json");
 
     let settings_json = std::fs::read_to_string(&settings_path).ok();
     let lyrics_cache_json = std::fs::read_to_string(&lyrics_cache_path).ok();
+    let lyrics_fetch_job_json = std::fs::read_to_string(&lyrics_fetch_job_path).ok();
     let db_snapshot = state.db.load_snapshot()?;
 
     state.allowlist.set_roots(db_snapshot.folders.iter().cloned());
@@ -350,6 +359,7 @@ pub fn cmd_bootstrap(
         tauri_version: tauri::VERSION,
         settings_json,
         lyrics_cache_json,
+        lyrics_fetch_job_json,
         db_snapshot,
         startup_files,
         undecorated: read_window_chrome(&window).undecorated,
@@ -373,19 +383,14 @@ pub async fn cmd_db_mutate(
         .map_err(|e| e.to_string())?
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HistoryAddArgs {
-    pub track_id: i64,
-    pub played_at: i64,
-    pub payload: String,
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryEntry {
     pub id: i64,
-    pub track_id: i64,
+    pub source_kind: String,
+    pub track_id: Option<i64>,
+    pub remote_id: Option<String>,
+    pub canonical_url: Option<String>,
     pub played_at: i64,
     pub payload: Value,
 }
@@ -393,20 +398,39 @@ pub struct HistoryEntry {
 /// Records one completed listening session: the track that genuinely started playing, when it
 /// started, and a snapshot of its metadata at that moment. Fires once per play start, never on
 /// pause/resume or position ticks.
+///
+/// Parameters are flat (like every other command here) on purpose: Tauri resolves each
+/// parameter by name from the invoke payload, so a single struct parameter would require the
+/// bridge to nest the fields under that parameter's name. This command previously took a
+/// `HistoryAddArgs` struct while the bridge sent the fields flat, which made every invoke
+/// reject before reaching SQLite — history rendered from in-memory optimistic rows during a
+/// session and vanished on restart. The contract is pinned by tests/unit/ipcContract.test.ts.
 #[tauri::command]
 pub async fn cmd_history_add(
-    args: HistoryAddArgs,
+    source_kind: String,
+    track_id: Option<i64>,
+    remote_id: Option<String>,
+    canonical_url: Option<String>,
+    played_at: i64,
+    payload: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let db = Arc::clone(&state.db);
-    // Persistence is fire-and-forget: playback must never wait on disk I/O, and failures are
-    // logged by the store's caller. Bind the Result to suppress the must_use warning while still
-    // propagating persistence errors up to the bridge caller.
-    let _ = tauri::async_runtime::spawn_blocking(move || {
-        db.add_history_entry(args.track_id, args.played_at, &args.payload)
+    // The write runs on the blocking pool so playback never waits on disk I/O, but its
+    // result is propagated: a failed insert must reach the bridge caller (which logs it)
+    // instead of being silently dropped.
+    tauri::async_runtime::spawn_blocking(move || {
+        db.add_history_entry(
+            &source_kind,
+            track_id,
+            remote_id.as_deref(),
+            canonical_url.as_deref(),
+            played_at,
+            &payload,
+        )
     })
-    .await
-    .map_err(|e| e.to_string())?;
+        .await
+        .map_err(|e| e.to_string())??;
     Ok(())
 }
 
@@ -421,7 +445,10 @@ pub async fn cmd_history_list(state: State<'_, AppState>) -> Result<Vec<HistoryE
         .into_iter()
         .map(|row| HistoryEntry {
             id: row.id,
+            source_kind: row.source_kind,
             track_id: row.track_id,
+            remote_id: row.remote_id,
+            canonical_url: row.canonical_url,
             played_at: row.played_at,
             payload: row.payload,
         })
@@ -457,6 +484,7 @@ pub async fn cmd_write_user_json(
     let file_name = match kind.as_str() {
         "settings" => "settings.json",
         "lyricsCache" => "lyrics-cache.json",
+        "lyricsFetchJob" => "lyrics-fetch-job.json",
         _ => return Err("Unsupported configuration file".to_string()),
     };
     let target = state.app_data_dir.join(file_name);
@@ -846,12 +874,21 @@ pub async fn cmd_http_fetch(
     }
 
     let timeout_ms = args.timeout_ms.clamp(500, 30_000);
+    let method = match args.method.as_deref().map(str::to_ascii_uppercase).as_deref() {
+        Some("POST") => reqwest::Method::POST,
+        Some("PUT") => reqwest::Method::PUT,
+        Some("DELETE") => reqwest::Method::DELETE,
+        _ => reqwest::Method::GET,
+    };
     let mut req = state
         .http_client
-        .get(parsed)
+        .request(method, parsed)
         .timeout(Duration::from_millis(timeout_ms));
     for (k, v) in &args.headers {
         req = req.header(k.as_str(), v.as_str());
+    }
+    if let Some(body) = &args.body {
+        req = req.body(body.clone());
     }
 
     let outcome = tokio::select! {
@@ -932,6 +969,65 @@ pub fn cmd_window_action(action: String, window: WebviewWindow) -> Result<(), St
         }
         _ => Err("Unknown window action".to_string()),
     }
+}
+
+struct MiniPlayerState {
+    enabled: bool,
+    previous_size: Option<(f64, f64)>,
+}
+
+static MINI_PLAYER: Mutex<MiniPlayerState> = Mutex::new(MiniPlayerState {
+    enabled: false,
+    previous_size: None,
+});
+
+/// Switch the main window between its normal layout size and the compact,
+/// always-on-top mini-player size. The renderer owns the mini UI; this
+/// command only owns the OS window geometry so entering/leaving mini mode
+/// restores the exact size the user had before.
+#[tauri::command]
+pub fn cmd_set_mini_player(enabled: bool, window: WebviewWindow) -> Result<(), String> {
+    let mut state = MINI_PLAYER
+        .lock()
+        .map_err(|_| "Mini-player state unavailable".to_string())?;
+    if enabled {
+        if !state.enabled {
+            if window.is_fullscreen().unwrap_or(false) {
+                window.set_fullscreen(false).map_err(|e| e.to_string())?;
+            }
+            if window.is_maximized().unwrap_or(false) {
+                window.unmaximize().map_err(|e| e.to_string())?;
+            }
+            let scale = window.scale_factor().unwrap_or(1.0).max(0.1);
+            if let Ok(size) = window.inner_size() {
+                state.previous_size = Some((size.width as f64 / scale, size.height as f64 / scale));
+            }
+        }
+        window
+            .set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(360.0, 132.0))))
+            .map_err(|e| e.to_string())?;
+        window
+            .set_size(tauri::Size::Logical(tauri::LogicalSize::new(460.0, 160.0)))
+            .map_err(|e| e.to_string())?;
+        window.set_resizable(false).map_err(|e| e.to_string())?;
+        window.set_always_on_top(true).map_err(|e| e.to_string())?;
+        state.enabled = true;
+    } else {
+        let (width, height) = state.previous_size.unwrap_or((1440.0, 920.0));
+        window.set_always_on_top(false).map_err(|e| e.to_string())?;
+        window.set_resizable(true).map_err(|e| e.to_string())?;
+        window
+            .set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(1040.0, 680.0))))
+            .map_err(|e| e.to_string())?;
+        window
+            .set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+                width.max(1040.0),
+                height.max(680.0),
+            )))
+            .map_err(|e| e.to_string())?;
+        state.enabled = false;
+    }
+    Ok(())
 }
 
 #[tauri::command]

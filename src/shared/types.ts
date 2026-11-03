@@ -41,10 +41,106 @@ export interface Track {
   addedAt: number;
   lastPlayedAt: number | null;
   playCount: number;
+  /** ReplayGain track adjustment from file tags, in dB (null when untagged). */
+  replayGainTrackDb: number | null;
+  /** ReplayGain album adjustment from file tags, in dB (null when untagged). */
+  replayGainAlbumDb: number | null;
+  /** ReplayGain track peak amplitude (linear), used for clipping prevention. */
+  replayGainTrackPeak: number | null;
+  /** ReplayGain album peak amplitude (linear), used for clipping prevention. */
+  replayGainAlbumPeak: number | null;
   /** True when a sidecar `.lrc`/`.ttml`/`.qrc`/`.srt` file sits next to the audio file. */
   hasSidecarLyrics: boolean;
   /** True when this file has a supported audio extension; codec support is checked separately. */
   playable: boolean;
+  /** True when the user has edited this track's details in Cadence (see `metadataOverride`). */
+  metadataEdited?: boolean;
+  /**
+   * The user's saved edits for this track, plus the scanned file-tag values they replaced.
+   * Cadence re-applies `patch` after every rescan, so edits survive rescans without the
+   * audio file itself ever being modified. Null/absent when the track is unedited.
+   */
+  metadataOverride?: TrackMetadataOverride | null;
+}
+
+/** Editable text/number fields of a track, as patched by the user in the track editor. */
+export interface TrackMetadataEdit {
+  title?: string;
+  artist?: string;
+  albumArtist?: string;
+  album?: string;
+  genre?: string;
+  year?: number | null;
+  trackNo?: number | null;
+  discNo?: number | null;
+  /** Artwork file in Cadence's artwork cache; `null` means "explicitly no cover". */
+  artworkFile?: string | null;
+}
+
+/** A complete snapshot of a track's editable fields, as read from the audio file's tags. */
+export interface TrackMetadataSnapshot {
+  title: string;
+  artist: string;
+  albumArtist: string;
+  album: string;
+  genre: string;
+  year: number | null;
+  trackNo: number | null;
+  discNo: number | null;
+  artworkFile: string | null;
+}
+
+/**
+ * Durable per-track edit state: `patch` holds only the fields the user changed, and
+ * `original` holds the latest scanned tag values so "Reset to file tags" is always exact.
+ */
+export interface TrackMetadataOverride {
+  patch: TrackMetadataEdit;
+  original: TrackMetadataSnapshot;
+  updatedAt: number;
+}
+
+/* ------------------------------------------------------------------ media sources */
+
+/**
+ * Content origin is deliberately separate from the mechanism that eventually plays it. The
+ * remote source kinds are retained for source-aware queue/history compatibility and for a
+ * future documented, appropriately licensed provider. This build registers no remote
+ * playback provider, so non-local entries are representable but not playable.
+ */
+export type TrackSource =
+  | { kind: "local"; trackId: number }
+  | { kind: "youtube-music"; remoteId: string; canonicalUrl: string }
+  | { kind: "youtube"; remoteId: string; canonicalUrl: string };
+
+export type PlaybackMechanism = "local-file" | "remote-provider" | "unavailable";
+
+export type MediaAvailability = "ready" | "restricted" | "unavailable" | "live" | "unknown";
+
+/** Source-aware display/playback item shared by local and remote catalog surfaces. */
+export interface MediaItem {
+  source: TrackSource;
+  title: string;
+  artistLabel: string;
+  channelId: string | null;
+  channelTitle: string | null;
+  albumLabel: string | null;
+  durationSeconds: number | null;
+  artworkUrl: string | null;
+  publishedAt: string | null;
+  availability: MediaAvailability;
+  fetchedAt: number;
+}
+
+/**
+ * One occurrence of a media item in Cadence's single playback queue. The occurrence ID is
+ * deliberately distinct from the item's source identity: the same local or remote item may
+ * appear more than once, and history/transition guards are keyed by the occurrence plus the
+ * playback load, never by inventing a local numeric ID for remote media.
+ */
+export interface QueueEntry {
+  occurrenceId: string;
+  item: MediaItem;
 }
 
 export interface Album {
@@ -67,6 +163,28 @@ export interface Artist {
   albumCount: number;
 }
 
+/** Built-in smart playlist rule kinds, evaluated live against the current library. */
+export type SmartPlaylistPreset =
+  | "favorites"
+  | "recently-added"
+  | "recently-played"
+  | "most-played"
+  | "never-played"
+  | "genre"
+  | "artist";
+
+/**
+ * A smart playlist rule. Smart playlists store no track list: membership is recomputed
+ * from the library every time the playlist is read, so it stays current on its own.
+ */
+export interface SmartPlaylistRule {
+  preset: SmartPlaylistPreset;
+  /** Genre or artist text for the `genre` / `artist` presets. */
+  value?: string;
+  /** Maximum number of tracks (after the preset's ordering); absent means no practical cap. */
+  limit?: number;
+}
+
 export interface Playlist {
   id: number;
   name: string;
@@ -77,6 +195,10 @@ export interface Playlist {
   duration: number;
   /** Artwork of the first track, used as the playlist cover. */
   artworkUrl: string | null;
+  /** `smart` playlists are rule-driven and cannot be edited track by track. */
+  kind?: "manual" | "smart";
+  /** The rule driving a smart playlist; null/absent for manual playlists. */
+  smart?: SmartPlaylistRule | null;
 }
 
 export interface ScanProgress {
@@ -260,14 +382,62 @@ export interface LyricsResolveRequest {
   artist: string;
   album: string;
   duration: number;
+  /**
+   * Set when resolving lyrics for a remote (YouTube Music) item: the item has no local track id,
+   * so `trackId` is -1 and the remote identity drives both the cache key and the YTM lyrics
+   * provider. Never a fake library id — queue/history keep the string source identity.
+   */
+  remote?: { remoteId: string; canonicalUrl: string } | null;
   /** Skip the network and only look at local files / tags. */
   localOnly?: boolean;
+  /**
+   * Explicit user-initiated retry: bypass the cached network answer and the Not Found cooldown
+   * so previously unsuccessful providers are queried again. Automatic paths never set this.
+   */
+  forceRefresh?: boolean;
 }
 
 export interface LyricsResolveResult {
   candidates: LyricsCandidate[];
   /** Providers that were attempted and their outcome, for the provider picker UI. */
   providerStatus: { provider: string; status: "hit" | "miss" | "error" | "skipped"; detail?: string }[];
+  /**
+   * True when every participating provider completed normally (hit or clean miss), so an empty
+   * candidate list is a proven "not found". False when any provider errored or timed out.
+   */
+  definitive?: boolean;
+}
+
+/** Lifecycle of the persistent Fetch All Lyrics background job. */
+export type LyricsFetchJobState = "idle" | "running" | "paused" | "completed" | "canceled";
+
+/** Renderer-facing snapshot of the Fetch All job; the bridge owns the authoritative state. */
+export interface LyricsFetchJobSnapshot {
+  jobId: string | null;
+  state: LyricsFetchJobState;
+  total: number;
+  /** Entries in a terminal state (found + notFound + failed + skipped). */
+  processed: number;
+  found: number;
+  notFound: number;
+  /** Temporary failures plus rate-limited tracks awaiting a manual retry. */
+  failed: number;
+  skipped: number;
+  /** A track being processed right now, when any. */
+  currentTrack: { trackId: number; title: string; artist: string } | null;
+  startedAt: number | null;
+  finishedAt: number | null;
+}
+
+/** Library-wide lyrics coverage, for the onboarding Fetch All page and Settings. */
+export interface LyricsFetchStats {
+  totalTracks: number;
+  /** Tracks that already have some usable lyrics (local, embedded, manual or cached remote). */
+  withLyrics: number;
+  /** Tracks a Fetch All run would still query providers for. */
+  needsSearch: number;
+  /** Tracks whose every eligible provider result is already cached and fresh. */
+  fullyProcessed: number;
 }
 
 export interface TranslationRequest {
@@ -288,9 +458,20 @@ export interface RomanizationResult {
   detectedLanguage: string;
 }
 
+/** Bounded provider-request parallelism for Autofetch / Fetch All (see the central limiter). */
+export type LyricsFetchConcurrency = "low" | "balanced" | "high";
+
 export interface LyricsSettings {
   providerOrder: string[];
   autoFetch: boolean;
+  /**
+   * Days before a proven "not found" track is eligible for another automatic provider search
+   * (1–30). Only the last attempt timestamp is stored, so changing this re-evaluates every track
+   * immediately. Manual retries always bypass it.
+   */
+  notFoundCooldownDays: number;
+  /** Global provider-request concurrency preset shared by Autofetch, Fetch All and manual search. */
+  fetchConcurrency: LyricsFetchConcurrency;
   /** Offset in milliseconds applied to the playback clock before matching. */
   offsetMs: number;
   translationLanguage: string;
@@ -315,6 +496,16 @@ export interface LyricsSettings {
   showLyricsInFullscreen: boolean;
 }
 
+export type ReplayGainMode = "off" | "track" | "album";
+
+export interface EqualizerSettings {
+  enabled: boolean;
+  preampDb: number;
+  /** 10 band gains in dB (-12..+12); centre frequencies live in the renderer's equalizer module. */
+  bandsDb: number[];
+  presetId: string;
+}
+
 export interface PlaybackSettings {
   volume: number;
   muted: boolean;
@@ -322,12 +513,22 @@ export interface PlaybackSettings {
   repeat: RepeatMode;
   playbackRate: number;
   resumeOnLaunch: boolean;
+  /** Seconds of overlap between consecutive tracks; 0 disables crossfade. */
+  crossfadeSeconds: number;
+  /** Preload the next track so queue transitions cut without a silent gap. */
+  gaplessPlayback: boolean;
+  replayGainMode: ReplayGainMode;
+  replayGainPreampDb: number;
+  replayGainPreventClipping: boolean;
+  equalizer: EqualizerSettings;
 }
 
 export interface AppearanceSettings {
   accent: string;
   reduceMotion: boolean;
   compactSidebar: boolean;
+  /** When the sidebar is compact, hovering (or keyboard-focusing) it temporarily expands it as an overlay. */
+  compactSidebarHoverExpand: boolean;
   blurArtwork: boolean;
   /** Font id from the shared font list; applied to the whole UI and the lyrics view. */
   fontFamily: string;
@@ -341,39 +542,223 @@ export interface ShaderSettings extends GradientSettings {
   performanceMode: "high" | "balanced" | "low" | "off";
 }
 
+/** The two Now Playing surfaces a profile can describe independently. */
+export type NowPlayingProfileMode = "windowed" | "fullscreen";
+
+/** Which side of the fullscreen stage the artwork column occupies. */
+export type NowPlayingArtworkSlot = "left" | "right";
+/** Where the title/artist block sits in fullscreen: under the artwork, or across the top. */
+export type NowPlayingMetadataSlot = "artwork" | "top";
+export type NowPlayingLyricsAlignment = "left" | "center";
+/** Word-highlight treatments. They only ever affect lyrics that actually carry word timings. */
+export type NowPlayingKaraokeStyle = "sweep" | "solid" | "gradient" | "glow" | "minimal";
+export type NowPlayingBackgroundMode =
+  | "fluid"
+  | "blurred-artwork"
+  | "gradient"
+  | "solid"
+  | "particles"
+  | "visualizer";
+
+/**
+ * Visual proportions for one Now Playing surface. These values deliberately layer on the
+ * existing global lyrics typography settings: a profile changes the balance of artwork,
+ * lyrics, metadata and controls without silently replacing the sizes chosen in Settings.
+ * Later customization stages add independently editable appearance fields to this shape.
+ */
+export interface NowPlayingProfileConfig {
+  /** Whether the profile asks fullscreen layouts to show artwork. Narrow layouts may still hide it. */
+  artworkVisible: boolean;
+  /** Multiplier for the responsive artwork size (0.6–1.25 after normalization). */
+  artworkScale: number;
+  /** Multiplier for the main lyric size (0.7–1.35). */
+  lyricsScale: number;
+  /** Multiplier for translated lyric lines (0.7–1.35). */
+  translationScale: number;
+  /** Multiplier for romanized lyric lines (0.7–1.35). */
+  romanizationScale: number;
+  /** Multiplier for the track title (0.75–1.25). */
+  titleScale: number;
+  /** Multiplier for artist/album metadata (0.75–1.25). */
+  metadataScale: number;
+  /** Multiplier for playback-control and dock hit sizes (0.8–1.2). */
+  controlsScale: number;
+  /** Maximum readable lyric measure in CSS pixels (640–1280). */
+  lyricsMaxWidth: number;
+  /** Multiplier for Now Playing gutters and major gaps (0.8–1.25). */
+  spacingScale: number;
+
+  /* Layout (grid-constrained component placement) */
+  artworkSlot: NowPlayingArtworkSlot;
+  metadataSlot: NowPlayingMetadataSlot;
+  metadataVisible: boolean;
+  dockVisible: boolean;
+  controlsVisible: boolean;
+  lyricsAlignment: NowPlayingLyricsAlignment;
+
+  /* Typography. Font ids reference the shared font list; "" inherits the app font. */
+  fontId: string;
+  translationFontId: string;
+  romanizationFontId: string;
+  /** Main lyric weight 300–900; 0 inherits the Settings weight. */
+  lyricsWeight: number;
+  /** Line-height multiplier on the Settings line height (0.85–1.4). */
+  lineSpacingScale: number;
+  /** Extra letter spacing in em (-0.02–0.08). */
+  letterSpacingEm: number;
+
+  /* Lyrics appearance. Colors are #rrggbb; "" inherits the active theme. */
+  activeColor: string;
+  inactiveColor: string;
+  /** Multiplier on the Settings inactive opacity (0.4–1.6). */
+  inactiveOpacityScale: number;
+  /** Renderer active-line scale (0.9–1.2). */
+  activeLineScale: number;
+  /** Blur applied to inactive lines, px (0–6). Opt-in; 0 disables the filter entirely. */
+  inactiveBlurPx: number;
+
+  /* Karaoke / word highlight (word-timed sources only; never faked for line-level lyrics). */
+  karaokeStyle: NowPlayingKaraokeStyle;
+  /** Highlight/glow strength (0–1). */
+  karaokeIntensity: number;
+  /** Active-word emphasis scale (1–1.2). */
+  activeWordScale: number;
+
+  /* Background. Canvas modes are opt-in and run only while playing and visible. */
+  backgroundMode: NowPlayingBackgroundMode;
+  /** Background opacity (0.2–1). */
+  backgroundIntensity: number;
+  /** Blur radius for the blurred-artwork background, px (0–60). */
+  backgroundBlurPx: number;
+  /** Particle/visualizer speed multiplier (0.25–2). */
+  effectSpeed: number;
+  /** Particle density / visualizer responsiveness multiplier (0.25–1.5). */
+  effectDensity: number;
+
+}
+
+/** One named Now Playing profile, with distinct windowed and fullscreen proportions. */
+export interface NowPlayingProfile {
+  id: string;
+  name: string;
+  description: string;
+  /** Built-in profiles are shipped by Cadence and cannot be edited or deleted in place. */
+  builtIn: boolean;
+  windowed: NowPlayingProfileConfig;
+  fullscreen: NowPlayingProfileConfig;
+}
+
+/** Persisted profile selection plus user-authored profiles. Built-ins live in code, not settings. */
+export interface NowPlayingProfilesSettings {
+  version: 1;
+  activeProfileId: string;
+  customProfiles: NowPlayingProfile[];
+  /**
+   * Optional per-context profile activation (disabled by default): when enabled, the
+   * windowed and fullscreen surfaces use these profiles instead of `activeProfileId`.
+   * Each chosen profile still contributes only its matching mode config.
+   */
+  contextSwitching: {
+    enabled: boolean;
+    windowedProfileId: string;
+    fullscreenProfileId: string;
+  };
+}
+
 export interface AppSettings {
   version: number;
   playback: PlaybackSettings;
   appearance: AppearanceSettings;
   lyrics: LyricsSettings;
+  nowPlayingProfiles: NowPlayingProfilesSettings;
   shaders: ShaderSettings;
   advanced: { showLogs: boolean };
+  general: {
+    /** True once the first-launch onboarding has been finished or skipped. */
+    onboardingCompleted: boolean;
+    /** Step to resume at when onboarding was interrupted (0 = Welcome). */
+    onboardingStep: number;
+  };
+  scrobbling: LastFmSettings;
+  youtubeMusic: YouTubeMusicSettings;
+}
+
+/**
+ * YouTube Music source settings. Only non-sensitive session data lives here: the anonymous
+ * visitor id and locale. A connected Google account's cookie is NEVER stored in settings JSON —
+ * it goes to the operating system's secret store via the `secrets` bridge API, and only the
+ * display name is kept here so the UI can show the connected status.
+ */
+export interface YouTubeMusicSettings {
+  /** Anonymous InnerTube visitor id (regex ^Cg[t|s]); not a credential. */
+  visitorData: string | null;
+  /** Catalog locale (country / language) for InnerTube requests. */
+  gl: string;
+  hl: string;
+  /** Display name of the connected Google account, or null in Guest mode. */
+  accountName: string | null;
+}
+
+/** last.fm scrobbling credentials and session, stored locally in settings. */
+export interface LastFmSettings {
+  enabled: boolean;
+  /** User-supplied last.fm API key (Cadence ships no shared key). */
+  apiKey: string;
+  /** User-supplied last.fm shared secret used only to sign requests locally. */
+  apiSecret: string;
+  /** Long-lived session key returned by auth.getSession; empty until connected. */
+  sessionKey: string;
+  /** Connected last.fm username, shown in Settings once authorized. */
+  username: string;
 }
 
 /** One completed listening session, newest first when listed. */
 export interface HistoryEntry {
   id: number;
-  trackId: number;
+  /** Discriminated content origin; remote plays never borrow a local numeric track ID. */
+  source: TrackSource;
   /** When playback started, ms since epoch. */
   playedAt: number;
   /** Track metadata snapshot as it was when playback started; survives file removal. */
   payload: HistoryPayload;
 }
 
-/** Stored snapshot of a played track, kept small so history rows stay cheap. */
-export interface HistoryPayload {
-  trackId: number;
-  path: string;
+interface HistoryPayloadBase {
   title: string;
   artist: string;
   albumArtist: string;
   album: string;
   artworkUrl: string | null;
   duration: number;
+  /** When remote catalog metadata was fetched; local snapshots use their play time if absent. */
+  fetchedAt?: number;
 }
 
+/** Stored snapshot of a local play, kept small so history rows stay cheap. */
+export interface LocalHistoryPayload extends HistoryPayloadBase {
+  source: Extract<TrackSource, { kind: "local" }>;
+  trackId: number;
+  path: string;
+}
+
+/** Stored snapshot of an observed remote-provider play start. */
+export interface RemoteHistoryPayload extends HistoryPayloadBase {
+  source: Extract<TrackSource, { kind: "youtube" | "youtube-music" }>;
+  channelId: string | null;
+  channelTitle: string | null;
+  canonicalUrl: string;
+  playbackMechanism: Extract<PlaybackMechanism, "remote-provider">;
+  fetchedAt: number;
+}
+
+/** Stored snapshot of a played item, discriminated by the same source model as the queue. */
+export type HistoryPayload = LocalHistoryPayload | RemoteHistoryPayload;
+
 export interface PlayerSnapshot {
+  /** Local library ID for local playback; null for remote playback (never a fake ID). */
   trackId: number | null;
+  source: TrackSource | null;
+  playbackMechanism: PlaybackMechanism;
   position: number;
   duration: number;
   playing: boolean;
@@ -382,7 +767,7 @@ export interface PlayerSnapshot {
   playbackRate: number;
   shuffle: boolean;
   repeat: RepeatMode;
-  queue: number[];
+  queue: TrackSource[];
   queueIndex: number;
 }
 
@@ -441,7 +826,7 @@ export interface CadenceApi {
   info(): Promise<AppInfo>;
   history: {
     add(args: {
-      trackId: number;
+      source: TrackSource;
       playedAt: number;
       payload: HistoryPayload;
     }): Promise<void>;
@@ -457,12 +842,32 @@ export interface CadenceApi {
     getTrack(id: number): Promise<Track | null>;
     setFavorite(id: number, favorite: boolean): Promise<void>;
     recordPlay(id: number): Promise<void>;
+    /**
+     * Saves user edits to a track's details as a durable override that is re-applied after
+     * every rescan (the audio file itself is never modified). Resolves with the updated track.
+     */
+    updateTrackMetadata(id: number, edit: TrackMetadataEdit): Promise<Track | null>;
+    /** Discards all saved edits for a track, restoring the values scanned from its file tags. */
+    resetTrackMetadata(id: number): Promise<Track | null>;
+    /**
+     * Stores a user-chosen cover image for a track (saved into Cadence's artwork cache and
+     * kept across rescans). Resolves with the updated track.
+     */
+    setTrackArtwork(id: number, data: ArrayBuffer, mimeType: string): Promise<Track | null>;
+    /** Removes the track's cover in Cadence (kept across rescans until reset). */
+    removeTrackArtwork(id: number): Promise<Track | null>;
+    /** Drops only the artwork edit, so the cover scanned from the file shows again. */
+    resetTrackArtwork(id: number): Promise<Track | null>;
     onScanProgress(listener: (progress: ScanProgress) => void): () => void;
     onChanged(listener: () => void): () => void;
   };
   playlists: {
     list(): Promise<Playlist[]>;
     create(name: string, trackIds?: number[]): Promise<Playlist>;
+    /** Creates a rule-driven playlist whose membership is recomputed from the library. */
+    createSmart(name: string, rule: SmartPlaylistRule): Promise<Playlist>;
+    /** Replaces the rule of an existing smart playlist. */
+    updateSmart(id: number, rule: SmartPlaylistRule): Promise<void>;
     rename(id: number, name: string): Promise<void>;
     remove(id: number): Promise<void>;
     addTracks(id: number, trackIds: number[]): Promise<void>;
@@ -474,6 +879,18 @@ export interface CadenceApi {
     get(): Promise<AppSettings>;
     patch(patch: DeepPartial<AppSettings>): Promise<AppSettings>;
     reset(): Promise<AppSettings>;
+  };
+  /**
+   * Operating-system credential store for secrets Cadence must never write to ordinary JSON
+   * settings (e.g. a connected Google account's cookie for YouTube Music). Backed by DPAPI on
+   * Windows, Secret Service (`secret-tool`) on Linux and the Keychain (`security`) on macOS.
+   * Values are only ever returned to the renderer to be attached to YouTube Music requests; they
+   * are never logged and never sent anywhere else.
+   */
+  secrets: {
+    store(args: { service: string; account: string; secret: string }): Promise<void>;
+    get(args: { service: string; account: string }): Promise<string | null>;
+    delete(args: { service: string; account: string }): Promise<boolean>;
   };
   lyrics: {
     resolve(request: LyricsResolveRequest): Promise<LyricsResolveResult>;
@@ -502,6 +919,26 @@ export interface CadenceApi {
     cacheChosenFile(request: { trackId: number; path: string; text: string }): Promise<void>;
     /** Stores a manual-search result the user chose, replacing any earlier choice for the track. */
     rememberSelection(request: { trackId: number; candidate: LyricsCandidate }): Promise<void>;
+    /**
+     * The persistent Fetch All Lyrics background job. It runs beside the lyrics service (never
+     * through the track-scoped `resolve` above), shares the same provider/cache/request
+     * coordination, and survives navigation and app restarts.
+     */
+    fetchAll: {
+      getState(): Promise<LyricsFetchJobSnapshot>;
+      /** Builds the queue and starts; a compatible running job is returned instead of duplicated. */
+      start(): Promise<LyricsFetchJobSnapshot>;
+      pause(): Promise<LyricsFetchJobSnapshot>;
+      resume(): Promise<LyricsFetchJobSnapshot>;
+      /** Stops active requests and drops pending work; already-cached lyrics are kept. */
+      cancel(): Promise<LyricsFetchJobSnapshot>;
+      /** Re-queues temporary failures / rate-limited tracks. Nothing retries automatically. */
+      retryFailed(): Promise<LyricsFetchJobSnapshot>;
+      stats(): Promise<LyricsFetchStats>;
+      /** Moves a pending track to the front of the queue (e.g. it just started playing). */
+      promote(trackId: number): Promise<void>;
+      onProgress(listener: (snapshot: LyricsFetchJobSnapshot) => void): () => void;
+    };
   };
   player: {
     /** Decode an ALAC source to a seekable lossless PCM WAV cache and return its media URL. */
@@ -526,6 +963,8 @@ export interface CadenceApi {
     openPath(path: string): Promise<void>;
     chooseLyricsFile(trackId: number): Promise<{ canceled: boolean; path?: string; text?: string }>;
     window(action: WindowAction): Promise<void>;
+    /** Resize the OS window into (or out of) the compact always-on-top mini-player. */
+    setMiniPlayer(enabled: boolean): Promise<void>;
     isFullScreen(): Promise<boolean>;
     /** Frame state captured while the bridge boots, so the title bar renders on the first frame. */
     initialWindowChrome: WindowChromeState;

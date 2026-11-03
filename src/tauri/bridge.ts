@@ -17,10 +17,12 @@ import type {
   HistoryPayload,
   LibraryScanResult,
   LibrarySnapshot,
+  LyricsFetchJobSnapshot,
   MediaCommand,
   PlayerSnapshot,
   ScanProgress,
   Track,
+  TrackSource,
   WindowChromeState,
 } from "../shared/types";
 import { isPathInside, type PathPlatform } from "../main/media/allowlist";
@@ -29,6 +31,8 @@ import { SettingsCore } from "../main/settingsCore";
 import { LyricsCacheCore } from "../main/lyrics/cacheCore";
 import { createLocalLyricsReader } from "../main/lyrics/localLyricsCore";
 import { LyricsServiceCore } from "../main/lyrics/serviceCore";
+import { LyricsFetchAllCore, type FetchTrackInfo } from "../main/lyrics/fetchAllCore";
+import { FETCH_CONCURRENCY_PRESETS } from "../main/lyrics/http";
 import { setRuntimeFetch, type RuntimeFetch } from "../main/lyrics/http";
 import { fetchYouTubeMetadata } from "../main/lyrics/youtube";
 import {
@@ -64,6 +68,7 @@ export interface BootstrapPayload {
   tauriVersion: string;
   settingsJson: string | null;
   lyricsCacheJson: string | null;
+  lyricsFetchJobJson: string | null;
   dbSnapshot: DatabaseShape;
   startupFiles: string[];
   undecorated: boolean;
@@ -75,13 +80,85 @@ interface HttpFetchResponse {
   body: string;
 }
 
-/** The shape Rust returns from `cmd_history_list` (camelCase keys). */
+/** The shape Rust returns from `cmd_history_list` (camelCase keys). Payloads written before
+ * source-aware history may omit `source`, so the bridge normalizes them from the row columns. */
 type HistoryRow = {
   id: number;
-  trackId: number;
+  sourceKind: string;
+  trackId: number | null;
+  remoteId: string | null;
+  canonicalUrl: string | null;
   playedAt: number;
-  payload: HistoryPayload;
+  payload: {
+    source?: TrackSource;
+    trackId?: number;
+    path?: string;
+    title?: string;
+    artist?: string;
+    albumArtist?: string;
+    album?: string;
+    artworkUrl?: string | null;
+    duration?: number;
+    channelId?: string | null;
+    channelTitle?: string | null;
+    canonicalUrl?: string;
+    fetchedAt?: number;
+  };
 };
+
+function historySourceFromRow(row: HistoryRow): TrackSource | null {
+  if (row.sourceKind === "local" && typeof row.trackId === "number") {
+    return { kind: "local", trackId: row.trackId };
+  }
+  if (
+    (row.sourceKind === "youtube" || row.sourceKind === "youtube-music") &&
+    typeof row.remoteId === "string"
+  ) {
+    return {
+      kind: row.sourceKind,
+      remoteId: row.remoteId,
+      canonicalUrl:
+        row.canonicalUrl ??
+        (row.sourceKind === "youtube-music"
+          ? `https://music.youtube.com/watch?v=${encodeURIComponent(row.remoteId)}`
+          : `https://www.youtube.com/watch?v=${encodeURIComponent(row.remoteId)}`),
+    };
+  }
+  return null;
+}
+
+function normalizeHistoryPayload(row: HistoryRow, source: TrackSource): HistoryPayload {
+  const payload = row.payload;
+  if (source.kind === "local") {
+    return {
+      source,
+      trackId: source.trackId,
+      path: payload.path ?? "",
+      title: payload.title ?? "",
+      artist: payload.artist ?? "",
+      albumArtist: payload.albumArtist ?? payload.artist ?? "",
+      album: payload.album ?? "",
+      artworkUrl: payload.artworkUrl ?? null,
+      duration: payload.duration ?? 0,
+      fetchedAt: payload.fetchedAt,
+    };
+  }
+  const remotePayload = payload.source?.kind === "local" ? null : payload;
+  return {
+    source,
+    title: payload.title ?? "",
+    artist: payload.artist ?? "",
+    albumArtist: payload.albumArtist ?? payload.artist ?? "",
+    album: payload.album ?? "",
+    artworkUrl: payload.artworkUrl ?? null,
+    duration: payload.duration ?? 0,
+    channelId: remotePayload?.channelId ?? null,
+    channelTitle: remotePayload?.channelTitle ?? null,
+    canonicalUrl: source.canonicalUrl,
+    playbackMechanism: "remote-provider",
+    fetchedAt: remotePayload?.fetchedAt ?? row.playedAt,
+  };
+}
 
 type DbMutation =
   | { op: "upsertTrack"; id: number; path: string; payload: string }
@@ -130,6 +207,14 @@ function createTauriRuntimeFetch(): RuntimeFetch {
     };
     signal?.addEventListener("abort", onAbort, { once: true });
 
+    const method = (init?.method ?? "GET").toUpperCase();
+    const body =
+      typeof init?.body === "string"
+        ? init.body
+        : init?.body instanceof URLSearchParams
+          ? init.body.toString()
+          : undefined;
+
     try {
       const res = await invoke<HttpFetchResponse>("cmd_http_fetch", {
         args: {
@@ -137,6 +222,8 @@ function createTauriRuntimeFetch(): RuntimeFetch {
           url,
           headers,
           timeoutMs: 15_000,
+          method,
+          body,
         },
       });
       return new Response(res.body, {
@@ -286,6 +373,110 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
   const lyricsService = new LyricsServiceCore(store, lyricsCache, localLyricsReader);
   const translationCache = createTranslationCache();
 
+  // Fetch-automation settings feed the shared service directly: the central provider limiter
+  // (Autofetch, Fetch All and manual search alike) and the cache's Not Found cooldown.
+  const applyLyricsFetchSettings = (): void => {
+    const lyrics = settings.get().lyrics;
+    lyricsService.setProviderConcurrency(
+      FETCH_CONCURRENCY_PRESETS[lyrics.fetchConcurrency].providerRequests
+    );
+    lyricsCache.setNegativeTtlMs(lyrics.notFoundCooldownDays * 24 * 60 * 60 * 1000);
+  };
+  applyLyricsFetchSettings();
+
+  const fetchAllListeners = new Set<(snapshot: LyricsFetchJobSnapshot) => void>();
+
+  /**
+   * Superseded resolve/search calls are routinely abandoned by the UI after a track switch.
+   * Attach a handled branch so their AbortError never surfaces as an unhandled rejection;
+   * callers that await the returned promise still observe the rejection exactly as before.
+   */
+  const abandonSafe = <T,>(promise: Promise<T>): Promise<T> => {
+    promise.catch(() => undefined);
+    return promise;
+  };
+  const toFetchInfo = (track: StoredTrack): FetchTrackInfo => ({
+    id: track.id,
+    title: track.title,
+    artist: track.artist,
+    album: track.album,
+    duration: track.duration,
+    hasSidecarLyrics: track.hasSidecarLyrics,
+    hasEmbeddedLyrics: track.hasEmbeddedLyrics,
+    lastPlayedAt: track.lastPlayedAt,
+  });
+
+  // Persistent Fetch All job. It calls the service directly with its own per-track abort
+  // controllers — never the UI's track-scoped resolve controller — so bulk work and Now Playing
+  // lookups share in-flight provider requests instead of aborting each other.
+  const fetchAll = new LyricsFetchAllCore(
+    {
+      tracksPage: (offset, limit) => {
+        const tracks = store.getTracks();
+        return { tracks: tracks.slice(offset, offset + limit).map(toFetchInfo), total: tracks.length };
+      },
+      getTrack: trackId => {
+        const track = store.getTrack(trackId);
+        return track ? toFetchInfo(track) : null;
+      },
+      assess: track => lyricsService.assessTrack(track, settings.get().lyrics.providerOrder),
+      resolveTrack: async (track, { force, signal }) => {
+        await store.ensureLyrics(track.id);
+        try {
+          return await lyricsService.resolve(
+            {
+              trackId: track.id,
+              title: track.title,
+              artist: track.artist,
+              album: track.album,
+              duration: track.duration,
+              forceRefresh: force,
+            },
+            settings.get().lyrics.providerOrder,
+            signal
+          );
+        } finally {
+          store.releaseLyrics(track.id);
+          lyricsCache.flush();
+        }
+      },
+      shareResult: (fromTrackId, toTrack) => lyricsService.shareRecordingResult(fromTrackId, toTrack),
+      getPriority: async () => {
+        let historyTrackIds: number[] = [];
+        try {
+          const rows = await invoke<HistoryRow[]>("cmd_history_list");
+          historyTrackIds = (rows ?? [])
+            .map(row => row.trackId)
+            .filter((trackId): trackId is number => typeof trackId === "number");
+        } catch {
+          historyTrackIds = [];
+        }
+        return { currentTrackId: lastPlayerState?.trackId ?? null, historyTrackIds };
+      },
+      getParallelTracks: () =>
+        FETCH_CONCURRENCY_PRESETS[settings.get().lyrics.fetchConcurrency].parallelTracks,
+      onProgress: snapshot => {
+        for (const listener of fetchAllListeners) listener(snapshot);
+      },
+    },
+    {
+      initialJson: bootstrap.lyricsFetchJobJson,
+      persist: json => invoke("cmd_write_user_json", { kind: "lyricsFetchJob", content: json }),
+    }
+  );
+
+  /** Saves cover bytes into the artwork cache under their content hash; returns the file name. */
+  const saveArtworkBytes = async (data: Uint8Array, format: string): Promise<string> => {
+    const hash = await sha1Hex(data);
+    const ext = artworkExtensionForMime(format);
+    const fileName = `${hash}${ext}`;
+    // Raw IPC avoids a second JS number array and JSON string for every cover image.
+    await invoke<string>("cmd_save_artwork", data, {
+      headers: { "x-file-name": fileName },
+    });
+    return fileName;
+  };
+
   // Scanner host I/O backed by binary `cmd_read_file_chunk` + `RangeTokenizer`
   const parseWalkedAudioFile = (file: WalkedAudioFile) =>
     readTrackMetadataCore(file.path, {
@@ -301,16 +492,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         if (res instanceof ArrayBuffer) return new Uint8Array(res);
         return Uint8Array.from(res);
       },
-      saveArtwork: async (data, format) => {
-        const hash = await sha1Hex(data);
-        const ext = artworkExtensionForMime(format);
-        const fileName = `${hash}${ext}`;
-        // Raw IPC avoids a second JS number array and JSON string for every embedded cover.
-        await invoke<string>("cmd_save_artwork", data, {
-          headers: { "x-file-name": fileName },
-        });
-        return fileName;
-      },
+      saveArtwork: saveArtworkBytes,
       fileExists: candidate => {
         if (file.animatedArtPath && candidate.toLowerCase() === file.animatedArtPath.toLowerCase()) {
           return true;
@@ -396,7 +578,8 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         store.upsertTrack({
           ...parsed,
           hasEmbeddedLyrics: parsed.embeddedLyrics !== null,
-          artworkFile: parsed.artworkFile ?? existing?.artworkFile ?? null,
+          artworkFile:
+            parsed.artworkFile ?? existing?.metadataOverride?.original.artworkFile ?? existing?.artworkFile ?? null,
           animatedArtPath: parsed.animatedArtPath ?? existing?.animatedArtPath ?? null,
           accentColor: existing?.accentColor ?? null,
         });
@@ -466,8 +649,13 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
 
   const onPageHide = () => {
     lyricsService.flush();
+    void fetchAll.flush();
     void flushDbQueue();
   };
+
+  // A Fetch All job that was running when the app closed resumes automatically; paused,
+  // completed and canceled jobs are left exactly as the user left them.
+  fetchAll.restore();
   if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
     window.addEventListener("pagehide", onPageHide);
   }
@@ -552,6 +740,53 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         await flushDbQueue();
       },
 
+      async updateTrackMetadata(id, edit) {
+        store.setTrackMetadata(id, edit);
+        await flushDbQueue();
+        emitLibraryChanged();
+        const stored = store.getTrack(id);
+        return stored ? store.toTrack(stored) : null;
+      },
+
+      async resetTrackMetadata(id) {
+        store.clearTrackMetadata(id);
+        await flushDbQueue();
+        emitLibraryChanged();
+        const stored = store.getTrack(id);
+        return stored ? store.toTrack(stored) : null;
+      },
+
+      async setTrackArtwork(id, data, mimeType) {
+        if (!store.getTrack(id)) return null;
+        const bytes = new Uint8Array(data);
+        if (bytes.byteLength === 0) throw new Error("That image file is empty.");
+        if (!mimeType.toLowerCase().startsWith("image/")) {
+          throw new Error("Choose an image file for the cover.");
+        }
+        const fileName = await saveArtworkBytes(bytes, mimeType);
+        store.setTrackArtwork(id, fileName);
+        await flushDbQueue();
+        emitLibraryChanged();
+        const stored = store.getTrack(id);
+        return stored ? store.toTrack(stored) : null;
+      },
+
+      async removeTrackArtwork(id) {
+        store.removeTrackArtwork(id);
+        await flushDbQueue();
+        emitLibraryChanged();
+        const stored = store.getTrack(id);
+        return stored ? store.toTrack(stored) : null;
+      },
+
+      async resetTrackArtwork(id) {
+        store.resetTrackArtwork(id);
+        await flushDbQueue();
+        emitLibraryChanged();
+        const stored = store.getTrack(id);
+        return stored ? store.toTrack(stored) : null;
+      },
+
       onScanProgress(listener: (progress: ScanProgress) => void): () => void {
         progressListeners.add(listener);
         return () => {
@@ -569,12 +804,15 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
 
     history: {
       async add(args: {
-        trackId: number;
+        source: TrackSource;
         playedAt: number;
         payload: HistoryPayload;
       }): Promise<void> {
         await invoke<void>("cmd_history_add", {
-          trackId: args.trackId,
+          sourceKind: args.source.kind,
+          trackId: args.source.kind === "local" ? args.source.trackId : null,
+          remoteId: args.source.kind === "local" ? null : args.source.remoteId,
+          canonicalUrl: args.source.kind === "local" ? null : args.source.canonicalUrl,
           playedAt: args.playedAt,
           payload: JSON.stringify(args.payload),
         });
@@ -582,12 +820,18 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
 
       async list(): Promise<HistoryEntry[]> {
         const rows = await invoke<HistoryRow[]>("cmd_history_list");
-        return (rows ?? []).map(row => ({
-          id: row.id,
-          trackId: row.trackId,
-          playedAt: row.playedAt,
-          payload: row.payload,
-        }));
+        return (rows ?? []).flatMap(row => {
+          const source = historySourceFromRow(row);
+          if (!source) return [];
+          return [
+            {
+              id: row.id,
+              source,
+              playedAt: row.playedAt,
+              payload: normalizeHistoryPayload(row, source),
+            },
+          ];
+        });
       },
 
       async clear(): Promise<void> {
@@ -604,6 +848,20 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         await flushDbQueue();
         emitLibraryChanged();
         return created;
+      },
+      async createSmart(name, rule) {
+        const created = store.createSmartPlaylist(name, rule);
+        if (!created) throw new Error("That smart playlist needs a genre or artist to match.");
+        await flushDbQueue();
+        emitLibraryChanged();
+        return created;
+      },
+      async updateSmart(id, rule) {
+        if (!store.updateSmartPlaylist(id, rule)) {
+          throw new Error("That smart playlist needs a genre or artist to match.");
+        }
+        await flushDbQueue();
+        emitLibraryChanged();
       },
       async rename(id: number, name: string) {
         store.renamePlaylist(id, name);
@@ -644,47 +902,79 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         return settings.get();
       },
       async patch(patch) {
-        return settings.patch(patch);
+        const next = settings.patch(patch);
+        applyLyricsFetchSettings();
+        return next;
       },
       async reset() {
-        return settings.reset();
+        const next = settings.reset();
+        applyLyricsFetchSettings();
+        return next;
+      },
+    },
+
+    secrets: {
+      // Fields are inlined (not spread from a variable) so the static IPC contract test can pin
+      // them against the Rust struct fields.
+      async store(args) {
+        await invoke("cmd_secret_store", {
+          args: { service: args.service, account: args.account, secret: args.secret },
+        });
+      },
+      async get(args) {
+        return await invoke<string | null>("cmd_secret_get", {
+          args: { service: args.service, account: args.account },
+        });
+      },
+      async delete(args) {
+        return await invoke<boolean>("cmd_secret_delete", {
+          args: { service: args.service, account: args.account },
+        });
       },
     },
 
     lyrics: {
-      async resolve(request) {
-        resolveController?.abort();
-        const controller = new AbortController();
-        resolveController = controller;
-        try {
-          await store.ensureLyrics(request.trackId);
-          if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
-          return await lyricsService.resolve(
-            request,
-            settings.get().lyrics.providerOrder,
-            controller.signal
-          );
-        } finally {
-          if (resolveController === controller) resolveController = null;
-          store.releaseLyrics(request.trackId);
-          lyricsCache.flush();
-        }
+      resolve(request) {
+        return abandonSafe(
+          (async () => {
+            resolveController?.abort();
+            const controller = new AbortController();
+            resolveController = controller;
+            try {
+              await store.ensureLyrics(request.trackId);
+              if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
+              return await lyricsService.resolve(
+                request,
+                settings.get().lyrics.providerOrder,
+                controller.signal
+              );
+            } finally {
+              if (resolveController === controller) resolveController = null;
+              store.releaseLyrics(request.trackId);
+              lyricsCache.flush();
+            }
+          })()
+        );
       },
 
-      async search(request) {
-        searchController?.abort();
-        const controller = new AbortController();
-        searchController = controller;
-        try {
-          return await lyricsService.searchLyrics(
-            request,
-            settings.get().lyrics.providerOrder,
-            controller.signal
-          );
-        } finally {
-          if (searchController === controller) searchController = null;
-          lyricsCache.flush();
-        }
+      search(request) {
+        return abandonSafe(
+          (async () => {
+            searchController?.abort();
+            const controller = new AbortController();
+            searchController = controller;
+            try {
+              return await lyricsService.searchLyrics(
+                request,
+                settings.get().lyrics.providerOrder,
+                controller.signal
+              );
+            } finally {
+              if (searchController === controller) searchController = null;
+              lyricsCache.flush();
+            }
+          })()
+        );
       },
 
       async youtubeMetadata(request) {
@@ -844,6 +1134,39 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         lyricsService.rememberSelection(request.trackId, request.candidate);
         lyricsCache.flush();
       },
+
+      fetchAll: {
+        async getState() {
+          return fetchAll.snapshot();
+        },
+        async start() {
+          return fetchAll.start();
+        },
+        async pause() {
+          return fetchAll.pause();
+        },
+        async resume() {
+          return fetchAll.resume();
+        },
+        async cancel() {
+          return fetchAll.cancel();
+        },
+        async retryFailed() {
+          return fetchAll.retryFailed();
+        },
+        async stats() {
+          return fetchAll.stats();
+        },
+        async promote(trackId: number) {
+          fetchAll.promote(trackId);
+        },
+        onProgress(listener: (snapshot: LyricsFetchJobSnapshot) => void): () => void {
+          fetchAllListeners.add(listener);
+          return () => {
+            fetchAllListeners.delete(listener);
+          };
+        },
+      },
     },
 
     player: {
@@ -901,6 +1224,10 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
 
       async window(action) {
         await invoke("cmd_window_action", { action });
+      },
+
+      async setMiniPlayer(enabled: boolean): Promise<void> {
+        await invoke("cmd_set_mini_player", { enabled });
       },
 
       async isFullScreen(): Promise<boolean> {
@@ -974,6 +1301,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
       youtubeController?.abort();
       translateController?.abort();
       romanizeController?.abort();
+      void fetchAll.flush();
       lyricsCache.flush();
       store.close();
     },

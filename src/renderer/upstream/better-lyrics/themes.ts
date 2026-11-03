@@ -33,7 +33,7 @@ const cadenceMidnight = `
 .blyrics-container {
   --blyrics-font-weight: 650;
   --blyrics-lyric-active-color: #ffffff;
-  --blyrics-lyric-inactive-color: rgb(255 255 255 / 0.28);
+  --blyrics-lyric-inactive-color: rgb(255 255 255 / var(--blyrics-inactive-opacity, 0.28));
   --blyrics-glow-color: rgb(120 170 255 / 0.45);
   --blyrics-translated-color: rgb(190 210 255 / 0.7);
   --blyrics-padding: 1.6rem;
@@ -45,7 +45,7 @@ const cadenceNeon = `
 .blyrics-container {
   --blyrics-font-weight: 800;
   --blyrics-lyric-active-color: #ffffff;
-  --blyrics-lyric-inactive-color: rgb(255 255 255 / 0.22);
+  --blyrics-lyric-inactive-color: rgb(255 255 255 / var(--blyrics-inactive-opacity, 0.22));
   --blyrics-glow-color: rgb(255 61 113 / 0.55);
   --blyrics-translated-color: rgb(255 190 210 / 0.75);
   --blyrics-font-size: 3.4rem;
@@ -58,7 +58,7 @@ const cadenceMinimal = `
   --blyrics-font-size: 2.1rem;
   --blyrics-font-weight: 600;
   --blyrics-line-height: 1.5;
-  --blyrics-lyric-inactive-color: rgb(255 255 255 / 0.35);
+  --blyrics-lyric-inactive-color: rgb(255 255 255 / var(--blyrics-inactive-opacity, 0.35));
   --blyrics-padding: 1.2rem;
 }
 `;
@@ -96,21 +96,66 @@ export function buildThemeCss(settings: LyricsSettings): string {
   const translationFontSizePx = secondaryFontSizePx(settings.translationFontSizePx, 32);
   const romanizationFontSizePx = secondaryFontSizePx(settings.romanizationFontSizePx, 26);
 
-  return `
+  const css = `
 ${base}
 /* blyrics-target-scroll-pos-ratio = ${Math.min(0.9, Math.max(0.1, settings.targetScrollRatio))}; */
 ${settings.hideInstrumentalOnly ? "/* blyrics-hide-instrumental-only = true; */" : ""}
 ${settings.showCredits ? "" : "/* blyrics-hide-credits = true; */"}
 .blyrics-container {
-  --blyrics-font-size: ${fontSize}rem;
-  --blyrics-font-weight: ${fontWeight};
-  --blyrics-line-height: ${lineHeight};
+  --blyrics-font-size: var(--np-lyrics-font-size, ${fontSize}rem);
+  --blyrics-font-weight: var(--np-lyrics-weight, ${fontWeight});
+  --blyrics-line-height: calc(${lineHeight} * var(--np-line-spacing-scale, 1));
   --blyrics-active-opacity: ${activeOpacity};
-  --blyrics-inactive-opacity: ${inactiveOpacity};
-  --blyrics-translated-font-size: ${translationFontSizePx}px;
+  --blyrics-inactive-opacity: calc(${inactiveOpacity} * var(--np-inactive-opacity-scale, 1));
+  --blyrics-translated-font-size: var(--np-translation-font-size, ${translationFontSizePx}px);
+  --blyrics-active-scale: var(--np-active-line-scale, 1);
+  --blyrics-animate-highlight-swipe: var(--np-karaoke-swipe, 1);
+  --blyrics-animate-highlight-glow: var(--np-karaoke-glow, 1);
+  --blyrics-animate-highlight-fade: var(--np-karaoke-fade, 1);
+  --blyrics-highlight-glow-radius-from: var(--np-karaoke-glow-radius, 0.8rem);
+  --blyrics-letter-wave-emphasis-scale: var(--np-active-word-scale, 1.11);
+  letter-spacing: var(--np-letter-spacing, 0em);
 }
 .blyrics-container .blyrics--romanized {
-  font-size: ${romanizationFontSizePx}px;
+  font-size: var(--np-romanization-font-size, ${romanizationFontSizePx}px);
+  font-family: var(--np-romanization-font, var(--blyrics-translated-font-family, var(--blyrics-font-family, var(--blyrics-default-font-family))));
 }
 `.trim();
+  // The engine's variables.css derives the active/inactive colours from the
+  // opacity variables at host scope, where the container-level definitions
+  // above cannot substitute (custom properties resolve where they are
+  // declared), so the opacity controls would dead-end at the engine's
+  // fallbacks. Redeclare the same derivations on the container — where the
+  // variables live — whenever the theme does not define the colours itself.
+  const derivations: string[] = [];
+  if (!base.includes("--blyrics-lyric-active-color")) {
+    derivations.push(
+      "--blyrics-lyric-active-color: var(--blyrics-text-color, color(display-p3 1 1 1 / var(--blyrics-active-opacity, 1)));"
+    );
+  }
+  if (!base.includes("--blyrics-lyric-inactive-color")) {
+    derivations.push(
+      "--blyrics-lyric-inactive-color: color(from var(--blyrics-text-color, color(display-p3 1 1 1)) display-p3 r g b / var(--blyrics-inactive-opacity, 0.3));"
+    );
+  }
+  // Same trap for the line enter/exit transforms: variables.css declares them
+  // at :root as scale(var(--blyrics-active-scale)), freezing substitution at
+  // the engine's --blyrics-active-scale: 1 and dead-ending the profile's
+  // active-line-scale. Redeclared at container scope they resolve against
+  // the container's --blyrics-active-scale (the --np-active-line-scale alias).
+  if (!base.includes("--blyrics-line-enter-transform-to")) {
+    derivations.push("--blyrics-line-enter-transform-to: scale(var(--blyrics-active-scale));");
+  }
+  if (!base.includes("--blyrics-line-exit-transform-from")) {
+    derivations.push("--blyrics-line-exit-transform-from: scale(var(--blyrics-active-scale));");
+  }
+  if (!base.includes("--blyrics-line-enter-transform-from")) {
+    derivations.push("--blyrics-line-enter-transform-from: scale(var(--blyrics-scale));");
+  }
+  if (!base.includes("--blyrics-line-exit-transform-to")) {
+    derivations.push("--blyrics-line-exit-transform-to: scale(var(--blyrics-scale));");
+  }
+  return derivations.length
+    ? `${css}\n.blyrics-container {\n  ${derivations.join("\n  ")}\n}`
+    : css;
 }

@@ -37,6 +37,9 @@ export type LyricSourceKey =
   | "unison-wordsynced"
   | "binimum-synced"
   | "unison-plain"
+  // Cadence addition: official lyrics for YouTube Music sources, via the InnerTube provider.
+  // Only ever active for remote items (it needs a video id); local resolution never touches it.
+  | "youtube-music"
   // Legacy key from before the local TTML/QRC vs local LRC split; migration-only.
   | "local-sidecar"
   // Ephemeral source for a user-picked file; never part of the persisted order.
@@ -108,6 +111,8 @@ export const PROVIDER_CONFIGS: readonly ProviderConfig[] = [
   { key: "unison-wordsynced", displayName: "Unison Word", syncType: "word", priority: 14, offline: false, available: true },
   { key: "binimum-synced", displayName: "BiniLyrics Line", syncType: "line", priority: 15, offline: false, available: true },
   { key: "unison-plain", displayName: "Unison Unsynced", syncType: "unsynced", priority: 16, offline: false, available: true },
+  // Cadence addition (original code, same GPL-3.0): YouTube Music's own lyrics for remote items.
+  { key: "youtube-music", displayName: "YouTube Music", syncType: "unsynced", priority: 17, offline: false, available: true },
 ] as const;
 
 /** The exact recommended order: the 13 available/unavailable slots, no extras, no duplicates. */

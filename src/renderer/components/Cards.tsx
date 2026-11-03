@@ -97,6 +97,7 @@ export function PlaylistCard({ playlist }: { playlist: Playlist }) {
       <Artwork src={playlist.artworkUrl} alt={playlist.name} size="md" />
       <div className="card-title">{playlist.name}</div>
       <div className="card-subtitle">
+        {playlist.kind === "smart" ? "Smart · " : ""}
         {playlist.trackCount} song{playlist.trackCount === 1 ? "" : "s"}
       </div>
     </article>

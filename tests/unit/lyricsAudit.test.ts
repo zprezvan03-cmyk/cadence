@@ -676,6 +676,10 @@ describe("6, 7 & 8. Provider ordering, caching, Retry-After backoff, deduplicati
       hasEmbeddedLyrics: false,
       hasSidecarLyrics: true,
       playable: true,
+      replayGainTrackDb: null,
+      replayGainAlbumDb: null,
+      replayGainTrackPeak: null,
+      replayGainAlbumPeak: null,
     });
 
     const plainSidecar = await service.resolve({

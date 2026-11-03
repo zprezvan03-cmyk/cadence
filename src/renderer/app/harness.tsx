@@ -24,7 +24,9 @@ import { LyricsView } from "../features/lyrics/LyricsView";
 import { KawarpBackground } from "../features/shaders/KawarpBackground";
 import { useSettings } from "../state/settingsStore";
 import { useLyricsStore } from "../state/lyricsStore";
+import { mediaItemFromLocalTrack } from "../../shared/media";
 import { DEFAULT_PROVIDER_ORDER } from "../../shared/upstream/better-lyrics/constants";
+import { createDefaultNowPlayingProfilesSettings } from "../../shared/nowPlayingProfiles";
 import type {
   AppSettings,
   CadenceApi,
@@ -142,12 +144,18 @@ function makeHarnessTrack(spec: HarnessTrackSpec): Track {
     hasSidecarLyrics: true,
     playable: true,
     ...spec,
+    replayGainTrackDb: spec.replayGainTrackDb ?? null,
+    replayGainAlbumDb: spec.replayGainAlbumDb ?? null,
+    replayGainTrackPeak: spec.replayGainTrackPeak ?? null,
+    replayGainAlbumPeak: spec.replayGainAlbumPeak ?? null,
   };
 }
 
 const defaultLyricsSettings: LyricsSettings = {
   providerOrder: [...DEFAULT_PROVIDER_ORDER],
   autoFetch: true,
+  notFoundCooldownDays: 7,
+  fetchConcurrency: "balanced",
   offsetMs: 0,
   translationLanguage: "",
   romanization: false,
@@ -171,11 +179,28 @@ const defaultLyricsSettings: LyricsSettings = {
 function harnessAppSettings(lyrics?: Partial<LyricsSettings>): AppSettings {
   return {
     version: 1,
-    playback: { volume: 0.85, muted: false, shuffle: false, repeat: "off", playbackRate: 1, resumeOnLaunch: false },
-    appearance: { accent: "#ff3d71", reduceMotion: false, compactSidebar: false, blurArtwork: true, fontFamily: "inter" },
+    playback: {
+      volume: 0.85,
+      muted: false,
+      shuffle: false,
+      repeat: "off",
+      playbackRate: 1,
+      resumeOnLaunch: false,
+      crossfadeSeconds: 0,
+      gaplessPlayback: false,
+      replayGainMode: "off",
+      replayGainPreampDb: 0,
+      replayGainPreventClipping: true,
+      equalizer: { enabled: false, preampDb: 0, bandsDb: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], presetId: "flat" },
+    },
+    appearance: { accent: "#ff3d71", reduceMotion: false, compactSidebar: false, compactSidebarHoverExpand: true, blurArtwork: true, fontFamily: "inter" },
     lyrics: { ...defaultLyricsSettings, ...lyrics },
+    nowPlayingProfiles: createDefaultNowPlayingProfilesSettings(),
     shaders: { ...shaderSettings, enabled: false },
     advanced: { showLogs: false },
+    general: { onboardingCompleted: true, onboardingStep: 0 },
+    scrobbling: { enabled: false, apiKey: "", apiSecret: "", sessionKey: "", username: "" },
+    youtubeMusic: { visitorData: null, gl: "US", hl: "en", accountName: null },
   };
 }
 
@@ -270,6 +295,29 @@ function installLyricsHarnessBridge(): void {
       }),
       cacheChosenFile: async () => undefined,
       rememberSelection: async () => undefined,
+      fetchAll: {
+        getState: async () => ({
+          jobId: null,
+          state: "idle",
+          total: 0,
+          processed: 0,
+          found: 0,
+          notFound: 0,
+          failed: 0,
+          skipped: 0,
+          currentTrack: null,
+          startedAt: null,
+          finishedAt: null,
+        }),
+        start: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
+        pause: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
+        resume: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
+        cancel: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
+        retryFailed: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
+        stats: async () => ({ totalTracks: 0, withLyrics: 0, needsSearch: 0, fullyProcessed: 0 }),
+        promote: async () => undefined,
+        onProgress: () => () => undefined,
+      },
     },
     app: {
       ...(existing.app as object | undefined),
@@ -391,6 +439,7 @@ const harness = {
     lyricsViewRoot.render(
       createElement(LyricsView, {
         track,
+        item: mediaItemFromLocalTrack(track),
         playing: false,
         fullscreen: false,
         onToggleFullscreen: () => undefined,

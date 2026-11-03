@@ -5,6 +5,7 @@ export type LibraryTab = "songs" | "albums" | "artists" | "playlists" | "favorit
 export type Route =
   | { name: "home" }
   | { name: "history" }
+  | { name: "stats" }
   | { name: "library"; tab: LibraryTab }
   | { name: "search"; query: string }
   | { name: "album"; albumId: string }
@@ -12,7 +13,13 @@ export type Route =
   | { name: "playlist"; playlistId: number }
   | { name: "lyrics" }
   | { name: "decode-tester" }
-  | { name: "settings" };
+  | { name: "settings" }
+  | { name: "ytm-home" }
+  | { name: "ytm-search"; query: string }
+  | { name: "ytm-artist"; artistId: string }
+  | { name: "ytm-album"; albumId: string }
+  | { name: "ytm-playlist"; playlistId: string }
+  | { name: "ytm-explore" };
 
 interface UiState {
   route: Route;
@@ -21,6 +28,9 @@ interface UiState {
   searchFocused: boolean;
   playlistPicker: { trackIds: number[] } | null;
   playlistCreateRequested: boolean;
+  trackEditorId: number | null;
+  miniPlayer: boolean;
+  shortcutsHelpOpen: boolean;
   toast: string | null;
   navigate: (route: Route) => void;
   goBack: () => void;
@@ -31,6 +41,11 @@ interface UiState {
   setSearchFocused: (value: boolean) => void;
   openPlaylistPicker: (trackIds: number[]) => void;
   closePlaylistPicker: () => void;
+  openTrackEditor: (trackId: number) => void;
+  closeTrackEditor: () => void;
+  setMiniPlayer: (value: boolean) => void;
+  toggleMiniPlayer: () => void;
+  setShortcutsHelpOpen: (value: boolean) => void;
   requestPlaylistCreate: () => void;
   acknowledgePlaylistCreate: () => void;
   showToast: (message: string) => void;
@@ -43,6 +58,8 @@ export function routeToHash(route: Route): string {
       return "#/";
     case "history":
       return "#/history";
+    case "stats":
+      return "#/stats";
     case "library":
       return `#/library/${route.tab}`;
     case "search":
@@ -59,6 +76,18 @@ export function routeToHash(route: Route): string {
       return "#/decode-tester";
     case "settings":
       return "#/settings";
+    case "ytm-home":
+      return "#/ytmusic";
+    case "ytm-search":
+      return `#/ytmusic/search/${encodeURIComponent(route.query)}`;
+    case "ytm-artist":
+      return `#/ytmusic/artist/${encodeURIComponent(route.artistId)}`;
+    case "ytm-album":
+      return `#/ytmusic/album/${encodeURIComponent(route.albumId)}`;
+    case "ytm-playlist":
+      return `#/ytmusic/playlist/${encodeURIComponent(route.playlistId)}`;
+    case "ytm-explore":
+      return "#/ytmusic/explore";
     default:
       return "#/";
   }
@@ -93,6 +122,26 @@ export function hashToRoute(hash: string): Route {
       return { name: "settings" };
     case "history":
       return { name: "history" };
+    case "stats":
+      return { name: "stats" };
+    case "ytmusic": {
+      const [sub, ...tailParts] = value.split("/");
+      const tail = tailParts.join("/");
+      switch (sub) {
+        case "search":
+          return { name: "ytm-search", query: decodeURIComponent(tail) };
+        case "artist":
+          return { name: "ytm-artist", artistId: decodeURIComponent(tail) };
+        case "album":
+          return { name: "ytm-album", albumId: decodeURIComponent(tail) };
+        case "playlist":
+          return { name: "ytm-playlist", playlistId: decodeURIComponent(tail) };
+        case "explore":
+          return { name: "ytm-explore" };
+        default:
+          return { name: "ytm-home" };
+      }
+    }
     default:
       return { name: "home" };
   }
@@ -105,6 +154,9 @@ export const useUi = create<UiState>()((set, get) => ({
   searchFocused: false,
   playlistPicker: null,
   playlistCreateRequested: false,
+  trackEditorId: null,
+  miniPlayer: false,
+  shortcutsHelpOpen: false,
   toast: null,
   navigate: route => {
     const hash = routeToHash(route);
@@ -129,6 +181,12 @@ export const useUi = create<UiState>()((set, get) => ({
   setSearchFocused: value => set({ searchFocused: value }),
   openPlaylistPicker: trackIds => set({ playlistPicker: { trackIds } }),
   closePlaylistPicker: () => set({ playlistPicker: null }),
+  openTrackEditor: trackId => set({ trackEditorId: trackId }),
+  closeTrackEditor: () => set({ trackEditorId: null }),
+  setMiniPlayer: value =>
+    set(state => ({ miniPlayer: value, queueOpen: value ? false : state.queueOpen })),
+  toggleMiniPlayer: () => get().setMiniPlayer(!get().miniPlayer),
+  setShortcutsHelpOpen: value => set({ shortcutsHelpOpen: value }),
   requestPlaylistCreate: () => {
     get().navigate({ name: "library", tab: "playlists" });
     set({ playlistCreateRequested: true });

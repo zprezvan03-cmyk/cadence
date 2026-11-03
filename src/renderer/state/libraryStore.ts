@@ -1,5 +1,11 @@
 import { create } from "zustand";
-import type { LibrarySnapshot, Playlist, Track } from "../../shared/types";
+import type {
+  LibrarySnapshot,
+  Playlist,
+  SmartPlaylistRule,
+  Track,
+  TrackMetadataEdit,
+} from "../../shared/types";
 import { bridge } from "./bridge";
 import { setTrackRegistry } from "./trackRegistry";
 
@@ -15,7 +21,14 @@ interface LibraryState {
   rescan: () => Promise<void>;
   setFavorite: (id: number, favorite: boolean) => Promise<void>;
   recordPlay: (id: number) => Promise<void>;
+  updateTrackMetadata: (id: number, edit: TrackMetadataEdit) => Promise<Track | null>;
+  resetTrackMetadata: (id: number) => Promise<Track | null>;
+  setTrackArtwork: (id: number, data: ArrayBuffer, mimeType: string) => Promise<Track | null>;
+  removeTrackArtwork: (id: number) => Promise<Track | null>;
+  resetTrackArtwork: (id: number) => Promise<Track | null>;
   createPlaylist: (name: string, trackIds?: number[]) => Promise<Playlist | null>;
+  createSmartPlaylist: (name: string, rule: SmartPlaylistRule) => Promise<Playlist | null>;
+  updateSmartPlaylist: (id: number, rule: SmartPlaylistRule) => Promise<void>;
   renamePlaylist: (id: number, name: string) => Promise<void>;
   deletePlaylist: (id: number) => Promise<void>;
   addToPlaylist: (id: number, trackIds: number[]) => Promise<void>;
@@ -92,10 +105,44 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
     const tracksById = indexTracks({ ...snapshot, tracks });
     set({ snapshot: { ...snapshot, tracks }, tracksById });
   },
+  updateTrackMetadata: async (id, edit) => {
+    const updated = await bridge.library.updateTrackMetadata(id, edit);
+    await get().refresh();
+    return updated;
+  },
+  resetTrackMetadata: async id => {
+    const updated = await bridge.library.resetTrackMetadata(id);
+    await get().refresh();
+    return updated;
+  },
+  setTrackArtwork: async (id, data, mimeType) => {
+    const updated = await bridge.library.setTrackArtwork(id, data, mimeType);
+    await get().refresh();
+    return updated;
+  },
+  removeTrackArtwork: async id => {
+    const updated = await bridge.library.removeTrackArtwork(id);
+    await get().refresh();
+    return updated;
+  },
+  resetTrackArtwork: async id => {
+    const updated = await bridge.library.resetTrackArtwork(id);
+    await get().refresh();
+    return updated;
+  },
   createPlaylist: async (name, trackIds = []) => {
     const playlist = await bridge.playlists.create(name, trackIds);
     await get().refresh();
     return playlist;
+  },
+  createSmartPlaylist: async (name, rule) => {
+    const playlist = await bridge.playlists.createSmart(name, rule);
+    await get().refresh();
+    return playlist;
+  },
+  updateSmartPlaylist: async (id, rule) => {
+    await bridge.playlists.updateSmart(id, rule);
+    await get().refresh();
   },
   renamePlaylist: async (id, name) => {
     await bridge.playlists.rename(id, name);

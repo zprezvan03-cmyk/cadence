@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Plus, X } from "lucide-react";
 import { EMPTY_PLAYLISTS, useLibrary } from "../state/libraryStore";
 import { useUi } from "../state/uiStore";
+import { useLastNonNull, usePresence } from "./usePresence";
 
 export function PlaylistPicker() {
   const picker = useUi(state => state.playlistPicker);
@@ -15,11 +16,15 @@ export function PlaylistPicker() {
   const addToPlaylist = useLibrary(state => state.addToPlaylist);
   const showToast = useUi(state => state.showToast);
   const [name, setName] = useState("");
+  // The store flag flips instantly on close; presence only keeps the surface mounted for
+  // its fast exit, rendering the last picker selection so the final frame is not blank.
+  const presence = usePresence(Boolean(picker));
+  const renderedPicker = useLastNonNull(picker);
 
-  if (!picker) return null;
+  if (!presence.mounted || !renderedPicker) return null;
 
   return (
-    <div className="modal-backdrop" onClick={close}>
+    <div className={`modal-backdrop ${presence.phaseClass}`} data-presence={presence.phase} onClick={close}>
       <div className="modal compact" onClick={event => event.stopPropagation()}>
         <header className="modal-header">
           <h2>Add to playlist</h2>
@@ -34,7 +39,7 @@ export function PlaylistPicker() {
               key={playlist.id}
               className="modal-row simple"
               onClick={async () => {
-                await addToPlaylist(playlist.id, picker.trackIds);
+                await addToPlaylist(playlist.id, renderedPicker.trackIds);
                 showToast(`Added to ${playlist.name}`);
                 close();
               }}
@@ -51,7 +56,7 @@ export function PlaylistPicker() {
           onSubmit={async event => {
             event.preventDefault();
             if (!name.trim()) return;
-            const playlist = await createPlaylist(name.trim(), picker.trackIds);
+            const playlist = await createPlaylist(name.trim(), renderedPicker.trackIds);
             setName("");
             if (playlist) showToast(`Added to ${playlist.name}`);
             close();

@@ -4,7 +4,17 @@
  * a pluggable adapter (Rust `rusqlite` in Tauri, or `node:sqlite` / JSON in Node).
  */
 
-import type { Album, Artist, Playlist, Track } from "../../shared/types";
+import type {
+  Album,
+  Artist,
+  Playlist,
+  SmartPlaylistRule,
+  Track,
+  TrackMetadataEdit,
+  TrackMetadataOverride,
+  TrackMetadataSnapshot,
+} from "../../shared/types";
+import { evaluateSmartPlaylist, normalizeSmartPlaylistRule } from "../../shared/smartPlaylists";
 import { pathJoin } from "./metadataCore";
 
 export interface StoredTrack {
@@ -36,6 +46,17 @@ export interface StoredTrack {
   addedAt: number;
   lastPlayedAt: number | null;
   playCount: number;
+  replayGainTrackDb: number | null;
+  replayGainAlbumDb: number | null;
+  replayGainTrackPeak: number | null;
+  replayGainAlbumPeak: number | null;
+  /**
+   * User edits saved in Cadence. The editable fields above always hold the *effective*
+   * (post-edit) values; this record keeps the patch plus the latest scanned tag values so
+   * `upsertTrack` can re-apply the patch after a rescan and reset can restore the tags.
+   * Optional because rows persisted before metadata editing existed have no such field.
+   */
+  metadataOverride?: TrackMetadataOverride | null;
 }
 
 export interface NewTrack extends Omit<StoredTrack, "id" | "favorite" | "addedAt" | "lastPlayedAt" | "playCount"> {
@@ -49,6 +70,8 @@ export interface PlaylistRow {
   createdAt: number;
   updatedAt: number;
   trackIds: number[];
+  /** Rule for smart playlists; when set, `trackIds` is ignored and membership is computed live. */
+  smart?: SmartPlaylistRule | null;
 }
 
 export interface DatabaseShape {
@@ -82,6 +105,95 @@ export interface LibraryPersistenceAdapter {
 
 function normalizeText(value: string): string {
   return value.normalize("NFC");
+}
+
+type EditableTrackSource = Pick<
+  StoredTrack,
+  "title" | "artist" | "albumArtist" | "album" | "genre" | "year" | "trackNo" | "discNo" | "artworkFile"
+>;
+
+function editableSnapshot(source: EditableTrackSource): TrackMetadataSnapshot {
+  return {
+    title: source.title,
+    artist: source.artist,
+    albumArtist: source.albumArtist,
+    album: source.album,
+    genre: source.genre,
+    year: source.year,
+    trackNo: source.trackNo,
+    discNo: source.discNo,
+    artworkFile: source.artworkFile,
+  };
+}
+
+function assignEditableSnapshot(track: StoredTrack, snapshot: TrackMetadataSnapshot): void {
+  track.title = snapshot.title;
+  track.artist = snapshot.artist;
+  track.albumArtist = snapshot.albumArtist;
+  track.album = snapshot.album;
+  track.genre = snapshot.genre;
+  track.year = snapshot.year;
+  track.trackNo = snapshot.trackNo;
+  track.discNo = snapshot.discNo;
+  track.artworkFile = snapshot.artworkFile;
+}
+
+function applyMetadataPatch(track: StoredTrack, patch: TrackMetadataEdit): void {
+  const has = (key: keyof TrackMetadataEdit) => Object.prototype.hasOwnProperty.call(patch, key);
+  if (has("title") && patch.title !== undefined) track.title = patch.title;
+  if (has("artist") && patch.artist !== undefined) track.artist = patch.artist;
+  if (has("albumArtist") && patch.albumArtist !== undefined) track.albumArtist = patch.albumArtist;
+  if (has("album") && patch.album !== undefined) track.album = patch.album;
+  if (has("genre") && patch.genre !== undefined) track.genre = patch.genre;
+  if (has("year")) track.year = patch.year ?? null;
+  if (has("trackNo")) track.trackNo = patch.trackNo ?? null;
+  if (has("discNo")) track.discNo = patch.discNo ?? null;
+  if (has("artworkFile")) track.artworkFile = patch.artworkFile ?? null;
+}
+
+/**
+ * Sanitizes an edit coming from the UI (or any bridge caller): trims text, refuses to blank
+ * the title, and turns non-positive numbers into an explicit "cleared" null. Unknown keys are
+ * dropped so a malformed payload can never smuggle extra fields into the stored track row.
+ */
+function normalizeMetadataEdit(edit: TrackMetadataEdit): TrackMetadataEdit {
+  const out: TrackMetadataEdit = {};
+  if (!edit || typeof edit !== "object") return out;
+  const raw = edit as Record<string, unknown>;
+  const text = (key: string): string | undefined =>
+    typeof raw[key] === "string" ? (raw[key] as string).trim() : undefined;
+  const title = text("title");
+  if (title) out.title = title;
+  for (const key of ["artist", "albumArtist", "album", "genre"] as const) {
+    const value = text(key);
+    if (value !== undefined) out[key] = value;
+  }
+  const nullableInt = (value: unknown): number | null | undefined => {
+    if (value === null) return null;
+    if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+    const int = Math.floor(value);
+    return int > 0 && int <= 9999 ? int : null;
+  };
+  for (const key of ["year", "trackNo", "discNo"] as const) {
+    if (!Object.prototype.hasOwnProperty.call(raw, key)) continue;
+    const value = nullableInt(raw[key]);
+    if (value !== undefined) out[key] = value;
+  }
+  if (Object.prototype.hasOwnProperty.call(raw, "artworkFile")) {
+    const value = raw.artworkFile;
+    if (value === null) out.artworkFile = null;
+    else if (typeof value === "string") out.artworkFile = value.trim() || null;
+  }
+  return out;
+}
+
+/** Drops patch fields that merely restate the scanned tag value, keeping overrides minimal. */
+function pruneMetadataPatch(patch: TrackMetadataEdit, original: TrackMetadataSnapshot): TrackMetadataEdit {
+  const pruned: TrackMetadataEdit = { ...patch };
+  for (const key of Object.keys(pruned) as (keyof TrackMetadataEdit)[]) {
+    if (pruned[key] === original[key]) delete pruned[key];
+  }
+  return pruned;
 }
 
 export class LibraryStoreCore {
@@ -173,6 +285,19 @@ export class LibraryStoreCore {
         lastPlayedAt: existing.lastPlayedAt,
         playCount: existing.playCount,
       };
+      // Metadata edits survive rescans: the incoming row carries the file's current tags, so
+      // refresh the override's scanned-tag snapshot from it and re-apply the user's patch on
+      // top. Without this, the spread above would silently revert every edit on rescan.
+      const override = existing.metadataOverride ?? null;
+      if (override) {
+        const original = editableSnapshot(track);
+        const refreshed: TrackMetadataOverride = { ...override, original };
+        assignEditableSnapshot(merged, original);
+        applyMetadataPatch(merged, refreshed.patch);
+        merged.metadataOverride = refreshed;
+      } else {
+        merged.metadataOverride = track.metadataOverride ?? null;
+      }
       delete (merged as { embeddedLyrics?: unknown }).embeddedLyrics;
       // Preserve the indexed object identity and avoid a second linear array lookup on updates.
       Object.assign(existing, merged);
@@ -191,6 +316,7 @@ export class LibraryStoreCore {
       addedAt: Date.now(),
       lastPlayedAt: null,
       playCount: 0,
+      metadataOverride: track.metadataOverride ?? null,
     };
     delete (row as { embeddedLyrics?: unknown }).embeddedLyrics;
     this.data.tracks.push(row);
@@ -247,6 +373,76 @@ export class LibraryStoreCore {
     track.lastPlayedAt = Date.now();
     this.persistTrack(track);
     this.markDirty();
+  }
+
+  /** Rebuilds a track's effective editable fields from its scanned tags plus saved patch. */
+  private refreshTrackFromOverride(track: StoredTrack): void {
+    const override = track.metadataOverride;
+    if (!override) return;
+    assignEditableSnapshot(track, override.original);
+    applyMetadataPatch(track, override.patch);
+  }
+
+  /**
+   * Saves user edits to a track's details. The first edit captures the scanned tag values as
+   * the reset baseline; later edits merge into the same patch. Fields edited back to their
+   * scanned value drop out of the patch, and an emptied patch removes the override entirely.
+   * Returns false when the track is unknown or the edit contained nothing usable.
+   */
+  setTrackMetadata(id: number, edit: TrackMetadataEdit): boolean {
+    const track = this.getTrack(id);
+    if (!track) return false;
+    const incoming = normalizeMetadataEdit(edit);
+    if (Object.keys(incoming).length === 0) return false;
+    const existing = track.metadataOverride ?? null;
+    const original = existing?.original ?? editableSnapshot(track);
+    const patch = pruneMetadataPatch({ ...(existing?.patch ?? {}), ...incoming }, original);
+    assignEditableSnapshot(track, original);
+    applyMetadataPatch(track, patch);
+    track.metadataOverride =
+      Object.keys(patch).length > 0 ? { patch, original, updatedAt: Date.now() } : null;
+    this.persistTrack(track);
+    this.markDirty();
+    return true;
+  }
+
+  /** Discards every saved edit for a track, restoring the latest scanned file-tag values. */
+  clearTrackMetadata(id: number): boolean {
+    const track = this.getTrack(id);
+    if (!track?.metadataOverride) return false;
+    assignEditableSnapshot(track, track.metadataOverride.original);
+    track.metadataOverride = null;
+    this.persistTrack(track);
+    this.markDirty();
+    return true;
+  }
+
+  /** Points a track at a user-chosen cover already saved in the artwork cache. */
+  setTrackArtwork(id: number, artworkFile: string): boolean {
+    return this.setTrackMetadata(id, { artworkFile });
+  }
+
+  /** Hides a track's cover in Cadence (the file's embedded artwork is untouched). */
+  removeTrackArtwork(id: number): boolean {
+    return this.setTrackMetadata(id, { artworkFile: null });
+  }
+
+  /** Drops only the artwork edit so the cover scanned from the file shows again. */
+  resetTrackArtwork(id: number): boolean {
+    const track = this.getTrack(id);
+    const override = track?.metadataOverride;
+    if (!track || !override || !Object.prototype.hasOwnProperty.call(override.patch, "artworkFile")) {
+      return false;
+    }
+    const patch = { ...override.patch };
+    delete patch.artworkFile;
+    track.metadataOverride =
+      Object.keys(patch).length > 0 ? { ...override, patch, updatedAt: Date.now() } : null;
+    if (track.metadataOverride) this.refreshTrackFromOverride(track);
+    else assignEditableSnapshot(track, override.original);
+    this.persistTrack(track);
+    this.markDirty();
+    return true;
   }
 
   // ------------------------------------------------------------------ lyrics
@@ -319,8 +515,23 @@ export class LibraryStoreCore {
 
   // --------------------------------------------------------------- playlists
 
+  /**
+   * Membership of a playlist right now: smart playlists are evaluated against the current
+   * library on every read (that is what keeps them current), manual ones use their stored list.
+   */
+  private playlistMembership(row: PlaylistRow): { trackIds: number[]; smart: SmartPlaylistRule | null } {
+    const smart = normalizeSmartPlaylistRule(row.smart);
+    if (smart) return { trackIds: evaluateSmartPlaylist(this.data.tracks, smart), smart };
+    return { trackIds: row.trackIds, smart: null };
+  }
+
+  private isSmartPlaylistRow(row: PlaylistRow): boolean {
+    return normalizeSmartPlaylistRule(row.smart) !== null;
+  }
+
   private playlistSummary(row: PlaylistRow): Playlist {
-    const tracks = row.trackIds
+    const { trackIds, smart } = this.playlistMembership(row);
+    const tracks = trackIds
       .map(id => this.getTrack(id))
       .filter((track): track is StoredTrack => track !== null);
     const firstArtwork = tracks.find(track => track.artworkFile)?.artworkFile ?? null;
@@ -333,6 +544,8 @@ export class LibraryStoreCore {
       trackCount: tracks.length,
       duration: tracks.reduce((total, track) => total + track.duration, 0),
       artworkUrl: firstArtwork ? this.mediaUrl(pathJoin(this.artworkDirectory, firstArtwork), true) : null,
+      kind: smart ? "smart" : "manual",
+      smart,
     };
   }
 
@@ -341,7 +554,8 @@ export class LibraryStoreCore {
   }
 
   getPlaylistTrackIds(id: number): number[] {
-    return this.data.playlists.find(row => row.id === id)?.trackIds ?? [];
+    const row = this.data.playlists.find(candidate => candidate.id === id);
+    return row ? this.playlistMembership(row).trackIds : [];
   }
 
   createPlaylist(name: string, trackIds: number[] = []): Playlist {
@@ -361,6 +575,40 @@ export class LibraryStoreCore {
     return this.playlistSummary(row);
   }
 
+  /** Creates a rule-driven playlist. Returns null when the rule cannot mean anything. */
+  createSmartPlaylist(name: string, rule: SmartPlaylistRule): Playlist | null {
+    const smart = normalizeSmartPlaylistRule(rule);
+    if (!smart) return null;
+    const id = this.data.nextPlaylistId++;
+    const now = Date.now();
+    const row: PlaylistRow = {
+      id,
+      name: name.trim() || "New smart playlist",
+      description: "",
+      createdAt: now,
+      updatedAt: now,
+      trackIds: [],
+      smart,
+    };
+    this.data.playlists.push(row);
+    this.persistPlaylist(row);
+    this.markDirty();
+    return this.playlistSummary(row);
+  }
+
+  /** Replaces a playlist's rule (converting it to a smart playlist if it was manual). */
+  updateSmartPlaylist(id: number, rule: SmartPlaylistRule): boolean {
+    const row = this.data.playlists.find(playlist => playlist.id === id);
+    const smart = normalizeSmartPlaylistRule(rule);
+    if (!row || !smart) return false;
+    row.smart = smart;
+    row.trackIds = [];
+    row.updatedAt = Date.now();
+    this.persistPlaylist(row);
+    this.markDirty();
+    return true;
+  }
+
   renamePlaylist(id: number, name: string): void {
     const row = this.data.playlists.find(playlist => playlist.id === id);
     if (!row) return;
@@ -378,7 +626,8 @@ export class LibraryStoreCore {
 
   addTracksToPlaylist(id: number, trackIds: number[]): void {
     const row = this.data.playlists.find(playlist => playlist.id === id);
-    if (!row) return;
+    // Smart playlists are rule-driven; hand edits would be silently overwritten by the rule.
+    if (!row || this.isSmartPlaylistRow(row)) return;
     const existing = new Set(row.trackIds);
     for (const trackId of trackIds) {
       if (this.getTrack(trackId) && !existing.has(trackId)) {
@@ -393,7 +642,7 @@ export class LibraryStoreCore {
 
   removeTrackFromPlaylist(id: number, trackId: number): void {
     const row = this.data.playlists.find(playlist => playlist.id === id);
-    if (!row) return;
+    if (!row || this.isSmartPlaylistRow(row)) return;
     row.trackIds = row.trackIds.filter(candidate => candidate !== trackId);
     row.updatedAt = Date.now();
     this.persistPlaylist(row);
@@ -402,7 +651,7 @@ export class LibraryStoreCore {
 
   reorderPlaylist(id: number, trackIds: number[]): void {
     const row = this.data.playlists.find(playlist => playlist.id === id);
-    if (!row) return;
+    if (!row || this.isSmartPlaylistRow(row)) return;
     const valid = new Set(row.trackIds);
     const reordered = trackIds.filter(trackId => valid.has(trackId));
     for (const trackId of row.trackIds) if (!reordered.includes(trackId)) reordered.push(trackId);
@@ -460,8 +709,23 @@ export class LibraryStoreCore {
       addedAt: track.addedAt,
       lastPlayedAt: track.lastPlayedAt,
       playCount: track.playCount,
+      replayGainTrackDb: track.replayGainTrackDb ?? null,
+      replayGainAlbumDb: track.replayGainAlbumDb ?? null,
+      replayGainTrackPeak: track.replayGainTrackPeak ?? null,
+      replayGainAlbumPeak: track.replayGainAlbumPeak ?? null,
       hasSidecarLyrics: track.hasSidecarLyrics,
       playable: track.playable,
+      metadataEdited: Boolean(
+        track.metadataOverride && Object.keys(track.metadataOverride.patch).length > 0,
+      ),
+      // Clone so renderer state can never mutate the stored override by reference.
+      metadataOverride: track.metadataOverride
+        ? {
+            patch: { ...track.metadataOverride.patch },
+            original: { ...track.metadataOverride.original },
+            updatedAt: track.metadataOverride.updatedAt,
+          }
+        : null,
     };
   }
 

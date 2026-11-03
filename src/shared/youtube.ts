@@ -18,6 +18,16 @@ const WATCH_HOSTS = new Set([
 ]);
 
 const SHORT_HOSTS = new Set(["youtu.be", "www.youtu.be"]);
+function parseYouTubeUrl(input: string): URL | null {
+  const raw = input.trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
+    return url.protocol === "http:" || url.protocol === "https:" ? url : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Extract the 11-character video ID from every link shape YouTube itself accepts:
@@ -28,15 +38,8 @@ const SHORT_HOSTS = new Set(["youtu.be", "www.youtu.be"]);
  * Returns null for anything else: non-YouTube hosts, malformed URLs or IDs of the wrong length.
  */
 export function parseYouTubeVideoId(input: string): string | null {
-  const raw = input.trim();
-  if (!raw) return null;
-
-  let url: URL;
-  try {
-    url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
-  } catch {
-    return null;
-  }
+  const url = parseYouTubeUrl(input);
+  if (!url) return null;
 
   const host = url.hostname.toLowerCase();
   const idFromPath = (prefix: string): string | null => {
@@ -48,14 +51,11 @@ export function parseYouTubeVideoId(input: string): string | null {
     const id = url.pathname.split("/").filter(Boolean)[0];
     return id && VIDEO_ID_PATTERN.test(id) ? id : null;
   }
-
   if (!WATCH_HOSTS.has(host)) return null;
-
   if (url.pathname === "/watch") {
     const id = url.searchParams.get("v");
     return id && VIDEO_ID_PATTERN.test(id) ? id : null;
   }
-
   return idFromPath("shorts") ?? idFromPath("embed") ?? idFromPath("live") ?? idFromPath("v");
 }
 

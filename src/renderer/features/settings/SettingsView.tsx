@@ -4,8 +4,8 @@
  */
 
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronUp, FolderMinus, FolderPlus, RotateCcw, Stethoscope, Trash2 } from "lucide-react";
-import type { AppInfo, AppSettings, ShaderSettings } from "../../../shared/types";
+import { ChevronDown, ChevronUp, FolderMinus, FolderPlus, Keyboard, RotateCcw, Stethoscope, Trash2 } from "lucide-react";
+import type { AppInfo, AppSettings, EqualizerSettings, ReplayGainMode, ShaderSettings } from "../../../shared/types";
 import { FONT_KINDS, FONT_OPTIONS, resolveFontOption } from "../../../shared/fonts";
 import { detectUnavailableFonts } from "../../app/fonts";
 import { useLibrary } from "../../state/libraryStore";
@@ -25,7 +25,19 @@ import {
 } from "../../../shared/providerOrder";
 import { THEMES } from "../../upstream/better-lyrics/themes";
 import { TRANSLATION_LANGUAGES } from "../lyrics/translationLanguages";
+import { invalidateLyricsResolution } from "../lyrics/useLyrics";
+import { LastFmSettings } from "./LastFmSettings";
+import { YtmAccountSettings } from "./YtmAccountSettings";
 import { LyricsCachePanel } from "./LyricsCachePanel";
+import { FetchAllSettings } from "../lyrics-fetch/FetchAllSettings";
+import { useOnboarding } from "../../state/onboardingStore";
+import {
+  EQ_BAND_LABELS,
+  EQ_PRESETS,
+  matchingEqualizerPresetId,
+  normalizeEqBandsDb,
+} from "../../audio/equalizer";
+import type { LyricsFetchConcurrency } from "../../../shared/types";
 import { useSessionState } from "../../app/useSessionState";
 
 /** Tauri's `invoke` rejects with a plain string; Error instances come from the renderer itself. */
@@ -117,13 +129,14 @@ export function SettingsView() {
   const scanning = useLibrary(state => state.scanning);
   const [info, setInfo] = useState<AppInfo | null>(null);
   // Reopening Settings returns to the tab you were on rather than back to Appearance.
-  const [section, setSection] = useSessionState<"library" | "playback" | "appearance" | "cache" | "about">(
+  const [section, setSection] = useSessionState<"library" | "playback" | "appearance" | "cache" | "ytmusic" | "about">(
     "settings.section",
     "appearance"
   );
   const [unavailableFonts, setUnavailableFonts] = useState<ReadonlySet<string>>(() => new Set());
   const [clearingCache, setClearingCache] = useState(false);
   const showToast = useUi(state => state.showToast);
+  const setShortcutsHelpOpen = useUi(state => state.setShortcutsHelpOpen);
   const navigate = useUi(state => state.navigate);
 
   useEffect(() => {
@@ -143,6 +156,20 @@ export function SettingsView() {
 
   const patchLyrics = (patch: Partial<AppSettings["lyrics"]>) => void patchSettings({ lyrics: patch });
   const patchShaders = (patch: Partial<ShaderSettings>) => void patchSettings({ shaders: patch });
+  const formatDb = (value: number) => `${value > 0 ? "+" : ""}${value.toFixed(1)} dB`;
+  // Patch a complete equalizer object: the settings store's optimistic merge is only shallow
+  // below `playback`, so a partial nested object would briefly drop the other EQ fields
+  // until the (deep-merging) host response lands.
+  const patchEqualizer = (patch: Partial<EqualizerSettings>) =>
+    void patchSettings({
+      playback: {
+        equalizer: {
+          ...settings.playback.equalizer,
+          ...patch,
+          bandsDb: normalizeEqBandsDb(patch.bandsDb ?? settings.playback.equalizer.bandsDb),
+        },
+      },
+    });
 
   // Provider-order edits go through the shared helpers so a removal is persisted as an upstream
   // `d_` entry instead of being spliced out: migrateProviderOrder re-inserts missing defaults, so a
@@ -165,15 +192,20 @@ export function SettingsView() {
           <p className="eyebrow">Settings</p>
           <h1>Make it yours</h1>
         </div>
-        <button
-          type="button"
-          onClick={async () => {
-            await resetSettings();
-            showToast("Settings restored to defaults");
-          }}
-        >
-          <RotateCcw size={16} /> Reset all
-        </button>
+        <div className="heading-actions">
+          <button type="button" data-testid="open-shortcuts-help" onClick={() => setShortcutsHelpOpen(true)}>
+            <Keyboard size={16} /> Keyboard shortcuts
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              await resetSettings();
+              showToast("Settings restored to defaults");
+            }}
+          >
+            <RotateCcw size={16} /> Reset all
+          </button>
+        </div>
       </header>
 
       <nav className="settings-tabs">
@@ -182,6 +214,7 @@ export function SettingsView() {
           ["library", "Library"],
           ["playback", "Playback"],
           ["cache", "Cache"],
+          ["ytmusic", "YouTube Music"],
           ["about", "About"],
         ] as const).map(([id, label]) => (
           <button
@@ -240,17 +273,62 @@ export function SettingsView() {
             </p>
             <Toggle label="Reduce motion" checked={settings.appearance.reduceMotion} onChange={value => void patchSettings({ appearance: { reduceMotion: value } })} />
             <Toggle label="Compact sidebar" checked={settings.appearance.compactSidebar} onChange={value => void patchSettings({ appearance: { compactSidebar: value } })} />
+            <Toggle label="Expand compact sidebar on hover" checked={settings.appearance.compactSidebarHoverExpand} onChange={value => void patchSettings({ appearance: { compactSidebarHoverExpand: value } })} />
             <Toggle label="Blur artwork behind the player" checked={settings.appearance.blurArtwork} onChange={value => void patchSettings({ appearance: { blurArtwork: value } })} />
             <Toggle label="Verbose shader logs" checked={settings.advanced.showLogs} onChange={value => void patchSettings({ advanced: { showLogs: value } })} />
+            <div className="setting-row">
+              <span>
+                <strong>Replay Onboarding</strong>
+                <em>Run the first-launch setup again (library, ✨ Fetch All Lyrics ✨, preferences).</em>
+              </span>
+              <button
+                type="button"
+                data-testid="replay-onboarding"
+                onClick={() => useOnboarding.getState().replay()}
+              >
+                Replay Onboarding
+              </button>
+            </div>
           </div>
           <div className="settings-subsection" data-testid="settings-lyrics">
             <h3>Lyrics</h3>
             <Toggle
               label="Fetch lyrics online"
-              hint="When off, Cadence only uses sidecar files and embedded tags. Playback never needs the network."
+              hint="Autofetch: when on, lyrics are looked up automatically the moment a track starts playing. When off, Cadence only uses sidecar files, embedded tags and the cache. Playback never needs the network."
               checked={settings.lyrics.autoFetch}
               onChange={value => patchLyrics({ autoFetch: value })}
             />
+            <FetchAllSettings />
+            <Range
+              label="Not Found cooldown"
+              hint="Days before a track no provider had lyrics for is searched again automatically. Manual retries in Now Playing always search immediately."
+              value={settings.lyrics.notFoundCooldownDays}
+              min={1}
+              max={30}
+              step={1}
+              onChange={value => patchLyrics({ notFoundCooldownDays: value })}
+              format={value => `${Math.round(value)} ${Math.round(value) === 1 ? "day" : "days"}`}
+            />
+            <div className="setting-row">
+              <span>
+                <strong>Lyrics Fetch Concurrency</strong>
+                <em>
+                  One global limit for provider requests across Autofetch, Fetch All and manual
+                  search. Lower is gentler on slow connections and low-memory systems.
+                </em>
+              </span>
+              <select
+                data-testid="fetch-concurrency-select"
+                value={settings.lyrics.fetchConcurrency}
+                onChange={event =>
+                  patchLyrics({ fetchConcurrency: event.target.value as LyricsFetchConcurrency })
+                }
+              >
+                <option value="low">Low</option>
+                <option value="balanced">Balanced</option>
+                <option value="high">High</option>
+              </select>
+            </div>
             <Toggle
               label="Romanize non-Latin lyrics"
               hint="Uses the same Google romanization path as Better Lyrics."
@@ -522,10 +600,148 @@ export function SettingsView() {
             </select>
           </div>
           <Toggle label="Shuffle by default" checked={settings.playback.shuffle} onChange={value => void patchSettings({ playback: { shuffle: value } })} />
+
+          <div className="settings-subsection" data-testid="settings-audio">
+            <h3>Audio</h3>
+            <Range
+              label="Crossfade"
+              hint="Overlap the end of one track with the start of the next. Off keeps today's instant cut."
+              value={settings.playback.crossfadeSeconds}
+              min={0}
+              max={12}
+              step={0.5}
+              format={value => (value === 0 ? "Off" : `${value.toFixed(1)}s`)}
+              onChange={value => void patchSettings({ playback: { crossfadeSeconds: value } })}
+            />
+            <Toggle
+              label="Gapless playback"
+              hint="Preload the next track so album tracks that run together cut without a silent gap."
+              checked={settings.playback.gaplessPlayback}
+              onChange={value => void patchSettings({ playback: { gaplessPlayback: value } })}
+            />
+            <div className="setting-row">
+              <span>
+                <strong>ReplayGain</strong>
+                <em>Level out loud and quiet files using ReplayGain tags read when files are scanned. Untagged files are untouched.</em>
+              </span>
+              <select
+                data-testid="replaygain-mode"
+                value={settings.playback.replayGainMode}
+                onChange={event => void patchSettings({ playback: { replayGainMode: event.target.value as ReplayGainMode } })}
+              >
+                <option value="off">Off</option>
+                <option value="track">Track gain</option>
+                <option value="album">Album gain</option>
+              </select>
+            </div>
+            <Range
+              label="ReplayGain preamp"
+              hint="Extra level added on top of the ReplayGain adjustment."
+              value={settings.playback.replayGainPreampDb}
+              min={-12}
+              max={12}
+              step={0.5}
+              format={formatDb}
+              onChange={value => void patchSettings({ playback: { replayGainPreampDb: value } })}
+            />
+            <Toggle
+              label="Prevent clipping"
+              hint="Use each file's ReplayGain peak tag to cap boosts before they can distort."
+              checked={settings.playback.replayGainPreventClipping}
+              onChange={value => void patchSettings({ playback: { replayGainPreventClipping: value } })}
+            />
+          </div>
+
+          <div className="settings-subsection" data-testid="settings-equalizer">
+            <h3>Equalizer</h3>
+            <Toggle
+              label="Enable equalizer"
+              hint="Ten-band EQ applied after ReplayGain. Turning it off is instantly transparent."
+              checked={settings.playback.equalizer.enabled}
+              onChange={value => patchEqualizer({ enabled: value })}
+            />
+            <div className="setting-row">
+              <span>
+                <strong>Preset</strong>
+                <em>Moving any band switches to Custom.</em>
+              </span>
+              <select
+                data-testid="equalizer-preset"
+                value={matchingEqualizerPresetId(settings.playback.equalizer.bandsDb)}
+                onChange={event => {
+                  const preset = EQ_PRESETS.find(candidate => candidate.id === event.target.value);
+                  if (preset) patchEqualizer({ bandsDb: [...preset.bandsDb], presetId: preset.id });
+                }}
+              >
+                {EQ_PRESETS.map(preset => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.label}
+                  </option>
+                ))}
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+            <Range
+              label="EQ preamp"
+              hint="Overall level trim — lower it if strong boosts make loud tracks clip."
+              value={settings.playback.equalizer.preampDb}
+              min={-12}
+              max={12}
+              step={0.5}
+              format={formatDb}
+              onChange={value => patchEqualizer({ preampDb: value })}
+            />
+            <div className="equalizer-bands" role="group" aria-label="Equalizer bands">
+              {normalizeEqBandsDb(settings.playback.equalizer.bandsDb).map((bandDb, index) => (
+                <label className="equalizer-band" key={EQ_BAND_LABELS[index]}>
+                  <span>{EQ_BAND_LABELS[index]}</span>
+                  <input
+                    type="range"
+                    min={-12}
+                    max={12}
+                    step={0.5}
+                    value={bandDb}
+                    data-testid={`equalizer-band-${index}`}
+                    aria-label={`${EQ_BAND_LABELS[index]} Hz band`}
+                    onChange={event => {
+                      const bandsDb = normalizeEqBandsDb(settings.playback.equalizer.bandsDb);
+                      bandsDb[index] = Number(event.target.value);
+                      patchEqualizer({ bandsDb, presetId: matchingEqualizerPresetId(bandsDb) });
+                    }}
+                  />
+                  <output>{formatDb(bandDb)}</output>
+                </label>
+              ))}
+            </div>
+            <div className="setting-row">
+              <span>
+                <strong>Reset equalizer</strong>
+                <em>Back to flat with no preamp.</em>
+              </span>
+              <button
+                type="button"
+                onClick={() => patchEqualizer({ preampDb: 0, bandsDb: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], presetId: "flat" })}
+              >
+                <RotateCcw size={14} /> Reset
+              </button>
+            </div>
+          </div>
+
+          <LastFmSettings
+            settings={settings.scrobbling}
+            patchSettings={patch => patchSettings(patch)}
+            showToast={showToast}
+          />
         </section>
       ) : null}
 
       {section === "cache" ? <LyricsCachePanel /> : null}
+      {section === "ytmusic" ? (
+        <section className="settings-section" data-testid="settings-ytmusic">
+          <h2>YouTube Music</h2>
+          <YtmAccountSettings />
+        </section>
+      ) : null}
 
       {section === "about" ? (
         <section className="settings-section about" data-testid="settings-about">
@@ -577,6 +793,7 @@ export function SettingsView() {
                 // Resolves only once the emptied cache file has been written to disk; a
                 // filesystem error rejects here instead of being reported as a success.
                 const { removedEntries } = await window.cadence.lyrics.clearCache();
+                if (removedEntries > 0) invalidateLyricsResolution();
                 showToast(
                   removedEntries > 0
                     ? `Lyrics cache cleared (${removedEntries} cached ${removedEntries === 1 ? "song" : "songs"} removed)`

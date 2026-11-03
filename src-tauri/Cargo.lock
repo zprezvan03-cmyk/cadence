@@ -413,7 +413,7 @@ dependencies = [
 
 [[package]]
 name = "cadence"
-version = "0.2.2"
+version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
  "percent-encoding",

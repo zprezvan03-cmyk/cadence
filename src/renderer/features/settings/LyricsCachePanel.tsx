@@ -21,6 +21,8 @@ import type {
 import { bridge } from "../../state/bridge";
 import { useUi } from "../../state/uiStore";
 import { parseLyricsText, type ParsedLyrics } from "../lyrics/parseLyrics";
+import { invalidateLyricsResolution } from "../lyrics/useLyrics";
+import { useLastNonNull, usePresence } from "../../app/usePresence";
 
 /** Exact, human-sized rendering of a measured byte count. */
 function formatBytes(bytes: number): string {
@@ -132,6 +134,7 @@ export function LyricsCachePanel() {
     setBusyKey(entry.key);
     try {
       const result = await bridge.lyrics.removeCacheEntry(entry.key);
+      if (result.removed) invalidateLyricsResolution();
       showToast(
         result.removed
           ? `Removed “${entryTitle(entry)}” from the lyrics cache`
@@ -153,6 +156,7 @@ export function LyricsCachePanel() {
     setClearing(true);
     try {
       const { removedEntries } = await bridge.lyrics.clearCache();
+      if (removedEntries > 0) invalidateLyricsResolution();
       showToast(
         removedEntries > 0
           ? `Lyrics cache cleared (${removedEntries} cached ${removedEntries === 1 ? "song" : "songs"} removed)`
@@ -291,24 +295,36 @@ export function LyricsCachePanel() {
         </p>
       ) : null}
 
-      {inspecting ? (
-        <CacheInspector detail={inspecting} onClose={() => setInspecting(null)} />
-      ) : null}
+      <CacheInspector detail={inspecting} onClose={() => setInspecting(null)} />
     </section>
   );
 }
 
-function CacheInspector({ detail, onClose }: { detail: LyricsCacheEntryDetail; onClose: () => void }) {
+function CacheInspector({
+  detail: detailProp,
+  onClose,
+}: {
+  detail: LyricsCacheEntryDetail | null;
+  onClose: () => void;
+}) {
+  // Closing clears the inspected entry instantly; presence keeps the modal mounted for
+  // its fast exit, rendering the last entry so the final frame is not blank.
+  const presence = usePresence(detailProp !== null);
+  const detail = useLastNonNull(detailProp);
+
   useEffect(() => {
+    if (!detailProp) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [detailProp, onClose]);
+
+  if (!presence.mounted || !detail) return null;
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className={`modal-backdrop ${presence.phaseClass}`} data-presence={presence.phase} onClick={onClose}>
       <div
         className="modal cache-inspector"
         role="dialog"

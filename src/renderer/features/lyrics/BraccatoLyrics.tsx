@@ -8,7 +8,7 @@
  * Written for Cadence.
  */
 
-import { createElement, useEffect, useRef } from "react";
+import { createElement, useEffect, useLayoutEffect, useRef } from "react";
 import "@braccato/core/element";
 import "@braccato/core/styles/variables.css";
 import "@braccato/core/styles/lyrics.css";
@@ -16,9 +16,16 @@ import "@braccato/core/styles/instrumental.css";
 import { injectRomanization, injectTranslation, type Lyric, type LyricsRenderer } from "@braccato/core";
 import type { LyricsSyncType } from "../../../shared/types";
 import { audioEngine } from "../../audio/engine";
+import { MOTION_DURATION_MS } from "../../app/motion";
+import type { RemotePlaybackClockSource } from "../../player/playbackClock";
+import { shouldCrossfadeUpgrade, type LyricsRenderIdentity } from "./upgrade";
 
 export interface BraccatoLyricsProps {
   lyrics: Lyric[] | null;
+  /** Identity used only to distinguish a track change from a same-track source upgrade. */
+  trackId?: LyricsRenderIdentity["trackId"];
+  /** Provider/source identity for the payload, used to time the upgrade crossfade. */
+  sourceKey?: string | null;
   themeCss: string;
   offsetMs: number;
   passiveScroll: boolean;
@@ -30,9 +37,16 @@ export interface BraccatoLyricsProps {
   loaderVisible?: boolean;
   noLyrics?: boolean;
   className?: string;
+  /**
+   * External clock for a provider player with no HTML media element.
+   * When supplied, the local audio element is deliberately not bound and the element's documented
+   * manual `currentTime` / `playing` properties are driven from this source instead.
+   */
+  remoteClockSource?: RemotePlaybackClockSource | null;
   onLoaded?: (detail: { lineCount: number; syncType: LyricsSyncType }) => void;
   onError?: (message: string) => void;
   onScrollState?: (userScrolling: boolean) => void;
+  onLineClick?: (timeS: number) => void;
 }
 
 /**
@@ -111,6 +125,8 @@ const CLEARED_LYRICS: Lyric[] = [];
 
 export function BraccatoLyrics({
   lyrics,
+  trackId = null,
+  sourceKey = null,
   themeCss,
   offsetMs,
   passiveScroll,
@@ -121,14 +137,16 @@ export function BraccatoLyrics({
   loaderVisible = false,
   noLyrics = false,
   className,
+  remoteClockSource = null,
   onLoaded,
   onError,
   onScrollState,
+  onLineClick,
 }: BraccatoLyricsProps) {
   const ref = useRef<BraccatoElement | null>(null);
   const measuredFont = useRef(fontFamily);
-  const callbacks = useRef({ onLoaded, onError, onScrollState });
-  callbacks.current = { onLoaded, onError, onScrollState };
+  const callbacks = useRef({ onLoaded, onError, onScrollState, onLineClick });
+  callbacks.current = { onLoaded, onError, onScrollState, onLineClick };
   // The decoration pass reads the latest lyrics and tick settings, so it can run from the element's
   // own build events (which fire while a lyrics assignment is still on the stack) as well as from the
   // effect that assigns them.
@@ -140,8 +158,48 @@ export function BraccatoLyrics({
     const { lyrics: current, offsetMs: offset, passiveScroll: passive } = latest.current;
     applyLineDecorations(element, current, { offsetMs: offset, passiveScroll: passive });
   });
+  const renderedIdentity = useRef<LyricsRenderIdentity | null>(null);
+  const renderedLyrics = useRef<Lyric[] | null>(null);
+  const upgradeTimer = useRef<number | undefined>(undefined);
 
-  // Bind once: the element, not React, owns the per-frame clock while a media element is bound.
+  // Same-track source upgrades get one short opacity dip. This must be a layout effect: it
+  // runs after React commits the new props but before the passive effect below assigns the
+  // new payload to the upstream element, so the old lines start the dip and the replacement
+  // lands inside it. Neither the renderer's clock nor its scroll state is touched.
+  useLayoutEffect(() => {
+    const next: LyricsRenderIdentity = {
+      trackId,
+      source: sourceKey,
+      hasLyrics: Boolean(lyrics?.length),
+    };
+    const element = ref.current;
+    const payloadChanged = renderedLyrics.current !== lyrics;
+    if (element && payloadChanged && shouldCrossfadeUpgrade(renderedIdentity.current, next)) {
+      if (upgradeTimer.current !== undefined) window.clearTimeout(upgradeTimer.current);
+      delete element.dataset.upgrading;
+      void element.offsetWidth;
+      element.dataset.upgrading = "true";
+      upgradeTimer.current = window.setTimeout(() => {
+        delete element.dataset.upgrading;
+        upgradeTimer.current = undefined;
+      }, MOTION_DURATION_MS.surface);
+    }
+    renderedIdentity.current = next;
+    renderedLyrics.current = lyrics;
+  }, [lyrics, sourceKey, trackId]);
+
+  useEffect(
+    () => () => {
+      if (upgradeTimer.current !== undefined) window.clearTimeout(upgradeTimer.current);
+    },
+    []
+  );
+
+  // The Braccato element, not React, owns the per-frame clock while a media element is bound.
+  // With gapless/crossfade decks the active media element can be promoted, so rebind on that
+  // explicit engine event; ordinary cuts keep the same element and do not rebind. A remote
+  // clock source is the one exception: it means "no media element exists", so nothing local is
+  // bound and the manual-clock effect below is authoritative.
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
@@ -161,28 +219,108 @@ export function BraccatoLyrics({
       const detail = (event as CustomEvent<{ userScrolling: boolean }>).detail;
       callbacks.current.onScrollState?.(Boolean(detail?.userScrolling));
     };
+    const handleLineClick = (event: Event) => {
+      const detail = (event as CustomEvent<{ timeS: number }>).detail;
+      if (Number.isFinite(detail?.timeS)) callbacks.current.onLineClick?.(Math.max(0, detail.timeS));
+    };
 
     element.addEventListener("braccato:lyrics-loaded", handleLoaded);
     element.addEventListener("braccato:error", handleError);
     element.addEventListener("braccato:scroll-state", handleScroll);
+    element.addEventListener("braccato:line-click", handleLineClick);
 
-    try {
-      element.source = audioEngine.element;
-    } catch (error) {
-      callbacks.current.onError?.(`source: ${(error as Error).message}`);
+    let unsubscribeSource: () => void = () => undefined;
+    if (remoteClockSource) {
+      try {
+        element.source = null;
+      } catch (error) {
+        callbacks.current.onError?.(`source: ${(error as Error).message}`);
+      }
+    } else {
+      const bindSource = (sourceElement: HTMLAudioElement) => {
+        try {
+          if (element.source !== sourceElement) element.source = sourceElement;
+        } catch (error) {
+          callbacks.current.onError?.(`source: ${(error as Error).message}`);
+        }
+      };
+      bindSource(audioEngine.element);
+      unsubscribeSource = audioEngine.on("source", ({ element: sourceElement }) => {
+        bindSource(sourceElement);
+      });
     }
 
     return () => {
+      unsubscribeSource();
       element.removeEventListener("braccato:lyrics-loaded", handleLoaded);
       element.removeEventListener("braccato:error", handleError);
       element.removeEventListener("braccato:scroll-state", handleScroll);
+      element.removeEventListener("braccato:line-click", handleLineClick);
       try {
         element.source = null;
       } catch {
         /* element may already be gone */
       }
     };
-  }, []);
+  }, [remoteClockSource]);
+
+  // Manual clock adapter for an external provider clock. The provider is sampled by its
+  // owner; between samples this effect projects the last sample at the provider playback rate
+  // and writes the custom element's documented clock properties directly (no React state and
+  // no fabricated HTMLAudioElement). Paused/ended samples write once and stop the frame loop.
+  useEffect(() => {
+    const element = ref.current;
+    if (!element || !remoteClockSource) return;
+
+    let frame: number | undefined;
+    let stopped = false;
+
+    const writeClock = () => {
+      const projected = remoteClockSource.projectedAt();
+      const { offsetMs: offset, passiveScroll: passive } = latest.current;
+      element.tickOptions = {
+        globalLyricOffset: offset / 1000,
+        passiveScrollEnabled: passive,
+        playbackRate: projected.playbackRate,
+      };
+      element.currentTime = projected.currentTime;
+      if (element.playing !== projected.isPlaying) element.playing = projected.isPlaying;
+    };
+
+    const schedule = () => {
+      if (stopped || frame !== undefined) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = undefined;
+        if (stopped || !element.isConnected) return;
+        writeClock();
+        if (remoteClockSource.getSnapshot().isPlaying) schedule();
+      });
+    };
+
+    const unsubscribe = remoteClockSource.subscribe(() => {
+      writeClock();
+      if (remoteClockSource.getSnapshot().isPlaying) {
+        schedule();
+      } else if (frame !== undefined) {
+        window.cancelAnimationFrame(frame);
+        frame = undefined;
+      }
+    });
+
+    writeClock();
+    if (remoteClockSource.getSnapshot().isPlaying) schedule();
+
+    return () => {
+      stopped = true;
+      unsubscribe();
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      try {
+        element.playing = false;
+      } catch {
+        /* The element may already be disconnected. */
+      }
+    };
+  }, [remoteClockSource]);
 
   useEffect(() => {
     const element = ref.current;
@@ -213,6 +351,59 @@ export function BraccatoLyrics({
     measuredFont.current = fontFamily;
     ref.current?.renderer?.relayout();
   }, [fontFamily]);
+
+  // A resize re-measures the renderer and arms a rescroll, but its media frame loop is
+  // stopped while paused. Without a tick, the active line can therefore keep the old
+  // size's scroll position until playback or a seek happens. Ask for the renderer's
+  // existing position update after the scrollport settles on a new size; this neither
+  // moves the audio clock nor replaces the renderer's own scroll calculation.
+  useEffect(() => {
+    const element = ref.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const scrollport = element.parentElement ?? element;
+    let lastSize: { width: number; height: number } | null = null;
+    let frame: number | undefined;
+
+    const observer = new ResizeObserver(entries => {
+      const rect = entries[entries.length - 1]?.contentRect;
+      if (!rect) return;
+      if (
+        lastSize &&
+        Math.abs(rect.width - lastSize.width) < 1 &&
+        Math.abs(rect.height - lastSize.height) < 1
+      ) {
+        return;
+      }
+      const firstObservation = lastSize === null;
+      lastSize = { width: rect.width, height: rect.height };
+      if (firstObservation) return;
+
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = undefined;
+        const renderer = element.renderer;
+        if (!renderer || !element.isConnected) return;
+        const { offsetMs: offset, passiveScroll: passive } = latest.current;
+        renderer.scheduleLyricPositionUpdate(
+          () => element.isConnected,
+          () => {
+            renderer.retickFromPlaybackClock((eventCreationTime, isPlaying) => ({
+              eventCreationTime,
+              isPlaying,
+              smoothScroll: false,
+              globalLyricOffset: offset / 1000,
+              passiveScrollEnabled: passive,
+            }));
+          }
+        );
+      });
+    });
+    observer.observe(scrollport);
+    return () => {
+      observer.disconnect();
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+    };
+  }, []);
 
   useEffect(() => {
     const element = ref.current;

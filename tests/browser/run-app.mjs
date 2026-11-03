@@ -260,6 +260,8 @@ await page.evaluateOnNewDocument(
         performanceMode: "balanced",
       },
       advanced: { showLogs: false },
+      general: { onboardingCompleted: true, onboardingStep: 4 },
+      scrobbling: { enabled: false, apiKey: "", apiSecret: "", sessionKey: "", username: "" },
     };
     const loadSettings = () => {
       try {
@@ -412,6 +414,12 @@ await page.evaluateOnNewDocument(
         removeTrack: async id => playlists.find(playlist => playlist.id === id),
         reorder: async id => playlists.find(playlist => playlist.id === id),
         tracks: async id => (playlists.find(playlist => playlist.id === id)?.trackIds ?? []).map(trackById).filter(Boolean),
+      },
+
+      secrets: {
+        store: async () => {},
+        get: async () => null,
+        delete: async () => true,
       },
       settings: {
         get: async () => structuredClone(settings),
@@ -789,6 +797,18 @@ await clickTrack("Fixture FLAC");
 await wait(900);
 await page.click('button[aria-label="Now Playing"]');
 await page.waitForSelector(".lyrics-view", { timeout: 15_000 });
+// Restart the 6-second fixture and halve its rate for this section: clicking the
+// already-current track does not restart it, so on a slow machine it can be
+// seconds from ending here — it then ends mid-section, the player advances to
+// the MP3 fixture, and every downstream lyrics assertion silently measures the
+// wrong track. The rate is restored at the pause after the seek checks below.
+await page.evaluate(() => {
+  const audio = document.querySelector("audio");
+  if (audio) {
+    audio.currentTime = 0.3;
+    audio.playbackRate = 0.5;
+  }
+});
 await wait(1800);
 
 const navLabels = await page.$$eval("aside.sidebar .nav-item", nodes => nodes.map(node => node.textContent.trim()));
@@ -919,7 +939,11 @@ const atFive = await seekAndRead(4.9);
 const pausedSeek = (await audioState()).paused;
 console.log("DEBUG paused-seek", pausedSeek, JSON.stringify({ atOne, atFive }));
 check("lyrics-follow-seek", (atOne.active ?? "").includes("Word") && (atFive.active ?? "").includes("Last"), `1.0s → ${JSON.stringify(atOne.active)}, 4.9s → ${JSON.stringify(atFive.active)}`);
-await page.evaluate(() => document.querySelector("audio").pause());
+await page.evaluate(() => {
+  const audio = document.querySelector("audio");
+  audio.pause();
+  audio.playbackRate = 1;
+});
 
 /* ------------------------------------------- inline translation / romanization */
 
@@ -1007,12 +1031,19 @@ const decoFontSizes = () =>
       const node = document.querySelector(selector);
       return node ? parseFloat(getComputedStyle(node).fontSize) : null;
     };
+    // Legacy lyric sizes are reference values at a 48px fluid base. The rendered
+    // size is that reference multiplied by clamp(30px, 6cqh, 84px) / 48, where
+    // cqh is the actual route-content height in windowed or fullscreen mode.
+    const contentHeight = document.querySelector(".content-scroll")?.clientHeight ?? 0;
+    const fluidBase = Math.min(84, Math.max(30, contentHeight * 0.06));
     return {
       main: px(".blyrics--line .blyrics-line-main"),
       translated: px("braccato-lyrics .blyrics--translated"),
       romanized: px("braccato-lyrics .blyrics--romanized"),
+      responsiveScale: fluidBase / 48,
     };
   });
+const nearPx = (actual, expected) => actual !== null && Math.abs(actual - expected) < 0.05;
 const setRange = (selector, value) =>
   page.$eval(
     selector,
@@ -1048,6 +1079,30 @@ const setSettingsRange = (label, value) =>
     value
   );
 
+// The dock's Style popover was removed; its sliders live in Settings, so the size
+// checks below detour there and back to the lyrics.
+const openSettingsView = async () => {
+  await page.click('aside.sidebar button[title="Settings"]');
+  await page.waitForSelector('[data-testid="settings-view"]');
+  await page.evaluate(() => {
+    const appearanceTab = [...document.querySelectorAll(".settings-tabs button")].find(node =>
+      /appearance/i.test(node.textContent ?? "")
+    );
+    appearanceTab?.click();
+  });
+  await wait(400);
+};
+const backToNowPlaying = async () => {
+  await page.evaluate(() => {
+    const item = [...document.querySelectorAll("aside.sidebar .nav-item")].find(node =>
+      node.textContent.includes("Now Playing")
+    );
+    item?.click();
+  });
+  await page.waitForSelector(".lyrics-view", { timeout: 10_000 }).catch(() => null);
+  await wait(500);
+};
+
 await page.click('[data-testid="lyrics-dock"] button[title="Romanize lyrics"]');
 await page.waitForFunction(() => document.querySelectorAll("braccato-lyrics .blyrics--romanized").length >= 4, {
   timeout: 10_000,
@@ -1055,28 +1110,32 @@ await page.waitForFunction(() => document.querySelectorAll("braccato-lyrics .bly
 const defaultSizes = await decoFontSizes();
 check(
   "secondary-font-size-defaults",
-  defaultSizes.translated === 32 && defaultSizes.romanized === 26,
+  nearPx(defaultSizes.main, 25.6 * defaultSizes.responsiveScale) &&
+    nearPx(defaultSizes.translated, 32 * defaultSizes.responsiveScale) &&
+    nearPx(defaultSizes.romanized, 26 * defaultSizes.responsiveScale),
   JSON.stringify(defaultSizes)
 );
 
-await page.click('[data-testid="lyrics-dock"] button[title="Lyrics appearance"]');
-await page.waitForSelector('.dock-appearance input[aria-label="Translation Font Size"]');
-await setRange('.dock-appearance input[aria-label="Translation Font Size"]', 18);
-await wait(400);
+await openSettingsView();
+await setSettingsRange("Translation Font Size", 18);
+await backToNowPlaying();
 const translationSized = await decoFontSizes();
 check(
   "translation-font-size-live-and-independent",
-  translationSized.translated === 18 &&
+  nearPx(translationSized.translated, 18 * translationSized.responsiveScale) &&
     translationSized.romanized === defaultSizes.romanized &&
     translationSized.main === defaultSizes.main,
   `before=${JSON.stringify(defaultSizes)} after=${JSON.stringify(translationSized)}`
 );
-await setRange('.dock-appearance input[aria-label="Romanization Font Size"]', 14);
-await wait(400);
+await openSettingsView();
+await setSettingsRange("Romanization Font Size", 14);
+await backToNowPlaying();
 const romanizationSized = await decoFontSizes();
 check(
   "romanization-font-size-live-and-independent",
-  romanizationSized.romanized === 14 && romanizationSized.translated === 18 && romanizationSized.main === defaultSizes.main,
+  nearPx(romanizationSized.romanized, 14 * romanizationSized.responsiveScale) &&
+    nearPx(romanizationSized.translated, 18 * romanizationSized.responsiveScale) &&
+    romanizationSized.main === defaultSizes.main,
   JSON.stringify(romanizationSized)
 );
 const persistedSizes = await page.evaluate(
@@ -1088,28 +1147,29 @@ check(
   JSON.stringify(persistedSizes)
 );
 
-// Fullscreen renders through the same theme, so the configured sizes hold there too.
+// Fullscreen renders through the same theme and settings; its larger content height
+// therefore rescales the same reference sizes instead of replacing them.
 await page.click('button[aria-label="Fullscreen lyrics"]');
 await page.waitForSelector(".lyrics-view.is-fullscreen", { timeout: 5000 }).catch(() => null);
 await wait(600);
 const fullscreenSizes = await decoFontSizes();
 check(
   "secondary-font-sizes-in-fullscreen",
-  fullscreenSizes.translated === 18 && fullscreenSizes.romanized === 14,
+  nearPx(fullscreenSizes.main, 25.6 * fullscreenSizes.responsiveScale) &&
+    nearPx(fullscreenSizes.translated, 18 * fullscreenSizes.responsiveScale) &&
+    nearPx(fullscreenSizes.romanized, 14 * fullscreenSizes.responsiveScale),
   JSON.stringify(fullscreenSizes)
 );
 await page.keyboard.press("Escape");
 await wait(500);
 
-// Settings shows the same values the Styles sliders set, and driving it from there lands back
+// Settings still shows the values just set, and driving it from there lands back
 // on the lyrics.
-await page.click('aside.sidebar button[title="Settings"]');
-await page.waitForSelector('[data-testid="settings-view"]');
-await wait(400);
+await openSettingsView();
 const settingsTranslation = await readSettingsRange("Translation Font Size");
 const settingsRomanization = await readSettingsRange("Romanization Font Size");
 check(
-  "font-size-settings-mirror-styles",
+  "font-size-settings-shown",
   settingsTranslation.value === "18" &&
     settingsTranslation.output === "18 px" &&
     settingsRomanization.value === "14" &&
@@ -1118,27 +1178,20 @@ check(
 );
 await setSettingsRange("Translation Font Size", 22);
 await wait(300);
-await page.evaluate(() => {
-  const item = [...document.querySelectorAll("aside.sidebar .nav-item")].find(node =>
-    node.textContent.includes("Now Playing")
-  );
-  item?.click();
-});
-await page.waitForSelector(".lyrics-view", { timeout: 10_000 }).catch(() => null);
-await wait(600);
+await backToNowPlaying();
 const settingsDriven = await decoFontSizes();
 check(
   "settings-font-size-drives-lyrics",
-  settingsDriven.translated === 22 && settingsDriven.romanized === 14,
+  nearPx(settingsDriven.translated, 22 * settingsDriven.responsiveScale) &&
+    nearPx(settingsDriven.romanized, 14 * settingsDriven.responsiveScale),
   JSON.stringify(settingsDriven)
 );
 
 // Restore the defaults and the pre-section dock state for the checks that follow.
-await page.click('[data-testid="lyrics-dock"] button[title="Lyrics appearance"]');
-await page.waitForSelector('.dock-appearance input[aria-label="Translation Font Size"]');
-await setRange('.dock-appearance input[aria-label="Translation Font Size"]', 32);
-await setRange('.dock-appearance input[aria-label="Romanization Font Size"]', 26);
-await page.click('[data-testid="lyrics-dock"] button[title="Lyrics appearance"]');
+await openSettingsView();
+await setSettingsRange("Translation Font Size", 32);
+await setSettingsRange("Romanization Font Size", 26);
+await backToNowPlaying();
 await page.click('[data-testid="lyrics-dock"] button[title="Romanize lyrics"]');
 await page.waitForFunction(() => document.querySelectorAll("braccato-lyrics .blyrics--romanized").length === 0, {
   timeout: 10_000,
@@ -1245,6 +1298,9 @@ const motionOf = async box => {
   // motion measurement. A static/black control still has no window that can pass the thresholds.
   let strongest = null;
   for (let sample = 0; sample < 3; sample += 1) {
+    // Keep the cursor over the controls so the idle-conceal fade cannot fire mid-sample:
+    // a fade during the black-fill baseline reveals the moving shader and contaminates it.
+    await page.mouse.move(box.x + box.width / 2, box.y + 6);
     const first = PNG.sync.read(await page.screenshot({ clip: box }));
     await wait(800);
     const second = PNG.sync.read(await page.screenshot({ clip: box }));
@@ -1274,6 +1330,13 @@ const hideContents = hidden => page.evaluate(value => {
   for (const child of node.children) child.style.visibility = value ? "hidden" : "";
 }, hidden);
 await hideContents(true);
+// Pin the bar visible with no fade for the whole measurement: an idle-conceal (or re-show)
+// transition inside a sample window swamps the backdrop signal this check exists to measure.
+await page.evaluate(() => {
+  const node = document.querySelector('[data-testid="fullscreen-controls"]');
+  node.style.opacity = "1";
+  node.style.transition = "none";
+});
 const glassMotion = await motionOf(fsBox);
 await page.evaluate(() => {
   const node = document.querySelector('[data-testid="fullscreen-controls"]');
@@ -1285,6 +1348,8 @@ await page.evaluate(() => {
   const node = document.querySelector('[data-testid="fullscreen-controls"]');
   node.style.background = "";
   node.style.backdropFilter = "";
+  node.style.opacity = "";
+  node.style.transition = "";
 });
 await hideContents(false);
 check(
@@ -1510,7 +1575,12 @@ check(
 );
 
 // Roaming over the lyrics, including the point just above the controls' top edge, does not reveal them.
-for (const [x, y] of [[300, 250], [640, 420], [900, 600], [640, 700]]) {
+// Derive that edge from the rendered footer: its height is intentionally fluid now, so a fixed
+// y-coordinate from the old laptop-sized control stack can land inside the controls themselves.
+const roamControlsTop = await page.$eval('[data-testid="fullscreen-controls"]', node =>
+  node.getBoundingClientRect().top
+);
+for (const [x, y] of [[300, 250], [640, 420], [900, 600], [640, Math.max(0, roamControlsTop - 8)]]) {
   await page.mouse.move(x, y);
   await wait(40);
 }
@@ -1564,14 +1634,15 @@ check(
   JSON.stringify(leftState)
 );
 
-// The fade is opacity and visibility only, 250 ms: no transform, scale or layout transition.
+// The fade is opacity and visibility only, 240 ms (`--dur-3` since the Stage 1 token
+// normalization): no transform, scale or layout transition.
 const fade = await page.evaluate(() => {
   const style = getComputedStyle(document.querySelector('[data-testid="fullscreen-controls"]'));
   return { properties: style.transitionProperty, durations: style.transitionDuration };
 });
 check(
   "hover-fade-is-opacity-only",
-  fade.properties === "opacity, visibility" && fade.durations === "0.25s, 0.25s",
+  fade.properties === "opacity, visibility" && fade.durations === "0.24s, 0.24s",
   JSON.stringify(fade)
 );
 
@@ -1799,9 +1870,14 @@ await layoutAtSize(1568, 889);
 await page.evaluate(() => document.querySelector("audio").play());
 await wait(300);
 
-// The queue opens from fullscreen and must sit above the fullscreen view.
+// The queue opens from fullscreen and must sit above the fullscreen view. Move the
+// pointer away first: wakeClick's wake depends on a real move event, and if the
+// pointer is already resting where the Queue button sits, the synthetic move is a
+// no-op and the click lands on still-concealed controls.
+await pointerAway();
+await wait(200);
 await wakeClick('[data-testid="fullscreen-controls"] button[aria-label="Queue"]');
-await wait(400);
+await wait(700);
 const queueLayer = await page.evaluate(() => {
   const panel = document.querySelector(".queue-panel");
   if (!panel) return null;
@@ -1810,8 +1886,10 @@ const queueLayer = await page.evaluate(() => {
   return { topmost: panel.contains(hit), bottomGap: Math.round(window.innerHeight - rect.bottom) };
 });
 check("queue-opens-over-fullscreen", queueLayer?.topmost === true && queueLayer.bottomGap === 0, JSON.stringify(queueLayer));
-await wakeClick('.queue-panel button[aria-label="Close queue"]');
-await wait(200);
+if (await page.$('.queue-panel button[aria-label="Close queue"]')) {
+  await wakeClick('.queue-panel button[aria-label="Close queue"]');
+  await wait(200);
+}
 
 // Lyrics stay hidden only in fullscreen: switch them off, leave fullscreen, and the normal page still shows them.
 await wakeClick('[data-testid="fullscreen-lyrics-toggle"]');
@@ -1908,7 +1986,12 @@ await page.evaluate(() => {
 });
 await wait(400);
 const persisted = await page.evaluate(async () => {
-  const slider = document.querySelector('[data-testid="settings-lyrics"] input[type="range"]');
+  // Select by label, not "first range in the section": the Not-Found cooldown slider now sits
+  // ahead of Font size in the Lyrics settings, and grabbing it would silently set days not rem.
+  const row = [...document.querySelectorAll('[data-testid="settings-lyrics"] .range-row')].find(
+    node => node.querySelector("strong")?.textContent === "Font size"
+  );
+  const slider = row?.querySelector('input[type="range"]');
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
   setter.call(slider, "2.4");
   slider.dispatchEvent(new Event("input", { bubbles: true }));
@@ -1936,15 +2019,16 @@ await page.waitForSelector(".sidebar", { timeout: 15_000 }).catch(async () => {
 await page.click('aside.sidebar button[title="Settings"]');
 await page.waitForSelector('[data-testid="settings-view"]');
 await wait(600);
-const fontSize = await page.evaluate(() => {
-  const section = document.querySelector('[data-testid="settings-lyrics"]');
-  const slider = section?.querySelector('input[type="range"]');
-  return {
-    stored: JSON.parse(localStorage.getItem("cadence.harness.settings.v1") ?? "{}")?.lyrics?.fontSizeRem,
-    slider: slider?.value ?? null,
-    output: section?.querySelector("output")?.textContent ?? null,
-  };
-});
+// Same by-label selection as above: the first range/output in the Lyrics section is now the
+// Not-Found cooldown control, so reading positionally would check days instead of rem.
+const fontSizeRange = await readSettingsRange("Font size");
+const fontSize = {
+  stored: await page.evaluate(
+    () => JSON.parse(localStorage.getItem("cadence.harness.settings.v1") ?? "{}")?.lyrics?.fontSizeRem ?? null
+  ),
+  slider: fontSizeRange.value,
+  output: fontSizeRange.output,
+};
 check("settings-survive-reload", fontSize.stored === 2.4 && fontSize.slider === "2.4", `stored=${fontSize.stored}, slider=${fontSize.slider}, shown=${fontSize.output}`);
 const reloadedSecondary = {
   translation: await readSettingsRange("Translation Font Size"),

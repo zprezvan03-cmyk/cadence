@@ -5,6 +5,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import {
   Album as AlbumIcon,
+  ChartColumn,
+  Compass,
   Heart,
   Home,
   History,
@@ -15,6 +17,7 @@ import {
   Plus,
   Settings,
   Users,
+  Youtube,
 } from "lucide-react";
 import { EMPTY_PLAYLISTS, useLibrary } from "../state/libraryStore";
 import { useUi, type LibraryTab } from "../state/uiStore";
@@ -22,11 +25,13 @@ import { useUi, type LibraryTab } from "../state/uiStore";
 const NAV: { label: string; icon: React.ReactNode; route: Parameters<ReturnType<typeof useUi.getState>["navigate"]>[0] }[] = [
   { label: "Home", icon: <Home size={18} />, route: { name: "home" } },
   { label: "History", icon: <History size={18} />, route: { name: "history" } },
+  { label: "Stats", icon: <ChartColumn size={18} />, route: { name: "stats" } },
   { label: "Songs", icon: <Music2 size={18} />, route: { name: "library", tab: "songs" } },
   { label: "Albums", icon: <AlbumIcon size={18} />, route: { name: "library", tab: "albums" } },
   { label: "Artists", icon: <Users size={18} />, route: { name: "library", tab: "artists" } },
   { label: "Playlists", icon: <ListMusic size={18} />, route: { name: "library", tab: "playlists" } },
   { label: "Liked songs", icon: <Heart size={18} />, route: { name: "library", tab: "favorites" } },
+  { label: "YouTube Music", icon: <Youtube size={18} />, route: { name: "ytm-home" } },
   { label: "Now Playing", icon: <Mic2 size={18} />, route: { name: "lyrics" } },
 ];
 
@@ -38,7 +43,11 @@ export function Sidebar() {
   const counts = useLibrary(state => state.snapshot?.counts);
 
   const isActive = (candidate: (typeof NAV)[number]["route"]) => {
-    if (candidate.name !== route.name) return false;
+    if (candidate.name !== route.name) {
+      // The YouTube Music nav item stays highlighted on every YTM route (home/search/details).
+      if (candidate.name === "ytm-home" && route.name.startsWith("ytm-")) return true;
+      return false;
+    }
     if (candidate.name === "library" && route.name === "library") {
       return candidate.tab === route.tab;
     }
@@ -100,6 +109,7 @@ export function Sidebar() {
         className="brand"
         onClick={() => navigate({ name: "home" })}
         role="button"
+        aria-label="Cadence home"
         tabIndex={0}
         onKeyDown={event => {
           if (event.key !== "Enter" && event.key !== " ") return;
@@ -125,6 +135,7 @@ export function Sidebar() {
             className={`nav-item ${isActive(item.route) ? "active" : ""}`}
             onClick={() => navigate(item.route)}
             title={item.label}
+            aria-label={item.label}
           >
             {item.icon}
             <span>{item.label}</span>
@@ -164,6 +175,7 @@ export function Sidebar() {
           className={`nav-item ${route.name === "settings" ? "active" : ""}`}
           onClick={() => navigate({ name: "settings" })}
           title="Settings"
+          aria-label="Settings"
         >
           <Settings size={18} />
           <span>Settings</span>
