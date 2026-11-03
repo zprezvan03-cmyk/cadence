@@ -9,6 +9,7 @@ pub mod alac;
 pub mod commands;
 pub mod db;
 pub mod protocol;
+pub mod secrets;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
