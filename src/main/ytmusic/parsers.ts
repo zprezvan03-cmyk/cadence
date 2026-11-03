@@ -30,6 +30,7 @@ import type {
   YtmSuggestions,
   YtmTrack,
 } from "../../shared/ytmusic";
+import { ytmItemKey } from "../../shared/ytmusic";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = Record<string, any>;
@@ -677,8 +678,93 @@ export function parseHomePage(response: unknown, continuationResponse = false): 
   return { chips, sections: shelvesOf(contents), continuation };
 }
 
-/** Search results for one filter. */
+/**
+ * Parse one search-section entry (a `sectionListRenderer.contents[]` element, or an
+ * `itemSectionRenderer.contents[]` element): card shelf (top result), music shelf, carousel, or a
+ * nested itemSectionRenderer. Returns parsed items plus any continuation token found inside.
+ */
+function parseSearchSectionEntry(
+  record: Json,
+  state: { topResult: YtmItem | null; items: YtmItem[]; continuation: string | null }
+): void {
+  const card = asRecord(record.musicCardShelfRenderer);
+  if (card) {
+    const parsed = parseCardShelf(card);
+    if (parsed) {
+      if (!state.topResult) state.topResult = parsed;
+      else state.items.push(parsed);
+    }
+    return;
+  }
+  const shelf = asRecord(record.musicShelfRenderer);
+  if (shelf) {
+    const parsed = parseShelfContents(asArray(shelf.contents));
+    state.items.push(...parsed.items);
+    // Continuations can sit on the shelf itself or inside its contents.
+    state.continuation = state.continuation || parsed.continuation || continuationToken(shelf.continuations);
+    return;
+  }
+  const carousel = asRecord(record.musicCarouselShelfRenderer);
+  if (carousel) {
+    const parsed = parseShelfContents(asArray(carousel.contents));
+    state.items.push(...parsed.items);
+    state.continuation = state.continuation || parsed.continuation || continuationToken(carousel.continuations);
+    return;
+  }
+  // Songs/albums can also be wrapped in an itemSectionRenderer (both a nested shelf and inline
+  // list items occur in real responses) — recurse so those results are not lost.
+  const itemSection = asRecord(record.itemSectionRenderer);
+  if (itemSection) {
+    for (const inner of asArray(itemSection.contents)) {
+      const innerRecord = asRecord(inner);
+      if (innerRecord) parseSearchSectionEntry(innerRecord, state);
+    }
+    state.continuation = state.continuation || continuationToken(itemSection.continuations);
+    return;
+  }
+  const listItem = asRecord(record.musicResponsiveListItemRenderer);
+  if (listItem) {
+    const parsed = parseListItem(listItem);
+    if (parsed) state.items.push(parsed);
+    return;
+  }
+  const twoRow = asRecord(record.musicTwoRowItemRenderer);
+  if (twoRow) {
+    const parsed = parseTwoRowItem(twoRow);
+    if (parsed) state.items.push(parsed);
+  }
+}
+
+/** Parse a `continuationContents` payload (search/browse continuations). */
+function parseContinuationContents(response: unknown): { items: YtmItem[]; continuation: string | null } | null {
+  const cont = asRecord(asRecord(response)?.continuationContents);
+  if (!cont) return null;
+  // musicShelfContinuation (search continuation), sectionListContinuation (browse), etc.
+  for (const key of ["musicShelfContinuation", "sectionListContinuation", "playlistContinuation", "gridContinuation"]) {
+    const section = asRecord(cont[key]);
+    if (!section) continue;
+    const state = { topResult: null, items: [] as YtmItem[], continuation: null as string | null };
+    for (const entry of asArray(section.contents)) {
+      const record = asRecord(entry);
+      if (record) parseSearchSectionEntry(record, state);
+    }
+    return { items: state.items, continuation: state.continuation || continuationToken(section.continuations) };
+  }
+  return null;
+}
+
+/**
+ * Search results for one filter. Handles both first-page responses
+ * (`contents.tabbedSearchResultsRenderer…sectionListRenderer`) and continuation responses
+ * (`continuationContents.musicShelfContinuation`), dedupes by stable per-type id, and never
+ * treats a continuation container as a result.
+ */
 export function parseSearchResponse(response: unknown, filter: YtmSearchFilter): YtmSearchResults {
+  const continuationPage = parseContinuationContents(response);
+  if (continuationPage) {
+    return { filter, topResult: null, items: dedupItems(continuationPage.items), continuation: continuationPage.continuation };
+  }
+
   const tabbed = firstRenderer(response, "tabbedSearchResultsRenderer");
   const tabs = asArray(asRecord(tabbed)?.tabs);
   const selectedTab =
@@ -687,34 +773,27 @@ export function parseSearchResponse(response: unknown, filter: YtmSearchFilter):
   const sectionList = asRecord(asRecord(selectedTab?.content)?.sectionListRenderer);
   const contents = asArray(sectionList?.contents);
 
-  let topResult: YtmItem | null = null;
-  const items: YtmItem[] = [];
-  let continuation: string | null = null;
+  const state = { topResult: null as YtmItem | null, items: [] as YtmItem[], continuation: null as string | null };
   for (const entry of contents) {
     const record = asRecord(entry);
-    if (!record) continue;
-    const card = asRecord(record.musicCardShelfRenderer);
-    if (card && !topResult) {
-      topResult = parseCardShelf(card);
-      continue;
-    }
-    const shelf = asRecord(record.musicShelfRenderer);
-    if (shelf) {
-      const parsed = parseShelfContents(asArray(shelf.contents));
-      items.push(...parsed.items);
-      continuation = continuation || parsed.continuation;
-      continue;
-    }
-    const carousel = asRecord(record.musicCarouselShelfRenderer);
-    if (carousel) {
-      items.push(...parseShelfContents(asArray(carousel.contents)).items);
-      continue;
-    }
-    const single = parseShelf(record);
-    if (single) items.push(...single.items);
+    if (record) parseSearchSectionEntry(record, state);
   }
-  continuation = continuation || continuationToken(sectionList?.continuations);
-  return { filter, topResult, items, continuation };
+  // Continuation tokens can sit on the section list or inline in its contents.
+  state.continuation = state.continuation || continuationToken(sectionList?.continuations) || continuationToken(contents);
+  return { filter, topResult: state.topResult, items: dedupItems(state.items), continuation: state.continuation };
+}
+
+/** Deduplicate items by their stable, type-prefixed id (video/browse/playlist id). */
+function dedupItems(items: YtmItem[]): YtmItem[] {
+  const seen = new Set<string>();
+  const out: YtmItem[] = [];
+  for (const item of items) {
+    const key = ytmItemKey(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
 }
 
 /** Search suggestions (`music/get_search_suggestions`). */
@@ -859,6 +938,27 @@ export function parsePlaylistPage(response: unknown, playlistId: string): YtmPla
     const desc = firstRenderer(response, "musicDescriptionShelfRenderer");
     return desc ? runsText(asRecord(desc.description)?.runs) || null : null;
   })();
+
+  // Continuation responses wrap the track list in continuationContents.musicPlaylistShelfContinuation.
+  const contPayload = asRecord(asRecord(response)?.continuationContents)?.musicPlaylistShelfContinuation;
+  if (contPayload) {
+    const { items, continuation } = parseShelfContents(asArray(contPayload.contents));
+    const contTracks: YtmTrack[] = [];
+    for (const item of items) {
+      if (item.type === "song" || item.type === "video") contTracks.push(item.track);
+    }
+    return {
+      id: playlistId,
+      title: "Playlist",
+      author: null,
+      description: null,
+      trackCountText: null,
+      viewCountText: null,
+      artworkUrl: null,
+      tracks: contTracks,
+      continuation: continuation || continuationToken(contPayload.continuations),
+    };
+  }
 
   // Tracks: a musicPlaylistShelfRenderer or musicShelfRenderer of list items.
   const playlistShelf = firstRenderer(response, "musicPlaylistShelfRenderer");

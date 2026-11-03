@@ -606,6 +606,111 @@ describe("parsers", () => {
   });
 });
 
+describe("search parsing: full result sets, categories, continuations, dedup", () => {
+  const songIn = (id: string, title: string) => songRendererSimple(id, title, "3:32");
+
+  it("parses songs nested inside itemSectionRenderer (not only the top card)", () => {
+    const response = {
+      contents: {
+        tabbedSearchResultsRenderer: {
+          tabs: [
+            {
+              tabRenderer: {
+                selected: true,
+                content: {
+                  sectionListRenderer: {
+                    contents: [
+                      { musicCardShelfRenderer: { title: { runs: [{ text: "Top" }] }, subtitle: { runs: [{ text: "Song" }] }, onTap: { watchEndpoint: { videoId: "top1", watchEndpointMusicSupportedConfigs: { watchEndpointMusicConfig: { musicVideoType: "MUSIC_VIDEO_TYPE_ATV" } } } } } },
+                      {
+                        itemSectionRenderer: {
+                          contents: [
+                            { musicShelfRenderer: { title: { runs: [{ text: "Songs" }] }, contents: [songIn("s1", "One"), songIn("s2", "Two"), songIn("s3", "Three")] } },
+                            { musicResponsiveListItemRenderer: undefined },
+                          ],
+                        },
+                      },
+                      { itemSectionRenderer: { contents: [{ musicResponsiveListItemRenderer: songIn("s4", "Four").musicResponsiveListItemRenderer }] } },
+                    ],
+                    continuations: [continuation()],
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    };
+    const results = parseSearchResponse(response, "all");
+    expect(results.items.filter(i => i.type === "song").map(i => (i as { track: { videoId: string } }).track.videoId)).toEqual(["s1", "s2", "s3", "s4"]);
+    expect(results.topResult?.type).toBe("song");
+    expect(results.continuation).toBe("TOKEN_ABC");
+  });
+
+  it("parses continuation responses (continuationContents.musicShelfContinuation) with items and next token", () => {
+    const response = {
+      continuationContents: {
+        musicShelfContinuation: {
+          contents: [songIn("c1", "Cont One"), songIn("c2", "Cont Two"), continuation()],
+          continuations: [{ continuationItemRenderer: { continuationEndpoint: { continuationCommand: { token: "NEXT_TOK" } } } }],
+        },
+      },
+    };
+    const results = parseSearchResponse(response, "songs");
+    expect(results.items.map(i => (i as { track: { videoId: string } }).track.videoId)).toEqual(["c1", "c2"]);
+    expect(results.continuation).toBe("NEXT_TOK");
+    expect(results.topResult).toBeNull();
+  });
+
+  it("never treats a continuationItemRenderer as a search result", () => {
+    const response = {
+      contents: {
+        tabbedSearchResultsRenderer: {
+          tabs: [{ tabRenderer: { selected: true, content: { sectionListRenderer: { contents: [continuation()] } } } }],
+        },
+      },
+    };
+    const results = parseSearchResponse(response, "all");
+    expect(results.items).toEqual([]);
+    expect(results.continuation).toBe("TOKEN_ABC");
+  });
+
+  it("deduplicates items by stable type-prefixed id", () => {
+    const response = {
+      contents: {
+        tabbedSearchResultsRenderer: {
+          tabs: [{ tabRenderer: { selected: true, content: { sectionListRenderer: { contents: [
+            { musicShelfRenderer: { contents: [songIn("dup", "Same"), songIn("dup", "Same"), songIn("other", "Other")] } },
+            { musicCarouselShelfRenderer: { header: { musicCarouselShelfBasicHeaderRenderer: { title: { runs: [{ text: "Albums" }] } } }, contents: [albumTwoRow()] } },
+          ] } } } }],
+        },
+      },
+    };
+    const results = parseSearchResponse(response, "all");
+    const songIds = results.items.filter(i => i.type === "song").map(i => (i as { track: { videoId: string } }).track.videoId);
+    expect(songIds).toEqual(["dup", "other"]);
+    // album from carousel survives alongside songs (categories do not collide)
+    expect(results.items.some(i => i.type === "album")).toBe(true);
+  });
+
+  it("handles single-result, empty and malformed responses without throwing", () => {
+    const single = parseSearchResponse({
+      contents: { tabbedSearchResultsRenderer: { tabs: [{ tabRenderer: { selected: true, content: { sectionListRenderer: { contents: [{ musicShelfRenderer: { contents: [songIn("only", "Only One")] } }] } } } }] } },
+    }, "songs");
+    expect(single.items).toHaveLength(1);
+    expect(single.continuation).toBeNull();
+
+    const empty = parseSearchResponse({ contents: { tabbedSearchResultsRenderer: { tabs: [] } } }, "all");
+    expect(empty.items).toEqual([]);
+    expect(empty.continuation).toBeNull();
+    expect(empty.topResult).toBeNull();
+
+    const malformed = parseSearchResponse({ contents: null }, "all");
+    expect(malformed.items).toEqual([]);
+    expect(parseSearchResponse(null, "all").items).toEqual([]);
+    expect(parseSearchResponse("nope", "all").items).toEqual([]);
+  });
+});
+
 describe("YouTubeMusicProvider", () => {
   function providerWith(handler: (req: CapturedRequest) => { status?: number; body: string }) {
     const { fetchImpl, calls } = stubFetch(handler);
@@ -694,6 +799,54 @@ describe("YouTubeMusicProvider", () => {
       streamingData: { adaptiveFormats: [] },
     }));
     await expect(provider.resolveStream(VIDEO_ID)).rejects.toMatchObject({ kind: "blocked" });
+  });
+
+  it("search continuation sends only the token and parses continuationContents", async () => {
+    const continuationResponse = {
+      continuationContents: {
+        musicShelfContinuation: {
+          contents: [
+            { musicResponsiveListItemRenderer: songRendererSimple("c1", "Cont One", "3:00").musicResponsiveListItemRenderer },
+            { musicResponsiveListItemRenderer: songRendererSimple("c2", "Cont Two", "3:10").musicResponsiveListItemRenderer },
+            continuation(),
+          ],
+          continuations: [{ continuationItemRenderer: { continuationEndpoint: { continuationCommand: { token: "NEXT" } } } }],
+        },
+      },
+    };
+    const { provider, calls } = providerWith(req =>
+      req.url.includes("continuation=") ? { body: JSON.stringify(continuationResponse) } : { body: JSON.stringify(searchResponse) }
+    );
+    const page = await provider.search("rick astley", "songs", "TOKEN_ABC");
+    const contCall = calls.find(c => c.url.includes("continuation=TOKEN_ABC"));
+    expect(contCall).toBeDefined();
+    expect(contCall!.url).toContain("ctoken=TOKEN_ABC");
+    const body = JSON.parse(contCall!.body!);
+    expect(body.query).toBeUndefined(); // continuation calls must not resend the query
+    expect(page.items.map(i => (i as { track: { videoId: string } }).track.videoId)).toEqual(["c1", "c2"]);
+    expect(page.continuation).toBe("NEXT");
+  });
+
+  it("playlist continuation parses continuationContents.musicPlaylistShelfContinuation", async () => {
+    const contResponse = {
+      continuationContents: {
+        musicPlaylistShelfContinuation: {
+          contents: [
+            { musicResponsiveListItemRenderer: songRendererSimple("p1", "Pl One", "3:00").musicResponsiveListItemRenderer },
+            { musicResponsiveListItemRenderer: songRendererSimple("p2", "Pl Two", "3:10").musicResponsiveListItemRenderer },
+          ],
+          continuations: [continuation()],
+        },
+      },
+    };
+    const { provider, calls } = providerWith(req =>
+      req.url.includes("continuation") || JSON.parse(req.body!).continuation ? { body: JSON.stringify(contResponse) } : { body: JSON.stringify(playlistPageResponse) }
+    );
+    const page = await provider.playlist("PL123", "TOKEN_ABC");
+    expect(JSON.parse(calls.at(-1)!.body!).browseId).toBeUndefined();
+    expect(JSON.parse(calls.at(-1)!.body!).continuation).toBe("TOKEN_ABC");
+    expect(page.tracks.map(t => t.videoId)).toEqual(["p1", "p2"]);
+    expect(page.continuation).toBe("TOKEN_ABC");
   });
 
   it("surfaces provider errors with friendly messages", async () => {

@@ -26,10 +26,18 @@ import {
   YtmProviderError,
   type YouTubeMusicProvider,
 } from "../../main/ytmusic/provider";
+import { ytmItemKey } from "../../shared/ytmusic";
 import { bridge, hasBridge } from "./bridge";
 import { useSettings } from "./settingsStore";
 
 const SEARCH_HISTORY_KEY = "cadence.ytm.searchHistory.v1";
+
+/**
+ * Monotonic token for search requests. Every performSearch/loadMoreSearch captures the current
+ * value and only applies its response if it is still the latest request for that query — an
+ * older, slower response must never overwrite the results of a newer query (rapid typing).
+ */
+let searchRequestSeq = 0;
 const ACCOUNT_SECRET_ACCOUNT = "google-account-cookie";
 export const YTM_SECRET_SERVICE = "cadence";
 
@@ -209,6 +217,7 @@ export const useYtm = create<YtmState>()((set, get) => {
       if (!trimmed) return;
       syncSessionFromSettings();
       const activeFilter = filter ?? get().searchState.filter;
+      const seq = ++searchRequestSeq;
       set(state => ({
         searchState: { ...state.searchState, query: trimmed, filter: activeFilter, status: "loading", error: null },
       }));
@@ -217,6 +226,8 @@ export const useYtm = create<YtmState>()((set, get) => {
           if (cookie) provider.setSession({ cookie });
           return provider.search(trimmed, activeFilter);
         });
+        // Stale guard: a newer search (or filter change) started meanwhile — drop this response.
+        if (seq !== searchRequestSeq) return;
         set(state => ({
           searchState: {
             ...state.searchState,
@@ -233,6 +244,7 @@ export const useYtm = create<YtmState>()((set, get) => {
           })(),
         }));
       } catch (error) {
+        if (seq !== searchRequestSeq) return;
         set(state => ({ searchState: { ...state.searchState, status: "error", error: errorMessage(error) } }));
       }
     },
@@ -240,20 +252,36 @@ export const useYtm = create<YtmState>()((set, get) => {
     async loadMoreSearch() {
       const state = get().searchState;
       if (state.status !== "ready" || !state.continuation || state.loadingMore) return;
+      const seq = ++searchRequestSeq;
+      const queryAtStart = state.query;
+      const filterAtStart = state.filter;
       set(current => ({ searchState: { ...current.searchState, loadingMore: true } }));
       try {
         const results = await provider.search(state.query, state.filter, state.continuation);
-        set(current => ({
-          searchState: {
-            ...current.searchState,
-            loadingMore: false,
-            data: current.searchState.data
-              ? { ...results, items: [...current.searchState.data.items, ...results.items] }
-              : results,
-            continuation: results.continuation,
-          },
-        }));
+        // Stale guards: a new search replaced the query meanwhile, or a newer load-more is running.
+        if (seq !== searchRequestSeq) return;
+        if (get().searchState.query !== queryAtStart || get().searchState.filter !== filterAtStart) return;
+        set(current => {
+          const existing = current.searchState.data;
+          // Append the next page, deduplicating by stable type-prefixed id so overlapping
+          // continuation responses can never produce duplicate rows.
+          const seen = new Set((existing?.items ?? []).map(item => ytmItemKey(item)));
+          const fresh = results.items.filter(item => !seen.has(ytmItemKey(item)));
+          return {
+            searchState: {
+              ...current.searchState,
+              loadingMore: false,
+              data: existing
+                ? { ...results, items: [...existing.items, ...fresh] }
+                : results,
+              continuation: results.continuation,
+              error: null,
+            },
+          };
+        });
       } catch (error) {
+        if (seq !== searchRequestSeq) return;
+        // Failed pagination must preserve the already-loaded results; only flag the error.
         set(current => ({ searchState: { ...current.searchState, loadingMore: false, error: errorMessage(error) } }));
       }
     },

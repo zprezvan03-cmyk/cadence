@@ -262,8 +262,10 @@ export class InnerTubeClient {
 
   /** `search` — query plus optional music filter params; continuation via query params. */
   search(query: string, params: string | null, continuation: string | null, signal?: AbortSignal): Promise<unknown> {
-    const body: JsonRecord = { ...this.context(), query };
-    if (params) body.params = params;
+    // Continuation calls carry only the token (as query params), never the query again.
+    const body: JsonRecord = { ...this.context() };
+    if (!continuation) body.query = query;
+    if (params && !continuation) body.params = params;
     const queryParams: Record<string, string> = {};
     if (continuation) {
       queryParams.continuation = continuation;
