@@ -23,6 +23,7 @@ import { getTrackById } from "../state/trackRegistry";
 import { useSettings } from "../state/settingsStore";
 import { useUi } from "../state/uiStore";
 import { useHistory } from "../state/historyStore";
+import { useYtm } from "../state/ytmusicStore";
 import { mediaItemFromLocalTrack, trackSourceKey } from "../../shared/media";
 import { formatTime } from "../player/queue";
 import {
@@ -52,6 +53,11 @@ export function useBootstrap(): void {
 
     void (async () => {
       await useSettings.getState().load();
+      // YouTube Music source: restore the anonymous guest session from settings and re-check the
+      // optional connected account (whose cookie lives in the OS secret store). No network call
+      // happens here; the first catalog page the user opens lazily fetches visitor data.
+      useYtm.getState().syncSessionFromSettings();
+      void useYtm.getState().checkAccount();
       await useLibrary.getState().refresh();
       // Restore persistent listening history so both the History tab and the homepage's Recently
       // Played section reconstruct from SQLite on every launch. Idempotent: safe to call again

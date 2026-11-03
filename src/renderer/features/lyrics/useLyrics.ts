@@ -15,9 +15,12 @@ import type { Lyric, LyricSyncType } from "@braccato/types";
 import type {
   LyricsCandidate,
   LyricsSettings,
+  MediaItem,
   Track,
+  TrackSource,
   YouTubeMetadataResult,
 } from "../../../shared/types";
+import { trackSourceKey } from "../../../shared/media";
 import { parseYouTubeVideoId, resolveSearchFields, type ManualSearchInput } from "../../../shared/youtube";
 import { bridge } from "../../state/bridge";
 import {
@@ -163,7 +166,7 @@ let forceNextResolve = false;
  * fallback lyrics that are already showing.
  */
 function applyResolveResult(
-  track: Track,
+  identity: { id: number; title?: string; artist?: string; duration?: number },
   settings: LyricsSettings,
   result: {
     candidates: LyricsCandidate[];
@@ -173,7 +176,7 @@ function applyResolveResult(
   interim: boolean
 ): void {
   const store = useLyricsStore.getState();
-  const sameTrackOnScreen = store.trackId === track.id;
+  const sameTrackOnScreen = store.trackId === identity.id;
   const hasOnScreen = sameTrackOnScreen && Boolean(store.lyrics?.length);
 
   if (result.candidates.length === 0) {
@@ -183,7 +186,7 @@ function applyResolveResult(
     // state exactly as before, stale source rows included.
     const authoritativeEmpty = result.definitive === true || !settings.autoFetch;
     if (hasOnScreen && !authoritativeEmpty) {
-      store.setActive(track.id, {
+      store.setActive(identity.id, {
         status: "ready",
         refreshing: interim,
         providerStatus: result.providerStatus,
@@ -191,7 +194,7 @@ function applyResolveResult(
       });
       return;
     }
-    store.setActive(track.id, {
+    store.setActive(identity.id, {
       status: "empty",
       refreshing: false,
       candidates: [],
@@ -205,7 +208,7 @@ function applyResolveResult(
     return;
   }
 
-  const chosenSource = store.selectedSources[track.id];
+  const chosenSource = store.selectedSources[identity.id];
   const preferred = pickPreferredCandidate(result.candidates, chosenSource) ?? result.candidates[0];
   const manual = hasOnScreen && isManualSelection(store.activeSource, chosenSource);
 
@@ -231,7 +234,7 @@ function applyResolveResult(
     // fallback the upgrade pass could not beat) stay exactly as they are, decorations included.
     const activeStillListed = result.candidates.some(c => c.source === store.activeSource);
     const currentCandidate = store.candidates.find(c => c.source === store.activeSource);
-    store.setActive(track.id, {
+    store.setActive(identity.id, {
       status: "ready",
       refreshing: interim,
       candidates:
@@ -244,10 +247,10 @@ function applyResolveResult(
     return;
   }
 
-  const parsed = parseCandidateForTrack(track, preferred, track.duration);
+  const parsed = parseCandidateForTrack(identity, preferred, identity.duration ?? 0);
   const previous = useLyricsStore.getState();
   const sameParse = previous.parsed === parsed;
-  store.setActive(track.id, {
+  store.setActive(identity.id, {
     status: "ready",
     refreshing: interim,
     candidates: result.candidates,
@@ -325,7 +328,7 @@ export async function ensureLyricsForTrack(
       ...(force ? { forceRefresh: true } : {}),
     });
     if (token !== generations.resolve) return;
-    applyResolveResult(track, settings, result, false);
+    applyResolveResult({ ...track, duration: track.duration }, settings, result, false);
   } catch (error) {
     if (token !== generations.resolve) return;
     if (
@@ -350,9 +353,118 @@ export async function ensureLyricsForTrack(
   }
 }
 
-export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyricsResult {
+/**
+ * Stable NEGATIVE numeric key used only inside the lyrics store for a remote (YouTube Music)
+ * item. Library track ids are always >= 0, so this can never collide with — or be mistaken for —
+ * a real local track id: queue, history and the library keep the string source identity
+ * (`youtube-music:<videoId>`); this key exists solely because the lyrics store sessions are keyed
+ * by number.
+ */
+export function remoteLyricsKey(source: TrackSource): number {
+  const key = trackSourceKey(source);
+  let hash = 2166136261 >>> 0;
+  for (let i = 0; i < key.length; i += 1) {
+    hash ^= key.charCodeAt(i);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return -((hash % 2_000_000_000) + 1);
+}
+
+/**
+ * Remote variant of {@link ensureLyricsForTrack}: passes the item's YouTube Music metadata (title,
+ * artist, album, duration) plus its remote identity into the existing lyrics resolution service.
+ * The service fans out to the same providers (and the YouTube Music lyrics provider when the
+ * source carries a video id) and caches under `remote:<videoId>`, never under a fake track id.
+ */
+export async function ensureLyricsForRemoteItem(
+  item: MediaItem,
+  settings: LyricsSettings,
+  options?: { reloadTick?: number; force?: boolean }
+): Promise<void> {
+  if (item.source.kind === "local") return;
+  const key = remoteLyricsKey(item.source);
+  const force = Boolean(options?.force || forceNextResolve);
+  const requestKey = `${key}:${settings.autoFetch ? "online" : "local"}:${settings.providerOrder.join(",")}:${options?.reloadTick ?? reloadToken}:${force ? "force" : ""}`;
+  const current = lyricsStore();
+  if (
+    resolvedForKey === requestKey &&
+    current.trackId === key &&
+    (current.status === "loading" || current.candidates.length > 0 || current.status === "empty")
+  ) {
+    return;
+  }
+  forceNextResolve = false;
+  const token = ++generations.resolve;
+  resolvedForKey = requestKey;
+
+  const identity = { id: key, title: item.title, artist: item.artistLabel, duration: item.durationSeconds ?? 0 };
+  const sameKey = current.trackId === key;
+  useLyricsStore.getState().beginResolve(key);
+  if (!sameKey) {
+    appliedTranslationKey = null;
+    appliedRomanizationKey = null;
+  }
+
+  const request = {
+    trackId: key,
+    remote: { remoteId: item.source.remoteId, canonicalUrl: item.source.canonicalUrl },
+    title: item.title,
+    artist: item.artistLabel,
+    album: item.albumLabel ?? "",
+    duration: item.durationSeconds ?? 0,
+  };
+
+  try {
+    if (settings.autoFetch && !force) {
+      try {
+        const fallback = await bridge.lyrics.resolve({ ...request, localOnly: true });
+        if (token !== generations.resolve) return;
+        if (fallback.candidates.length > 0) {
+          applyResolveResult(identity, settings, fallback, true);
+        }
+      } catch {
+        if (token !== generations.resolve) return;
+      }
+    }
+
+    const result = await bridge.lyrics.resolve({
+      ...request,
+      localOnly: !settings.autoFetch,
+      ...(force ? { forceRefresh: true } : {}),
+    });
+    if (token !== generations.resolve) return;
+    applyResolveResult(identity, settings, result, false);
+  } catch (error) {
+    if (token !== generations.resolve) return;
+    if ((error as Error)?.name === "AbortError" || (error as { kind?: string })?.kind === "aborted") {
+      return;
+    }
+    resolvedForKey = null;
+    const store = useLyricsStore.getState();
+    if (store.trackId === key && store.lyrics?.length) {
+      store.setActive(key, { status: "ready", refreshing: false });
+      return;
+    }
+    store.setActive(key, {
+      status: "error",
+      refreshing: false,
+      error: (error as Error).message,
+      lyrics: null,
+    });
+  }
+}
+
+export function useLyrics(
+  track: Track | null,
+  settings: LyricsSettings,
+  remoteItem?: MediaItem | null
+): UseLyricsResult {
   const store = useLyricsStore();
   const [reloadTick, setReloadTick] = useState(reloadToken);
+  // Unified active key: the local track id, or the negative remote key for a YouTube Music item.
+  const activeKey = track?.id ?? (remoteItem && remoteItem.source.kind !== "local" ? remoteLyricsKey(remoteItem.source) : null);
+  const activeDuration = track?.duration ?? remoteItem?.durationSeconds ?? 0;
+  const activeIdentity = track ?? (remoteItem ? { id: activeKey ?? 0, title: remoteItem.title, artist: remoteItem.artistLabel } : null);
 
   // Ensure this track owns a search session (drafts may be rehydrated from localStorage).
   useEffect(() => {
@@ -363,26 +475,29 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     generations.youtube += 1;
   }, [track?.id]);
 
-  const session = track ? store.sessions[track.id] : undefined;
+  const session = activeKey !== null && activeKey !== undefined ? store.sessions[activeKey] : undefined;
 
   const parseCandidate = useCallback(
     (candidate: LyricsCandidate, durationSeconds: number): ParsedLyrics =>
-      parseCandidateForTrack(track, candidate, durationSeconds),
-    [track]
+      parseCandidateForTrack(activeIdentity, candidate, durationSeconds),
+    [activeIdentity]
   );
 
-  // Resolve candidates whenever the track or the provider configuration changes. The pipeline
-  // itself lives in `ensureLyricsForTrack` so the app-level Autofetch driver can run it before
-  // (or without) this view mounting; on remount with the same request key it returns at once.
+  // Resolve candidates whenever the track/item or the provider configuration changes. The pipeline
+  // itself lives in `ensureLyricsForTrack`/`ensureLyricsForRemoteItem` so the app-level Autofetch
+  // driver can run it before (or without) this view mounting; on remount with the same request key
+  // it returns at once.
   useEffect(() => {
-    if (!track) {
+    if (track) {
+      void ensureLyricsForTrack(track, settings, { reloadTick });
+    } else if (remoteItem && remoteItem.source.kind !== "local") {
+      void ensureLyricsForRemoteItem(remoteItem, settings, { reloadTick });
+    } else {
       generations.resolve += 1;
       resolvedForKey = null;
-      return;
     }
-    void ensureLyricsForTrack(track, settings, { reloadTick });
     // reloadTick mirrors the module token that survives remounts.
-  }, [track, settings, reloadTick]);
+  }, [track, remoteItem, settings, reloadTick]);
 
   // Translation pass (ported Better Lyrics batching lives in the main process).
   useEffect(() => {
@@ -555,11 +670,11 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
 
   const selectSource = useCallback(
     (source: string) => {
-      if (!track) return;
+      if (activeKey === null || activeKey === undefined) return;
       const candidate = lyricsStore().candidates.find(entry => entry.source === source);
-      const parsed = candidate?.text ? parseCandidate(candidate, track.duration) : null;
+      const parsed = candidate?.text ? parseCandidate(candidate, activeDuration) : null;
       if (!parsed) return;
-      useLyricsStore.getState().setSelectedSource(track.id, source);
+      useLyricsStore.getState().setSelectedSource(activeKey, source);
       useLyricsStore.setState(previous => ({
         ...previous,
         parsed,
@@ -570,7 +685,7 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
         status: "ready",
       }));
     },
-    [track, parseCandidate]
+    [activeKey, activeDuration, parseCandidate]
   );
 
   const reload = useCallback(() => {

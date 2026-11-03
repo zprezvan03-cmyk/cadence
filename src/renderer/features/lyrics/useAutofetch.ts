@@ -9,9 +9,9 @@
 import { useEffect } from "react";
 import { bridge, hasBridge } from "../../state/bridge";
 import { useLibrary } from "../../state/libraryStore";
-import { currentTrackId, usePlayer } from "../../state/playerStore";
+import { currentMediaItem, currentTrackId, usePlayer } from "../../state/playerStore";
 import { useSettings } from "../../state/settingsStore";
-import { ensureLyricsForTrack } from "./useLyrics";
+import { ensureLyricsForRemoteItem, ensureLyricsForTrack } from "./useLyrics";
 
 export function useAutofetchLyrics(): void {
   useEffect(() => {
@@ -25,11 +25,22 @@ export function useAutofetchLyrics(): void {
       // network (and re-populate a just-cleared cache) on every startup for lyrics nobody has
       // asked for yet. Pressing play fires the same check via the subscription below.
       if (!usePlayer.getState().isPlaying) return;
+      const lyrics = settings.lyrics;
+      const item = currentMediaItem(usePlayer.getState());
+      if (!item) return;
       const trackId = currentTrackId(usePlayer.getState());
+      if (item.source.kind !== "local") {
+        // Remote (YouTube Music) item: resolve lyrics from its remote metadata through the same
+        // pipeline (the service adds the YouTube Music lyrics provider for these sources).
+        const key = `remote:${item.source.kind}:${item.source.remoteId}:${lyrics.autoFetch ? "online" : "local"}:${lyrics.providerOrder.join(",")}`;
+        if (key === lastKey) return;
+        lastKey = key;
+        void ensureLyricsForRemoteItem(item, lyrics);
+        return;
+      }
       if (trackId === null) return;
       const track = useLibrary.getState().tracksById.get(trackId);
       if (!track) return;
-      const lyrics = settings.lyrics;
       const key = `${track.id}:${lyrics.autoFetch ? "online" : "local"}:${lyrics.providerOrder.join(",")}`;
       if (key === lastKey) return;
       lastKey = key;
@@ -47,7 +58,10 @@ export function useAutofetchLyrics(): void {
     // subscriptions still only re-check on state changes of the three owning stores.
     const unsubscribes = [
       usePlayer.subscribe((state, previous) => {
+        const currentItem = currentMediaItem(state);
+        const previousItem = currentMediaItem(previous);
         if (
+          currentItem?.source !== previousItem?.source ||
           currentTrackId(state) !== currentTrackId(previous) ||
           (state.isPlaying && !previous.isPlaying)
         ) {

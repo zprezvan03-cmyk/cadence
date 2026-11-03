@@ -137,9 +137,12 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
   // The toggle only applies in fullscreen; the normal page always shows lyrics.
   const lyricsVisible = !fullscreen || showLyrics;
 
+  // Remote (YouTube Music) items resolve through the same lyrics pipeline with their remote
+  // metadata; local tracks use their library tags as before.
   const lyrics = useLyrics(
     isRemote ? null : track ?? null,
-    lyricsSettings ?? fallbackLyricsSettings
+    lyricsSettings ?? fallbackLyricsSettings,
+    isRemote ? item : null
   );
 
   useEffect(() => {
