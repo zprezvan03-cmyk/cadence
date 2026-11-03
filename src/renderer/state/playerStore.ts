@@ -20,6 +20,7 @@ import {
   pruneQueueOrder,
 } from "../player/queue";
 import { decideTransition, TransitionGuard } from "../player/transitions";
+import { codecFromMime, resolveRemoteStream } from "../player/remotePlayback";
 import { getTrackById } from "./trackRegistry";
 import { useLibrary } from "./libraryStore";
 import { useHistory } from "./historyStore";
@@ -39,7 +40,7 @@ export interface SessionState {
   repeat: RepeatMode;
 }
 
-export type RemotePlaybackStatus = "idle" | "unavailable";
+export type RemotePlaybackStatus = "idle" | "resolving" | "ready" | "unavailable";
 
 interface PlayerState extends SessionState {
   isPlaying: boolean;
@@ -168,7 +169,9 @@ export function pruneSessionQueue(
     oldCurrentIndex === undefined ? null : session.queue[oldCurrentIndex] ?? null;
   const pruned = pruneQueueOrder(session.queue, session.order, session.orderPosition, entry => {
     if (entry.item.source.kind === "local") return availableTrackIds.has(entry.item.source.trackId);
-    return false;
+    // Remote YouTube Music entries are restorable: they keep their string source identity and
+    // are re-resolved on play, so a restart must not silently drop them from the queue.
+    return entry.item.source.kind === "youtube-music";
   });
   const newCurrentIndex = pruned.order[pruned.orderPosition];
   const newCurrent = newCurrentIndex === undefined ? null : pruned.queue[newCurrentIndex] ?? null;
@@ -256,21 +259,53 @@ export const usePlayer = create<PlayerState>()((set, get) => {
 
     if (entry.item.source.kind !== "local") {
       const item = resolvedItem(entry);
-      loadToken += 1;
+      const token = ++loadToken;
       transitionGuard.reset();
       audioEngine.pause();
-      const message = "Remote playback is not available in this build.";
       set({
-        playbackMechanism: "unavailable",
+        playbackMechanism: "remote-provider",
+        remoteStatus: "resolving",
+        remoteError: null,
         duration: item.durationSeconds ?? 0,
         buffered: 0,
         isPlaying: false,
-        buffering: false,
+        buffering: true,
         ended: false,
-        error: message,
-        remoteStatus: "unavailable",
-        remoteError: message,
+        error: null,
       });
+      const resolved = await resolveRemoteStream(item);
+      if (token !== loadToken) return;
+      if (!resolved.ok) {
+        const message = `YouTube Music playback unavailable: ${resolved.error}`;
+        set({
+          playbackMechanism: "unavailable",
+          remoteStatus: "unavailable",
+          remoteError: resolved.error,
+          buffering: false,
+          isPlaying: false,
+          error: message,
+        });
+        return;
+      }
+      const loaded = await audioEngine.load({
+        streamUrl: resolved.url,
+        title: item.title,
+        codec: codecFromMime(resolved.mimeType),
+      });
+      if (!loaded || token !== loadToken) return;
+      audioEngine.setVolume(state.volume);
+      audioEngine.setMuted(state.muted);
+      audioEngine.setRate(state.rate);
+      if (state.position > 0) audioEngine.seek(state.position);
+      set({ remoteStatus: "ready", buffering: false });
+      if (autoplay) {
+        await audioEngine.play();
+        if (token !== loadToken) return;
+        // Only a stream that really started belongs in listening history.
+        if (!audioEngine.paused && !audioEngine.element.error) {
+          void useHistory.getState().addRemote(item).catch(() => undefined);
+        }
+      }
       return;
     }
 
@@ -673,15 +708,12 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       if (state.queue.length === 0) return;
       const current = currentQueueEntry(state);
       if (current && current.item.source.kind !== "local") {
-        const message = "Remote playback is not available in this build.";
-        set({
-          isPlaying: false,
-          buffering: false,
-          remoteStatus: "unavailable",
-          remoteError: message,
-          error: message,
-        });
-        after();
+        if (get().remoteStatus === "ready" && audioEngine.element.src) {
+          await audioEngine.toggle();
+          after();
+          return;
+        }
+        await loadCurrent(true);
         return;
       }
       if (!audioEngine.element.src) {
@@ -790,6 +822,7 @@ export const usePlayer = create<PlayerState>()((set, get) => {
         state.duration > 0 ? Math.min(seconds, state.duration) : seconds
       );
       if (current && current.item.source.kind !== "local") {
+        if (get().remoteStatus === "ready") audioEngine.seek(target);
         set({ position: target, ended: false });
         after();
         return;
@@ -873,16 +906,23 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     },
 
     handleEnded: async () => {
-      const current = currentQueueEntry(get());
-      if (!current || current.item.source.kind !== "local") return;
       await get().next(true);
     },
 
     syncTime: (position, duration, buffered) => {
       const current = currentQueueEntry(get());
-      if (current && current.item.source.kind !== "local") return;
+      const remoteCurrent = Boolean(current && current.item.source.kind !== "local");
       set({ position, duration, buffered });
       transitionGuard.observe(position);
+      if (remoteCurrent) {
+        // Remote items have no local successor to prewarm/crossfade into; handleEnded advances.
+        const now = Date.now();
+        if (now - lastPositionPersistAt >= 1000) {
+          lastPositionPersistAt = now;
+          after();
+        }
+        return;
+      }
 
       const state = get();
       const audio = playbackAudioSettings();
@@ -922,8 +962,6 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     },
 
     syncState: state => {
-      const current = currentQueueEntry(get());
-      if (current && current.item.source.kind !== "local") return;
       set({ isPlaying: state.playing, buffering: state.buffering, ended: state.ended });
       if (!state.playing) after();
     },

@@ -13,7 +13,13 @@ export type Route =
   | { name: "playlist"; playlistId: number }
   | { name: "lyrics" }
   | { name: "decode-tester" }
-  | { name: "settings" };
+  | { name: "settings" }
+  | { name: "ytm-home" }
+  | { name: "ytm-search"; query: string }
+  | { name: "ytm-artist"; artistId: string }
+  | { name: "ytm-album"; albumId: string }
+  | { name: "ytm-playlist"; playlistId: string }
+  | { name: "ytm-explore" };
 
 interface UiState {
   route: Route;
@@ -70,6 +76,18 @@ export function routeToHash(route: Route): string {
       return "#/decode-tester";
     case "settings":
       return "#/settings";
+    case "ytm-home":
+      return "#/ytmusic";
+    case "ytm-search":
+      return `#/ytmusic/search/${encodeURIComponent(route.query)}`;
+    case "ytm-artist":
+      return `#/ytmusic/artist/${encodeURIComponent(route.artistId)}`;
+    case "ytm-album":
+      return `#/ytmusic/album/${encodeURIComponent(route.albumId)}`;
+    case "ytm-playlist":
+      return `#/ytmusic/playlist/${encodeURIComponent(route.playlistId)}`;
+    case "ytm-explore":
+      return "#/ytmusic/explore";
     default:
       return "#/";
   }
@@ -106,6 +124,24 @@ export function hashToRoute(hash: string): Route {
       return { name: "history" };
     case "stats":
       return { name: "stats" };
+    case "ytmusic": {
+      const [sub, ...tailParts] = value.split("/");
+      const tail = tailParts.join("/");
+      switch (sub) {
+        case "search":
+          return { name: "ytm-search", query: decodeURIComponent(tail) };
+        case "artist":
+          return { name: "ytm-artist", artistId: decodeURIComponent(tail) };
+        case "album":
+          return { name: "ytm-album", albumId: decodeURIComponent(tail) };
+        case "playlist":
+          return { name: "ytm-playlist", playlistId: decodeURIComponent(tail) };
+        case "explore":
+          return { name: "ytm-explore" };
+        default:
+          return { name: "ytm-home" };
+      }
+    }
     default:
       return { name: "home" };
   }
