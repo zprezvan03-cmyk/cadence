@@ -31,6 +31,8 @@ import { bridge, hasBridge } from "./bridge";
 import { useSettings } from "./settingsStore";
 
 const SEARCH_HISTORY_KEY = "cadence.ytm.searchHistory.v1";
+/** Input of the most recent suggestion request, used to drop stale responses. */
+let lastSuggestionInput = "";
 
 /**
  * Monotonic token for search requests. Every performSearch/loadMoreSearch captures the current
@@ -121,8 +123,40 @@ function saveSearchHistory(history: string[]): void {
   }
 }
 
-export const useYtm = create<YtmState>()((set, get) => {
+/** Per-detail page maps are bounded so browsing many artists/albums/playlists cannot grow forever. */
+const MAX_DETAIL_PAGES = 8;
+
+function capDetailPages(state: YtmState): YtmState {
+  const cap = <T>(record: Record<string, T> | undefined): Record<string, T> | undefined => {
+    if (!record) return record;
+    const keys = Object.keys(record);
+    if (keys.length <= MAX_DETAIL_PAGES) return record;
+    const kept = new Set(keys.slice(-MAX_DETAIL_PAGES));
+    const out: Record<string, T> = {};
+    for (const key of keys) if (kept.has(key)) out[key] = record[key];
+    return out;
+  };
+  return {
+    ...state,
+    artistPages: cap(state.artistPages) ?? {},
+    albumPages: cap(state.albumPages) ?? {},
+    playlistPages: cap(state.playlistPages) ?? {},
+  };
+}
+
+export const useYtm = create<YtmState>()((rawSet, get) => {
   const provider = getYouTubeMusicProvider();
+
+  // Wrap zustand's set so every state update passes through the detail-page cap.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const set = ((partial: any, replace?: any) =>
+    rawSet(
+      (state: YtmState) =>
+        capDetailPages(
+          typeof partial === "function" ? (partial as (s: YtmState) => Partial<YtmState>)(state) : { ...state, ...partial }
+        ),
+      replace
+    )) as typeof rawSet;
 
   const syncSessionFromSettings = () => {
     const ytm = useSettings.getState().settings?.youtubeMusic;
@@ -294,17 +328,21 @@ export const useYtm = create<YtmState>()((set, get) => {
 
     async fetchSuggestions(input) {
       const trimmed = input.trim();
+      lastSuggestionInput = trimmed;
       if (!trimmed) {
         set({ suggestions: { items: { queries: [], items: [] }, status: "idle", error: null } });
         return;
       }
       try {
         const items = await provider.suggestions(trimmed);
-        // Only apply if the input has not moved on meanwhile.
+        // Only apply if the input has not moved on meanwhile: a slower response for an older
+        // keystroke must never overwrite the suggestions of the current one.
+        if (lastSuggestionInput !== trimmed) return;
         set(state => ({
           suggestions: { items, status: "ready", error: null },
         }));
       } catch (error) {
+        if (lastSuggestionInput !== trimmed) return;
         set({ suggestions: { items: { queries: [], items: [] }, status: "error", error: errorMessage(error) } });
       }
     },

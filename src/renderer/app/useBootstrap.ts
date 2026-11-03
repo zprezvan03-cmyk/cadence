@@ -102,6 +102,16 @@ export function useBootstrap(): void {
         if (duration > 0 && isLocalCurrent()) usePlayer.setState({ duration });
       }),
       audioEngine.on("error", ({ message, code, mediaMessage, src }) => {
+        // Remote (YouTube Music) items: a mid-playback failure is usually an expired googlevideo
+        // URL. Drop the cached stream and retry once through the normal remote load path; if the
+        // retry also fails, loadCurrent surfaces the resolver's error in the player bar.
+        const remoteCurrent = currentPlayerMediaItem(usePlayer.getState());
+        if (remoteCurrent && remoteCurrent.source.kind !== "local") {
+          if (disposed) return;
+          console.error("[Cadence] Remote playback error:", message, "code:", code, "detail:", mediaMessage);
+          void usePlayer.getState().retryRemote();
+          return;
+        }
         if (!isLocalCurrent()) return;
         // Turn a bare media error code into something the listener can act on, while keeping
         // file-access errors (403/404) separate from unsupported-codec and decode errors.

@@ -20,7 +20,7 @@ import {
   pruneQueueOrder,
 } from "../player/queue";
 import { decideTransition, TransitionGuard } from "../player/transitions";
-import { codecFromMime, resolveRemoteStream } from "../player/remotePlayback";
+import { codecFromMime, invalidateRemoteStream, resolveRemoteStream } from "../player/remotePlayback";
 import { getTrackById } from "./trackRegistry";
 import { useLibrary } from "./libraryStore";
 import { useHistory } from "./historyStore";
@@ -69,6 +69,8 @@ interface PlayerState extends SessionState {
   next: (auto?: boolean, fadeSeconds?: number) => Promise<void>;
   previous: () => void;
   seek: (seconds: number) => void;
+  /** Re-resolve the current remote stream (e.g. after a mid-playback URL expiry) and retry once. */
+  retryRemote: () => Promise<void>;
   jumpTo: (position: number) => Promise<void>;
   seekBy: (seconds: number) => void;
   setVolume: (volume: number) => void;
@@ -184,6 +186,8 @@ export function pruneSessionQueue(
 }
 
 let loadToken = 0;
+/** Per-video timestamp of the last automatic remote retry, so a dead URL cannot loop. */
+const remoteRetryAt = new Map<string, number>();
 let lastPositionPersistAt = 0;
 let occurrenceCounter = 0;
 const transitionGuard = new TransitionGuard();
@@ -701,6 +705,22 @@ export const usePlayer = create<PlayerState>()((set, get) => {
         remoteError: null,
       });
       after();
+    },
+
+    retryRemote: async () => {
+      const current = currentQueueEntry(get());
+      if (!current || current.item.source.kind === "local") return;
+      const remoteId = current.item.source.remoteId;
+      const now = Date.now();
+      if ((remoteRetryAt.get(remoteId) ?? 0) > now - 30_000) {
+        // Already retried very recently: surface the failure instead of looping.
+        set({ remoteError: "Stream playback failed and the retry also failed; try again later." });
+        return;
+      }
+      remoteRetryAt.set(remoteId, now);
+      invalidateRemoteStream(remoteId);
+      set({ remoteStatus: "resolving", buffering: true, remoteError: null, error: null });
+      await loadCurrent(true);
     },
 
     toggle: async () => {

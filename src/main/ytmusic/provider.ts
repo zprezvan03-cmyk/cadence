@@ -84,6 +84,8 @@ interface CacheEntry<T> {
 }
 
 const PAGE_TTL_MS = 5 * 60_000;
+/** Hard cap on cached responses so a long browsing session cannot grow the Map without bound. */
+const MAX_CACHE_ENTRIES = 300;
 const SEARCH_TTL_MS = 60_000;
 const MAX_CONCURRENCY = 4;
 
@@ -194,6 +196,18 @@ export class YouTubeMusicProvider {
       })
       .then(value => {
         this.cache.set(key, { value, expiresAt: this.now() + ttl });
+        if (this.cache.size > MAX_CACHE_ENTRIES) {
+          // Evict expired entries first, then the oldest inserted (Map preserves insertion order).
+          const now = this.now();
+          for (const [k, entry] of this.cache) {
+            if (this.cache.size <= MAX_CACHE_ENTRIES) break;
+            if ((entry as CacheEntry<unknown>).expiresAt <= now) this.cache.delete(k);
+          }
+          for (const k of this.cache.keys()) {
+            if (this.cache.size <= MAX_CACHE_ENTRIES) break;
+            this.cache.delete(k);
+          }
+        }
         return value;
       })
       .catch(error => {

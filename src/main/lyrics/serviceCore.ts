@@ -78,6 +78,13 @@ const NETWORK_MODULES: readonly NetworkModule[] = [
     run: fetchBinimum,
   },
   { id: "lrclib", keys: ["lrclib-synced", "lrclib-plain"], run: runLrclib },
+  {
+    // Official YouTube Music lyrics, keyed by video id (query.videoId). Runs only when the
+    // request carries a remote identity; for local tracks it reports a clean skip.
+    id: YTM_LYRICS_PROVIDER_KEY,
+    keys: [YTM_LYRICS_PROVIDER_KEY],
+    run: (query, keys, signal) => fetchYtmLyrics(query, signal, keys),
+  },
 ];
 
 const SEARCH_MODULES: readonly NetworkModule[] = [
@@ -462,7 +469,11 @@ export class LyricsServiceCore {
 
     // The cache is consulted before any network request. A track bundle keeps the local copies and
     // the remote answer side by side, keyed by the library id so two same-titled songs never mix.
-    const trackKey = LyricsCacheCore.trackKey(request.trackId, request);
+    // Remote items have no library row (trackId is a negative placeholder), so key their cache
+    // entry by the stable remote id — otherwise every remote track would share `track:-1`.
+    const trackKey = request.remote?.remoteId
+      ? `remote:${request.remote.remoteId}`
+      : LyricsCacheCore.trackKey(request.trackId, request);
     const identity = this.identityFor(request, track?.id ?? null);
     const cachedEntry = this.cachedTrackEntry(trackKey, identity);
     const generation = this.cache.currentGeneration();
@@ -660,6 +671,9 @@ export class LyricsServiceCore {
       artist: request.artist,
       album: request.album,
       duration: request.duration,
+      // Remote (YouTube Music) items carry their video id here; local tracks leave it null and
+      // the YTM provider then skips cleanly.
+      videoId: request.remote?.remoteId ?? null,
     };
 
     const activeModules = NETWORK_MODULES.filter(module => module.keys.some(key => enabledKeys.has(key)));
