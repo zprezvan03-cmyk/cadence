@@ -27,6 +27,7 @@ import { THEMES } from "../../upstream/better-lyrics/themes";
 import { TRANSLATION_LANGUAGES } from "../lyrics/translationLanguages";
 import { invalidateLyricsResolution } from "../lyrics/useLyrics";
 import { LastFmSettings } from "./LastFmSettings";
+import { YtmAccountSettings } from "./YtmAccountSettings";
 import { LyricsCachePanel } from "./LyricsCachePanel";
 import { FetchAllSettings } from "../lyrics-fetch/FetchAllSettings";
 import { useOnboarding } from "../../state/onboardingStore";
@@ -128,7 +129,7 @@ export function SettingsView() {
   const scanning = useLibrary(state => state.scanning);
   const [info, setInfo] = useState<AppInfo | null>(null);
   // Reopening Settings returns to the tab you were on rather than back to Appearance.
-  const [section, setSection] = useSessionState<"library" | "playback" | "appearance" | "cache" | "about">(
+  const [section, setSection] = useSessionState<"library" | "playback" | "appearance" | "cache" | "ytmusic" | "about">(
     "settings.section",
     "appearance"
   );
@@ -213,6 +214,7 @@ export function SettingsView() {
           ["library", "Library"],
           ["playback", "Playback"],
           ["cache", "Cache"],
+          ["ytmusic", "YouTube Music"],
           ["about", "About"],
         ] as const).map(([id, label]) => (
           <button
@@ -734,6 +736,12 @@ export function SettingsView() {
       ) : null}
 
       {section === "cache" ? <LyricsCachePanel /> : null}
+      {section === "ytmusic" ? (
+        <section className="settings-section" data-testid="settings-ytmusic">
+          <h2>YouTube Music</h2>
+          <YtmAccountSettings />
+        </section>
+      ) : null}
 
       {section === "about" ? (
         <section className="settings-section about" data-testid="settings-about">

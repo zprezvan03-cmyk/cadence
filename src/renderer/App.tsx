@@ -29,6 +29,10 @@ import { PlayerBar } from "./features/player/PlayerBar";
 import { QueuePanel } from "./features/player/QueuePanel";
 import { SettingsView } from "./features/settings/SettingsView";
 import { StatsView } from "./features/stats/StatsView";
+import { YtmHomeView } from "./features/ytmusic/YtmHomeView";
+import { YtmSearchView } from "./features/ytmusic/YtmSearchView";
+import { YtmArtistView, YtmAlbumView, YtmPlaylistView } from "./features/ytmusic/YtmDetailViews";
+import { YtmExploreView } from "./features/ytmusic/YtmExploreView";
 import { usePlayer } from "./state/playerStore";
 import { useUi } from "./state/uiStore";
 
@@ -73,6 +77,18 @@ function RouteContent() {
       return <DecodeTesterView />;
     case "settings":
       return <SettingsView />;
+    case "ytm-home":
+      return <YtmHomeView />;
+    case "ytm-search":
+      return <YtmSearchView query={route.query} />;
+    case "ytm-artist":
+      return <YtmArtistView artistId={route.artistId} />;
+    case "ytm-album":
+      return <YtmAlbumView albumId={route.albumId} />;
+    case "ytm-playlist":
+      return <YtmPlaylistView playlistId={route.playlistId} />;
+    case "ytm-explore":
+      return <YtmExploreView />;
     default:
       return <HomeView />;
   }

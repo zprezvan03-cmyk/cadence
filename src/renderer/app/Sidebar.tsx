@@ -6,6 +6,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import {
   Album as AlbumIcon,
   ChartColumn,
+  Compass,
   Heart,
   Home,
   History,
@@ -16,6 +17,7 @@ import {
   Plus,
   Settings,
   Users,
+  Youtube,
 } from "lucide-react";
 import { EMPTY_PLAYLISTS, useLibrary } from "../state/libraryStore";
 import { useUi, type LibraryTab } from "../state/uiStore";
@@ -29,6 +31,7 @@ const NAV: { label: string; icon: React.ReactNode; route: Parameters<ReturnType<
   { label: "Artists", icon: <Users size={18} />, route: { name: "library", tab: "artists" } },
   { label: "Playlists", icon: <ListMusic size={18} />, route: { name: "library", tab: "playlists" } },
   { label: "Liked songs", icon: <Heart size={18} />, route: { name: "library", tab: "favorites" } },
+  { label: "YouTube Music", icon: <Youtube size={18} />, route: { name: "ytm-home" } },
   { label: "Now Playing", icon: <Mic2 size={18} />, route: { name: "lyrics" } },
 ];
 
@@ -40,7 +43,11 @@ export function Sidebar() {
   const counts = useLibrary(state => state.snapshot?.counts);
 
   const isActive = (candidate: (typeof NAV)[number]["route"]) => {
-    if (candidate.name !== route.name) return false;
+    if (candidate.name !== route.name) {
+      // The YouTube Music nav item stays highlighted on every YTM route (home/search/details).
+      if (candidate.name === "ytm-home" && route.name.startsWith("ytm-")) return true;
+      return false;
+    }
     if (candidate.name === "library" && route.name === "library") {
       return candidate.tab === route.tab;
     }

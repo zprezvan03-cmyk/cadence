@@ -13,6 +13,7 @@ import { useUi } from "../../state/uiStore";
 import { formatTime } from "../../player/queue";
 import { Artwork } from "../../components/Artwork";
 import { SourceBadge } from "../../components/SourceBadge";
+import { mediaItemFromHistoryPayload } from "../../../shared/media";
 
 export function HistoryView() {
   const { entries, loading, error, load, clear } = useHistory(state => state);
@@ -22,6 +23,8 @@ export function HistoryView() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const playMediaItem = usePlayer(state => state.playMediaItem);
 
   const handlePlay = useCallback(
     (entry: HistoryEntry) => {
@@ -34,9 +37,16 @@ export function HistoryView() {
         void playTrack(entry.source.trackId);
         return;
       }
-      void showToast("Remote playback is not available in this build.");
+      // Remote (YouTube Music) history entries keep their string source identity; replaying one
+      // re-enters the unified queue as a youtube-music item, never as a fake local id.
+      const item = mediaItemFromHistoryPayload(entry.payload);
+      if (!item) {
+        void showToast("This entry cannot be replayed.");
+        return;
+      }
+      void playMediaItem(item);
     },
-    [playTrack, showToast],
+    [playTrack, playMediaItem, showToast],
   );
 
   const handleClear = useCallback(() => {
@@ -109,7 +119,7 @@ export function HistoryView() {
       <div className="history-list">
         {entries.map(entry => {
           const track = entry.source.kind === "local" ? selectTrack(entry.source.trackId) : null;
-          const available = entry.source.kind === "local" && track !== null;
+          const available = entry.source.kind === "local" ? track !== null : true;
           const payload = entry.payload;
           const title = payload.title || "Unknown title";
           return (
