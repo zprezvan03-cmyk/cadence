@@ -5,7 +5,6 @@
 
 import { useCallback, useEffect } from "react";
 import { Trash2 } from "lucide-react";
-import { mediaItemFromHistoryPayload } from "../../../shared/media";
 import type { HistoryEntry } from "../../../shared/types";
 import { useHistory } from "../../state/historyStore";
 import { selectTrack } from "../../state/libraryStore";
@@ -18,9 +17,7 @@ import { SourceBadge } from "../../components/SourceBadge";
 export function HistoryView() {
   const { entries, loading, error, load, clear } = useHistory(state => state);
   const playTrack = usePlayer(state => state.playTrack);
-  const playMediaItem = usePlayer(state => state.playMediaItem);
   const showToast = useUi(state => state.showToast);
-  const navigate = useUi(state => state.navigate);
 
   useEffect(() => {
     void load();
@@ -37,15 +34,9 @@ export function HistoryView() {
         void playTrack(entry.source.trackId);
         return;
       }
-      const item = mediaItemFromHistoryPayload(entry.payload);
-      if (!item) {
-        void showToast("This remote history entry is incomplete.");
-        return;
-      }
-      void playMediaItem(item);
-      navigate({ name: "lyrics" });
+      void showToast("Remote playback is not available in this build.");
     },
-    [navigate, playMediaItem, playTrack, showToast],
+    [playTrack, showToast],
   );
 
   const handleClear = useCallback(() => {
@@ -118,7 +109,7 @@ export function HistoryView() {
       <div className="history-list">
         {entries.map(entry => {
           const track = entry.source.kind === "local" ? selectTrack(entry.source.trackId) : null;
-          const available = entry.source.kind !== "local" || track !== null;
+          const available = entry.source.kind === "local" && track !== null;
           const payload = entry.payload;
           const title = payload.title || "Unknown title";
           return (
@@ -142,7 +133,14 @@ export function HistoryView() {
               <SourceBadge source={entry.source} />
               <span className="history-time">{formatTime(payload.duration)}</span>
               {!available ? (
-                <span className="history-muted" title="This file was removed from the library.">
+                <span
+                  className="history-muted"
+                  title={
+                    entry.source.kind === "local"
+                      ? "This file was removed from the library."
+                      : "Remote playback is not available in this build."
+                  }
+                >
                   unavailable
                 </span>
               ) : null}

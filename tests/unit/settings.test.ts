@@ -144,48 +144,36 @@ describe("Now Playing profile settings", () => {
   });
 });
 
-describe("YouTube catalog settings", () => {
-  it("defaults off with no shipped/shared API key", () => {
-    expect(DEFAULT_SETTINGS.youtubeCatalog).toEqual({ enabled: false, apiKey: "", region: "" });
+describe("legacy YouTube catalog settings", () => {
+  it("are absent from defaults", () => {
+    expect(DEFAULT_SETTINGS).not.toHaveProperty("youtubeCatalog");
   });
 
-  it("migrates settings written before the catalog existed", () => {
+  it("drops a stored legacy catalog key, including any API key, when loading", () => {
     const file = join(workDir, "legacy-youtube-catalog.json");
-    writeFileSync(file, JSON.stringify({ lyrics: { fontSizeRem: 2.1 } }), "utf8");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        lyrics: { fontSizeRem: 2.1 },
+        youtubeCatalog: { enabled: true, apiKey: "AIza-testkey", region: "ID" },
+      }),
+      "utf8",
+    );
     const settings = new SettingsStore(file).get();
     expect(settings.lyrics.fontSizeRem).toBe(2.1);
-    expect(settings.youtubeCatalog).toEqual({ enabled: false, apiKey: "", region: "" });
+    expect(settings).not.toHaveProperty("youtubeCatalog");
+    expect(JSON.stringify(settings)).not.toContain("AIza-testkey");
   });
 
-  it("normalizes and persists the user's local key and region across a restart", () => {
-    const file = join(workDir, "youtube-catalog.json");
-    const first = new SettingsStore(file);
-    first.patch({
-      youtubeCatalog: { enabled: true, apiKey: " AIza-test\nkey ", region: "id" },
-    });
-
-    expect(JSON.parse(readFileSync(file, "utf8")).youtubeCatalog).toEqual({
-      enabled: true,
-      apiKey: "AIza-testkey",
-      region: "ID",
-    });
-    expect(new SettingsStore(file).get().youtubeCatalog).toEqual({
-      enabled: true,
-      apiKey: "AIza-testkey",
-      region: "ID",
-    });
-  });
-
-  it("repairs malformed catalog values instead of persisting them", () => {
-    const file = join(workDir, "youtube-catalog-invalid.json");
+  it("does not persist a legacy catalog key supplied through patch", () => {
+    const file = join(workDir, "youtube-catalog-patch.json");
     const store = new SettingsStore(file);
     store.patch({
-      youtubeCatalog: {
-        enabled: "yes" as unknown as boolean,
-        apiKey: 42 as unknown as string,
-        region: "Indonesia",
-      },
-    });
-    expect(store.get().youtubeCatalog).toEqual({ enabled: false, apiKey: "", region: "" });
+      youtubeCatalog: { enabled: true, apiKey: "AIza-testkey", region: "ID" },
+    } as never);
+
+    expect(store.get()).not.toHaveProperty("youtubeCatalog");
+    expect(JSON.parse(readFileSync(file, "utf8"))).not.toHaveProperty("youtubeCatalog");
+    expect(new SettingsStore(file).get()).not.toHaveProperty("youtubeCatalog");
   });
 });

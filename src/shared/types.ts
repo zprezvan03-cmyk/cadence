@@ -103,19 +103,19 @@ export interface TrackMetadataOverride {
 /* ------------------------------------------------------------------ media sources */
 
 /**
- * Content origin is deliberately separate from the mechanism that eventually plays it. A
- * `youtube-music` source is reserved for links/results whose provenance is actually YouTube
- * Music; generic YouTube Data API videos remain `youtube` and are never relabelled as native
- * YouTube Music songs.
+ * Content origin is deliberately separate from the mechanism that eventually plays it. The
+ * remote source kinds are retained for source-aware queue/history compatibility and for a
+ * future documented, appropriately licensed provider. This build registers no remote
+ * playback provider, so non-local entries are representable but not playable.
  */
 export type TrackSource =
   | { kind: "local"; trackId: number }
   | { kind: "youtube-music"; remoteId: string; canonicalUrl: string }
   | { kind: "youtube"; remoteId: string; canonicalUrl: string };
 
-export type PlaybackMechanism = "local-file" | "youtube-iframe" | "unavailable";
+export type PlaybackMechanism = "local-file" | "remote-provider" | "unavailable";
 
-export type MediaAvailability = "ready" | "not-embeddable" | "unavailable" | "live" | "unknown";
+export type MediaAvailability = "ready" | "restricted" | "unavailable" | "live" | "unknown";
 
 /** Source-aware display/playback item shared by local and remote catalog surfaces. */
 export interface MediaItem {
@@ -141,111 +141,6 @@ export interface MediaItem {
 export interface QueueEntry {
   occurrenceId: string;
   item: MediaItem;
-}
-
-export interface YouTubeChannelItem {
-  id: string;
-  title: string;
-  handle: string | null;
-  description: string;
-  artworkUrl: string | null;
-  canonicalUrl: string;
-  uploadsPlaylistId: string | null;
-  subscriberCount?: number | null;
-  videoCount?: number | null;
-  viewCount?: number | null;
-  fetchedAt: number;
-}
-
-export interface YouTubePlaylistSummary {
-  id: string;
-  title: string;
-  description: string;
-  channelId: string | null;
-  channelTitle: string | null;
-  /** Channel title with YouTube's auto-generated `- Topic` suffix removed, when present. */
-  artistLabel?: string | null;
-  artworkUrl: string | null;
-  itemCount: number | null;
-  canonicalUrl: string;
-  publishedAt: string | null;
-  /**
-   * True only for a public playlist whose ID is in YouTube Music's album-playlist namespace
-   * (`OLAK5uy…`). The Data API has no album resource, so Cadence presents these honestly as
-   * verified album collections rather than native album objects.
-   */
-  isAlbumCollection?: boolean;
-  fetchedAt: number;
-}
-
-export interface CatalogPage<T> {
-  items: T[];
-  nextPageToken: string | null;
-  totalResults: number | null;
-  cached: boolean;
-  fetchedAt: number;
-}
-
-export interface YouTubeChannelDetail {
-  channel: YouTubeChannelItem;
-  playlists: YouTubePlaylistSummary[];
-  playlistsNextPageToken?: string | null;
-  uploads: CatalogPage<MediaItem>;
-  cached: boolean;
-  fetchedAt: number;
-}
-
-export interface YouTubePlaylistDetail {
-  playlist: YouTubePlaylistSummary;
-  cached: boolean;
-  fetchedAt: number;
-}
-
-export type YouTubeCatalogErrorKind =
-  | "disabled"
-  | "missing-key"
-  | "invalid-key"
-  | "api-not-enabled"
-  | "quota-exceeded"
-  | "rate-limited"
-  | "not-found"
-  | "forbidden"
-  | "offline"
-  | "timeout"
-  | "server"
-  | "malformed"
-  | "aborted"
-  | "unavailable";
-
-export interface YouTubeCatalogError {
-  kind: YouTubeCatalogErrorKind;
-  message: string;
-  status?: number;
-}
-
-export type YouTubeCatalogResult<T> =
-  | { ok: true; data: T }
-  | { ok: false; error: YouTubeCatalogError };
-
-export type YouTubeCatalogSearchOrder = "relevance" | "date" | "viewCount" | "rating" | "title";
-
-export interface YouTubeCatalogSearchRequest {
-  query: string;
-  pageToken?: string | null;
-  maxResults?: number;
-  order?: YouTubeCatalogSearchOrder;
-}
-
-export interface YouTubeCatalogPageRequest {
-  pageToken?: string | null;
-  maxResults?: number;
-}
-
-export interface YouTubeCatalogStatus {
-  enabled: boolean;
-  configured: boolean;
-  region: string;
-  cacheEntries: number;
 }
 
 export interface Album {
@@ -779,7 +674,6 @@ export interface AppSettings {
     onboardingStep: number;
   };
   scrobbling: LastFmSettings;
-  youtubeCatalog: YouTubeCatalogSettings;
 }
 
 /** last.fm scrobbling credentials and session, stored locally in settings. */
@@ -793,15 +687,6 @@ export interface LastFmSettings {
   sessionKey: string;
   /** Connected last.fm username, shown in Settings once authorized. */
   username: string;
-}
-
-/** Public YouTube catalog access. The key is supplied and stored locally by the user. */
-export interface YouTubeCatalogSettings {
-  enabled: boolean;
-  /** User-supplied YouTube Data API v3 key. Cadence ships no shared key. */
-  apiKey: string;
-  /** ISO 3166-1 alpha-2 region for charts/search; empty means derive from the system locale. */
-  region: string;
 }
 
 /** One completed listening session, newest first when listed. */
@@ -833,13 +718,13 @@ export interface LocalHistoryPayload extends HistoryPayloadBase {
   path: string;
 }
 
-/** Stored snapshot of an observed official-IFrame play start. */
+/** Stored snapshot of an observed remote-provider play start. */
 export interface RemoteHistoryPayload extends HistoryPayloadBase {
   source: Extract<TrackSource, { kind: "youtube" | "youtube-music" }>;
   channelId: string | null;
   channelTitle: string | null;
   canonicalUrl: string;
-  playbackMechanism: Extract<PlaybackMechanism, "youtube-iframe">;
+  playbackMechanism: Extract<PlaybackMechanism, "remote-provider">;
   fetchedAt: number;
 }
 
@@ -1019,50 +904,6 @@ export interface CadenceApi {
       promote(trackId: number): Promise<void>;
       onProgress(listener: (snapshot: LyricsFetchJobSnapshot) => void): () => void;
     };
-  };
-  youtubeCatalog: {
-    status(): Promise<YouTubeCatalogStatus>;
-    clearCache(): Promise<{ cleared: number }>;
-    searchMusicVideos(
-      request: YouTubeCatalogSearchRequest
-    ): Promise<YouTubeCatalogResult<CatalogPage<MediaItem>>>;
-    searchChannels(
-      request: YouTubeCatalogSearchRequest
-    ): Promise<YouTubeCatalogResult<CatalogPage<YouTubeChannelItem>>>;
-    searchPlaylists(
-      request: YouTubeCatalogSearchRequest
-    ): Promise<YouTubeCatalogResult<CatalogPage<YouTubePlaylistSummary>>>;
-    /** Verified YouTube Music album-playlist collections only; Data API has no album resource. */
-    searchAlbumCollections(
-      request: YouTubeCatalogSearchRequest
-    ): Promise<YouTubeCatalogResult<CatalogPage<YouTubePlaylistSummary>>>;
-    trending(
-      request?: YouTubeCatalogPageRequest
-    ): Promise<YouTubeCatalogResult<CatalogPage<MediaItem>>>;
-    /** Recent Music-category uploads. This is a search call, so callers must load it explicitly. */
-    newReleases(
-      request?: YouTubeCatalogPageRequest
-    ): Promise<YouTubeCatalogResult<CatalogPage<MediaItem>>>;
-    getChannel(request: { channelId: string }): Promise<YouTubeCatalogResult<YouTubeChannelDetail>>;
-    getChannelPlaylists(request: {
-      channelId: string;
-      pageToken?: string | null;
-      maxResults?: number;
-    }): Promise<YouTubeCatalogResult<CatalogPage<YouTubePlaylistSummary>>>;
-    getChannelVideos(request: {
-      channelId: string;
-      pageToken?: string | null;
-      maxResults?: number;
-      order?: YouTubeCatalogSearchOrder;
-    }): Promise<YouTubeCatalogResult<CatalogPage<MediaItem>>>;
-    getPlaylist(request: {
-      playlistId: string;
-    }): Promise<YouTubeCatalogResult<YouTubePlaylistDetail>>;
-    getPlaylistItems(request: {
-      playlistId: string;
-      pageToken?: string | null;
-      maxResults?: number;
-    }): Promise<YouTubeCatalogResult<CatalogPage<MediaItem>>>;
   };
   player: {
     /** Decode an ALAC source to a seekable lossless PCM WAV cache and return its media URL. */

@@ -28,7 +28,6 @@ export function PlayerBar() {
   const buffering = usePlayer(state => state.buffering);
   const isPlaying = usePlayer(state => state.isPlaying);
   const playbackMechanism = usePlayer(state => state.playbackMechanism);
-  const remoteStatus = usePlayer(state => state.remoteStatus);
   const remoteError = usePlayer(state => state.remoteError);
   // Apple Lossless is decoded before it can play, which can take a moment. Show that work only
   // once it is clearly not instant, so ordinary formats never flash a label.
@@ -80,16 +79,7 @@ export function PlayerBar() {
               <SourceBadge source={item.source} compact />
             </div>
           ) : null}
-          {remoteStatus === "needs-now-playing" && item?.source.kind !== "local" ? (
-            <button
-              type="button"
-              className="player-open-now-playing"
-              data-testid="player-open-now-playing"
-              onClick={() => navigate({ name: "lyrics" })}
-            >
-              Open Now Playing to continue
-            </button>
-          ) : remoteError && item?.source.kind !== "local" ? (
+          {remoteError && item?.source.kind !== "local" ? (
             <div
               className="player-remote-error"
               role="status"
@@ -100,7 +90,7 @@ export function PlayerBar() {
             </div>
           ) : slowStart ? (
             <div className="player-preparing" role="status" data-testid="player-preparing">
-              {item?.source.kind === "local" || !item ? "Preparing audio…" : "Loading YouTube player…"}
+              Preparing audio…
             </div>
           ) : null}
         </div>

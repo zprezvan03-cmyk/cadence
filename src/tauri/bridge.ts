@@ -35,7 +35,6 @@ import { LyricsFetchAllCore, type FetchTrackInfo } from "../main/lyrics/fetchAll
 import { FETCH_CONCURRENCY_PRESETS } from "../main/lyrics/http";
 import { setRuntimeFetch, type RuntimeFetch } from "../main/lyrics/http";
 import { fetchYouTubeMetadata } from "../main/lyrics/youtube";
-import { YouTubeCatalogCore } from "../main/youtube/catalogCore";
 import {
   clearCache as clearTranslationCache,
   createTranslationCache,
@@ -156,7 +155,7 @@ function normalizeHistoryPayload(row: HistoryRow, source: TrackSource): HistoryP
     channelId: remotePayload?.channelId ?? null,
     channelTitle: remotePayload?.channelTitle ?? null,
     canonicalUrl: source.canonicalUrl,
-    playbackMechanism: "youtube-iframe",
+    playbackMechanism: "remote-provider",
     fetchedAt: remotePayload?.fetchedAt ?? row.playedAt,
   };
 }
@@ -372,27 +371,6 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
   );
 
   const lyricsService = new LyricsServiceCore(store, lyricsCache, localLyricsReader);
-  const youtubeCatalog = new YouTubeCatalogCore({
-    getSettings: () => settings.get().youtubeCatalog,
-  });
-  const catalogControllers: Record<"search" | "detail" | "home", AbortController | null> = {
-    search: null,
-    detail: null,
-    home: null,
-  };
-  const runCatalog = async <T,>(
-    group: keyof typeof catalogControllers,
-    operation: (signal: AbortSignal) => Promise<T>
-  ): Promise<T> => {
-    catalogControllers[group]?.abort();
-    const controller = new AbortController();
-    catalogControllers[group] = controller;
-    try {
-      return await operation(controller.signal);
-    } finally {
-      if (catalogControllers[group] === controller) catalogControllers[group] = null;
-    }
-  };
   const translationCache = createTranslationCache();
 
   // Fetch-automation settings feed the shared service directly: the central provider limiter
@@ -1168,48 +1146,6 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
             fetchAllListeners.delete(listener);
           };
         },
-      },
-    },
-
-    youtubeCatalog: {
-      async status() {
-        return youtubeCatalog.status();
-      },
-      async clearCache() {
-        return youtubeCatalog.clearCache();
-      },
-      searchMusicVideos(request) {
-        return runCatalog("search", signal => youtubeCatalog.searchMusicVideos(request, signal));
-      },
-      searchChannels(request) {
-        return runCatalog("search", signal => youtubeCatalog.searchChannels(request, signal));
-      },
-      searchPlaylists(request) {
-        return runCatalog("search", signal => youtubeCatalog.searchPlaylists(request, signal));
-      },
-      searchAlbumCollections(request) {
-        return runCatalog("search", signal => youtubeCatalog.searchAlbumCollections(request, signal));
-      },
-      trending(request) {
-        return runCatalog("home", signal => youtubeCatalog.trending(request ?? {}, signal));
-      },
-      newReleases(request) {
-        return runCatalog("home", signal => youtubeCatalog.newReleases(request ?? {}, signal));
-      },
-      getChannel(request) {
-        return runCatalog("detail", signal => youtubeCatalog.getChannel(request, signal));
-      },
-      getChannelPlaylists(request) {
-        return runCatalog("detail", signal => youtubeCatalog.getChannelPlaylists(request, signal));
-      },
-      getChannelVideos(request) {
-        return runCatalog("detail", signal => youtubeCatalog.getChannelVideos(request, signal));
-      },
-      getPlaylist(request) {
-        return runCatalog("detail", signal => youtubeCatalog.getPlaylist(request, signal));
-      },
-      getPlaylistItems(request) {
-        return runCatalog("detail", signal => youtubeCatalog.getPlaylistItems(request, signal));
       },
     },
 

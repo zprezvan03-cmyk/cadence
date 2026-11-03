@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { useHistory } from "../../src/renderer/state/historyStore";
-import { youtubeMediaItem } from "../../src/shared/media";
-import type { HistoryEntry, HistoryPayload, TrackSource } from "../../src/shared/types";
+import type { HistoryEntry, HistoryPayload, MediaItem, TrackSource } from "../../src/shared/types";
 
 const track = (overrides: Partial<{ id: number; title: string; artist: string; album: string }> = {}): import("../../src/shared/types").Track => ({
   id: overrides.id ?? 42,
@@ -166,16 +165,24 @@ describe("history store", () => {
 
   it("adds an observed remote play without inventing a local track ID", async () => {
     installBridge();
-    await useHistory.getState().addRemote(
-      youtubeMediaItem({
-        videoId: "remoteVideo1",
-        title: "Remote song",
-        artistLabel: "Remote artist",
-        channelId: "UCremote",
-        channelTitle: "Remote artist",
-        durationSeconds: 181,
-      })
-    );
+    const remoteItem: MediaItem = {
+      source: {
+        kind: "youtube",
+        remoteId: "remoteVideo1",
+        canonicalUrl: "https://www.youtube.com/watch?v=remoteVideo1",
+      },
+      title: "Remote song",
+      artistLabel: "Remote artist",
+      channelId: "UCremote",
+      channelTitle: "Remote artist",
+      albumLabel: null,
+      durationSeconds: 181,
+      artworkUrl: null,
+      publishedAt: null,
+      availability: "unknown",
+      fetchedAt: 0,
+    };
+    await useHistory.getState().addRemote(remoteItem);
     const entry = useHistory.getState().entries[0];
     expect(entry.source).toEqual({
       kind: "youtube",
@@ -186,7 +193,7 @@ describe("history store", () => {
       title: "Remote song",
       artist: "Remote artist",
       channelId: "UCremote",
-      playbackMechanism: "youtube-iframe",
+      playbackMechanism: "remote-provider",
     });
     expect(entry.payload).not.toHaveProperty("trackId");
     expect(entry.payload).not.toHaveProperty("path");

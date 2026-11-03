@@ -262,7 +262,6 @@ await page.evaluateOnNewDocument(
       advanced: { showLogs: false },
       general: { onboardingCompleted: true, onboardingStep: 4 },
       scrobbling: { enabled: false, apiKey: "", apiSecret: "", sessionKey: "", username: "" },
-      youtubeCatalog: { enabled: false, apiKey: "", region: "" },
     };
     const loadSettings = () => {
       try {

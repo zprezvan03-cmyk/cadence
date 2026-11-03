@@ -2,7 +2,7 @@
  * Application shell. Written for Cadence.
  */
 
-import { Suspense, lazy, useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { useCurrentMediaItem, useCurrentTrack } from "./app/hooks";
 import { useAutofetchLyrics } from "./features/lyrics/useAutofetch";
 import { useLastFmScrobbler } from "./features/scrobble/useLastFmScrobbler";
@@ -32,17 +32,6 @@ import { StatsView } from "./features/stats/StatsView";
 import { usePlayer } from "./state/playerStore";
 import { useUi } from "./state/uiStore";
 
-const YouTubeChannelView = lazy(() =>
-  import("./features/youtube/YouTubeCatalogDetailViews").then(module => ({
-    default: module.YouTubeChannelView,
-  }))
-);
-const YouTubePlaylistView = lazy(() =>
-  import("./features/youtube/YouTubeCatalogDetailViews").then(module => ({
-    default: module.YouTubePlaylistView,
-  }))
-);
-
 function RouteContent() {
   const route = useUi(state => state.route);
   const track = useCurrentTrack();
@@ -59,18 +48,6 @@ function RouteContent() {
       return <HistoryView />;
     case "stats":
       return <StatsView />;
-    case "youtube-channel":
-      return (
-        <Suspense fallback={<div className="view-loading">Loading YouTube channel…</div>}>
-          <YouTubeChannelView channelId={route.channelId} />
-        </Suspense>
-      );
-    case "youtube-playlist":
-      return (
-        <Suspense fallback={<div className="view-loading">Loading YouTube playlist…</div>}>
-          <YouTubePlaylistView playlistId={route.playlistId} />
-        </Suspense>
-      );
     case "library":
       return <LibraryView tab={route.tab} />;
     case "search":

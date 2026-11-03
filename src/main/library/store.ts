@@ -78,7 +78,7 @@ function normalizeHistoryPayload(
     channelId: remote?.channelId ?? null,
     channelTitle: remote?.channelTitle ?? null,
     canonicalUrl: source.canonicalUrl,
-    playbackMechanism: "youtube-iframe",
+    playbackMechanism: "remote-provider",
     fetchedAt: remote?.fetchedAt ?? playedAt,
   };
 }

@@ -1,8 +1,8 @@
 # Stage 7 — Integrated YouTube Music Architecture and Feasibility Gate
 
 **Date:** 2 November 2026; implementation record updated 3 November 2026  
-**Status:** **Option A approved.** The native-integration correction is implemented and offline-tested: one `playerStore`, one main Now Playing surface, an occurrence-based mixed queue, source-aware History in the existing database, integrated catalog/Search/detail surfaces, and the official visible IFrame as the remote playback mechanism. Gate 0 (real Windows, real API key, and real-video acceptance) remains pending, so no live YouTube behavior is claimed from the offline harnesses.
-**Scope decision used here:** the later “fully integrated Cadence UI” requirement supersedes the earlier suggestion of a separate YouTube Music section. YouTube must be a provider inside Cadence’s existing Search, Home, detail, Now Playing, Queue, History, Playlist, artwork, and lyrics surfaces.
+**Status:** **Superseded for the product UI by the user’s removal decision.** The Option A / Native Cadence Integration checkpoint remains recoverable in Git history (`c45b795` code, `7e7703f` build trigger, `a188fb2` artifact, `ea15add` cleanup; `Cadence-7.exe` on Drive), but it was rejected as still feeling like YouTube search/results plus an embedded player. The active product branch therefore removes the YouTube Data API catalog and IFrame experience from Cadence’s main UI. No remote provider is registered in this build, and no further YouTube playback implementation should be attempted unless a documented, appropriately licensed backend contract is supplied.
+**Current scope decision:** preserve only reusable provider-ready architecture—source-aware media/queue/history identity, original-vs-mechanism separation, source badges, generic artwork handling, and the provider-agnostic remote playback clock—while keeping local playback, Now Playing, Queue, History/Recently Played, and lyrics as the product.
 
 ## Executive decision
 
@@ -432,6 +432,32 @@ Not verified yet:
 - Launching the packaged Windows build containing this correction.
 - Any real YouTube video, embed restriction, Tauri Referer/origin behavior, provider result, or lyric drift in the desktop runtime (Gate 0 remains open).
 
+### 2026-11-03 — User-selected removal (provider-ready architecture retained)
+
+After reviewing the delivered correction, the user chose **“Remove YouTube, keep provider-ready architecture.”** This supersedes Option A for the shipping UI; the paragraphs above remain the historical feasibility/implementation record for the checkpoint in Git history.
+
+Removed from the active product:
+
+- Data API catalog core/bridge methods, catalog settings (including dropping a stored legacy `youtubeCatalog`/API-key section during settings normalization), Home catalog shelves, Search catalog results, channel/playlist routes and detail pages.
+- The official IFrame player/stage/adapter, remote-player mounted/visible/autoplay state and sync callbacks, the Now Playing YouTube link form/stage, remote-item registry, YouTube catalog/player CSS, YouTube script/frame CSP allowances, `test:youtube`, and the fake IFrame/Data API browser suite/catalog unit tests.
+- Remote History/Home rows are no longer presented as playable. Their stored rows/artwork remain visible with source badges and an honest **“Remote playback is not available in this build”** outcome. Restored sessions prune legacy non-local queue entries; a non-local queue item that is nevertheless loaded resolves to `playbackMechanism: "unavailable"` without recording a new history play.
+
+Preserved and still tested:
+
+- Source-aware `TrackSource`/`MediaItem`/`QueueEntry` identity with local numeric IDs and remote string IDs/canonical URLs kept distinct; the same `listening_history` table/store, `historyStore.addRemote`, Home Recently Played, and source badges.
+- `playerStore` as the single playback coordinator for the local engine and the existing queue/session normalization (including legacy numeric queues and legacy `not-embeddable` availability normalized to `restricted`).
+- The provider-agnostic `RemotePlaybackClockSource` and Braccato external-clock plumbing for a possible future licensed provider; the current Now Playing uses the local audio clock only.
+- The pre-existing manual lyrics-search YouTube oEmbed metadata helper (`src/main/lyrics/youtube.ts` + the video-ID/search-field helpers it needs). This is not catalog search or playback and was deliberately not removed with Stage 7. Remote source kinds (`youtube`, `youtube-music`) also remain in the stored-history schema for compatibility with existing rows.
+
+Offline verification for the removal on 2026-11-03:
+
+- `npm run typecheck`: passed.
+- `npm test`: **437/437** tests passed across 35 files, including source-aware History/library persistence, settings drop of the legacy catalog key, queue/session normalization, manual YouTube metadata for lyrics search, and the extracted provider-agnostic playback-clock tests.
+- `npm run build:web`: passed.
+- Dedicated browser suites: History **22/22**, lyrics UI **40/40**, Now Playing layout **120/120**, audio engine **11/11**.
+- The broad legacy `npm run test:ui` harness is **not** counted as passing: it again aborts on the missing `Repeat: one` fullscreen selector after several fullscreen active-line/layout failures. This is recorded as an unresolved local harness/layout risk, not hidden by the dedicated suites above.
+- No new Windows/Tauri package or live-provider verification is claimed for the removal build. A future remote provider must start from a documented/licensed backend contract and re-run desktop acceptance before any remote playback claim.
+
 ## Required QA before claiming any phase works
 
 - Unit tests for URL/source identity, Data API mapping, quota/error handling, cache expiry, queue ordering, and history migration.
@@ -445,7 +471,7 @@ Not verified yet:
 
 ## Approval options
 
-**Selected by the user: A.**
+**Originally selected by the user: A. Superseded on 2026-11-03 by the removal decision recorded above.**
 
 ### A — Recommended compliant integrated path
 

@@ -4,7 +4,6 @@ import { App } from "./App";
 import "./styles/global.css";
 import "./styles/views.css";
 import "./styles/lyrics.css";
-import "./styles/youtube.css";
 
 const container = document.getElementById("root");
 if (!container) throw new Error("Root element is missing");

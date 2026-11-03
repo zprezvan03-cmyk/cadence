@@ -2,9 +2,9 @@
  * Home: recent activity, quick access and library shortcuts. Written for Cadence.
  */
 
-import { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Clock3, FolderPlus, Heart, Mic2, Play, Shuffle } from "lucide-react";
-import { mediaItemFromHistoryPayload, trackSourceKey } from "../../../shared/media";
+import { trackSourceKey } from "../../../shared/media";
 import type { HistoryPayload } from "../../../shared/types";
 import { useLibrary } from "../../state/libraryStore";
 import { useHistory } from "../../state/historyStore";
@@ -17,15 +17,6 @@ import { Artwork } from "../../components/Artwork";
 import { SourceBadge } from "../../components/SourceBadge";
 import { shuffle } from "../../player/queue";
 import { onRepeatTracks, rediscoverTracks, topLibraryTracks } from "../stats/listeningStats";
-import { useSettings } from "../../state/settingsStore";
-
-const YouTubeTrendingShelf = lazy(() => import("../youtube/YouTubeTrendingShelf"));
-const YouTubeNewReleasesShelf = lazy(() =>
-  import("../youtube/YouTubeTrendingShelf").then(module => ({
-    default: module.YouTubeNewReleasesShelf,
-  }))
-);
-
 function greeting(): string {
   const hour = new Date().getHours();
   if (hour < 5) return "Still up?";
@@ -48,13 +39,10 @@ export function HomeView() {
   const addFolder = useLibrary(state => state.addFolder);
   const scanning = useLibrary(state => state.scanning);
   const navigate = useUi(state => state.navigate);
+  const showToast = useUi(state => state.showToast);
   const playQueue = usePlayer(state => state.playQueue);
   const playShuffled = usePlayer(state => state.playShuffled);
   const playTrack = usePlayer(state => state.playTrack);
-  const playMediaItem = usePlayer(state => state.playMediaItem);
-  const youtubeCatalogConfigured = useSettings(state =>
-    Boolean(state.settings?.youtubeCatalog?.enabled && state.settings.youtubeCatalog.apiKey)
-  );
   const { entries: historyEntries, load: loadHistory } = useHistory(state => state);
   const [now] = useState(() => Date.now());
 
@@ -140,12 +128,6 @@ export function HomeView() {
         {snapshot.scan.errors.length > 0 ? (
           <p className="error-text">{snapshot.scan.errors.length} files could not be read during the last scan.</p>
         ) : null}
-        {youtubeCatalogConfigured ? (
-          <Suspense fallback={null}>
-            <YouTubeTrendingShelf />
-            <YouTubeNewReleasesShelf />
-          </Suspense>
-        ) : null}
       </div>
     );
   }
@@ -226,10 +208,7 @@ export function HomeView() {
                     void playTrack(track.source.trackId);
                     return;
                   }
-                  const item = mediaItemFromHistoryPayload(track);
-                  if (!item) return;
-                  void playMediaItem(item);
-                  navigate({ name: "lyrics" });
+                  void showToast("Remote playback is not available in this build.");
                 }}
               >
                 <Artwork src={track.artworkUrl ?? null} alt={track.album || track.title} size="xs" />
@@ -318,13 +297,6 @@ export function HomeView() {
             ))}
           </div>
         </section>
-      ) : null}
-
-      {youtubeCatalogConfigured ? (
-        <Suspense fallback={null}>
-          <YouTubeTrendingShelf />
-          <YouTubeNewReleasesShelf />
-        </Suspense>
       ) : null}
 
       <section className="shelf">

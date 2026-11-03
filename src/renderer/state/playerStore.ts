@@ -1,11 +1,5 @@
 import { create } from "zustand";
-import {
-  canOpenInYouTubePlayer,
-  isRemoteSource,
-  mediaItemFromLocalTrack,
-  remoteVideoId,
-  trackSourceKey,
-} from "../../shared/media";
+import { mediaItemFromLocalTrack, trackSourceKey } from "../../shared/media";
 import type {
   MediaItem,
   PlaybackMechanism,
@@ -15,14 +9,8 @@ import type {
   Track,
   TrackSource,
 } from "../../shared/types";
-import { normalizeYouTubeArtist } from "../../shared/youtube";
 import { audioEngine } from "../audio/engine";
 import { computeReplayGain } from "../audio/replayGain";
-import type {
-  YouTubePlayerErrorInfo,
-  YouTubePlayerMetadata,
-  YouTubePlayerSnapshot,
-} from "../features/youtube/youtubePlayerUtils";
 import {
   advancePosition,
   buildOrder,
@@ -32,11 +20,9 @@ import {
   pruneQueueOrder,
 } from "../player/queue";
 import { decideTransition, TransitionGuard } from "../player/transitions";
-import { getYouTubePlayer, resetYouTubePlaybackClock } from "../player/youtubePlayerAdapter";
 import { getTrackById } from "./trackRegistry";
 import { useLibrary } from "./libraryStore";
 import { useHistory } from "./historyStore";
-import { useRemoteMedia } from "./remoteMediaStore";
 import { useSettings } from "./settingsStore";
 
 const SESSION_KEY = "cadence.session.v1";
@@ -53,16 +39,7 @@ export interface SessionState {
   repeat: RepeatMode;
 }
 
-export type RemotePlaybackStatus =
-  | "idle"
-  | "needs-now-playing"
-  | "loading"
-  | "cued"
-  | "playing"
-  | "paused"
-  | "buffering"
-  | "ended"
-  | "error";
+export type RemotePlaybackStatus = "idle" | "unavailable";
 
 interface PlayerState extends SessionState {
   isPlaying: boolean;
@@ -74,9 +51,6 @@ interface PlayerState extends SessionState {
   /** Actual mechanism for the current source; remote origin is on the queue item itself. */
   playbackMechanism: PlaybackMechanism;
   remoteStatus: RemotePlaybackStatus;
-  remotePlayerMounted: boolean;
-  remotePlayerVisible: boolean;
-  remoteAutoplayPending: boolean;
   remoteError: string | null;
   playQueue: (trackIds: number[], startIndex?: number) => Promise<void>;
   playShuffled: (trackIds: number[], startIndex?: number) => Promise<void>;
@@ -104,13 +78,6 @@ interface PlayerState extends SessionState {
   setRepeat: (repeat: RepeatMode) => void;
   restore: (session: SessionState) => Promise<void>;
   handleEnded: () => Promise<void>;
-  setRemotePlayerMounted: (mounted: boolean, videoId?: string | null) => void;
-  setRemotePlayerVisible: (visible: boolean, videoId: string) => void;
-  remotePlayerReady: (videoId: string) => void;
-  syncRemoteSnapshot: (videoId: string, snapshot: YouTubePlayerSnapshot) => void;
-  syncRemoteMetadata: (videoId: string, metadata: YouTubePlayerMetadata) => void;
-  syncRemoteError: (videoId: string, error: YouTubePlayerErrorInfo) => void;
-  handleRemoteEnded: (videoId: string) => Promise<void>;
   /** Called by the local engine bridge on every tick. Ignored while a remote item is current. */
   syncTime: (position: number, duration: number, buffered: number) => void;
   syncState: (state: { playing: boolean; buffering: boolean; ended: boolean }) => void;
@@ -134,10 +101,6 @@ export const currentTrackId = (state: PlayerState): number | null => {
   return source?.kind === "local" ? source.trackId : null;
 };
 
-export const currentRemoteVideoId = (state: PlayerState): string | null => {
-  const source = currentSource(state);
-  return source && source.kind !== "local" ? source.remoteId : null;
-};
 
 function persist(state: PlayerState): void {
   const session: SessionState = {
@@ -191,24 +154,21 @@ export function readSession(): SessionState | null {
   }
 }
 
-const REMOTE_SESSION_METADATA_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-
 /**
- * Drops restored local entries whose files are gone and remote snapshots older than the
- * 30-day temporary-storage window for non-authorized API metadata. Order/current position are
- * remapped together, so pruning cannot silently point Cadence at a different queue entry.
+ * Drops restored local entries whose files are gone and legacy non-local entries (this build has
+ * no remote provider registered). Order/current position are remapped together, so pruning cannot
+ * silently point Cadence at a different queue entry.
  */
 export function pruneSessionQueue(
   session: SessionState,
-  availableTrackIds: ReadonlySet<number>,
-  now = Date.now()
+  availableTrackIds: ReadonlySet<number>
 ): SessionState {
   const oldCurrentIndex = session.order[session.orderPosition];
   const oldCurrent =
     oldCurrentIndex === undefined ? null : session.queue[oldCurrentIndex] ?? null;
   const pruned = pruneQueueOrder(session.queue, session.order, session.orderPosition, entry => {
     if (entry.item.source.kind === "local") return availableTrackIds.has(entry.item.source.trackId);
-    return entry.item.fetchedAt <= 0 || now - entry.item.fetchedAt <= REMOTE_SESSION_METADATA_MAX_AGE_MS;
+    return false;
   });
   const newCurrentIndex = pruned.order[pruned.orderPosition];
   const newCurrent = newCurrentIndex === undefined ? null : pruned.queue[newCurrentIndex] ?? null;
@@ -223,17 +183,6 @@ export function pruneSessionQueue(
 let loadToken = 0;
 let lastPositionPersistAt = 0;
 let occurrenceCounter = 0;
-let remoteLoadSequence = 0;
-let activeRemoteLoadKey: string | null = null;
-let lastRemoteEndedKey: string | null = null;
-interface RemoteRestartRequest {
-  loadKey: string;
-  requestedAt: number;
-  settleRetryUsed: boolean;
-}
-let remoteRestartRequest: RemoteRestartRequest | null = null;
-const REMOTE_RESTART_SETTLE_WINDOW_MS = 5_000;
-const recordedRemoteLoads = new Set<string>();
 const transitionGuard = new TransitionGuard();
 
 function nextOccurrenceId(): string {
@@ -243,15 +192,6 @@ function nextOccurrenceId(): string {
       ? crypto.randomUUID()
       : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   return `q-${occurrenceCounter}-${random}`;
-}
-
-function rememberRecordedRemoteLoad(key: string): void {
-  recordedRemoteLoads.add(key);
-  while (recordedRemoteLoads.size > 500) {
-    const oldest = recordedRemoteLoads.values().next().value;
-    if (typeof oldest !== "string") break;
-    recordedRemoteLoads.delete(oldest);
-  }
 }
 
 type PlaybackAudioSettings = Pick<
@@ -295,94 +235,7 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       const track = getTrackById(entry.item.source.trackId);
       return track ? mediaItemFromLocalTrack(track, entry.item.fetchedAt || Date.now()) : entry.item;
     }
-    return useRemoteMedia.getState().videosByKey[trackSourceKey(entry.item.source)] ?? entry.item;
-  };
-
-  const updateQueueItem = (
-    occurrenceId: string,
-    update: (item: MediaItem) => MediaItem
-  ): MediaItem | null => {
-    const state = get();
-    const index = state.queue.findIndex(entry => entry.occurrenceId === occurrenceId);
-    if (index < 0) return null;
-    const previous = state.queue[index].item;
-    const next = update(previous);
-    if (next === previous) return previous;
-    const queue = [...state.queue];
-    queue[index] = { ...queue[index], item: next };
-    set({ queue });
-    if (isRemoteSource(next.source)) useRemoteMedia.getState().rememberVideos([next]);
-    return next;
-  };
-
-  const recordStartedRemote = (entry: QueueEntry): void => {
-    if (!activeRemoteLoadKey || recordedRemoteLoads.has(activeRemoteLoadKey)) return;
-    rememberRecordedRemoteLoad(activeRemoteLoadKey);
-    void useHistory.getState().addRemote(resolvedItem(entry)).catch(() => undefined);
-    prewarmNext();
-  };
-
-  const pauseRemotePlayer = (): void => {
-    try {
-      getYouTubePlayer()?.pause();
-    } catch {
-      /* The mounted player may be mid-destroy during a source switch. */
-    }
-  };
-
-  const tryPlayRemote = (): boolean => {
-    const state = get();
-    const entry = currentQueueEntry(state);
-    if (!entry || entry.item.source.kind === "local") return false;
-    const player = getYouTubePlayer();
-    if (!player || !state.remotePlayerMounted) {
-      set({ remoteStatus: "needs-now-playing", remoteAutoplayPending: true, isPlaying: false });
-      return false;
-    }
-    let started = false;
-    try {
-      started = player.play(remoteVideoId(entry.item.source) ?? undefined);
-    } catch {
-      started = false;
-    }
-    set({
-      remoteAutoplayPending: !started,
-      remoteStatus: started ? "loading" : state.remotePlayerVisible ? "loading" : "needs-now-playing",
-      buffering: started,
-    });
-    return started;
-  };
-
-  /**
-   * Restarting an ended embedded video is a seek followed by Play, but those commands settle
-   * asynchronously: the seek can report Paused/Cued after Play was accepted. Keep this restart
-   * identifiable for a short window so syncRemoteSnapshot can retry that one Play request once,
-   * instead of treating the seek-settling snapshot as the final user intent.
-   */
-  const beginRemoteRestart = (entry: QueueEntry): void => {
-    remoteLoadSequence += 1;
-    activeRemoteLoadKey = `${entry.occurrenceId}:${remoteLoadSequence}`;
-    remoteRestartRequest = {
-      loadKey: activeRemoteLoadKey,
-      requestedAt: Date.now(),
-      settleRetryUsed: false,
-    };
-    set({
-      position: 0,
-      ended: false,
-      remoteAutoplayPending: true,
-      buffering: true,
-      remoteStatus: "loading",
-      remoteError: null,
-      error: null,
-    });
-    try {
-      getYouTubePlayer()?.seekTo(0, true);
-    } catch {
-      /* The pending restart is applied when the official player is mounted and ready. */
-    }
-    set({ position: 0, ended: false, remoteAutoplayPending: true });
-    tryPlayRemote();
+    return entry.item;
   };
 
   const trackAtPosition = (
@@ -403,80 +256,33 @@ export const usePlayer = create<PlayerState>()((set, get) => {
 
     if (entry.item.source.kind !== "local") {
       const item = resolvedItem(entry);
-      const token = ++loadToken;
-      void token;
+      loadToken += 1;
       transitionGuard.reset();
       audioEngine.pause();
-      remoteLoadSequence += 1;
-      activeRemoteLoadKey = `${entry.occurrenceId}:${remoteLoadSequence}`;
-      lastRemoteEndedKey = null;
-      remoteRestartRequest = null;
-      resetYouTubePlaybackClock();
-      useRemoteMedia.getState().rememberVideos([item]);
-
-      if (!canOpenInYouTubePlayer(item)) {
-        set({
-          playbackMechanism: "unavailable",
-          duration: item.durationSeconds ?? 0,
-          buffered: 0,
-          isPlaying: false,
-          buffering: false,
-          ended: false,
-          error:
-            item.availability === "not-embeddable"
-              ? "YouTube does not allow this video to play in embedded players."
-              : "That YouTube video is unavailable.",
-          remoteStatus: "error",
-          remoteAutoplayPending: false,
-          remoteError:
-            item.availability === "not-embeddable"
-              ? "YouTube does not allow this video to play in embedded players."
-              : "That YouTube video is unavailable.",
-        });
-        return;
-      }
-
+      const message = "Remote playback is not available in this build.";
       set({
-        playbackMechanism: "youtube-iframe",
+        playbackMechanism: "unavailable",
         duration: item.durationSeconds ?? 0,
         buffered: 0,
         isPlaying: false,
-        buffering: autoplay,
+        buffering: false,
         ended: false,
-        error: null,
-        remoteStatus: state.remotePlayerMounted ? "loading" : "needs-now-playing",
-        remoteAutoplayPending: autoplay,
-        remoteError: null,
+        error: message,
+        remoteStatus: "unavailable",
+        remoteError: message,
       });
-
-      const player = getYouTubePlayer();
-      if (player && state.remotePlayerMounted) {
-        try {
-          player.setVolume(state.volume);
-          player.setMuted(state.muted);
-          player.setPlaybackRate(state.rate);
-          if (state.position > 0) player.seekTo(state.position, true);
-        } catch {
-          /* Readiness/visibility callbacks will retry the pending request. */
-        }
-      }
-      if (autoplay) tryPlayRemote();
       return;
     }
 
     const trackId = entry.item.source.trackId;
     const track = getTrackById(trackId);
     if (!track) return;
-    activeRemoteLoadKey = null;
-    remoteRestartRequest = null;
-    pauseRemotePlayer();
     const token = ++loadToken;
     transitionGuard.reset();
     set({
       playbackMechanism: "local-file",
       duration: track.duration,
       remoteStatus: "idle",
-      remoteAutoplayPending: false,
       remoteError: null,
     });
     const loaded = await audioEngine.load(track, { gain: replayGainForTrack(track) });
@@ -539,7 +345,6 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       ended: false,
       playbackMechanism: "local-file",
       remoteStatus: "idle",
-      remoteAutoplayPending: false,
       remoteError: null,
     });
     audioEngine.setVolume(current.volume);
@@ -560,10 +365,6 @@ export const usePlayer = create<PlayerState>()((set, get) => {
 
   const playEntries = async (entries: QueueEntry[], startIndex = 0): Promise<void> => {
     if (entries.length === 0) return;
-    const remoteItems = entries
-      .map(entry => entry.item)
-      .filter(item => item.source.kind !== "local");
-    if (remoteItems.length > 0) useRemoteMedia.getState().rememberVideos(remoteItems);
     const shuffle = get().shuffle;
     const start = Math.max(0, Math.min(startIndex, entries.length - 1));
     const order = buildOrder(entries.length, shuffle, start);
@@ -587,9 +388,7 @@ export const usePlayer = create<PlayerState>()((set, get) => {
   ): { entries: QueueEntry[]; start: number } => {
     const requestedStart = Math.max(0, Math.min(startIndex, Math.max(0, items.length - 1)));
     const mapped = items.map((item, index) => ({ item, index }));
-    const playable = mapped.filter(({ item }) =>
-      item.source.kind === "local" ? item.availability !== "unavailable" : canOpenInYouTubePlayer(item)
-    );
+    const playable = mapped.filter(({ item }) => item.availability !== "unavailable");
     const entries = playable.map(({ item }) => mediaQueueEntry(item, nextOccurrenceId()));
     const startOffset = playable.findIndex(({ index }) => index === requestedStart);
     const followingOffset = playable.findIndex(({ index }) => index > requestedStart);
@@ -671,9 +470,7 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     const state = get();
     if (queueIndex < 0 || queueIndex >= state.queue.length) return;
     const removingCurrent = state.order[state.orderPosition] === queueIndex;
-    const removingEntry = state.queue[queueIndex];
     const wasPlaying = state.isPlaying;
-    if (removingCurrent && removingEntry?.item.source.kind !== "local") pauseRemotePlayer();
     const queue = state.queue.filter((_, index) => index !== queueIndex);
     const order = state.order
       .filter(index => index !== queueIndex)
@@ -693,8 +490,6 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     if (removingCurrent) {
       if (queue.length === 0) {
         audioEngine.pause();
-        pauseRemotePlayer();
-        activeRemoteLoadKey = null;
         set({
           isPlaying: false,
           buffering: false,
@@ -702,7 +497,7 @@ export const usePlayer = create<PlayerState>()((set, get) => {
           duration: 0,
           playbackMechanism: "unavailable",
           remoteStatus: "idle",
-          remoteAutoplayPending: false,
+          remoteError: null,
         });
       } else {
         void loadCurrent(wasPlaying);
@@ -729,9 +524,6 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     ended: false,
     playbackMechanism: "unavailable",
     remoteStatus: "idle",
-    remotePlayerMounted: false,
-    remotePlayerVisible: false,
-    remoteAutoplayPending: false,
     remoteError: null,
 
     playQueue: async (trackIds, startIndex = 0) => {
@@ -765,24 +557,13 @@ export const usePlayer = create<PlayerState>()((set, get) => {
         await get().playTrack(item.source.trackId);
         return;
       }
-      if (!canOpenInYouTubePlayer(item)) return;
-      useRemoteMedia.getState().rememberVideos([item]);
       const state = get();
       const existing = findQueueIndexBySource(state, item.source);
       if (existing >= 0) {
-        const entry = state.queue[existing];
-        updateQueueItem(entry.occurrenceId, previous => ({ ...previous, ...item }));
+        const queue = [...state.queue];
+        queue[existing] = { ...queue[existing], item: { ...queue[existing].item, ...item } };
+        set({ queue });
         const position = state.order.indexOf(existing);
-        if (position === state.orderPosition) {
-          if (state.ended) {
-            beginRemoteRestart(entry);
-          } else if (!state.isPlaying) {
-            set({ remoteAutoplayPending: true });
-            tryPlayRemote();
-          }
-          after();
-          return;
-        }
         if (position >= 0) {
           await goToPosition(position, true);
           return;
@@ -869,10 +650,6 @@ export const usePlayer = create<PlayerState>()((set, get) => {
 
     clearQueue: () => {
       audioEngine.pause();
-      pauseRemotePlayer();
-      activeRemoteLoadKey = null;
-      remoteRestartRequest = null;
-      resetYouTubePlaybackClock();
       set({
         queue: [],
         order: [],
@@ -886,7 +663,6 @@ export const usePlayer = create<PlayerState>()((set, get) => {
         error: null,
         playbackMechanism: "unavailable",
         remoteStatus: "idle",
-        remoteAutoplayPending: false,
         remoteError: null,
       });
       after();
@@ -897,25 +673,14 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       if (state.queue.length === 0) return;
       const current = currentQueueEntry(state);
       if (current && current.item.source.kind !== "local") {
-        if (state.isPlaying) {
-          remoteRestartRequest = null;
-          pauseRemotePlayer();
-          set({
-            isPlaying: false,
-            buffering: false,
-            remoteAutoplayPending: false,
-            remoteStatus: state.remotePlayerMounted ? "paused" : "needs-now-playing",
-          });
-          after();
-          return;
-        }
-        if (state.ended) {
-          beginRemoteRestart(current);
-          after();
-          return;
-        }
-        set({ remoteAutoplayPending: true });
-        tryPlayRemote();
+        const message = "Remote playback is not available in this build.";
+        set({
+          isPlaying: false,
+          buffering: false,
+          remoteStatus: "unavailable",
+          remoteError: message,
+          error: message,
+        });
         after();
         return;
       }
@@ -937,7 +702,8 @@ export const usePlayer = create<PlayerState>()((set, get) => {
         transitionGuard.reset();
         const current = currentQueueEntry(state);
         if (current && current.item.source.kind !== "local") {
-          beginRemoteRestart(current);
+          set({ position: 0, ended: false });
+          await loadCurrent(true);
           after();
           return;
         }
@@ -948,7 +714,6 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       if (result.exhausted && auto) {
         set({ isPlaying: false, ended: true, position: state.duration });
         audioEngine.pause();
-        pauseRemotePlayer();
         return;
       }
 
@@ -994,7 +759,7 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       const shouldAutoplay =
         current?.item.source.kind === "local"
           ? !audioEngine.paused
-          : state.isPlaying || state.remoteAutoplayPending || state.buffering;
+          : state.isPlaying || state.buffering;
       if (crossesMechanism) {
         void goToPosition(result.position, shouldAutoplay);
         return;
@@ -1025,11 +790,6 @@ export const usePlayer = create<PlayerState>()((set, get) => {
         state.duration > 0 ? Math.min(seconds, state.duration) : seconds
       );
       if (current && current.item.source.kind !== "local") {
-        try {
-          getYouTubePlayer()?.seekTo(target, true);
-        } catch {
-          /* The store keeps the target; readiness seeks to it when the player mounts. */
-        }
         set({ position: target, ended: false });
         after();
         return;
@@ -1053,35 +813,18 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       const clamped = Math.max(0, Math.min(1, volume));
       audioEngine.setVolume(clamped);
       if (clamped > 0) audioEngine.setMuted(false);
-      try {
-        const player = getYouTubePlayer();
-        player?.setVolume(clamped);
-        if (clamped > 0) player?.setMuted(false);
-      } catch {
-        /* A non-current embedded player may not be ready yet. */
-      }
       set({ volume: clamped, muted: clamped > 0 ? false : get().muted });
       after();
     },
 
     setMuted: muted => {
       audioEngine.setMuted(muted);
-      try {
-        getYouTubePlayer()?.setMuted(muted);
-      } catch {
-        /* Readiness applies the store value when the player mounts. */
-      }
       set({ muted });
       after();
     },
 
     setRate: rate => {
       audioEngine.setRate(rate);
-      try {
-        getYouTubePlayer()?.setPlaybackRate(rate);
-      } catch {
-        /* YouTube may not support every local rate; the official player remains authoritative. */
-      }
       set({ rate });
       after();
     },
@@ -1124,7 +867,6 @@ export const usePlayer = create<PlayerState>()((set, get) => {
         buffering: false,
         ended: false,
         error: null,
-        remoteAutoplayPending: false,
       });
       if (session.queue.length === 0) return;
       await loadCurrent(false);
@@ -1133,201 +875,6 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     handleEnded: async () => {
       const current = currentQueueEntry(get());
       if (!current || current.item.source.kind !== "local") return;
-      await get().next(true);
-    },
-
-    setRemotePlayerMounted: (mounted, videoId) => {
-      const state = get();
-      const current = currentQueueEntry(state);
-      const currentVideoId = current ? remoteVideoId(current.item.source) : null;
-      if (mounted && videoId && currentVideoId && videoId !== currentVideoId) return;
-      set({
-        remotePlayerMounted: mounted,
-        remotePlayerVisible: mounted ? state.remotePlayerVisible : false,
-        ...(current && current.item.source.kind !== "local"
-          ? {
-              isPlaying: mounted ? state.isPlaying : false,
-              buffering: mounted ? state.buffering : false,
-              remoteStatus: mounted
-                ? state.remoteStatus === "needs-now-playing"
-                  ? "loading"
-                  : state.remoteStatus
-                : "needs-now-playing",
-            }
-          : {}),
-      });
-    },
-
-    setRemotePlayerVisible: (visible, videoId) => {
-      const state = get();
-      const current = currentQueueEntry(state);
-      if (!current || current.item.source.kind === "local") return;
-      if (remoteVideoId(current.item.source) !== videoId) return;
-      set({ remotePlayerVisible: visible });
-      if (visible && state.remoteAutoplayPending) tryPlayRemote();
-    },
-
-    remotePlayerReady: videoId => {
-      const state = get();
-      const current = currentQueueEntry(state);
-      if (!current || current.item.source.kind === "local") return;
-      if (remoteVideoId(current.item.source) !== videoId) return;
-      set({
-        remotePlayerMounted: true,
-        remoteStatus: state.remoteAutoplayPending ? "loading" : "cued",
-        remoteError: null,
-      });
-      const player = getYouTubePlayer();
-      if (player) {
-        try {
-          player.setVolume(state.volume);
-          player.setMuted(state.muted);
-          player.setPlaybackRate(state.rate);
-          if (state.position > 0) player.seekTo(state.position, true);
-        } catch {
-          /* Snapshot polling remains the authority if an early control call fails. */
-        }
-      }
-      if (state.remoteAutoplayPending) tryPlayRemote();
-    },
-
-    syncRemoteSnapshot: (videoId, snapshot) => {
-      const state = get();
-      const current = currentQueueEntry(state);
-      if (!current || current.item.source.kind === "local") return;
-      if (remoteVideoId(current.item.source) !== videoId) return;
-
-      const isPlaying = snapshot.state === "playing";
-      const ended = snapshot.state === "ended";
-      // `playVideo()` issued while a cue is still in flight can be superseded by the later
-      // CUED event. Preserve that explicit autoplay request across the snapshot and retry it
-      // once the player actually reports CUED, instead of leaving Now Playing stuck paused.
-      const autoplayRequested = state.remoteAutoplayPending || state.buffering;
-      const restartRequest = remoteRestartRequest;
-      const restartSettleRetry = Boolean(
-        restartRequest &&
-          restartRequest.loadKey === activeRemoteLoadKey &&
-          !restartRequest.settleRetryUsed &&
-          Date.now() - restartRequest.requestedAt <= REMOTE_RESTART_SETTLE_WINDOW_MS &&
-          (snapshot.state === "paused" || snapshot.state === "cued")
-      );
-      if (restartSettleRetry && restartRequest) restartRequest.settleRetryUsed = true;
-      if (isPlaying && restartRequest?.loadKey === activeRemoteLoadKey) {
-        remoteRestartRequest = null;
-      }
-      const duration = snapshot.duration > 0 ? snapshot.duration : state.duration;
-      const remoteStatus: RemotePlaybackStatus =
-        snapshot.state === "playing"
-          ? "playing"
-          : snapshot.state === "buffering"
-            ? "buffering"
-            : snapshot.state === "ended"
-              ? "ended"
-              : snapshot.state === "cued"
-                ? "cued"
-                : "paused";
-      set({
-        position: Math.max(0, snapshot.currentTime),
-        duration,
-        buffered: state.buffered,
-        volume: snapshot.volume,
-        muted: snapshot.muted,
-        rate: snapshot.playbackRate > 0 ? snapshot.playbackRate : state.rate,
-        isPlaying,
-        buffering: snapshot.state === "buffering",
-        ended,
-        playbackMechanism: "youtube-iframe",
-        remoteStatus,
-        remoteAutoplayPending: isPlaying
-          ? false
-          : (snapshot.state === "cued" && autoplayRequested) || restartSettleRetry
-            ? true
-            : state.remoteAutoplayPending,
-        remoteError: null,
-        error: null,
-      });
-      if (snapshot.duration > 0) {
-        updateQueueItem(current.occurrenceId, item =>
-          Math.abs((item.durationSeconds ?? 0) - snapshot.duration) > 0.5
-            ? { ...item, durationSeconds: snapshot.duration }
-            : item
-        );
-      }
-      if (isPlaying) recordStartedRemote(current);
-      if ((snapshot.state === "cued" && autoplayRequested) || restartSettleRetry) tryPlayRemote();
-
-      const now = Date.now();
-      if (!isPlaying || now - lastPositionPersistAt >= 1000) {
-        lastPositionPersistAt = now;
-        after();
-      }
-    },
-
-    syncRemoteMetadata: (videoId, metadata) => {
-      const state = get();
-      const current = currentQueueEntry(state);
-      if (!current || current.item.source.kind === "local") return;
-      if (remoteVideoId(current.item.source) !== videoId) return;
-      updateQueueItem(current.occurrenceId, item => {
-        const artistLabel =
-          (metadata.author ? normalizeYouTubeArtist(metadata.author) : null) ?? item.artistLabel;
-        const next: MediaItem = {
-          ...item,
-          title: metadata.title || item.title,
-          artistLabel,
-          channelTitle: metadata.author || item.channelTitle,
-          availability: item.availability === "unknown" ? ("ready" as const) : item.availability,
-          fetchedAt: Date.now(),
-        };
-        return next.title === item.title &&
-          next.artistLabel === item.artistLabel &&
-          next.channelTitle === item.channelTitle &&
-          next.availability === item.availability
-          ? item
-          : next;
-      });
-      after();
-    },
-
-    syncRemoteError: (videoId, errorInfo) => {
-      const state = get();
-      const current = currentQueueEntry(state);
-      if (!current || current.item.source.kind === "local") return;
-      if (remoteVideoId(current.item.source) !== videoId) return;
-      remoteRestartRequest = null;
-      if (errorInfo.kind === "not-embeddable" || errorInfo.kind === "not-found") {
-        updateQueueItem(current.occurrenceId, item => ({
-          ...item,
-          availability: errorInfo.kind === "not-embeddable" ? "not-embeddable" : "unavailable",
-        }));
-      }
-      set({
-        isPlaying: false,
-        buffering: false,
-        remoteAutoplayPending: false,
-        remoteStatus: "error",
-        remoteError: errorInfo.message,
-        error: errorInfo.message,
-      });
-      after();
-    },
-
-    handleRemoteEnded: async videoId => {
-      const state = get();
-      const current = currentQueueEntry(state);
-      if (!current || current.item.source.kind === "local") return;
-      if (remoteVideoId(current.item.source) !== videoId) return;
-      if (activeRemoteLoadKey && lastRemoteEndedKey === activeRemoteLoadKey) return;
-      lastRemoteEndedKey = activeRemoteLoadKey;
-      remoteRestartRequest = null;
-      set({
-        isPlaying: false,
-        buffering: false,
-        ended: true,
-        position: state.duration,
-        remoteStatus: "ended",
-        remoteAutoplayPending: false,
-      });
       await get().next(true);
     },
 

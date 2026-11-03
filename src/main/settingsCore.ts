@@ -84,11 +84,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
     sessionKey: "",
     username: "",
   },
-  youtubeCatalog: {
-    enabled: false,
-    apiKey: "",
-    region: "",
-  },
 };
 
 type AnyRecord = Record<string, unknown>;
@@ -168,23 +163,9 @@ function normalizeSettings(settings: AppSettings): AppSettings {
     sessionKey: credential(scrobblingSource.sessionKey),
     username: credential(scrobblingSource.username),
   };
-  const youtubeCatalogSource: AnyRecord = isPlainObject(settings.youtubeCatalog)
-    ? settings.youtubeCatalog
-    : {};
-  const region =
-    typeof youtubeCatalogSource.region === "string"
-      ? youtubeCatalogSource.region.trim().toUpperCase()
-      : "";
-  settings.youtubeCatalog = {
-    enabled: youtubeCatalogSource.enabled === true,
-    // Data API keys contain no whitespace. Removing it makes a pasted key with an accidental
-    // line break usable without accepting arbitrary long credential blobs into settings.
-    apiKey:
-      typeof youtubeCatalogSource.apiKey === "string"
-        ? youtubeCatalogSource.apiKey.replace(/\s+/g, "").slice(0, 512)
-        : "",
-    region: /^[A-Z]{2}$/.test(region) ? region : "",
-  };
+  // The Data API catalog was removed from the product. Drop the legacy section (including any
+  // stored API key) instead of carrying an unused credential in the active settings schema.
+  delete (settings as unknown as AnyRecord).youtubeCatalog;
   return settings;
 }
 

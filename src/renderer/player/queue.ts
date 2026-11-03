@@ -155,7 +155,7 @@ function normalizeMediaItem(value: unknown): MediaItem | null {
   const availability = item.availability;
   return {
     source,
-    title: cleanString(item.title, source.kind === "local" ? "Loading local track…" : "Loading YouTube video…"),
+    title: cleanString(item.title, source.kind === "local" ? "Loading local track…" : "Loading remote item…"),
     artistLabel: cleanString(item.artistLabel),
     channelId: cleanNullableString(item.channelId),
     channelTitle: cleanNullableString(item.channelTitle),
@@ -165,17 +165,19 @@ function normalizeMediaItem(value: unknown): MediaItem | null {
     publishedAt: cleanNullableString(item.publishedAt),
     availability:
       availability === "ready" ||
-      availability === "not-embeddable" ||
+      availability === "restricted" ||
       availability === "unavailable" ||
       availability === "live"
         ? availability
-        : "unknown",
+        : availability === "not-embeddable"
+          ? "restricted"
+          : "unknown",
     fetchedAt: typeof item.fetchedAt === "number" && Number.isFinite(item.fetchedAt) ? item.fetchedAt : 0,
   };
 }
 
 /**
- * Accepts the pre-Stage-7 numeric session queue as well as the source-aware occurrence queue.
+ * Accepts the legacy numeric session queue as well as the source-aware occurrence queue.
  * Invalid remote entries are dropped instead of being converted into fake local IDs.
  */
 export function normalizeQueueEntry(value: unknown, fallbackOccurrenceId: string): QueueEntry | null {

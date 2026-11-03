@@ -38,7 +38,7 @@ export interface BraccatoLyricsProps {
   noLyrics?: boolean;
   className?: string;
   /**
-   * External clock for a player with no HTML media element (the YouTube iframe prototype).
+   * External clock for a provider player with no HTML media element.
    * When supplied, the local audio element is deliberately not bound and the element's documented
    * manual `currentTime` / `playing` properties are driven from this source instead.
    */
@@ -264,8 +264,8 @@ export function BraccatoLyrics({
     };
   }, [remoteClockSource]);
 
-  // Manual clock adapter for the YouTube iframe. The player itself is sampled at 250 ms by its
-  // owner; between samples this effect projects the last sample at the iframe's playback rate
+  // Manual clock adapter for an external provider clock. The provider is sampled by its
+  // owner; between samples this effect projects the last sample at the provider playback rate
   // and writes the custom element's documented clock properties directly (no React state and
   // no fabricated HTMLAudioElement). Paused/ended samples write once and stop the frame loop.
   useEffect(() => {

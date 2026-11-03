@@ -23,7 +23,6 @@ import { getTrackById } from "../state/trackRegistry";
 import { useSettings } from "../state/settingsStore";
 import { useUi } from "../state/uiStore";
 import { useHistory } from "../state/historyStore";
-import { useRemoteMedia } from "../state/remoteMediaStore";
 import { mediaItemFromLocalTrack, trackSourceKey } from "../../shared/media";
 import { formatTime } from "../player/queue";
 import {
@@ -71,7 +70,7 @@ export function useBootstrap(): void {
       if (settings.playback.shuffle !== player.shuffle) player.toggleShuffle();
 
       if (settings.playback.resumeOnLaunch && savedSession) {
-        // Drop local entries whose files no longer exist and stale remote snapshots, remapping
+        // Drop local entries whose files no longer exist and legacy non-local entries, remapping
         // the playback order/current occurrence in the same operation.
         const available = new Set(useLibrary.getState().tracksById.keys());
         const session = pruneSessionQueue(savedSession, available);
@@ -156,18 +155,9 @@ export function useBootstrap(): void {
 
       const player = usePlayer.getState();
       switch (command) {
-        case "play-pause": {
-          const current = currentQueueEntry(player);
-          const needsVisiblePlayer =
-            current?.item.source.kind !== "local" && !player.isPlaying && !player.remotePlayerMounted;
+        case "play-pause":
           void player.toggle();
-          if (needsVisiblePlayer) {
-            const ui = useUi.getState();
-            if (ui.miniPlayer) ui.toggleMiniPlayer();
-            ui.navigate({ name: "lyrics" });
-          }
           break;
-        }
         case "next":
           void player.next(false);
           break;
@@ -175,8 +165,7 @@ export function useBootstrap(): void {
           player.previous();
           break;
         case "stop":
-          if (!isLocalCurrent() && player.isPlaying) void player.toggle();
-          else audioEngine.pause();
+          audioEngine.pause();
           break;
         case "seek-forward":
           player.seekBy(SEEK_STEP);
@@ -231,7 +220,7 @@ export function useBootstrap(): void {
           ? track
             ? mediaItemFromLocalTrack(track, entry.item.fetchedAt || Date.now())
             : queuedItem
-          : useRemoteMedia.getState().videosByKey[trackSourceKey(entry.item.source)] ?? queuedItem;
+          : queuedItem;
       const source = item?.source ?? null;
       const sourceKey = source ? trackSourceKey(source) : "none";
 
