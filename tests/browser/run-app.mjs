@@ -415,6 +415,12 @@ await page.evaluateOnNewDocument(
         reorder: async id => playlists.find(playlist => playlist.id === id),
         tracks: async id => (playlists.find(playlist => playlist.id === id)?.trackIds ?? []).map(trackById).filter(Boolean),
       },
+
+      secrets: {
+        store: async () => {},
+        get: async () => null,
+        delete: async () => true,
+      },
       settings: {
         get: async () => structuredClone(settings),
         patch: async patch => {

@@ -16,12 +16,17 @@
  * unregistered command fails identically.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = resolve(import.meta.dirname, "../..");
-const commandsRs = readFileSync(resolve(root, "src-tauri/src/commands.rs"), "utf8");
+// All Rust modules under src-tauri/src contribute commands (commands.rs, secrets.rs, ...).
+const srcDir = resolve(root, "src-tauri/src");
+const rustSources = readdirSync(srcDir)
+  .filter(file => file.endsWith(".rs"))
+  .map(file => readFileSync(resolve(srcDir, file), "utf8"));
+const commandsRs = rustSources.join("\n");
 const libRs = readFileSync(resolve(root, "src-tauri/src/lib.rs"), "utf8");
 const bridgeTs = readFileSync(resolve(root, "src/tauri/bridge.ts"), "utf8");
 
@@ -208,9 +213,9 @@ describe("tauri IPC argument contract", () => {
 
   it("registers every Rust command in the invoke handler", () => {
     for (const command of rustCommands) {
-      expect(libRs, `${command.name} must appear in lib.rs generate_handler!`).toContain(
-        `commands::${command.name}`,
-      );
+      // Commands may live in any module (commands::, secrets::, ...); the handler must name it.
+      const registered = new RegExp(`\\w+::${command.name}\\b`).test(libRs);
+      expect(registered, `${command.name} must appear in lib.rs generate_handler!`).toBe(true);
     }
   });
 
