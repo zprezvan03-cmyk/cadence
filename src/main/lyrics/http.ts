@@ -14,6 +14,8 @@ export interface ProviderQuery {
   artist: string;
   album: string;
   duration: number;
+  /** Video id when the playing item is a YouTube Music source; enables the YTM lyrics provider. */
+  videoId?: string | null;
 }
 
 export type ProviderStatusKind = "hit" | "miss" | "error" | "skipped";

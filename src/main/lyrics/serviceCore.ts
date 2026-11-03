@@ -29,6 +29,7 @@ import { fetchLrclib, searchLrclib } from "./lrclib";
 import { fetchBetterLyrics, searchBetterLyrics } from "./betterLyrics";
 import { fetchUnison, searchUnison } from "./unison";
 import { fetchBinimum, searchBinimum } from "./binimum";
+import { fetchYtmLyrics, YTM_LYRICS_PROVIDER_KEY } from "./ytmLyrics";
 import type { LocalLyrics, LocalLyricsReader } from "./localLyricsCore";
 import {
   ConcurrencyLimiter,
