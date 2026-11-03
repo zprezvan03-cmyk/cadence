@@ -219,6 +219,17 @@ describe("tauri IPC argument contract", () => {
     }
   });
 
+  it("declares a module for every module::cmd_* path used in the handler", () => {
+    // E0433 regression guard: `secrets::cmd_secret_*` was registered without `mod secrets;`.
+    const prefixes = new Set(
+      [...libRs.matchAll(/([a-z_]+)::cmd_[a-z_]+/g)].map(match => match[1])
+    );
+    for (const prefix of prefixes) {
+      const declared = new RegExp(`^(pub )?mod ${prefix};`, "m").test(libRs);
+      expect(declared, `lib.rs uses ${prefix}::cmd_* but never declares \`mod ${prefix};\``).toBe(true);
+    }
+  });
+
   it("every invoked app command exists in Rust with matching argument keys", () => {
     for (const call of invokeCalls) {
       if (call.command.startsWith("plugin:")) continue;
