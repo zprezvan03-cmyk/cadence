@@ -382,6 +382,12 @@ export interface LyricsResolveRequest {
   artist: string;
   album: string;
   duration: number;
+  /**
+   * Set when resolving lyrics for a remote (YouTube Music) item: the item has no local track id,
+   * so `trackId` is -1 and the remote identity drives both the cache key and the YTM lyrics
+   * provider. Never a fake library id — queue/history keep the string source identity.
+   */
+  remote?: { remoteId: string; canonicalUrl: string } | null;
   /** Skip the network and only look at local files / tags. */
   localOnly?: boolean;
   /**
@@ -674,6 +680,23 @@ export interface AppSettings {
     onboardingStep: number;
   };
   scrobbling: LastFmSettings;
+  youtubeMusic: YouTubeMusicSettings;
+}
+
+/**
+ * YouTube Music source settings. Only non-sensitive session data lives here: the anonymous
+ * visitor id and locale. A connected Google account's cookie is NEVER stored in settings JSON —
+ * it goes to the operating system's secret store via the `secrets` bridge API, and only the
+ * display name is kept here so the UI can show the connected status.
+ */
+export interface YouTubeMusicSettings {
+  /** Anonymous InnerTube visitor id (regex ^Cg[t|s]); not a credential. */
+  visitorData: string | null;
+  /** Catalog locale (country / language) for InnerTube requests. */
+  gl: string;
+  hl: string;
+  /** Display name of the connected Google account, or null in Guest mode. */
+  accountName: string | null;
 }
 
 /** last.fm scrobbling credentials and session, stored locally in settings. */
@@ -856,6 +879,18 @@ export interface CadenceApi {
     get(): Promise<AppSettings>;
     patch(patch: DeepPartial<AppSettings>): Promise<AppSettings>;
     reset(): Promise<AppSettings>;
+  };
+  /**
+   * Operating-system credential store for secrets Cadence must never write to ordinary JSON
+   * settings (e.g. a connected Google account's cookie for YouTube Music). Backed by DPAPI on
+   * Windows, Secret Service (`secret-tool`) on Linux and the Keychain (`security`) on macOS.
+   * Values are only ever returned to the renderer to be attached to YouTube Music requests; they
+   * are never logged and never sent anywhere else.
+   */
+  secrets: {
+    store(args: { service: string; account: string; secret: string }): Promise<void>;
+    get(args: { service: string; account: string }): Promise<string | null>;
+    delete(args: { service: string; account: string }): Promise<boolean>;
   };
   lyrics: {
     resolve(request: LyricsResolveRequest): Promise<LyricsResolveResult>;

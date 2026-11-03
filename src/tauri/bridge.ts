@@ -913,6 +913,26 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
       },
     },
 
+    secrets: {
+      // Fields are inlined (not spread from a variable) so the static IPC contract test can pin
+      // them against the Rust struct fields.
+      async store(args) {
+        await invoke("cmd_secret_store", {
+          args: { service: args.service, account: args.account, secret: args.secret },
+        });
+      },
+      async get(args) {
+        return await invoke<string | null>("cmd_secret_get", {
+          args: { service: args.service, account: args.account },
+        });
+      },
+      async delete(args) {
+        return await invoke<boolean>("cmd_secret_delete", {
+          args: { service: args.service, account: args.account },
+        });
+      },
+    },
+
     lyrics: {
       resolve(request) {
         return abandonSafe(

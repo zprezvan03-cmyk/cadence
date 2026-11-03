@@ -84,6 +84,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
     sessionKey: "",
     username: "",
   },
+  youtubeMusic: {
+    visitorData: null,
+    gl: "US",
+    hl: "en",
+    accountName: null,
+  },
 };
 
 type AnyRecord = Record<string, unknown>;
@@ -166,6 +172,25 @@ function normalizeSettings(settings: AppSettings): AppSettings {
   // The Data API catalog was removed from the product. Drop the legacy section (including any
   // stored API key) instead of carrying an unused credential in the active settings schema.
   delete (settings as unknown as AnyRecord).youtubeCatalog;
+  // YouTube Music session settings are rebuilt field-by-field: anything else a hand-edited or
+  // smuggled settings file carries under `youtubeMusic` (e.g. an account cookie) is dropped.
+  // The cookie of a connected account lives ONLY in the OS secret store, never in this JSON.
+  const ytmSource: AnyRecord = isPlainObject(settings.youtubeMusic) ? settings.youtubeMusic : {};
+  const ytmDefaults = DEFAULT_SETTINGS.youtubeMusic;
+  const locale = (value: unknown, fallback: string): string =>
+    typeof value === "string" && /^[A-Za-z_-]{2,8}$/.test(value) ? value : fallback;
+  settings.youtubeMusic = {
+    visitorData:
+      typeof ytmSource.visitorData === "string" && /^Cg[t|s]/.test(ytmSource.visitorData)
+        ? ytmSource.visitorData
+        : null,
+    gl: locale(ytmSource.gl, ytmDefaults.gl),
+    hl: locale(ytmSource.hl, ytmDefaults.hl),
+    accountName:
+      typeof ytmSource.accountName === "string" && ytmSource.accountName.trim()
+        ? ytmSource.accountName.trim().slice(0, 64)
+        : null,
+  };
   return settings;
 }
 
