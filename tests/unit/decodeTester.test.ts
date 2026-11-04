@@ -333,4 +333,9 @@ describe("decode tester routing", () => {
     expect(hashToRoute("#/decode-tester")).toEqual({ name: "decode-tester" });
     expect(routeToHash({ name: "decode-tester" })).toBe("#/decode-tester");
   });
+
+  it("round-trips the Recently Added library route", () => {
+    expect(hashToRoute("#/library/recent")).toEqual({ name: "library", tab: "recent" });
+    expect(routeToHash({ name: "library", tab: "recent" })).toBe("#/library/recent");
+  });
 });

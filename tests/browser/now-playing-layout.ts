@@ -1419,11 +1419,20 @@ const kxBrightRatio = async () => {
     return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
   });
   const png = PNG.sync.read(Buffer.from(await page.screenshot({ clip: box })));
+  const luminances: number[] = [];
+  for (let i = 0; i < png.data.length; i += 4) {
+    luminances.push((png.data[i] + png.data[i + 1] + png.data[i + 2]) / 3);
+  }
+  // The graphite shell (#303236) is itself above the old near-black threshold. Most pixels in the
+  // line crop are background, so use the median as the local background and count only pixels
+  // materially brighter than it as glyphs; fully highlighted glyphs remain >170.
+  const sorted = [...luminances].sort((a, b) => a - b);
+  const background = sorted[Math.floor(sorted.length / 2)] ?? 0;
+  const glyphThreshold = Math.max(70, background + 30);
   let bright = 0;
   let glyph = 0;
-  for (let i = 0; i < png.data.length; i += 4) {
-    const luminance = (png.data[i] + png.data[i + 1] + png.data[i + 2]) / 3;
-    if (luminance > 45) glyph += 1;
+  for (const luminance of luminances) {
+    if (luminance > glyphThreshold) glyph += 1;
     if (luminance > 170) bright += 1;
   }
   return { bright, glyph, ratio: glyph ? bright / glyph : 0 };

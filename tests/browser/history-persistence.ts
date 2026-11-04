@@ -672,7 +672,7 @@ const readHistoryViewTitles = async (page: Page): Promise<string[]> => {
 };
 
 const readHomeRecentlyPlayedTitles = async (page: Page): Promise<string[]> => {
-  await clickNav(page, "Home");
+  await clickNav(page, "Listen Now");
   // Home renders from the history store; wait until its shelves have mounted.
   await page.waitForSelector(".shelf", { timeout: 10_000 }).catch(() => null);
   await wait(200);
@@ -918,7 +918,7 @@ try {
     JSON.stringify(statsBarCounts),
   );
 
-  await clickNav(page, "Home");
+  await clickNav(page, "Listen Now");
   await page.waitForSelector('[data-testid="home-top-tracks"]', { timeout: 10_000 }).catch(() => null);
   const homeShelves = await page.evaluate(() => ({
     top: Array.from(document.querySelectorAll('[data-testid="home-top-tracks"] .title-text')).map(

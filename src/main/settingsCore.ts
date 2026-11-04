@@ -34,7 +34,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     },
   },
   appearance: {
-    accent: "#ff3d71",
+    accent: "#fa586a",
     reduceMotion: false,
     compactSidebar: false,
     compactSidebarHoverExpand: true,

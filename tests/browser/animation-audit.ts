@@ -451,7 +451,7 @@ check("motion-token-consumers-normalized", motionTokens.seekBufferMs === 320, JS
 // Home is the boot route, so the pill starts on it — measured, visible, not animating in.
 const pillAtBoot = await page.evaluate(() => {
   const pill = document.querySelector(".nav-pill")!;
-  const home = ([...document.querySelectorAll(".nav .nav-item")] as HTMLButtonElement[]).find(button => button.title === "Home")!.getBoundingClientRect();
+  const home = ([...document.querySelectorAll(".nav .nav-item")] as HTMLButtonElement[]).find(button => button.title === "Listen Now")!.getBoundingClientRect();
   const rect = pill.getBoundingClientRect();
   return {
     visible: pill.classList.contains("is-visible"),
@@ -547,6 +547,65 @@ await page.setViewport({ width: 1440, height: 900 });
 await wait(320);
 check("nav-pill-follows-resize", resizedPill.deltaTop < 1 && resizedPill.deltaHeight < 1 && resizedPill.left === 14, JSON.stringify(resizedPill));
 
+await page.setViewport({ width: 1040, height: 680 });
+await wait(320);
+await shot("00-minimum-window");
+const minimumWindow = await page.evaluate(() => {
+  const nav = document.querySelector(".nav") as HTMLElement;
+  const player = document.querySelector(".player-bar")!.getBoundingClientRect();
+  const settings = document.querySelector('button[title="Settings"]')!.getBoundingClientRect();
+  return {
+    horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth,
+    navClientHeight: nav.clientHeight,
+    navScrollHeight: nav.scrollHeight,
+    playerBottom: Math.round(player.bottom),
+    settingsTop: Math.round(settings.top),
+    settingsBottom: Math.round(settings.bottom),
+    viewport: { width: window.innerWidth, height: window.innerHeight },
+  };
+});
+check(
+  "minimum-window-keeps-sidebar-and-player-in-frame",
+  !minimumWindow.horizontalOverflow &&
+    minimumWindow.navScrollHeight <= minimumWindow.navClientHeight + 1 &&
+    minimumWindow.playerBottom <= minimumWindow.viewport.height &&
+    minimumWindow.settingsTop >= 0 &&
+    minimumWindow.settingsBottom <= minimumWindow.viewport.height,
+  JSON.stringify(minimumWindow)
+);
+await page.setViewport({ width: 1440, height: 900 });
+await wait(320);
+
+await navItem("Search");
+await wait(260);
+const searchDestination = await page.evaluate(() => ({
+  view: Boolean(document.querySelector('[data-testid="search-view"]')),
+  focused: document.activeElement?.id === "global-search",
+  heading: document.querySelector(".search-view h1")?.textContent?.trim() ?? "",
+}));
+check(
+  "sidebar-search-focuses-global-search",
+  searchDestination.view && searchDestination.focused && searchDestination.heading === "Search your library",
+  JSON.stringify(searchDestination)
+);
+
+await navItem("Recently Added");
+await wait(260);
+const recentDestination = await page.evaluate(() => ({
+  view: Boolean(document.querySelector('[data-testid="library-view-recent"]')),
+  heading: document.querySelector(".library-view h1")?.textContent?.trim() ?? "",
+  toolbar: document.querySelector(".list-toolbar")?.textContent ?? "",
+  rows: document.querySelectorAll('[data-testid="library-track-list"] .track-row').length,
+}));
+check(
+  "sidebar-recently-added-view",
+  recentDestination.view &&
+    recentDestination.heading === "Recently Added" &&
+    recentDestination.toolbar.includes("Newest first") &&
+    recentDestination.rows > 0,
+  JSON.stringify(recentDestination)
+);
+
 /* ------------------------------------------------ 2. page state preservation */
 
 await navItem("Songs");
@@ -594,7 +653,7 @@ await sidebarItem("Settings");
 await wait(280);
 await clickText(".settings-tabs button", "Playback");
 await wait(200);
-await navItem("Home");
+await navItem("Listen Now");
 await wait(280);
 await sidebarItem("Settings");
 await wait(300);
@@ -1014,7 +1073,7 @@ check("toast-dismisses-on-its-own", await waitForGone(".toast"), "toast removed 
 
 const rapid = await page.evaluate(async () => {
   const buttons = [...document.querySelectorAll(".nav .nav-item")] as HTMLButtonElement[];
-  const order = ["Songs", "Albums", "Artists", "Playlists", "Liked songs", "Home", "Songs", "Albums", "Home", "Songs", "Artists", "Home"];
+  const order = ["Songs", "Albums", "Artists", "Playlists", "Liked songs", "Listen Now", "Songs", "Albums", "Listen Now", "Songs", "Artists", "Listen Now"];
   for (const label of order) {
     buttons.find(button => button.title === label)!.click();
     await new Promise(done => setTimeout(done, 45));
@@ -1025,7 +1084,7 @@ await wait(500);
 const rapidState = await page.evaluate(() => {
   const active = [...document.querySelectorAll(".nav .nav-item.active")];
   const pill = document.querySelector(".nav-pill")!.getBoundingClientRect();
-  const home = ([...document.querySelectorAll(".nav .nav-item")] as HTMLButtonElement[]).find(button => button.title === "Home")!.getBoundingClientRect();
+  const home = ([...document.querySelectorAll(".nav .nav-item")] as HTMLButtonElement[]).find(button => button.title === "Listen Now")!.getBoundingClientRect();
   return {
     views: document.querySelectorAll(".view").length,
     activeCount: active.length,
@@ -1064,7 +1123,7 @@ check(
   JSON.stringify(artworkFade)
 );
 await shot("08-albums-grid");
-await navItem("Home");
+await navItem("Listen Now");
 await wait(40);
 // The fixture library has a single album card, so the stagger itself is probed on
 // Home's quick grids, which hold several tracks.
@@ -1282,7 +1341,7 @@ const hoverState = await sidebarProbe();
 check(
   "compact-hover-expands-overlay",
   beforeHover.sidebarWidth === 76 &&
-    hoverState.sidebarWidth === 248 &&
+    hoverState.sidebarWidth === 260 &&
     hoverState.mainLeft === beforeHover.mainLeft &&
     hoverState.labelOpacity === "1" &&
     hoverState.labelVisibility === "visible" &&
@@ -1300,7 +1359,7 @@ check(
 await page.keyboard.press("Tab");
 await wait(560);
 const focusState = await sidebarProbe();
-check("compact-focus-expands-overlay", focusState.sidebarWidth === 248 && focusState.mainLeft === beforeHover.mainLeft, JSON.stringify(focusState));
+check("compact-focus-expands-overlay", focusState.sidebarWidth === 260 && focusState.mainLeft === beforeHover.mainLeft, JSON.stringify(focusState));
 await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
 await wait(460);
 

@@ -13,6 +13,8 @@ export function TopBar() {
   const goBack = useUi(state => state.goBack);
   const goForward = useUi(state => state.goForward);
   const route = useUi(state => state.route);
+  const searchFocused = useUi(state => state.searchFocused);
+  const setSearchFocused = useUi(state => state.setSearchFocused);
   const scanning = useLibrary(state => state.scanning);
   const addFolder = useLibrary(state => state.addFolder);
   const scan = useLibrary(state => state.snapshot?.scan);
@@ -21,6 +23,12 @@ export function TopBar() {
   useEffect(() => {
     if (route.name === "search") setQuery(route.query);
   }, [route]);
+
+  useEffect(() => {
+    if (!searchFocused) return;
+    document.getElementById("global-search")?.focus();
+    setSearchFocused(false);
+  }, [searchFocused, setSearchFocused]);
 
   return (
     <header className="top-bar">
