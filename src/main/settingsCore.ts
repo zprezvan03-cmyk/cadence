@@ -42,6 +42,16 @@ export const DEFAULT_SETTINGS: AppSettings = {
     fontFamily: DEFAULT_FONT_ID,
   },
   lyrics: {
+    aiTranslation: {
+      enabled: false, protocol: "openai-compatible", baseUrl: "https://api.openai.com/v1", chatPath: "/chat/completions",
+      modelsPath: "/models", apiKey: "", model: "", temperature: 0.25, maxOutputTokens: 4096, timeoutMs: 60000,
+      targetLanguage: "en", customHeaders: "{}",
+    },
+    aiRomanization: {
+      enabled: false, protocol: "ollama-native", baseUrl: "http://localhost:11434", chatPath: "/api/chat", modelsPath: "/api/tags",
+      apiKey: "", model: "", temperature: 0.1, maxOutputTokens: 4096, timeoutMs: 120000,
+      romanizationStandard: "auto", customHeaders: "{}",
+    },
     providerOrder: [...DEFAULT_PROVIDER_ORDER],
     autoFetch: true,
     notFoundCooldownDays: 7,
@@ -139,6 +149,25 @@ function normalizeSettings(settings: AppSettings): AppSettings {
   };
   settings.playback = playback as AppSettings["playback"];
 
+  const normalizeAi = (candidate: unknown, fallback: AppSettings["lyrics"]["aiTranslation"]): AppSettings["lyrics"]["aiTranslation"] => {
+    const source = isPlainObject(candidate) ? candidate : {};
+    const text = (value: unknown, defaultValue: string, limit = 2048) => typeof value === "string" ? value.trim().slice(0, limit) : defaultValue;
+    return {
+      ...fallback,
+      enabled: Boolean(source.enabled),
+      protocol: source.protocol === "ollama-native" ? "ollama-native" : "openai-compatible",
+      baseUrl: text(source.baseUrl, fallback.baseUrl), chatPath: text(source.chatPath, fallback.chatPath, 256),
+      modelsPath: text(source.modelsPath, fallback.modelsPath, 256), apiKey: text(source.apiKey, "", 4096),
+      model: text(source.model, "", 256), customHeaders: text(source.customHeaders, "{}", 8192),
+      temperature: clampNumber(source.temperature, fallback.temperature, 0, 2),
+      maxOutputTokens: Math.round(clampNumber(source.maxOutputTokens, fallback.maxOutputTokens, 1, 32768)),
+      timeoutMs: Math.round(clampNumber(source.timeoutMs, fallback.timeoutMs, 1000, 300000)),
+      ...(fallback.targetLanguage !== undefined ? { targetLanguage: text(source.targetLanguage, fallback.targetLanguage, 32) } : {}),
+      ...(fallback.romanizationStandard !== undefined ? { romanizationStandard: text(source.romanizationStandard, fallback.romanizationStandard, 80) } : {}),
+    };
+  };
+  settings.lyrics.aiTranslation = normalizeAi(settings.lyrics.aiTranslation, DEFAULT_SETTINGS.lyrics.aiTranslation);
+  settings.lyrics.aiRomanization = normalizeAi(settings.lyrics.aiRomanization, DEFAULT_SETTINGS.lyrics.aiRomanization);
   settings.lyrics.providerOrder = migrateProviderOrder(settings.lyrics.providerOrder);
   const cooldown = Number(settings.lyrics.notFoundCooldownDays);
   settings.lyrics.notFoundCooldownDays = Number.isFinite(cooldown)

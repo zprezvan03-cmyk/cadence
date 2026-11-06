@@ -436,6 +436,12 @@ export interface LyricsFetchStats {
 
 export interface TranslationRequest {
   lines: string[];
+  /** Bypass only this transformation's derived result cache on explicit user regeneration. */
+  forceRegenerate?: boolean;
+  /** Plain neighboring lyric lines for context; never markup or timestamps. */
+  contextLines?: string[];
+  /** Stable identities from the parsed source lyric positions. */
+  segmentIds?: string[];
   targetLanguage: string;
   /** Optional song language hint used for romanization. */
   sourceLanguage?: string | null;
@@ -455,7 +461,27 @@ export interface RomanizationResult {
 /** Bounded provider-request parallelism for Autofetch / Fetch All (see the central limiter). */
 export type LyricsFetchConcurrency = "low" | "balanced" | "high";
 
+export type LyricsAiProtocol = "ollama-native" | "openai-compatible";
+export interface LyricsAiConfig {
+  enabled: boolean;
+  protocol: LyricsAiProtocol;
+  baseUrl: string;
+  chatPath: string;
+  modelsPath: string;
+  apiKey: string;
+  model: string;
+  temperature: number;
+  maxOutputTokens: number;
+  timeoutMs: number;
+  targetLanguage?: string;
+  romanizationStandard?: string;
+  /** JSON object of optional custom headers. Never included in logs or status text. */
+  customHeaders: string;
+}
+
 export interface LyricsSettings {
+  aiTranslation: LyricsAiConfig;
+  aiRomanization: LyricsAiConfig;
   providerOrder: string[];
   autoFetch: boolean;
   /**
@@ -863,6 +889,8 @@ export interface CadenceApi {
     youtubeMetadata(request: YouTubeMetadataRequest): Promise<YouTubeMetadataResult>;
     translate(request: TranslationRequest): Promise<TranslationResult>;
     romanize(request: TranslationRequest): Promise<RomanizationResult>;
+    aiModels(kind: "translation" | "romanization"): Promise<{id: string; name: string}[]>;
+    aiTestConnection(kind: "translation" | "romanization"): Promise<string>;
     saveSidecar(trackId: number, text: string): Promise<{ path: string }>;
     /**
      * Empties the persistent remote-lyrics cache. Resolves only after the emptied cache file has

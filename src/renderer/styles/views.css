@@ -843,6 +843,40 @@
   margin-bottom: 10px;
 }
 
+.lyrics-ai-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.lyrics-ai-section > h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.ai-model-control,
+.ai-timeout-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-model-control input,
+.lyrics-ai-section .setting-row > input:not([type="checkbox"]),
+.ai-timeout-control input {
+  min-width: 180px;
+  width: min(360px, 36vw);
+}
+
+.ai-model-control button,
+.lyrics-ai-section .setting-row > button {
+  white-space: nowrap;
+}
+
+.lyrics-ai-section .error-text {
+  color: #ff7382;
+}
+
 .settings-subsection {
   display: flex;
   flex-direction: column;

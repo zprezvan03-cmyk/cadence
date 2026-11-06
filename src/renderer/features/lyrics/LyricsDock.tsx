@@ -45,6 +45,8 @@ interface LyricsDockProps {
   onSelectSource: (source: string) => void;
   providerStatus: { provider: string; status: string; detail?: string }[];
   onReload: () => void;
+  onRegenerateTranslation: () => void;
+  onRegenerateRomanization: () => void;
   onSaveSidecar: () => void;
   onChooseFile: () => void;
   /** Remote queue items have no local file/sidecar; all other dock controls still apply. */
@@ -90,6 +92,8 @@ export function LyricsDock({
   onSelectSource,
   providerStatus,
   onReload,
+  onRegenerateTranslation,
+  onRegenerateRomanization,
   onSaveSidecar,
   onChooseFile,
   localFileActions = true,
@@ -153,6 +157,15 @@ export function LyricsDock({
     if (!effective.title || manualSearchState.status === "loading") return;
     onManualSearch(searchDraft);
   };
+  const translateTarget = settings.aiTranslation?.enabled
+    ? (settings.aiTranslation.targetLanguage ?? "en")
+    : settings.translationLanguage;
+  const patchTranslateTarget = (language: string) => {
+    if (settings.aiTranslation?.enabled) {
+      if (!language) onPatch({ aiTranslation: { ...settings.aiTranslation, enabled: false }, translationLanguage: "" });
+      else onPatch({ aiTranslation: { ...settings.aiTranslation, targetLanguage: language } });
+    } else onPatch({ translationLanguage: language });
+  };
 
   return (
     <div className={`lyrics-dock ${concealed ? "is-concealed" : ""}`} data-testid="lyrics-dock">
@@ -189,7 +202,7 @@ export function LyricsDock({
           title="Translate lyrics"
           aria-expanded={languageOpen}
         >
-          <Languages size={16} /> {settings.translationLanguage ? languageLabel(settings.translationLanguage) : "Translate"}
+          <Languages size={16} /> {translateTarget ? languageLabel(translateTarget) : "Translate"}
         </button>
         <button
           type="button"
@@ -199,6 +212,16 @@ export function LyricsDock({
         >
           <Wand2 size={16} /> Romanize
         </button>
+        {(settings.aiTranslation?.enabled || settings.translationLanguage) ? (
+          <button type="button" className="dock-button" onClick={onRegenerateTranslation} disabled={busy} title="Force-regenerate translation">
+            <RefreshCw size={15} /> Regenerate translation
+          </button>
+        ) : null}
+        {settings.romanization ? (
+          <button type="button" className="dock-button" onClick={onRegenerateRomanization} disabled={busy} title="Force-regenerate romanization">
+            <RefreshCw size={15} /> Regenerate romanization
+          </button>
+        ) : null}
       </div>
 
       <div className="dock-group dock-offset" title="Lyrics timing offset">
@@ -527,9 +550,9 @@ export function LyricsDock({
           <div className="popover-title">Translate to</div>
           <button
             type="button"
-            className={`source-row ${settings.translationLanguage === "" ? "active" : ""}`}
+            className={`source-row ${translateTarget === "" ? "active" : ""}`}
             onClick={() => {
-              onPatch({ translationLanguage: "" });
+              patchTranslateTarget("");
               setLanguageOpen(false);
             }}
           >
@@ -542,9 +565,9 @@ export function LyricsDock({
               <button
                 type="button"
                 key={language.code}
-                className={`source-row ${settings.translationLanguage === language.code ? "active" : ""}`}
+                className={`source-row ${translateTarget === language.code ? "active" : ""}`}
                 onClick={() => {
-                  onPatch({ translationLanguage: language.code });
+                  patchTranslateTarget(language.code);
                   setLanguageOpen(false);
                 }}
               >

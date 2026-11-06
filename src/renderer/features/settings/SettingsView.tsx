@@ -38,6 +38,7 @@ import {
 } from "../../audio/equalizer";
 import type { LyricsFetchConcurrency } from "../../../shared/types";
 import { useSessionState } from "../../app/useSessionState";
+import { LyricsAiSettings } from "./LyricsAiSettings";
 
 /** Tauri's `invoke` rejects with a plain string; Error instances come from the renderer itself. */
 function describeError(error: unknown): string {
@@ -329,7 +330,7 @@ export function SettingsView() {
             </div>
             <Toggle
               label="Romanize non-Latin lyrics"
-              hint="Uses the same Google romanization path as Better Lyrics."
+              hint={settings.lyrics.aiRomanization.enabled ? "Uses the independent AI Romanization provider configured below." : "Uses the existing non-Latin romanization provider; enable AI Romanization below to use your configured model."}
               checked={settings.lyrics.romanization}
               onChange={value => patchLyrics({ romanization: value })}
             />
@@ -350,10 +351,11 @@ export function SettingsView() {
               onChange={value => patchLyrics({ hideInstrumentalOnly: value })}
             />
 
+            {!settings.lyrics.aiTranslation.enabled ? (
             <div className="setting-row">
               <span>
                 <strong>Translation language</strong>
-                <em>Translated lines appear under each lyric, using the upstream batching logic.</em>
+                <em>{settings.lyrics.aiTranslation.enabled ? "AI translation uses the independent provider configured below." : "Uses Cadence's existing lyrics translation provider; AI can be configured separately below."}</em>
               </span>
               <select
                 value={settings.lyrics.translationLanguage}
@@ -367,6 +369,9 @@ export function SettingsView() {
                 ))}
               </select>
             </div>
+            ) : null}
+
+            <LyricsAiSettings settings={settings.lyrics} onChange={patch => patchLyrics(patch)} />
 
             <div className="setting-row">
               <span>

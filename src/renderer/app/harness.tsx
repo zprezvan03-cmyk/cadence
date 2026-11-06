@@ -152,6 +152,8 @@ function makeHarnessTrack(spec: HarnessTrackSpec): Track {
 }
 
 const defaultLyricsSettings: LyricsSettings = {
+  aiTranslation: { enabled: false, protocol: "openai-compatible", baseUrl: "https://api.openai.com/v1", chatPath: "/chat/completions", modelsPath: "/models", apiKey: "", model: "", temperature: 0.25, maxOutputTokens: 4096, timeoutMs: 60000, targetLanguage: "en", customHeaders: "{}" },
+  aiRomanization: { enabled: false, protocol: "ollama-native", baseUrl: "http://localhost:11434", chatPath: "/api/chat", modelsPath: "/api/tags", apiKey: "", model: "", temperature: 0.1, maxOutputTokens: 4096, timeoutMs: 120000, romanizationStandard: "auto", customHeaders: "{}" },
   providerOrder: [...DEFAULT_PROVIDER_ORDER],
   autoFetch: true,
   notFoundCooldownDays: 7,

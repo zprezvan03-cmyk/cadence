@@ -41,6 +41,8 @@ import {
   romanizeBatch,
   translateBatch,
 } from "../main/lyrics/translation";
+import { clearAiCache, initializeAiCache, listModels, testConnection, transformLyrics } from "../main/lyrics/ai";
+import { analyzeLyrics } from "../main/lyrics/languageIntelligence";
 import {
   artworkExtensionForMime,
   readTrackMetadataCore,
@@ -68,6 +70,7 @@ export interface BootstrapPayload {
   tauriVersion: string;
   settingsJson: string | null;
   lyricsCacheJson: string | null;
+  lyricsAiCacheJson?: string | null;
   lyricsFetchJobJson: string | null;
   dbSnapshot: DatabaseShape;
   startupFiles: string[];
@@ -221,7 +224,7 @@ function createTauriRuntimeFetch(): RuntimeFetch {
           requestId,
           url,
           headers,
-          timeoutMs: 15_000,
+          timeoutMs: 300_000,
           method,
           body,
         },
@@ -372,6 +375,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
 
   const lyricsService = new LyricsServiceCore(store, lyricsCache, localLyricsReader);
   const translationCache = createTranslationCache();
+  initializeAiCache(bootstrap.lyricsAiCacheJson, json => invoke("cmd_write_user_json", { kind: "lyricsAiCache", content: json }));
 
   // Fetch-automation settings feed the shared service directly: the central provider limiter
   // (Autofetch, Fetch All and manual search alike) and the cache's Not Found cooldown.
@@ -973,6 +977,12 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         const controller = new AbortController();
         translateController = controller;
         try {
+          const ai = settings.get().lyrics.aiTranslation;
+          if (ai?.enabled) {
+            const response = await transformLyrics("translation", ai, request.lines, request.targetLanguage || ai.targetLanguage || "en", request.sourceLanguage, controller.signal, request.forceRegenerate, request.segmentIds, request.contextLines);
+            return { translations: response.results, detectedLanguage: response.analysis.language };
+          }
+          if (request.forceRegenerate) for (const line of request.lines) translationCache.translation.delete(`${request.targetLanguage}_${line.trim()}`);
           const response = await translateBatch(
             {
               lines: request.lines,
@@ -996,6 +1006,14 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         const controller = new AbortController();
         romanizeController = controller;
         try {
+          const ai = settings.get().lyrics.aiRomanization;
+          if (ai?.enabled) {
+            const analysis = analyzeLyrics(request.contextLines?.length ? request.contextLines : request.lines);
+            if (!analysis.romanizationLikelyNeeded && !request.forceRegenerate) return { romanizations: request.lines.map(() => null), detectedLanguage: analysis.language };
+            const response = await transformLyrics("romanization", ai, request.lines, "", request.sourceLanguage ?? analysis.language, controller.signal, request.forceRegenerate, request.segmentIds, request.contextLines);
+            return { romanizations: response.results, detectedLanguage: response.analysis.language };
+          }
+          if (request.forceRegenerate) for (const line of request.lines) translationCache.romanization.delete(line.trim());
           const response = await romanizeBatch(
             {
               lines: request.lines,
@@ -1012,6 +1030,16 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         } finally {
           if (romanizeController === controller) romanizeController = null;
         }
+      },
+
+      async aiModels(kind) {
+        const config = settings.get().lyrics[kind === "translation" ? "aiTranslation" : "aiRomanization"];
+        return listModels(config);
+      },
+
+      async aiTestConnection(kind) {
+        const config = settings.get().lyrics[kind === "translation" ? "aiTranslation" : "aiRomanization"];
+        return testConnection(config);
       },
 
       async saveSidecar(trackId: number, text: string) {
@@ -1037,6 +1065,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
       async clearCache() {
         const removedEntries = await lyricsService.clearCache();
         clearTranslationCache(translationCache);
+        await clearAiCache();
         return { removedEntries };
       },
 

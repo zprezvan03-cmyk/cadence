@@ -592,6 +592,14 @@ await wait(200);
 
 await sidebarItem("Settings");
 await wait(280);
+await clickText(".settings-tabs button", "Appearance");
+await wait(200);
+const aiSettingsSections = await page.evaluate(() => ({
+  translation: [...document.querySelectorAll(".lyrics-ai-section > h3")].some(node => node.textContent?.trim() === "AI Translation"),
+  romanization: [...document.querySelectorAll(".lyrics-ai-section > h3")].some(node => node.textContent?.trim() === "AI Romanization"),
+  modelsButtons: document.querySelectorAll(".lyrics-ai-section button").length,
+}));
+check("independent-ai-translation-and-romanization-settings", aiSettingsSections.translation && aiSettingsSections.romanization && aiSettingsSections.modelsButtons >= 4, JSON.stringify(aiSettingsSections));
 await clickText(".settings-tabs button", "Playback");
 await wait(200);
 await navItem("Home");

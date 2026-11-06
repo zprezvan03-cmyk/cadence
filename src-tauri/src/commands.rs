@@ -60,6 +60,7 @@ pub struct BootstrapPayload {
     pub tauri_version: &'static str,
     pub settings_json: Option<String>,
     pub lyrics_cache_json: Option<String>,
+    pub lyrics_ai_cache_json: Option<String>,
     pub lyrics_fetch_job_json: Option<String>,
     pub db_snapshot: DbSnapshot,
     pub startup_files: Vec<String>,
@@ -324,10 +325,12 @@ pub fn cmd_bootstrap(
 ) -> Result<BootstrapPayload, String> {
     let settings_path = state.app_data_dir.join("settings.json");
     let lyrics_cache_path = state.app_data_dir.join("lyrics-cache.json");
+    let lyrics_ai_cache_path = state.app_data_dir.join("lyrics-ai-cache.json");
     let lyrics_fetch_job_path = state.app_data_dir.join("lyrics-fetch-job.json");
 
     let settings_json = std::fs::read_to_string(&settings_path).ok();
     let lyrics_cache_json = std::fs::read_to_string(&lyrics_cache_path).ok();
+    let lyrics_ai_cache_json = std::fs::read_to_string(&lyrics_ai_cache_path).ok();
     let lyrics_fetch_job_json = std::fs::read_to_string(&lyrics_fetch_job_path).ok();
     let db_snapshot = state.db.load_snapshot()?;
 
@@ -359,6 +362,7 @@ pub fn cmd_bootstrap(
         tauri_version: tauri::VERSION,
         settings_json,
         lyrics_cache_json,
+        lyrics_ai_cache_json,
         lyrics_fetch_job_json,
         db_snapshot,
         startup_files,
@@ -484,6 +488,7 @@ pub async fn cmd_write_user_json(
     let file_name = match kind.as_str() {
         "settings" => "settings.json",
         "lyricsCache" => "lyrics-cache.json",
+        "lyricsAiCache" => "lyrics-ai-cache.json",
         "lyricsFetchJob" => "lyrics-fetch-job.json",
         _ => return Err("Unsupported configuration file".to_string()),
     };
@@ -873,7 +878,7 @@ pub async fn cmd_http_fetch(
         guard.insert(args.request_id.clone(), abort_tx);
     }
 
-    let timeout_ms = args.timeout_ms.clamp(500, 30_000);
+    let timeout_ms = args.timeout_ms.clamp(500, 300_000);
     let method = match args.method.as_deref().map(str::to_ascii_uppercase).as_deref() {
         Some("POST") => reqwest::Method::POST,
         Some("PUT") => reqwest::Method::PUT,
