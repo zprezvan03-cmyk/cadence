@@ -187,15 +187,7 @@ export function SearchView({ query }: { query: string }) {
         <div>
           <p className="eyebrow">Search</p>
           <h1>{query ? `“${query}”` : "Search your library"}</h1>
-          <p className="muted">
-            {searching
-              ? "Searching…"
-              : query
-                ? `${tracks.length} local songs · ${albums.length} albums · ${artists.length} artists`
-                : snapshot
-                  ? `${snapshot.counts.tracks} songs · ${snapshot.counts.albums} albums · ${snapshot.counts.artists} artists in your library`
-                  : "Loading your library…"}
-          </p>
+          <p className="muted">{searching ? "Searching…" : `${tracks.length} local songs · ${albums.length} albums · ${artists.length} artists`}</p>
         </div>
       </header>
 

@@ -5,64 +5,41 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import {
   Album as AlbumIcon,
-  AudioLines,
   ChartColumn,
-  CirclePlay,
-  Clock3,
   Heart,
+  Home,
   History,
   Library,
   ListMusic,
   Mic2,
   Music2,
   Plus,
-  Search,
   Settings,
+  Users,
 } from "lucide-react";
 import { EMPTY_PLAYLISTS, useLibrary } from "../state/libraryStore";
 import { useUi, type LibraryTab } from "../state/uiStore";
 
-type NavRoute = Parameters<ReturnType<typeof useUi.getState>["navigate"]>[0];
-type NavItem = { label: string; icon: React.ReactNode; route: NavRoute };
-
-const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
-  {
-    label: "Main",
-    items: [
-      { label: "Listen Now", icon: <CirclePlay size={18} />, route: { name: "home" } },
-      { label: "Search", icon: <Search size={18} />, route: { name: "search", query: "" } },
-      { label: "Now Playing", icon: <AudioLines size={18} />, route: { name: "lyrics" } },
-    ],
-  },
-  {
-    label: "Library",
-    items: [
-      { label: "Recently Added", icon: <Clock3 size={18} />, route: { name: "library", tab: "recent" } },
-      { label: "Artists", icon: <Mic2 size={18} />, route: { name: "library", tab: "artists" } },
-      { label: "Albums", icon: <AlbumIcon size={18} />, route: { name: "library", tab: "albums" } },
-      { label: "Songs", icon: <Music2 size={18} />, route: { name: "library", tab: "songs" } },
-      { label: "Playlists", icon: <ListMusic size={18} />, route: { name: "library", tab: "playlists" } },
-      { label: "Liked songs", icon: <Heart size={18} />, route: { name: "library", tab: "favorites" } },
-    ],
-  },
-  {
-    label: "Activity",
-    items: [
-      { label: "History", icon: <History size={18} />, route: { name: "history" } },
-      { label: "Stats", icon: <ChartColumn size={18} />, route: { name: "stats" } },
-    ],
-  },
+const NAV: { label: string; icon: React.ReactNode; route: Parameters<ReturnType<typeof useUi.getState>["navigate"]>[0] }[] = [
+  { label: "Home", icon: <Home size={18} />, route: { name: "home" } },
+  { label: "History", icon: <History size={18} />, route: { name: "history" } },
+  { label: "Stats", icon: <ChartColumn size={18} />, route: { name: "stats" } },
+  { label: "Songs", icon: <Music2 size={18} />, route: { name: "library", tab: "songs" } },
+  { label: "Albums", icon: <AlbumIcon size={18} />, route: { name: "library", tab: "albums" } },
+  { label: "Artists", icon: <Users size={18} />, route: { name: "library", tab: "artists" } },
+  { label: "Playlists", icon: <ListMusic size={18} />, route: { name: "library", tab: "playlists" } },
+  { label: "Liked songs", icon: <Heart size={18} />, route: { name: "library", tab: "favorites" } },
+  { label: "Now Playing", icon: <Mic2 size={18} />, route: { name: "lyrics" } },
 ];
 
 export function Sidebar() {
   const route = useUi(state => state.route);
   const navigate = useUi(state => state.navigate);
-  const setSearchFocused = useUi(state => state.setSearchFocused);
   const requestPlaylistCreate = useUi(state => state.requestPlaylistCreate);
   const playlists = useLibrary(state => state.snapshot?.playlists ?? EMPTY_PLAYLISTS);
   const counts = useLibrary(state => state.snapshot?.counts);
 
-  const isActive = (candidate: NavRoute) => {
+  const isActive = (candidate: (typeof NAV)[number]["route"]) => {
     if (candidate.name !== route.name) return false;
     if (candidate.name === "library" && route.name === "library") {
       return candidate.tab === route.tab;
@@ -144,30 +121,18 @@ export function Sidebar() {
 
       <nav className="nav" ref={navRef}>
         <span className="nav-pill" ref={pillRef} aria-hidden="true" />
-        {NAV_GROUPS.map(group => (
-          <div className="nav-group" key={group.label}>
-            <p className="nav-group-label">{group.label}</p>
-            {group.items.map(item => (
-              <button
-                type="button"
-                key={item.label}
-                className={`nav-item ${isActive(item.route) ? "active" : ""}`}
-                onClick={() => {
-                  if (item.route.name === "search") {
-                    if (route.name !== "search") navigate(item.route);
-                    setSearchFocused(true);
-                    return;
-                  }
-                  navigate(item.route);
-                }}
-                title={item.label}
-                aria-label={item.label}
-              >
-                {item.icon}
-                <span>{item.label}</span>
-              </button>
-            ))}
-          </div>
+        {NAV.map(item => (
+          <button
+            type="button"
+            key={item.label}
+            className={`nav-item ${isActive(item.route) ? "active" : ""}`}
+            onClick={() => navigate(item.route)}
+            title={item.label}
+            aria-label={item.label}
+          >
+            {item.icon}
+            <span>{item.label}</span>
+          </button>
         ))}
       </nav>
 
@@ -195,7 +160,6 @@ export function Sidebar() {
       </div>
 
       <div className="sidebar-footer">
-        <p className="nav-group-label">Other</p>
         <div className="sidebar-stats">
           {counts ? `${counts.tracks} songs · ${counts.albums} albums` : "Loading library…"}
         </div>

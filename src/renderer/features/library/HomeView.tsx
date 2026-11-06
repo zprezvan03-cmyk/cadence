@@ -12,7 +12,7 @@ import { usePlayer } from "../../state/playerStore";
 import { useUi } from "../../state/uiStore";
 import { formatTime } from "../../player/queue";
 import { TrackList } from "../../components/TrackList";
-import { AlbumCard, PlaylistCard } from "../../components/Cards";
+import { AlbumCard } from "../../components/Cards";
 import { Artwork } from "../../components/Artwork";
 import { SourceBadge } from "../../components/SourceBadge";
 import { shuffle } from "../../player/queue";
@@ -104,23 +104,6 @@ export function HomeView() {
     [historyEntries, now, snapshot?.tracks],
   );
 
-  const featured = useMemo(() => {
-    const top = topTracks[0]?.track;
-    if (top) return { track: top, label: "Frequently played" };
-    const tracksById = new Map((snapshot?.tracks ?? []).map(track => [track.id, track]));
-    const recentLocal = recentlyPlayed.find(item => item.source.kind === "local");
-    const recentTrack = recentLocal?.source.kind === "local" ? tracksById.get(recentLocal.source.trackId) : undefined;
-    if (recentTrack) return { track: recentTrack, label: "Pick up where you left off" };
-    const added = recentlyAdded[0];
-    return added ? { track: added, label: "New in your library" } : null;
-  }, [recentlyAdded, recentlyPlayed, snapshot?.tracks, topTracks]);
-
-  const featuredAlbum = useMemo(() => {
-    if (!featured) return null;
-    const track = featured.track;
-    return snapshot?.albums.find(album => album.id === `${track.albumArtist || track.artist}\u0000${track.album}`) ?? null;
-  }, [featured, snapshot?.albums]);
-
   if (!snapshot) {
     return <div className="view-loading">Loading your library…</div>;
   }
@@ -154,10 +137,7 @@ export function HomeView() {
       <header className="view-heading">
         <div>
           <p className="eyebrow">{greeting()}</p>
-          <h1>Listen Now</h1>
-          <p className="muted">
-            {snapshot.counts.tracks} songs · {snapshot.counts.albums} albums · {snapshot.counts.artists} artists
-          </p>
+          <h1>Listen again</h1>
         </div>
         <div className="heading-actions">
           <button
@@ -178,46 +158,6 @@ export function HomeView() {
           </button>
         </div>
       </header>
-
-      {featured ? (
-        <section
-          className="home-feature"
-          data-testid="home-featured"
-          style={
-            featured.track.accentColor
-              ? ({ "--home-feature-accent": featured.track.accentColor } as React.CSSProperties)
-              : undefined
-          }
-        >
-          <button
-            type="button"
-            className="home-feature-art"
-            onClick={() => void playTrack(featured.track.id)}
-            aria-label={`Play ${featured.track.title}`}
-          >
-            <Artwork src={featured.track.artworkUrl} alt={featured.track.album || featured.track.title} size="hero" />
-          </button>
-          <div className="home-feature-copy">
-            <p className="eyebrow">{featured.label}</p>
-            <h2>{featured.track.title}</h2>
-            <p className="home-feature-artist">{featured.track.artist}</p>
-            <p className="muted">
-              {featured.track.album}
-              {featured.track.year ? ` · ${featured.track.year}` : ""} · {formatTime(featured.track.duration)}
-            </p>
-            <div className="heading-actions">
-              <button type="button" className="primary" onClick={() => void playTrack(featured.track.id)}>
-                <Play size={16} fill="currentColor" /> Play
-              </button>
-              {featuredAlbum ? (
-                <button type="button" onClick={() => navigate({ name: "album", albumId: featuredAlbum.id })}>
-                  Open album
-                </button>
-              ) : null}
-            </div>
-          </div>
-        </section>
-      ) : null}
 
       <section className="quick-row">
         <button type="button" className="quick-card" onClick={() => navigate({ name: "library", tab: "favorites" })}>
@@ -345,24 +285,10 @@ export function HomeView() {
         </section>
       ) : null}
 
-      {snapshot.playlists.length > 0 ? (
-        <section className="shelf" data-testid="home-playlists">
-          <div className="shelf-heading">
-            <h2>Your playlists</h2>
-            <button type="button" className="link" onClick={() => navigate({ name: "library", tab: "playlists" })}>Show all</button>
-          </div>
-          <div className="card-grid">
-            {snapshot.playlists.slice(0, 10).map(playlist => (
-              <PlaylistCard key={playlist.id} playlist={playlist} />
-            ))}
-          </div>
-        </section>
-      ) : null}
-
       {albums.length > 0 ? (
         <section className="shelf">
           <div className="shelf-heading">
-            <h2>Albums from your library</h2>
+            <h2>Random albums</h2>
             <button type="button" className="link" onClick={() => navigate({ name: "library", tab: "albums" })}>Show all</button>
           </div>
           <div className="card-grid">

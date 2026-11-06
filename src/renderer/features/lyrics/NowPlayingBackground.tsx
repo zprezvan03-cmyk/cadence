@@ -73,7 +73,7 @@ export function NowPlayingBackground({
         <div
           className="np-bg-fill"
           style={{
-            background: `linear-gradient(160deg, ${accent} 0%, #303236 68%, #292b2f 100%)`,
+            background: `linear-gradient(160deg, ${accent} 0%, #0a0a12 68%, #05050a 100%)`,
             opacity: intensity,
           }}
         />
@@ -92,7 +92,7 @@ export function NowPlayingBackground({
           <div
             className="np-bg-fill"
             style={{
-              background: `radial-gradient(120% 90% at 30% 20%, ${accent} 0%, #303236 70%)`,
+              background: `radial-gradient(120% 90% at 30% 20%, ${accent} 0%, #07070c 70%)`,
               opacity: intensity,
             }}
           />
@@ -171,8 +171,8 @@ function EffectCanvas({
 
     const paintBackdrop = () => {
       const gradient = context.createLinearGradient(0, 0, 0, height);
-      gradient.addColorStop(0, "#383a3f");
-      gradient.addColorStop(1, "#303236");
+      gradient.addColorStop(0, "#0a0a14");
+      gradient.addColorStop(1, "#05050a");
       context.fillStyle = gradient;
       context.fillRect(0, 0, width, height);
       // Accent glow as a radial gradient that reaches full transparency at its

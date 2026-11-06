@@ -51,11 +51,11 @@ interface ArtworkProps {
 }
 
 const FALLBACK_GRADIENTS = [
-  "linear-gradient(135deg, #4b4e55 0%, #34363b 100%)",
-  "linear-gradient(135deg, #45484f 0%, #303236 100%)",
-  "linear-gradient(135deg, #50535a 0%, #383a3f 100%)",
-  "linear-gradient(135deg, #414349 0%, #2d2f33 100%)",
-  "linear-gradient(135deg, #484a50 0%, #33353a 100%)",
+  "linear-gradient(135deg, #2b1b3d 0%, #110b1a 100%)",
+  "linear-gradient(135deg, #1b2f3d 0%, #0b1218 100%)",
+  "linear-gradient(135deg, #3d241b 0%, #180f0b 100%)",
+  "linear-gradient(135deg, #1b3d2c 0%, #0b1811 100%)",
+  "linear-gradient(135deg, #3d1b2c 0%, #180b12 100%)",
 ];
 
 export function Artwork({ src, alt, size = "md", rounded = "md", className = "", accentVar }: ArtworkProps) {

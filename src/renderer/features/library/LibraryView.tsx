@@ -42,7 +42,6 @@ const TITLES: Record<LibraryTab, string> = {
   artists: "Artists",
   playlists: "Playlists",
   favorites: "Liked songs",
-  recent: "Recently Added",
 };
 
 export function LibraryView({ tab }: { tab: LibraryTab }) {
@@ -61,7 +60,6 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
   // Sort and filter belong to the list, not to the mount: coming back to Songs should show the
   // list the user left, not the default order.
   const [sort, setSort] = useSessionState<SortKey>("library.sort", "title");
-  const effectiveSort: SortKey = tab === "recent" ? "added" : sort;
   const [filter, setFilter] = useSessionState("library.filter", "");
   const deferredFilter = useDeferredValue(filter);
   const [creating, setCreating] = useState(false);
@@ -91,7 +89,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
         [track.title, track.artist, track.album].some(value => value.toLocaleLowerCase().includes(needle))
       );
     }
-    switch (effectiveSort) {
+    switch (sort) {
       case "artist":
         list.sort((a, b) => a.artist.localeCompare(b.artist) || a.album.localeCompare(b.album));
         break;
@@ -108,7 +106,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
         list.sort((a, b) => a.title.localeCompare(b.title));
     }
     return list;
-  }, [snapshot?.tracks, tab, effectiveSort, deferredFilter]);
+  }, [snapshot?.tracks, tab, sort, deferredFilter]);
 
   const smartPresetInfo = SMART_PLAYLIST_PRESETS[smartPreset];
   const normalizedSmartRule = useMemo(() => {
@@ -196,7 +194,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
         </div>
       </header>
 
-      {tab === "songs" || tab === "favorites" || tab === "recent" ? (
+      {tab === "songs" || tab === "favorites" ? (
         <>
           <div className="list-toolbar">
             <label className="inline-search">
@@ -208,20 +206,16 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
                 onChange={event => setFilter(event.target.value)}
               />
             </label>
-            {tab !== "recent" ? (
-              <label className="sort-select">
-                Sort
-                <select value={sort} onChange={event => setSort(event.target.value as SortKey)}>
-                  <option value="title">Title</option>
-                  <option value="artist">Artist</option>
-                  <option value="album">Album</option>
-                  <option value="added">Recently added</option>
-                  <option value="duration">Duration</option>
-                </select>
-              </label>
-            ) : (
-              <span className="muted">Newest first</span>
-            )}
+            <label className="sort-select">
+              Sort
+              <select value={sort} onChange={event => setSort(event.target.value as SortKey)}>
+                <option value="title">Title</option>
+                <option value="artist">Artist</option>
+                <option value="album">Album</option>
+                <option value="added">Recently added</option>
+                <option value="duration">Duration</option>
+              </select>
+            </label>
             <button
               type="button"
               data-testid="find-duplicates"

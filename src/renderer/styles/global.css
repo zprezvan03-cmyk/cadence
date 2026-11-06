@@ -5,31 +5,29 @@
 @property --sidebar-width {
   syntax: "<length>";
   inherits: true;
-  initial-value: 260px;
+  initial-value: 248px;
 }
 
 :root {
   color-scheme: dark;
-  --bg: #303236;
-  --bg-elevated: #292b2f;
-  --surface: #383a3f;
-  --surface-1: #34363b;
-  --surface-2: #414349;
-  --surface-3: #484a50;
-  --surface-hover: #484a50;
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  --text: #f2f2f2;
-  --text-dim: #b5b7bc;
-  --text-faint: #898c93;
-  --accent: #fa586a;
-  --accent-soft: color-mix(in srgb, var(--accent) 15%, transparent);
-  --accent-strong: color-mix(in srgb, var(--accent) 84%, white);
+  --bg: #08080b;
+  --bg-elevated: #0f0f15;
+  --surface: #14141c;
+  --surface-2: #1b1b25;
+  --surface-3: #252532;
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --text: #f5f5f8;
+  --text-dim: #a4a4b3;
+  --text-faint: #74748a;
+  --accent: #ff3d71;
+  --accent-soft: rgba(255, 61, 113, 0.16);
+  --accent-strong: #ff5c86;
   --success: #35d07f;
   --danger: #ff5d5d;
-  --radius: 16px;
-  --radius-sm: 10px;
-  --sidebar-expanded-width: 260px;
+  --radius: 14px;
+  --radius-sm: 9px;
+  --sidebar-expanded-width: 248px;
   --sidebar-compact-width: 76px;
   --sidebar-width: var(--sidebar-expanded-width);
   --player-height: 92px;
@@ -37,14 +35,12 @@
   --titlebar-height: 36px;
   /* The window chrome surface, shared by the integrated title bar and the top bar so the two read
      as one continuous panel. */
-  --chrome-surface: rgba(41, 43, 47, 0.94);
+  --chrome-surface: rgba(8, 8, 11, 0.72);
   /* Height consumed above the app shell by the integrated title bar (0 when the OS draws the frame
      or in immersive/fullscreen mode). Views that size themselves against the window use this. */
   --window-chrome-top: 0px;
-  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.32);
-  --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.22);
-  --page-max-width: 1560px;
-  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", "Segoe UI", system-ui, "Helvetica Neue", sans-serif;
+  --shadow-lg: 0 24px 70px rgba(0, 0, 0, 0.55);
+  --font: "Inter", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
   /* Motion. One timing scale and a small easing family for the whole app, so a menu, a toggle
      and a view change share the same rhythm: ease-out to enter, ease-in to leave, ease-in-out
      for state changes that stay on screen, and a restrained spring only for deliberate

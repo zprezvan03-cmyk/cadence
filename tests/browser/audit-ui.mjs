@@ -720,7 +720,7 @@ await runSection("appearance-settings-completes", async () => {
 await runSection("recent-play-completes", async () => {
   await nav("Songs"); await setShuffle(false); await playTrack("Fixture FLAC");
   check("real-audio-started", !(await audioState()).paused, await playerTitle());
-  await nav("Listen Now");
+  await nav("Home");
   const recentText = await page.evaluate(() => [...document.querySelectorAll(".shelf")].find(node => node.querySelector("h2")?.textContent === "Recently played")?.textContent ?? "");
   check("recently-played-records-real-playback", recentText.includes("Fixture FLAC"), recentText || "Recently played shelf missing");
 });
@@ -819,7 +819,7 @@ await runSection("blur-artwork-completes", async () => {
 await runSection("expanded-navigation-completes", async () => {
   await nav("Settings"); await page.click(".view-heading button"); await wait(150);
   const destinations = [
-    ["Listen Now", "home-view"], ["Songs", "library-view-songs"], ["Albums", "library-view-albums"],
+    ["Home", "home-view"], ["Songs", "library-view-songs"], ["Albums", "library-view-albums"],
     ["Artists", "library-view-artists"], ["Playlists", "library-view-playlists"],
     ["Liked songs", "library-view-favorites"], ["Now Playing", "lyrics-view"], ["Settings", "settings-view"],
   ];
@@ -838,18 +838,18 @@ await runSection("expanded-navigation-completes", async () => {
   check("brand-space-home", Boolean(await page.$('[data-testid="home-view"]')), "Space");
   await clickText(".quick-card", "Liked songs", false);
   check("home-quick-liked", Boolean(await page.$('[data-testid="library-view-favorites"]')), "quick card");
-  await nav("Listen Now"); await clickText(".quick-card", "Now Playing", false);
+  await nav("Home"); await clickText(".quick-card", "Now Playing", false);
   check("home-quick-now-playing", Boolean(await page.$('[data-testid="lyrics-view"]')), "quick card");
-  await nav("Listen Now"); await clickText(".quick-card", "Playlists", false);
+  await nav("Home"); await clickText(".quick-card", "Playlists", false);
   check("home-quick-playlists", Boolean(await page.$('[data-testid="library-view-playlists"]')), "quick card");
-  await nav("Listen Now");
+  await nav("Home");
   if (await page.$(".quick-track")) {
     await clickText(".shelf-heading .link", "Show all");
     check("recently-played-show-all", Boolean(await page.$('[data-testid="library-view-songs"]')), "Show all");
-    await nav("Listen Now"); await (await page.$(".quick-track")).click(); await wait(400);
+    await nav("Home"); await (await page.$(".quick-track")).click(); await wait(400);
     check("recently-played-track-plays", !(await audioState()).paused, await playerTitle());
   } else check("recently-played-track-plays", false, "no recent track button");
-  await nav("Listen Now");
+  await nav("Home");
   const albumLinks = await page.$$(".shelf-heading .link");
   for (const link of albumLinks) {
     const shelf = await link.evaluate(node => node.closest(".shelf")?.querySelector("h2")?.textContent);
@@ -1200,7 +1200,7 @@ await runSection("expanded-queue-and-errors-completes", async () => {
   await page.click('button[aria-label="Clear queue"]'); await wait(100);
   check("queue-clear", (await page.$eval(".queue-header", node => node.textContent)).includes("0 songs") && (await audioState()).paused, "empty and stopped");
   await closeQueue();
-  await nav("Listen Now"); if (await page.$(".quick-track")) await (await page.$(".quick-track")).click(); await wait(350);
+  await nav("Home"); if (await page.$(".quick-track")) await (await page.$(".quick-track")).click(); await wait(350);
   await nav("Songs"); await openTrackMenu("Fixture MP3"); await clickText(".context-menu button", "Add to queue"); await openQueue();
   check("context-add-to-queue", (await queueState()).titles.filter(title => title === "Fixture MP3").length === 1, (await queueState()).titles.join(","));
   await closeQueue(); await nav("Songs"); await playTrack("Fixture FLAC");
@@ -1238,7 +1238,7 @@ await runSection("expanded-shuffle-actions-completes", async () => {
   await clickText(".library-view .heading-actions button", "Shuffle");
   await wait(250);
   check("library-shuffle-randomizes-order", (await page.$eval('.player-bar button[aria-label="Shuffle"]', node => node.getAttribute("aria-pressed"))) === "true", "transport shuffle enabled");
-  await setShuffle(false); await nav("Listen Now"); await clickText(".home-view .heading-actions button", "Play library", false); await wait(200);
+  await setShuffle(false); await nav("Home"); await clickText(".home-view .heading-actions button", "Play library", false); await wait(200);
   await openQueue(); check("home-play-library", (await queueState()).titles.length === 8, `${(await queueState()).titles.length} queued`); await closeQueue();
   await setShuffle(false); await clickText(".home-view .heading-actions button", "Shuffle");
   check("home-shuffle-randomizes-order", (await page.$eval('.player-bar button[aria-label="Shuffle"]', node => node.getAttribute("aria-pressed"))) === "true", "transport shuffle enabled");
@@ -1517,7 +1517,7 @@ await runSection("expanded-empty-library-completes", async () => {
   if (process.env.AUDIT_DEBUG) console.log("EMPTY BEFORE", await page.evaluate(() => ({ folders: window.__audit.state.folders, tracks: window.__audit.state.tracks.length, buttons: [...document.querySelectorAll("button")].map(node => node.getAttribute("aria-label") || node.textContent?.trim()).filter(Boolean) })));
   if (await page.$('button[aria-label="Remove folder"]')) await page.click('button[aria-label="Remove folder"]'); await wait(400);
   if (process.env.AUDIT_DEBUG) console.log("EMPTY AFTER REMOVE", await page.evaluate(() => ({ folders: window.__audit.state.folders, tracks: window.__audit.state.tracks.length, body: document.querySelector('[data-testid="settings-library"]')?.textContent })));
-  await nav("Listen Now");
+  await nav("Home");
   check("remove-folder-empty-home", Boolean(await page.$('[data-testid="home-empty"]')), "empty-state rendered");
   const addsBefore = await page.evaluate(() => window.__audit.state.calls.filter(call => call[0] === "add-folder").length);
   await clickText(".empty-actions button", "Add music folder", false); await wait(100);

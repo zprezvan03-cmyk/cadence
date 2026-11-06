@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type LibraryTab = "songs" | "albums" | "artists" | "playlists" | "favorites" | "recent";
+export type LibraryTab = "songs" | "albums" | "artists" | "playlists" | "favorites";
 
 export type Route =
   | { name: "home" }
@@ -81,7 +81,7 @@ export function hashToRoute(hash: string): Route {
   const value = rest.join("/");
   switch (segment) {
     case "library": {
-      const tab = (["songs", "albums", "artists", "playlists", "favorites", "recent"] as LibraryTab[]).includes(
+      const tab = (["songs", "albums", "artists", "playlists", "favorites"] as LibraryTab[]).includes(
         value as LibraryTab
       )
         ? (value as LibraryTab)
