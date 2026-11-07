@@ -221,12 +221,12 @@ export function LyricsDock({
         </button>
         {translationSource !== "local" && (settings.aiTranslation?.enabled || settings.translationLanguage) ? (
           <button type="button" className="dock-button" onClick={onRegenerateTranslation} disabled={busy} title="Force-regenerate translation">
-            <RefreshCw size={15} /> Regenerate translation
+            <RefreshCw size={15} /> Translation
           </button>
         ) : null}
         {settings.romanization ? (
           <button type="button" className="dock-button" onClick={onRegenerateRomanization} disabled={busy} title="Force-regenerate romanization">
-            <RefreshCw size={15} /> Regenerate romanization
+            <RefreshCw size={15} /> Romanization
           </button>
         ) : null}
       </div>

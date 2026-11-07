@@ -985,6 +985,13 @@ a {
   border-color: transparent;
 }
 
+.heading-actions .primary,
+.heading-actions .primary:hover {
+  background: #fff;
+  color: #09090d;
+  border-color: transparent;
+}
+
 .primary:hover {
   transform: translateY(-1px);
   box-shadow: 0 10px 24px rgba(255, 255, 255, 0.12);
