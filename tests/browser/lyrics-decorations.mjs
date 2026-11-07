@@ -306,8 +306,9 @@ try {
       current.romanized[1] === "sora wa aoi" &&
       current.romanized[2] === "kaze ga fuku" &&
       pipeline.calls.romanize.length === 0 &&
-      JSON.stringify(pipeline.lines[0]?.timedRomanization) === JSON.stringify(["sakura ", "no hana"]),
-    `dom=${JSON.stringify(current.romanized)} calls=${pipeline.calls.romanize.length} timed=${JSON.stringify(pipeline.lines[0]?.timedRomanization)}`
+      pipeline.lines[0]?.parts?.length === 2 &&
+      JSON.stringify(pipeline.lines[0]?.parts.map(part => part.startTimeMs)) === JSON.stringify([500, 1200]),
+    `dom=${JSON.stringify(current.romanized)} calls=${pipeline.calls.romanize.length} originalPartStarts=${JSON.stringify(pipeline.lines[0]?.parts?.map(part => part.startTimeMs))}`
   );
 
   await clickTitle("Romanize lyrics");
@@ -317,8 +318,8 @@ try {
     "romanization-off-removes-embedded",
     !current.romanizeActive &&
       current.romanized.every(text => text === null) &&
-      pipeline.lines.every(line => line.timedRomanization === null),
-    `dom=${JSON.stringify(current.romanized)} timed=${JSON.stringify(pipeline.lines.map(line => line.timedRomanization))}`
+      JSON.stringify(pipeline.lines[0]?.parts?.map(part => part.startTimeMs)) === JSON.stringify([500, 1200]),
+    `dom=${JSON.stringify(current.romanized)} originalPartStarts=${JSON.stringify(pipeline.lines[0]?.parts?.map(part => part.startTimeMs))}`
   );
 
   await clickTitle("Romanize lyrics");
@@ -329,8 +330,9 @@ try {
     current.romanized[0] === "sakura no hana" &&
       current.romanized[2] === "kaze ga fuku" &&
       pipeline.calls.romanize.length === 0 &&
-      JSON.stringify(pipeline.lines[0]?.timedRomanization) === JSON.stringify(["sakura ", "no hana"]),
-    `dom=${JSON.stringify(current.romanized)} calls=${pipeline.calls.romanize.length} timed=${JSON.stringify(pipeline.lines[0]?.timedRomanization)}`
+      pipeline.lines[0]?.parts?.length === 2 &&
+      JSON.stringify(pipeline.lines[0]?.parts.map(part => part.startTimeMs)) === JSON.stringify([500, 1200]),
+    `dom=${JSON.stringify(current.romanized)} calls=${pipeline.calls.romanize.length} originalPartStarts=${JSON.stringify(pipeline.lines[0]?.parts?.map(part => part.startTimeMs))}`
   );
 
   // Translation independent of romanization.

@@ -24,7 +24,9 @@ import { LyricsView } from "../features/lyrics/LyricsView";
 import { KawarpBackground } from "../features/shaders/KawarpBackground";
 import { useSettings } from "../state/settingsStore";
 import { useLyricsStore } from "../state/lyricsStore";
+import { mediaItemFromLocalTrack } from "../../shared/media";
 import { DEFAULT_PROVIDER_ORDER } from "../../shared/upstream/better-lyrics/constants";
+import { createDefaultNowPlayingProfilesSettings } from "../../shared/nowPlayingProfiles";
 import type {
   AppSettings,
   CadenceApi,
@@ -142,12 +144,21 @@ function makeHarnessTrack(spec: HarnessTrackSpec): Track {
     hasSidecarLyrics: true,
     playable: true,
     ...spec,
+    replayGainTrackDb: spec.replayGainTrackDb ?? null,
+    replayGainAlbumDb: spec.replayGainAlbumDb ?? null,
+    replayGainTrackPeak: spec.replayGainTrackPeak ?? null,
+    replayGainAlbumPeak: spec.replayGainAlbumPeak ?? null,
   };
 }
 
 const defaultLyricsSettings: LyricsSettings = {
+  translationSource: "auto",
+  aiTranslation: { enabled: false, protocol: "openai-compatible", baseUrl: "https://api.openai.com/v1", chatPath: "/chat/completions", modelsPath: "/models", apiKey: "", model: "", temperature: 0.25, maxOutputTokens: 4096, timeoutMs: 60000, thinkingMode: "auto", targetLanguage: "en", customHeaders: "{}" },
+  aiRomanization: { enabled: false, protocol: "ollama-native", baseUrl: "http://localhost:11434", chatPath: "/api/chat", modelsPath: "/api/tags", apiKey: "", model: "", temperature: 0.1, maxOutputTokens: 4096, timeoutMs: 120000, thinkingMode: "auto", romanizationStandard: "auto", customHeaders: "{}" },
   providerOrder: [...DEFAULT_PROVIDER_ORDER],
   autoFetch: true,
+  notFoundCooldownDays: 7,
+  fetchConcurrency: "balanced",
   offsetMs: 0,
   translationLanguage: "",
   romanization: false,
@@ -171,11 +182,27 @@ const defaultLyricsSettings: LyricsSettings = {
 function harnessAppSettings(lyrics?: Partial<LyricsSettings>): AppSettings {
   return {
     version: 1,
-    playback: { volume: 0.85, muted: false, shuffle: false, repeat: "off", playbackRate: 1, resumeOnLaunch: false },
-    appearance: { accent: "#ff3d71", reduceMotion: false, compactSidebar: false, blurArtwork: true, fontFamily: "inter" },
+    playback: {
+      volume: 0.85,
+      muted: false,
+      shuffle: false,
+      repeat: "off",
+      playbackRate: 1,
+      resumeOnLaunch: false,
+      crossfadeSeconds: 0,
+      gaplessPlayback: false,
+      replayGainMode: "off",
+      replayGainPreampDb: 0,
+      replayGainPreventClipping: true,
+      equalizer: { enabled: false, preampDb: 0, bandsDb: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], presetId: "flat" },
+    },
+    appearance: { accent: "#ff3d71", reduceMotion: false, compactSidebar: false, compactSidebarHoverExpand: true, blurArtwork: true, fontFamily: "inter" },
     lyrics: { ...defaultLyricsSettings, ...lyrics },
+    nowPlayingProfiles: createDefaultNowPlayingProfilesSettings(),
     shaders: { ...shaderSettings, enabled: false },
     advanced: { showLogs: false },
+    general: { onboardingCompleted: true, onboardingStep: 0 },
+    scrobbling: { enabled: false, apiKey: "", apiSecret: "", sessionKey: "", username: "" },
   };
 }
 
@@ -197,7 +224,7 @@ const lyricsHarness = {
   settings: harnessAppSettings(),
   resolveCalls: 0,
   translateCalls: [] as { lines: string[]; targetLanguage: string }[],
-  romanizeCalls: [] as { lines: string[] }[],
+  romanizeCalls: [] as { lines: string[]; contextLines?: string[] }[],
   translationDelayMs: 0,
   romanizationDelayMs: 0,
   translationFailure: false,
@@ -249,14 +276,17 @@ function installLyricsHarnessBridge(): void {
           provider: "harness",
         };
       },
-      romanize: async (request: { lines: string[] }) => {
-        lyricsHarness.romanizeCalls.push({ lines: [...request.lines] });
+      romanize: async (request: { lines: string[]; contextLines?: string[] }) => {
+        lyricsHarness.romanizeCalls.push({ lines: [...request.lines], contextLines: request.contextLines });
         if (lyricsHarness.romanizationDelayMs > 0) {
           await new Promise(resolve => setTimeout(resolve, lyricsHarness.romanizationDelayMs));
         }
         if (lyricsHarness.romanizationFailure) throw new Error("harness romanization failure");
         return { romanizations: request.lines.map(line => `[rom] ${line}`), provider: "harness" };
       },
+      aiModels: async () => [],
+      aiTestConnection: async () => "Harness: no live AI endpoint configured.",
+      aiThinkingModes: async () => ({ modes: ["auto"], defaultMode: null, metadataAvailable: false, detail: "Harness does not query Ollama." }),
       saveSidecar: async () => "/harness/lyrics.lrc",
       clearCache: async () => ({ removedEntries: 0 }),
       listCache: async () => ({
@@ -270,6 +300,29 @@ function installLyricsHarnessBridge(): void {
       }),
       cacheChosenFile: async () => undefined,
       rememberSelection: async () => undefined,
+      fetchAll: {
+        getState: async () => ({
+          jobId: null,
+          state: "idle",
+          total: 0,
+          processed: 0,
+          found: 0,
+          notFound: 0,
+          failed: 0,
+          skipped: 0,
+          currentTrack: null,
+          startedAt: null,
+          finishedAt: null,
+        }),
+        start: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
+        pause: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
+        resume: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
+        cancel: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
+        retryFailed: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
+        stats: async () => ({ totalTracks: 0, withLyrics: 0, needsSearch: 0, fullyProcessed: 0 }),
+        promote: async () => undefined,
+        onProgress: () => () => undefined,
+      },
     },
     app: {
       ...(existing.app as object | undefined),
@@ -391,6 +444,7 @@ const harness = {
     lyricsViewRoot.render(
       createElement(LyricsView, {
         track,
+        item: mediaItemFromLocalTrack(track),
         playing: false,
         fullscreen: false,
         onToggleFullscreen: () => undefined,
@@ -467,7 +521,7 @@ const harness = {
         state.lyrics?.map(line => ({
           words: line.words,
           romanization: line.romanization ?? null,
-          timedRomanization: line.timedRomanization?.map(part => part.words) ?? null,
+          parts: line.parts?.map(part => ({ words: part.words, startTimeMs: part.startTimeMs, durationMs: part.durationMs })) ?? null,
           translation: line.translation?.text ?? null,
         })) ?? [],
       parsedLanguage: state.parsed?.language ?? null,

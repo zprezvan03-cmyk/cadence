@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { LibraryStore } from "../../src/main/library/store";
 import { scanLibrary } from "../../src/main/library/scanner";
 import { AUDIO_EXTENSIONS, isAudioFile, readTrackMetadata } from "../../src/main/library/metadata";
+import { historyPayloadFromMediaItem } from "../../src/shared/media";
 
 const fixtures = resolve(import.meta.dirname, "../../.artifacts/fixtures/formats");
 const musicDir = join(tmpdir(), "cadence-library-fixtures");
@@ -189,6 +190,65 @@ describe("library store", () => {
     expect(reopened.getTrack(track.id)?.favorite).toBe(true);
     expect(reopened.getTrack(track.id)?.playCount).toBe(1);
     expect(reopened.getTracks()[0].lastPlayedAt).toBeGreaterThan(0);
+  });
+
+  it("persists local and remote history in the same SQLite table across reopen", () => {
+    const track = store.getTracks()[0];
+    const playedAt = Date.now();
+    const localPayload = {
+      source: { kind: "local", trackId: track.id } as const,
+      trackId: track.id,
+      path: track.path,
+      title: track.title,
+      artist: track.artist,
+      albumArtist: track.albumArtist,
+      album: track.album,
+      artworkUrl: null,
+      duration: track.duration,
+    };
+    const remotePayload = historyPayloadFromMediaItem({
+      source: {
+        kind: "youtube-music",
+        remoteId: "restartVideo1",
+        canonicalUrl: "https://music.youtube.com/watch?v=restartVideo1",
+      },
+      title: "Restart remote song",
+      artistLabel: "Restart artist",
+      channelId: "UCrestart",
+      channelTitle: "Restart artist",
+      albumLabel: null,
+      durationSeconds: 197,
+      artworkUrl: null,
+      publishedAt: null,
+      availability: "unknown",
+      fetchedAt: playedAt,
+    });
+    expect(remotePayload).not.toBeNull();
+
+    store.addHistoryEntry(localPayload.source, playedAt - 1_000, localPayload);
+    store.addHistoryEntry(remotePayload!.source, playedAt, remotePayload!);
+    store.flush();
+
+    const reopened = new LibraryStore(libraryPath, join(workDir, "artwork3"), mediaUrl);
+    const history = reopened.listHistory();
+    expect(history.slice(0, 2).map(entry => entry.source.kind)).toEqual([
+      "youtube-music",
+      "local",
+    ]);
+    expect(history[0].source).toEqual({
+      kind: "youtube-music",
+      remoteId: "restartVideo1",
+      canonicalUrl: "https://music.youtube.com/watch?v=restartVideo1",
+    });
+    expect(history[0].payload).toMatchObject({
+      title: "Restart remote song",
+      artist: "Restart artist",
+      duration: 197,
+      playbackMechanism: "remote-provider",
+    });
+    expect(history[0].payload).not.toHaveProperty("trackId");
+    expect(history[0].payload).not.toHaveProperty("path");
+    expect(history[1].source).toEqual({ kind: "local", trackId: track.id });
   });
 
   it("manages playlist contents and ordering", () => {

@@ -14,22 +14,22 @@
 
 import { create } from "zustand";
 import { bridge, hasBridge } from "./bridge";
-import type { HistoryEntry, HistoryPayload, Track } from "../../shared/types";
+import {
+  historyPayloadFromLocalTrack,
+  historyPayloadFromMediaItem,
+  trackSourceKey,
+} from "../../shared/media";
+import type { HistoryEntry, HistoryPayload, MediaItem, Track } from "../../shared/types";
 
 /** Client ids for optimistic entries predate the server-assigned row id. */
 let nextClientId = -1;
 
 function trackPayload(track: Track): HistoryPayload {
-  return {
-    trackId: track.id,
-    path: track.path,
-    title: track.title,
-    artist: track.artist,
-    albumArtist: track.albumArtist,
-    album: track.album,
-    artworkUrl: track.artworkUrl,
-    duration: track.duration,
-  };
+  return historyPayloadFromLocalTrack(track);
+}
+
+function entryKey(entry: HistoryEntry): string {
+  return `${trackSourceKey(entry.source)}|${entry.playedAt}`;
 }
 
 interface HistoryState {
@@ -42,6 +42,8 @@ interface HistoryState {
   /** Record a genuine play start. Safe to call more than once per session — call sites are
    *  guarded in playerStore so a session only ever adds one row per track start. */
   add: (track: Track) => Promise<void>;
+  /** Record a remote play only after the official player has actually reported PLAYING. */
+  addRemote: (item: MediaItem) => Promise<void>;
   clear: () => Promise<void>;
 }
 
@@ -80,11 +82,9 @@ export const useHistory = create<HistoryState>((set, get) => ({
       const serverEntries = await bridge.history.list();
       // Entries added optimistically while the load was in flight are kept; anything the server
       // already knows about is not duplicated.
-      const known = new Set(
-        get().entries.map(entry => `${entry.trackId}|${entry.playedAt}`),
-      );
+      const known = new Set(get().entries.map(entryKey));
       const merged = [
-        ...serverEntries.filter(entry => !known.has(`${entry.trackId}|${entry.playedAt}`)),
+        ...serverEntries.filter(entry => !known.has(entryKey(entry))),
         ...get().entries,
       ].sort((a, b) => b.playedAt - a.playedAt || b.id - a.id);
       set({ entries: merged, loading: false, loaded: true });
@@ -101,11 +101,12 @@ export const useHistory = create<HistoryState>((set, get) => ({
   },
 
   add: async track => {
+    const payload = trackPayload(track);
     const entry: HistoryEntry = {
       id: nextClientId--,
-      trackId: track.id,
+      source: payload.source,
       playedAt: Date.now(),
-      payload: trackPayload(track),
+      payload,
     };
     set(state => ({ entries: [entry, ...state.entries] }));
     if (!hasBridge()) return;
@@ -113,12 +114,34 @@ export const useHistory = create<HistoryState>((set, get) => ({
     // because the listen already happened and the optimistic row is already on screen.
     try {
       await bridge.history.add({
-        trackId: track.id,
+        source: entry.source,
         playedAt: entry.playedAt,
-        payload: trackPayload(track),
+        payload,
       });
     } catch (error) {
       console.error("[Cadence] Failed to persist listening history:", error);
+    }
+  },
+
+  addRemote: async item => {
+    const payload = historyPayloadFromMediaItem(item);
+    if (!payload || payload.source.kind === "local") return;
+    const entry: HistoryEntry = {
+      id: nextClientId--,
+      source: payload.source,
+      playedAt: Date.now(),
+      payload,
+    };
+    set(state => ({ entries: [entry, ...state.entries] }));
+    if (!hasBridge()) return;
+    try {
+      await bridge.history.add({
+        source: entry.source,
+        playedAt: entry.playedAt,
+        payload,
+      });
+    } catch (error) {
+      console.error("[Cadence] Failed to persist remote listening history:", error);
     }
   },
 

@@ -112,7 +112,10 @@ export async function scanLibraryCore(
         const result = store.upsertTrack({
           ...parsed,
           hasEmbeddedLyrics: parsed.embeddedLyrics !== null,
-          artworkFile: parsed.artworkFile ?? existing?.artworkFile ?? null,
+          // When a reparse finds no embedded cover, fall back to the previously scanned one —
+          // never to a user-chosen custom cover, which lives in the metadata override patch.
+          artworkFile:
+            parsed.artworkFile ?? existing?.metadataOverride?.original.artworkFile ?? existing?.artworkFile ?? null,
           animatedArtPath: parsed.animatedArtPath ?? existing?.animatedArtPath ?? null,
           accentColor: existing?.accentColor ?? null,
         });

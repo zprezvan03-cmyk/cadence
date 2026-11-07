@@ -116,7 +116,26 @@ const server = createServer(async (req, res) => {
     if (url.pathname === "/api/settings") return sendJson(settings.get());
     if (url.pathname === "/api/settings/patch") return sendJson(settings.patch(body));
     if (url.pathname === "/api/settings/reset") return sendJson(settings.reset());
-    if (url.pathname === "/api/lyrics/resolve") return sendJson({ candidates: [], providerStatus: [] });
+    if (url.pathname === "/api/lyrics/resolve") {
+      // The audit exercises the real synced-lyrics surface (including its upgrade dip), so
+      // resolve the fixture's local LRC instead of leaving the host in its hidden empty state.
+      return sendJson({
+        candidates: [
+          {
+            source: "local-lrc",
+            provider: "Local LRC",
+            text: "[00:00.30]First line of the alpha song\n[00:01.60]Second line arrives later\n[00:03.20]Third line keeps the pace\n[00:04.60]Fourth line carries the motion",
+            syncHint: "synced",
+            language: "en",
+            songwriters: ["Harness Artist"],
+            sourceHref: null,
+            cached: true,
+          },
+        ],
+        providerStatus: [{ provider: "local-lrc", status: "hit", detail: "Local LRC" }],
+        definitive: true,
+      });
+    }
     if (url.pathname === "/api/lyrics/search") return sendJson({ results: [], providerStatus: [], cached: false });
     if (url.pathname === "/api/lyrics/translate") return sendJson({ translations: [], detectedLanguage: "en" });
     if (url.pathname === "/api/lyrics/romanize") return sendJson({ romanizations: [], detectedLanguage: "en" });
@@ -311,6 +330,24 @@ const animationsFor = (selector: string) =>
     }));
   }, selector);
 
+/** Wait until a presence surface reports its exiting phase, then snapshot its animations. */
+const waitForExit = async (selector: string) => {
+  await page
+    .waitForFunction(
+      (sel: string) => document.querySelector(sel)?.getAttribute("data-presence") === "exiting",
+      { timeout: 2000 },
+      selector
+    )
+    .catch(() => null);
+  return animationsFor(selector);
+};
+
+const waitForGone = (selector: string) =>
+  page
+    .waitForFunction((sel: string) => !document.querySelector(sel), { timeout: 2000 }, selector)
+    .then(() => true)
+    .catch(() => false);
+
 /** Hold the running animations at `at` ms so a screenshot captures a true intermediate frame. */
 const freezeAt = (at = 110) =>
   page.evaluate((time: number) => {
@@ -364,6 +401,52 @@ await waitForApp();
 await shot("00-boot");
 check("app-boots", (await page.$$(".nav-item")).length >= 6, `${(await page.$$(".nav-item")).length} nav items`);
 check("boot-no-console-errors", !logs.some(line => line.startsWith("[pageerror]")), logs.filter(line => line.startsWith("[pageerror]")).join(" | "));
+
+// Motion foundation: the live stylesheet must expose the shared token scale, and the
+// normalized consumers must compute to token durations rather than leftover literals.
+const motionTokens = await page.evaluate(() => {
+  const rootStyle = getComputedStyle(document.documentElement);
+  const token = (name: string) => rootStyle.getPropertyValue(name).trim();
+  const timeToMs = (value: string | undefined) => {
+    if (!value) return null;
+    const first = value.split(",")[0]?.trim() ?? "";
+    if (first.endsWith("ms")) return Math.round(Number.parseFloat(first));
+    if (first.endsWith("s")) return Math.round(Number.parseFloat(first) * 1000);
+    return null;
+  };
+  const seekBuffer = document.querySelector(".seek-buffer");
+  return {
+    // Chromium serializes some custom-property times as fractional seconds (".12s"), so the
+    // scale is compared as parsed milliseconds rather than raw stylesheet text.
+    dur0: timeToMs(token("--dur-0")),
+    dur1: timeToMs(token("--dur-1")),
+    dur2: timeToMs(token("--dur-2")),
+    dur3: timeToMs(token("--dur-3")),
+    dur4: timeToMs(token("--dur-4")),
+    stagger: timeToMs(token("--stagger-step")),
+    easeOut: token("--ease-out"),
+    easeIn: token("--ease-in"),
+    easeInOut: token("--ease-in-out"),
+    easeSpring: token("--ease-spring"),
+    seekBufferMs: seekBuffer ? timeToMs(getComputedStyle(seekBuffer).transitionDuration) : null,
+  };
+});
+check(
+  "motion-token-scale",
+  motionTokens.dur0 === 70 &&
+    motionTokens.dur1 === 120 &&
+    motionTokens.dur2 === 180 &&
+    motionTokens.dur3 === 240 &&
+    motionTokens.dur4 === 320 &&
+    motionTokens.stagger === 24,
+  JSON.stringify(motionTokens)
+);
+check(
+  "motion-token-easings",
+  [motionTokens.easeOut, motionTokens.easeIn, motionTokens.easeInOut, motionTokens.easeSpring].every(value => value.startsWith("cubic-bezier(")),
+  JSON.stringify(motionTokens)
+);
+check("motion-token-consumers-normalized", motionTokens.seekBufferMs === 320, JSON.stringify(motionTokens));
 
 // Home is the boot route, so the pill starts on it — measured, visible, not animating in.
 const pillAtBoot = await page.evaluate(() => {
@@ -509,6 +592,20 @@ await wait(200);
 
 await sidebarItem("Settings");
 await wait(280);
+await clickText(".settings-tabs button", "Appearance");
+await wait(200);
+const aiSettingsSections = await page.evaluate(() => ({
+  translation: [...document.querySelectorAll(".lyrics-ai-section > h3")].some(node => node.textContent?.trim() === "AI Translation"),
+  romanization: [...document.querySelectorAll(".lyrics-ai-section > h3")].some(node => node.textContent?.trim() === "AI Romanization"),
+  modelsButtons: document.querySelectorAll(".lyrics-ai-section button").length,
+  thinkingSelectors: document.querySelectorAll(".ai-thinking-control select").length,
+  autoOption: [...document.querySelectorAll(".ai-thinking-control option")].some(option => (option as HTMLOptionElement).value === "auto"),
+}));
+check("independent-ai-translation-and-romanization-settings", aiSettingsSections.translation && aiSettingsSections.romanization && aiSettingsSections.modelsButtons >= 4, JSON.stringify(aiSettingsSections));
+check("ollama-thinking-mode-control-renders", aiSettingsSections.thinkingSelectors === 2 && aiSettingsSections.autoOption, JSON.stringify(aiSettingsSections));
+await page.evaluate(() => document.querySelector(".ai-thinking-row")?.scrollIntoView({ block: "center" }));
+await wait(160);
+await shot("06-settings-ai-thinking");
 await clickText(".settings-tabs button", "Playback");
 await wait(200);
 await navItem("Home");
@@ -605,6 +702,9 @@ const seekTiming = await page.evaluate(() => {
     trackDuration: track.transitionDuration,
     bufferProperty: getComputedStyle(buffer).transitionProperty,
     bufferDuration: getComputedStyle(buffer).transitionDuration,
+    bufferTransform: getComputedStyle(buffer).transform,
+    bufferLayoutWidth: buffer.offsetWidth,
+    wrapperWidth: buffer.parentElement?.clientWidth ?? 0,
   };
 });
 check(
@@ -613,7 +713,14 @@ check(
     seekTiming.trackDuration.split(",").every(value => value.trim() === "0s"),
   JSON.stringify(seekTiming)
 );
-check("buffer-width-transitions", seekTiming.bufferProperty.includes("width") && seekTiming.bufferDuration !== "0s", JSON.stringify(seekTiming));
+check(
+  "buffer-fill-transforms-not-width",
+  seekTiming.bufferProperty.includes("transform") &&
+    !seekTiming.bufferProperty.includes("width") &&
+    seekTiming.bufferDuration === "0.32s" &&
+    Math.abs(seekTiming.bufferLayoutWidth - seekTiming.wrapperWidth) <= 1,
+  JSON.stringify(seekTiming)
+);
 
 const seekJump = await page.evaluate(async () => {
   const input = document.querySelector("input.seek") as HTMLInputElement;
@@ -652,8 +759,13 @@ await wait(260);
 await shot("03-queue-settled");
 check("queue-mid-frame-differs", heldQueue.count > 0 && frameDelta("03-queue-mid", "03-queue-settled") > 0.002, `${heldQueue.count} held`);
 await page.keyboard.press("q");
-await wait(200);
-check("queue-closes-instantly", !(await page.$('[data-testid="queue-panel"]')), "no panel after toggle");
+const queueExit = await waitForExit('[data-testid="queue-panel"]');
+check(
+  "queue-slides-out",
+  Boolean(queueExit?.some(animation => animation.name === "slide-out" && Number(animation.duration) === 120)),
+  JSON.stringify(queueExit)
+);
+check("queue-dismisses-after-exit", await waitForGone('[data-testid="queue-panel"]'), "panel unmounted after its 120ms exit");
 
 // A quick double toggle must not leave a panel behind or a transition stuck.
 await page.keyboard.press("q");
@@ -670,8 +782,13 @@ await page.waitForSelector(".context-menu", { timeout: 5000 });
 const menuAnimation = await animationsFor(".context-menu");
 check("context-menu-pops-in", Boolean(menuAnimation?.some(animation => animation.name === "pop-in" && Number(animation.duration) === 180)), JSON.stringify(menuAnimation));
 await page.keyboard.press("Escape");
-await wait(150);
-check("context-menu-dismisses-inside-150ms", !(await page.$(".context-menu")), "menu gone");
+const menuExit = await waitForExit(".context-menu");
+check(
+  "context-menu-pops-out",
+  Boolean(menuExit?.some(animation => animation.name === "pop-out" && Number(animation.duration) === 120)),
+  JSON.stringify(menuExit)
+);
+check("context-menu-dismisses-after-exit", await waitForGone(".context-menu"), "menu unmounted after its 120ms exit");
 
 await page.evaluate(() => {
   const row = document.querySelector(".track-row") as HTMLElement;
@@ -691,8 +808,28 @@ await wait(260);
 await shot("04-modal-settled");
 check("modal-mid-frame-differs", heldModal.count > 0 && frameDelta("04-modal-mid", "04-modal-settled") > 0.0005, `${heldModal.count} held`);
 await page.keyboard.press("Escape");
-await wait(120);
-check("modal-dismisses-inside-120ms", !(await page.$(".modal-backdrop")), "backdrop gone");
+const backdropExit = await waitForExit(".modal-backdrop");
+const modalExit = await animationsFor(".modal");
+check(
+  "modal-backdrop-fades-out",
+  Boolean(backdropExit?.some(animation => animation.name === "fade-out" && Number(animation.duration) === 120)),
+  JSON.stringify(backdropExit)
+);
+check(
+  "modal-scales-out",
+  Boolean(modalExit?.some(animation => animation.name === "modal-out" && Number(animation.duration) === 120)),
+  JSON.stringify(modalExit)
+);
+await freezeAt(60);
+await shot("04-modal-exit-mid");
+await resumeAll();
+check("modal-dismisses-after-exit", await waitForGone(".modal-backdrop"), "backdrop unmounted after its 120ms exit");
+await shot("04-modal-exit-settled");
+check(
+  "modal-exit-mid-frame-differs",
+  frameDelta("04-modal-exit-mid", "04-modal-exit-settled") > 0.0005,
+  `${(frameDelta("04-modal-exit-mid", "04-modal-exit-settled") * 100).toFixed(2)}% changed`
+);
 
 /* --------------------------------------------------------- 5. fullscreen */
 
@@ -757,6 +894,82 @@ const controlsBack = await page
   .catch(() => page.evaluate(() => getComputedStyle(document.querySelector(".fs-controls")!).opacity));
 check("fs-controls-return", controlsBack === "1", `opacity ${controlsBack}`);
 
+// Dock popovers share the presence language: pop-in on open, fast pop-out on close.
+await page.evaluate(() => document.querySelector<HTMLButtonElement>('button[title="Lyrics source"]')?.click());
+await page.waitForSelector(".dock-popover.dock-sources", { timeout: 5000 });
+const dockIn = await animationsFor(".dock-popover.dock-sources");
+check(
+  "dock-popover-pops-in",
+  Boolean(dockIn?.some(animation => animation.name === "pop-in" && Number(animation.duration) === 180)),
+  JSON.stringify(dockIn)
+);
+await wait(240);
+await shot("05-dock-popover");
+await page.evaluate(() => document.querySelector<HTMLButtonElement>('button[title="Lyrics source"]')?.click());
+const dockOut = await waitForExit(".dock-popover.dock-sources");
+check(
+  "dock-popover-pops-out",
+  Boolean(dockOut?.some(animation => animation.name === "pop-out" && Number(animation.duration) === 120)),
+  JSON.stringify(dockOut)
+);
+check("dock-popover-dismisses-after-exit", await waitForGone(".dock-popover.dock-sources"), "popover unmounted after its 120ms exit");
+
+// The audit fixture resolves to one source, so drive the exact host attribute the
+// same-track upgrade path sets and verify the real CSS beat: 180ms, opacity-only, and
+// visibly below full opacity at its midpoint without unmounting or blanking the host.
+await page.evaluate(() => {
+  document.querySelector("braccato-lyrics")?.setAttribute("data-upgrading", "true");
+});
+const lyricsUpgrade = await animationsFor("braccato-lyrics");
+check(
+  "lyrics-upgrade-dip-runs",
+  Boolean(lyricsUpgrade?.some(animation => animation.name === "lyrics-upgrade" && Number(animation.duration) === 180)),
+  JSON.stringify(lyricsUpgrade)
+);
+await freezeAt(63);
+const lyricsUpgradeOpacity = await page.evaluate(() => {
+  const host = document.querySelector("braccato-lyrics");
+  return host ? Number(getComputedStyle(host).opacity) : null;
+});
+await shot("05-lyrics-upgrade-mid");
+await page.evaluate(() => {
+  document.querySelector("braccato-lyrics")?.removeAttribute("data-upgrading");
+});
+await resumeAll();
+check(
+  "lyrics-upgrade-dip-mid-opacity",
+  lyricsUpgradeOpacity !== null && lyricsUpgradeOpacity > 0.35 && lyricsUpgradeOpacity < 0.6,
+  `opacity ${lyricsUpgradeOpacity}`
+);
+
+// A real Next action restarts only the fullscreen artwork entrance.
+await page.evaluate(() => document.querySelector<HTMLButtonElement>('button[aria-label="Next track"]')?.click());
+const fsArtworkSwap = await page
+  .waitForFunction(
+    () => {
+      const art = document.querySelector(".fs-artwork");
+      const animation = art
+        ?.getAnimations()
+        .find(candidate => (candidate as CSSAnimation).animationName === "artwork-in");
+      return animation
+        ? {
+            duration: animation.effect?.getTiming().duration ?? null,
+            currentTime: animation.currentTime,
+            swapping: art?.classList.contains("is-swapping") ?? false,
+          }
+        : false;
+    },
+    { timeout: 3000 }
+  )
+  .then(handle => handle?.jsonValue() as Promise<{ duration: number | string | null; currentTime: number | null; swapping: boolean } | null>)
+  .catch(() => null);
+check(
+  "fullscreen-artwork-track-swap",
+  Boolean(fsArtworkSwap?.swapping && Number(fsArtworkSwap.duration) === 240),
+  JSON.stringify(fsArtworkSwap)
+);
+await wait(300);
+
 await page.keyboard.press("Escape");
 await wait(120);
 const exitState = await page.evaluate(() => ({
@@ -775,13 +988,41 @@ await sidebarItem("Settings");
 await wait(300);
 await clickText(".settings-tabs button", "About");
 await wait(250);
+// Polling can miss a 120ms exit window (and a screenshot can outlast the toast's lifetime in
+// this harness), so record the exit with an in-page observer installed before it appears.
+await page.evaluate(() => {
+  const host = window as unknown as { __toastExit: unknown; __toastLog: string[] };
+  host.__toastExit = null;
+  host.__toastLog = [];
+  const observer = new MutationObserver(() => {
+    const toast = document.querySelector(".toast");
+    if (toast) host.__toastLog.push(`${toast.getAttribute("data-testid")}:${toast.getAttribute("data-presence")}`);
+    if (toast?.getAttribute("data-presence") === "exiting") {
+      host.__toastExit = toast.getAnimations().map(animation => ({
+        name: (animation as CSSAnimation).animationName ?? "",
+        duration: animation.effect?.getTiming().duration ?? null,
+      }));
+      observer.disconnect();
+    }
+  });
+  observer.observe(document.body, { subtree: true, attributes: true, childList: true, attributeFilter: ["data-presence"] });
+});
 await clickText("button", "Reset all");
 await page.waitForSelector(".toast", { timeout: 5000 });
 const toastState = await animationsFor(".toast");
 check("toast-slides-in", Boolean(toastState?.some(animation => animation.name === "toast-in")), JSON.stringify(toastState));
 await shot("06-toast");
-await page.waitForFunction(() => !document.querySelector(".toast"), { timeout: 6000 });
-check("toast-dismisses-on-its-own", !(await page.$(".toast")), "toast removed after its lifetime");
+const toastExit = await page
+  .waitForFunction(() => (window as unknown as { __toastExit: unknown }).__toastExit, { timeout: 6000 })
+  .then(handle => handle?.jsonValue() as Promise<{ name: string; duration: number | string | null }[] | null>)
+  .catch(() => null);
+const toastLog = await page.evaluate(() => (window as unknown as { __toastLog: string[] }).__toastLog.slice(-12).join(" ; "));
+check(
+  "toast-fades-out",
+  Boolean(toastExit?.some(animation => animation.name === "toast-out" && Number(animation.duration) === 120)),
+  `${JSON.stringify(toastExit)} | ${toastLog}`
+);
+check("toast-dismisses-on-its-own", await waitForGone(".toast"), "toast removed after its lifetime + exit");
 
 /* --------------------------------------------------- 7. rapid interaction */
 
@@ -822,10 +1063,132 @@ check("layout-stable", geometry.playerHeight === 92 && geometry.contentHeight ==
 await shot("07-after-rapid-nav");
 
 await navItem("Albums");
-await wait(420);
+await wait(40);
+await shot("08-albums-grid-mid");
+await wait(500);
+const artworkFade = await page.evaluate(() => {
+  const img = document.querySelector(".media-card .artwork img") as HTMLImageElement | null;
+  if (!img) return null;
+  const style = getComputedStyle(img);
+  return { loaded: img.dataset.loaded, opacity: style.opacity, transitionProperty: style.transitionProperty };
+});
+check(
+  "artwork-fades-in-on-load",
+  artworkFade?.loaded === "true" && artworkFade.opacity === "1" && artworkFade.transitionProperty.includes("opacity"),
+  JSON.stringify(artworkFade)
+);
 await shot("08-albums-grid");
 await navItem("Home");
+await wait(40);
+// The fixture library has a single album card, so the stagger itself is probed on
+// Home's quick grids, which hold several tracks.
+const gridStagger = await page.evaluate(() => {
+  const grid = document.querySelector(".quick-grid");
+  return [...(grid?.children ?? [])].slice(0, 4).map(card => {
+    const style = getComputedStyle(card);
+    return { name: style.animationName, delay: style.animationDelay, duration: style.animationDuration };
+  });
+});
+check(
+  "card-grid-staggers-capped",
+  gridStagger.length >= 2 &&
+    gridStagger[0].name === "card-in" &&
+    gridStagger[0].delay === "0s" &&
+    gridStagger[1].delay === "0.024s" &&
+    gridStagger[0].duration === "0.24s",
+  JSON.stringify(gridStagger)
+);
 await wait(280);
+
+/* ------------------------------------------- 8b. settings + onboarding motion */
+
+await sidebarItem("Settings");
+await wait(300);
+const tabUnderline = await page.evaluate(() => {
+  const active = document.querySelector(".settings-tabs button.active");
+  const inactive = document.querySelector(".settings-tabs button:not(.active)");
+  const activeStyle = active ? getComputedStyle(active, "::after") : null;
+  const inactiveStyle = inactive ? getComputedStyle(inactive, "::after") : null;
+  return {
+    activeTransform: activeStyle?.transform ?? "",
+    inactiveTransform: inactiveStyle?.transform ?? "",
+    property: activeStyle?.transitionProperty ?? "",
+    duration: activeStyle?.transitionDuration ?? "",
+  };
+});
+check(
+  "settings-tab-underline-slides",
+  tabUnderline.activeTransform.startsWith("matrix(1") &&
+    tabUnderline.inactiveTransform.startsWith("matrix(0") &&
+    tabUnderline.property.includes("transform") &&
+    tabUnderline.duration === "0.18s",
+  JSON.stringify(tabUnderline)
+);
+await clickText(".settings-tabs button", "Appearance");
+await wait(250);
+await page.click('[data-testid="replay-onboarding"]');
+await page.waitForSelector('[data-testid="onboarding"]', { timeout: 5000 });
+await wait(80);
+const onboardingProbe = () =>
+  page.evaluate(() => {
+    const wrap = document.querySelector(".onboarding-page-wrap");
+    const card = document.querySelector(".onboarding-card");
+    return {
+      direction: (wrap as HTMLElement | null)?.dataset.direction ?? null,
+      wrapAnimation: wrap ? getComputedStyle(wrap).animationName : null,
+      cardAnimation: card ? getComputedStyle(card).animationName : null,
+    };
+  });
+const onboardingFirst = await onboardingProbe();
+check(
+  "onboarding-card-enters",
+  onboardingFirst.cardAnimation === "modal-in" && onboardingFirst.wrapAnimation === "onboarding-forward",
+  JSON.stringify(onboardingFirst)
+);
+await page.click('[data-testid="onboarding-next"]');
+await wait(80);
+const onboardingForward = await onboardingProbe();
+await page.evaluate(() => {
+  const back = [...document.querySelectorAll(".onboarding-nav button")].find(button =>
+    button.textContent?.includes("Back")
+  ) as HTMLButtonElement | undefined;
+  back?.click();
+});
+await wait(80);
+const onboardingBack = await onboardingProbe();
+check(
+  "onboarding-steps-direction-aware",
+  onboardingForward.direction === "forward" &&
+    onboardingForward.wrapAnimation === "onboarding-forward" &&
+    onboardingBack.direction === "back" &&
+    onboardingBack.wrapAnimation === "onboarding-back",
+  JSON.stringify({ onboardingForward, onboardingBack })
+);
+await shot("10-onboarding-step");
+await page.setViewport({ width: 700, height: 900 });
+await wait(160);
+const onboardingNarrow = await page.evaluate(() => {
+  const card = document.querySelector(".onboarding-card")!.getBoundingClientRect();
+  return {
+    left: Math.round(card.left),
+    right: Math.round(card.right),
+    innerWidth: window.innerWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  };
+});
+check(
+  "onboarding-fits-narrow-window",
+  onboardingNarrow.left >= 0 &&
+    onboardingNarrow.right <= onboardingNarrow.innerWidth &&
+    onboardingNarrow.scrollWidth <= onboardingNarrow.innerWidth + 1,
+  JSON.stringify(onboardingNarrow)
+);
+await shot("10-onboarding-narrow");
+await page.setViewport({ width: 1440, height: 900 });
+await wait(160);
+await page.click('[data-testid="onboarding-skip-all"]');
+await wait(250);
+check("onboarding-dismisses", !(await page.$('[data-testid="onboarding"]')), "setup closed");
 
 /* ------------------------------------------------------- 9. reduced motion */
 
@@ -840,25 +1203,62 @@ const toggleReduceMotion = () =>
   });
 await toggleReduceMotion();
 await wait(300);
-const reducedSetting = await page.evaluate(() => ({
-  flag: document.documentElement.dataset.reduceMotion,
-  navDuration: getComputedStyle(document.querySelector(".nav-item")!).transitionDuration,
-  viewAnimation: getComputedStyle(document.querySelector(".view")!).animationDuration,
-  collapsed: ["0.001ms", "1e-06s", "0.000001s"].includes(getComputedStyle(document.querySelector(".nav-item")!).transitionDuration),
-}));
-check("setting-collapses-motion", reducedSetting.flag === "true" && reducedSetting.collapsed, JSON.stringify(reducedSetting));
+const reducedSetting = await page.evaluate(() => {
+  const root = getComputedStyle(document.documentElement);
+  return {
+    flag: document.documentElement.dataset.reduceMotion,
+    dur1: root.getPropertyValue("--dur-1").trim(),
+    dur2: root.getPropertyValue("--dur-2").trim(),
+    dur3: root.getPropertyValue("--dur-3").trim(),
+    dur4: root.getPropertyValue("--dur-4").trim(),
+    viewAnimation: getComputedStyle(document.querySelector(".view")!).animationDuration,
+  };
+});
+check(
+  "setting-collapses-motion-keeps-fast-feedback",
+  reducedSetting.flag === "true" &&
+    ["120ms", "0.12s", ".12s"].includes(reducedSetting.dur1) &&
+    [reducedSetting.dur2, reducedSetting.dur3, reducedSetting.dur4].every(value =>
+      ["0.01ms", ".01ms"].includes(value)
+    ) &&
+    ["0.001ms", "1e-06s", "0.000001s"].includes(reducedSetting.viewAnimation),
+  JSON.stringify(reducedSetting)
+);
 
 await toggleReduceMotion();
 await wait(300);
 
-// Compact sidebar hides the labels and changes the nav's width; the pill has to follow.
+// Compact sidebar: the explicit toggle must interpolate the column width (not swap it), labels
+// fade/collapse instead of popping, hover/focus expansion overlays without moving the content,
+// and the pill follows through all of it.
 const toggleCompact = () =>
   page.evaluate(() => {
     const label = [...document.querySelectorAll(".setting-row")].find(row => row.textContent?.includes("Compact sidebar"));
     (label?.querySelector('input[type="checkbox"]') as HTMLInputElement | null)?.click();
   });
-await toggleCompact();
-await wait(400);
+await page.mouse.move(900, 300);
+const compactWidthSamples = await page.evaluate(async () => {
+  const sidebar = document.querySelector(".sidebar")!;
+  const label = [...document.querySelectorAll(".setting-row")].find(row => row.textContent?.includes("Compact sidebar"));
+  (label?.querySelector('input[type="checkbox"]') as HTMLInputElement | null)?.click();
+  const samples: number[] = [];
+  const start = performance.now();
+  await new Promise<void>(done => {
+    const tick = () => {
+      samples.push(Math.round(sidebar.getBoundingClientRect().width));
+      if (performance.now() - start < 460) requestAnimationFrame(tick);
+      else done();
+    };
+    requestAnimationFrame(tick);
+  });
+  return samples;
+});
+const distinctCompactWidths = new Set(compactWidthSamples).size;
+check(
+  "compact-sidebar-width-animates",
+  distinctCompactWidths >= 4 && compactWidthSamples[0] > 200 && compactWidthSamples.at(-1) === 76,
+  `${distinctCompactWidths} distinct widths, ${compactWidthSamples[0]} -> ${compactWidthSamples.at(-1)}`
+);
 await navItem("Songs");
 await wait(340);
 const compactPill = await page.evaluate(() => {
@@ -866,7 +1266,58 @@ const compactPill = await page.evaluate(() => {
   const active = document.querySelector(".nav .nav-item.active")!.getBoundingClientRect();
   return { deltaTop: Math.abs(pill.top - active.top), deltaHeight: Math.abs(pill.height - active.height), compact: document.documentElement.dataset.compactSidebar };
 });
+await page.mouse.move(900, 300);
+await wait(460);
 await shot("09-compact-sidebar");
+
+const sidebarProbe = () =>
+  page.evaluate(() => {
+    const sidebar = document.querySelector(".sidebar")!.getBoundingClientRect();
+    const main = document.querySelector(".app-main")!.getBoundingClientRect();
+    const label = document.querySelector(".nav .nav-item.active span")!;
+    const labelStyle = getComputedStyle(label);
+    const pill = document.querySelector(".nav-pill")!.getBoundingClientRect();
+    const active = document.querySelector(".nav .nav-item.active")!.getBoundingClientRect();
+    return {
+      sidebarWidth: Math.round(sidebar.width),
+      mainLeft: Math.round(main.left),
+      labelOpacity: labelStyle.opacity,
+      labelVisibility: labelStyle.visibility,
+      pillAligned: Math.abs(pill.top - active.top) < 1 && Math.abs(pill.height - active.height) < 1,
+    };
+  });
+await page.mouse.move(900, 300);
+await wait(460);
+const beforeHover = await sidebarProbe();
+await page.mouse.move(38, 300);
+await wait(560);
+await shot("09-compact-hover-expanded");
+const hoverState = await sidebarProbe();
+check(
+  "compact-hover-expands-overlay",
+  beforeHover.sidebarWidth === 76 &&
+    hoverState.sidebarWidth === 248 &&
+    hoverState.mainLeft === beforeHover.mainLeft &&
+    hoverState.labelOpacity === "1" &&
+    hoverState.labelVisibility === "visible" &&
+    hoverState.pillAligned,
+  JSON.stringify({ beforeHover, hoverState })
+);
+await page.mouse.move(900, 300);
+await wait(460);
+const afterHover = await sidebarProbe();
+check(
+  "compact-hover-collapses",
+  afterHover.sidebarWidth === 76 && afterHover.labelOpacity === "0" && afterHover.labelVisibility === "hidden",
+  JSON.stringify(afterHover)
+);
+await page.keyboard.press("Tab");
+await wait(560);
+const focusState = await sidebarProbe();
+check("compact-focus-expands-overlay", focusState.sidebarWidth === 248 && focusState.mainLeft === beforeHover.mainLeft, JSON.stringify(focusState));
+await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+await wait(460);
+
 await sidebarItem("Settings");
 await wait(320);
 await toggleCompact();
@@ -877,24 +1328,34 @@ check("compact-sidebar-pill-aligns", compactPill.compact === "true" && compactPi
 await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
 await page.reload({ waitUntil: "networkidle2" });
 await waitForApp();
-const osReduced = await page.evaluate(() => ({
-  flag: document.documentElement.dataset.reduceMotion,
-  media: matchMedia("(prefers-reduced-motion: reduce)").matches,
-  navDuration: getComputedStyle(document.querySelector(".nav-item")!).transitionDuration,
-  viewAnimation: getComputedStyle(document.querySelector(".view")!).animationDuration,
-  collapsed:
-    ["0.001ms", "1e-06s", "0.000001s"].includes(getComputedStyle(document.querySelector(".nav-item")!).transitionDuration) &&
-    ["0.001ms", "1e-06s", "0.000001s"].includes(getComputedStyle(document.querySelector(".view")!).animationDuration),
-}));
+const osReduced = await page.evaluate(() => {
+  const root = getComputedStyle(document.documentElement);
+  return {
+    flag: document.documentElement.dataset.reduceMotion,
+    media: matchMedia("(prefers-reduced-motion: reduce)").matches,
+    dur1: root.getPropertyValue("--dur-1").trim(),
+    dur3: root.getPropertyValue("--dur-3").trim(),
+    viewAnimation: getComputedStyle(document.querySelector(".view")!).animationDuration,
+    collapsed:
+      ["0.01ms", ".01ms"].includes(root.getPropertyValue("--dur-3").trim()) &&
+      ["0.001ms", "1e-06s", "0.000001s"].includes(getComputedStyle(document.querySelector(".view")!).animationDuration),
+  };
+});
 await page.evaluate(() => {
   const buttons = [...document.querySelectorAll(".nav .nav-item")] as HTMLButtonElement[];
   buttons.find(button => button.title === "Albums")!.click();
 });
-await wait(100);
+// Fast feedback transitions are intentionally preserved at 120ms; give them
+// time to finish, then nothing at all should still be moving.
+await wait(220);
 const osReducedRunning = await page.evaluate(() => document.getAnimations().filter(animation => animation.playState === "running").length);
 check(
   "os-reduced-motion-honoured",
-  osReduced.media && osReduced.flag === "false" && osReduced.collapsed && osReducedRunning === 0,
+  osReduced.media &&
+    osReduced.flag === "false" &&
+    osReduced.collapsed &&
+    ["120ms", "0.12s", ".12s"].includes(osReduced.dur1) &&
+    osReducedRunning === 0,
   JSON.stringify({ ...osReduced, running: osReducedRunning })
 );
 

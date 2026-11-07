@@ -43,7 +43,7 @@ describe("Tauri v2 migration — configuration, RangeTokenizer, and desktop brid
 
     expect(conf.productName).toBe("Cadence");
     expect(conf.identifier).toBe("app.cadence.player");
-    expect(conf.version).toBe("0.2.2");
+    expect(conf.version).toBe("1.0.0");
 
     // WebView2 owns the existing SMTC session. Its host process must claim the same AUMID that
     // Tauri writes to the Cadence shortcut, before the window and media session are created.
@@ -133,10 +133,27 @@ describe("Tauri v2 migration — configuration, RangeTokenizer, and desktop brid
     expect(parsed.album).toBe("Test Bench");
     expect(parsed.duration).toBeGreaterThan(2);
     expect(parsed.hasSidecarLyrics).toBe(true);
+    expect(parsed.replayGainTrackDb).toBeCloseTo(-6, 5);
+    expect(parsed.replayGainAlbumDb).toBeCloseTo(-5, 5);
+    expect(parsed.replayGainTrackPeak).toBeCloseTo(0.9, 5);
+    expect(parsed.replayGainAlbumPeak).toBeCloseTo(0.95, 5);
     expect(parsed.artworkFile).toBe("deadbeef".repeat(5) + ".png");
     expect(savedArtwork.get("cover")?.subarray(0, 4)).toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
     // 64 KiB read-ahead window parses FLAC headers + cover art + ID3v1 tail in a handful of reads
     expect(rangeReads).toBeLessThanOrEqual(6);
+
+    const mp3Bytes = readFileSync(join(fixturesDir, "fixture.mp3"));
+    const parsedMp3 = await readTrackMetadataCore("C:\\Users\\Alice\\Music\\fixture.mp3", {
+      fileSize: mp3Bytes.byteLength,
+      mtimeMs: 1_700_000_000_000,
+      readChunk: async (offset, length) => new Uint8Array(mp3Bytes.subarray(offset, offset + length)),
+      saveArtwork: async () => "cover.png",
+      fileExists: () => false,
+    });
+    expect(parsedMp3.replayGainTrackDb).toBeCloseTo(-6, 5);
+    expect(parsedMp3.replayGainAlbumDb).toBeCloseTo(-5, 5);
+    expect(parsedMp3.replayGainTrackPeak).toBeCloseTo(0.9, 5);
+    expect(parsedMp3.replayGainAlbumPeak).toBeCloseTo(0.95, 5);
   });
 
   it("infers accurate artwork MIME types for Windows SMTC MediaMetadata", () => {
@@ -545,6 +562,10 @@ describe("Tauri v2 migration — configuration, RangeTokenizer, and desktop brid
       addedAt: 1_700_000_000_000,
       lastPlayedAt: null,
       playCount: 0,
+      replayGainTrackDb: null,
+      replayGainAlbumDb: null,
+      replayGainTrackPeak: null,
+      replayGainAlbumPeak: null,
     });
 
     const persistedDb: DatabaseShape = emptyDatabase();

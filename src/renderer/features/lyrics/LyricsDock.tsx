@@ -15,33 +15,44 @@ import {
   Download,
   FolderOpen,
   Languages,
+  LayoutGrid,
   Minus,
   Plus,
   RefreshCw,
   Search,
-  Settings2,
   Sparkles,
   Wand2,
   XCircle,
   Youtube,
 } from "lucide-react";
-import type { LyricsCandidate, LyricsSettings } from "../../../shared/types";
+import type { LyricsCandidate, LyricsSettings, NowPlayingProfile } from "../../../shared/types";
 import { providerConfig } from "../../../shared/upstream/better-lyrics/constants";
 import { formatDurationSeconds, resolveSearchFields, type ManualSearchInput } from "../../../shared/youtube";
 import type { SearchDraft } from "../../state/lyricsStore";
 import type { ManualSearchState, YouTubeResolveState } from "./useLyrics";
 import { TRANSLATION_LANGUAGES } from "./translationLanguages";
+import { staggerDelayMs, STAGGER_CAP } from "../../app/motion";
+import { usePresence } from "../../app/usePresence";
 
 interface LyricsDockProps {
   settings: LyricsSettings;
   onPatch: (patch: Partial<LyricsSettings>) => void;
+  nowPlayingProfiles: readonly NowPlayingProfile[];
+  activeNowPlayingProfileId: string;
+  onSelectNowPlayingProfile: (profileId: string) => void;
   candidates: LyricsCandidate[];
   activeSource: string | null;
   onSelectSource: (source: string) => void;
   providerStatus: { provider: string; status: string; detail?: string }[];
   onReload: () => void;
+  onRegenerateTranslation: () => void;
+  onRegenerateRomanization: () => void;
   onSaveSidecar: () => void;
+  onSaveTtml: () => void;
+  translationNotice?: string | null;
   onChooseFile: () => void;
+  /** Remote queue items have no local file/sidecar; all other dock controls still apply. */
+  localFileActions?: boolean;
   syncLabel: string;
   busy: boolean;
   /** Playing track's duration, used for the effective-search preview and provider matching. */
@@ -75,13 +86,21 @@ function providerLabel(candidate: LyricsCandidate): string {
 export function LyricsDock({
   settings,
   onPatch,
+  nowPlayingProfiles,
+  activeNowPlayingProfileId,
+  onSelectNowPlayingProfile,
   candidates,
   activeSource,
   onSelectSource,
   providerStatus,
   onReload,
+  onRegenerateTranslation,
+  onRegenerateRomanization,
   onSaveSidecar,
+  onSaveTtml,
+  translationNotice,
   onChooseFile,
+  localFileActions = true,
   syncLabel,
   busy,
   trackDuration,
@@ -96,8 +115,17 @@ export function LyricsDock({
   concealed = false,
   onPopoverChange,
 }: LyricsDockProps) {
-  const [panel, setPanel] = useState<"none" | "sources" | "appearance" | "search">("none");
+  const [panel, setPanel] = useState<"none" | "sources" | "profiles" | "search">("none");
   const [languageOpen, setLanguageOpen] = useState(false);
+  // Popovers close the instant their state flips; presence only keeps each mounted for
+  // its fast pop-out. Switching panels crossfades for one 120ms beat instead of cutting.
+  const sourcesPresence = usePresence(panel === "sources");
+  const searchPresence = usePresence(panel === "search");
+  const profilesPresence = usePresence(panel === "profiles");
+  const languagesPresence = usePresence(languageOpen);
+  const activeNowPlayingProfile =
+    nowPlayingProfiles.find(profile => profile.id === activeNowPlayingProfileId) ??
+    nowPlayingProfiles[0];
   const { title: searchTitle, artist: searchArtist, album: searchAlbum, youtubeUrl } = searchDraft;
 
   useEffect(() => {
@@ -133,6 +161,18 @@ export function LyricsDock({
     if (!effective.title || manualSearchState.status === "loading") return;
     onManualSearch(searchDraft);
   };
+  const translationSource = settings.translationSource ?? "auto";
+  const translateTarget = translationSource === "local"
+    ? settings.translationLanguage
+    : settings.aiTranslation?.enabled
+      ? (settings.aiTranslation.targetLanguage ?? "en")
+      : settings.translationLanguage;
+  const patchTranslateTarget = (language: string) => {
+    if (translationSource === "ai" && settings.aiTranslation?.enabled) {
+      if (!language) onPatch({ aiTranslation: { ...settings.aiTranslation, enabled: false }, translationLanguage: "" });
+      else onPatch({ aiTranslation: { ...settings.aiTranslation, targetLanguage: language } });
+    } else onPatch({ translationLanguage: language });
+  };
 
   return (
     <div className={`lyrics-dock ${concealed ? "is-concealed" : ""}`} data-testid="lyrics-dock">
@@ -154,11 +194,13 @@ export function LyricsDock({
         <button
           type="button"
           className="dock-button"
-          onClick={() => setPanel(panel === "appearance" ? "none" : "appearance")}
-          title="Lyrics appearance"
-          aria-expanded={panel === "appearance"}
+          onClick={() => setPanel(panel === "profiles" ? "none" : "profiles")}
+          title={`Now Playing profile: ${activeNowPlayingProfile?.name ?? "Balanced"}`}
+          aria-expanded={panel === "profiles"}
+          aria-haspopup="true"
+          data-testid="now-playing-profile-button"
         >
-          <Settings2 size={16} /> Style
+          <LayoutGrid size={16} /> Profile
         </button>
         <button
           type="button"
@@ -167,7 +209,7 @@ export function LyricsDock({
           title="Translate lyrics"
           aria-expanded={languageOpen}
         >
-          <Languages size={16} /> {settings.translationLanguage ? languageLabel(settings.translationLanguage) : "Translate"}
+          <Languages size={16} /> {translationSource === "local" ? `Local${translateTarget ? ` · ${languageLabel(translateTarget)}` : ""}` : translationSource === "ai" ? `AI${translateTarget ? ` · ${languageLabel(translateTarget)}` : ""}` : translateTarget ? languageLabel(translateTarget) : "Translate"}
         </button>
         <button
           type="button"
@@ -177,6 +219,16 @@ export function LyricsDock({
         >
           <Wand2 size={16} /> Romanize
         </button>
+        {translationSource !== "local" && (settings.aiTranslation?.enabled || settings.translationLanguage) ? (
+          <button type="button" className="dock-button" onClick={onRegenerateTranslation} disabled={busy} title="Force-regenerate translation">
+            <RefreshCw size={15} /> Translation
+          </button>
+        ) : null}
+        {settings.romanization ? (
+          <button type="button" className="dock-button" onClick={onRegenerateRomanization} disabled={busy} title="Force-regenerate romanization">
+            <RefreshCw size={15} /> Romanization
+          </button>
+        ) : null}
       </div>
 
       <div className="dock-group dock-offset" title="Lyrics timing offset">
@@ -193,16 +245,23 @@ export function LyricsDock({
         <button type="button" className="dock-icon" onClick={onReload} title="Reload lyrics" disabled={busy}>
           <RefreshCw size={16} className={busy ? "spin" : undefined} />
         </button>
-        <button type="button" className="dock-icon" onClick={onChooseFile} title="Open a lyrics file">
-          <FolderOpen size={16} />
-        </button>
-        <button type="button" className="dock-icon" onClick={onSaveSidecar} title="Save lyrics next to the track">
-          <Download size={16} />
-        </button>
+        {localFileActions ? (
+          <>
+            <button type="button" className="dock-icon" onClick={onChooseFile} title="Open a lyrics file">
+              <FolderOpen size={16} />
+            </button>
+            <button type="button" className="dock-icon" onClick={onSaveSidecar} title="Save lyrics as LRC next to the track">
+              <Download size={16} />
+            </button>
+            <button type="button" className="dock-icon dock-save-ttml" onClick={onSaveTtml} title="Save as TTML" aria-label="Save as TTML">
+              <Download size={16} /> <span>Save as TTML</span>
+            </button>
+          </>
+        ) : null}
       </div>
 
-      {panel === "sources" ? (
-        <div className="dock-popover dock-sources">
+      {sourcesPresence.mounted ? (
+        <div className={`dock-popover dock-sources ${sourcesPresence.phaseClass}`} data-presence={sourcesPresence.phase}>
           <div className="popover-title">Lyrics source</div>
           {candidates.length === 0 ? <div className="muted">No lyrics found for this track.</div> : null}
           {candidates.map(candidate => (
@@ -243,8 +302,53 @@ export function LyricsDock({
         </div>
       ) : null}
 
-      {panel === "search" ? (
-        <div className="dock-popover dock-search" data-testid="manual-search">
+      {profilesPresence.mounted ? (
+        <div
+          className={`dock-popover dock-profiles ${profilesPresence.phaseClass}`}
+          data-presence={profilesPresence.phase}
+          data-testid="now-playing-profile-switcher"
+          role="menu"
+          aria-label="Now Playing profiles"
+        >
+          <div className="popover-title">Now Playing profile</div>
+          {nowPlayingProfiles.map(profile => {
+            const active = profile.id === activeNowPlayingProfile?.id;
+            return (
+              <button
+                type="button"
+                key={profile.id}
+                className={`profile-row ${active ? "active" : ""}`}
+                onClick={() => {
+                  onSelectNowPlayingProfile(profile.id);
+                  setPanel("none");
+                }}
+                aria-pressed={active}
+                data-profile-id={profile.id}
+              >
+                <NowPlayingProfileThumbnail profile={profile} />
+                <span className="profile-row-copy">
+                  <strong>{profile.name}</strong>
+                  <em>
+                    {profile.description ||
+                      (profile.builtIn ? "Built-in profile" : "Custom profile")}
+                  </em>
+                </span>
+                {active ? (
+                  <Check size={16} aria-hidden="true" />
+                ) : (
+                  <span className="badge">{profile.builtIn ? "Built-in" : "Custom"}</span>
+                )}
+              </button>
+            );
+          })}
+          <p className="profile-switcher-note">
+            Each profile keeps separate windowed and fullscreen proportions.
+          </p>
+        </div>
+      ) : null}
+
+      {searchPresence.mounted ? (
+        <div className={`dock-popover dock-search ${searchPresence.phaseClass}`} data-presence={searchPresence.phase} data-testid="manual-search">
           <div className="search-panel-head">
             <button type="button" className="dock-icon" title="Back to sources" onClick={() => setPanel("sources")}>
               <ArrowLeft size={15} />
@@ -414,11 +518,16 @@ export function LyricsDock({
             </div>
           ) : null}
           {manualSearchState.status === "ready"
-            ? manualSearchState.results.map(candidate => (
+            ? manualSearchState.results.map((candidate, index) => (
                 <button
                   type="button"
                   key={`${candidate.source}-${candidate.matchTitle ?? ""}-${candidate.text.length}`}
-                  className="source-row"
+                  className="source-row search-result-row"
+                  style={
+                    index < STAGGER_CAP
+                      ? { animationDelay: `${staggerDelayMs(index, 8)}ms` }
+                      : undefined
+                  }
                   onClick={() => {
                     onSelectSearchResult(candidate);
                     setPanel("none");
@@ -446,121 +555,27 @@ export function LyricsDock({
         </div>
       ) : null}
 
-      {panel === "appearance" ? (
-        <div className="dock-popover dock-appearance">
-          <label className="slider-row">
-            <span>Font size</span>
-            <input
-              type="range"
-              min={1.5}
-              max={5.5}
-              step={0.1}
-              value={settings.fontSizeRem}
-              onChange={event => onPatch({ fontSizeRem: Number(event.target.value) })}
-            />
-            <output>{settings.fontSizeRem.toFixed(1)}rem</output>
-          </label>
-          <label className="slider-row">
-            <span>Translation Font Size</span>
-            <input
-              type="range"
-              min={10}
-              max={48}
-              step={1}
-              value={settings.translationFontSizePx}
-              onChange={event => onPatch({ translationFontSizePx: Number(event.target.value) })}
-              aria-label="Translation Font Size"
-            />
-            <output>{settings.translationFontSizePx} px</output>
-          </label>
-          <label className="slider-row">
-            <span>Romanization Font Size</span>
-            <input
-              type="range"
-              min={10}
-              max={48}
-              step={1}
-              value={settings.romanizationFontSizePx}
-              onChange={event => onPatch({ romanizationFontSizePx: Number(event.target.value) })}
-              aria-label="Romanization Font Size"
-            />
-            <output>{settings.romanizationFontSizePx} px</output>
-          </label>
-          <label className="slider-row">
-            <span>Weight</span>
-            <input
-              type="range"
-              min={300}
-              max={900}
-              step={50}
-              value={settings.fontWeight}
-              onChange={event => onPatch({ fontWeight: Number(event.target.value) })}
-            />
-            <output>{settings.fontWeight}</output>
-          </label>
-          <label className="slider-row">
-            <span>Line height</span>
-            <input
-              type="range"
-              min={1}
-              max={2}
-              step={0.05}
-              value={settings.lineHeight}
-              onChange={event => onPatch({ lineHeight: Number(event.target.value) })}
-            />
-            <output>{settings.lineHeight.toFixed(2)}</output>
-          </label>
-          <label className="slider-row">
-            <span>Active</span>
-            <input
-              type="range"
-              min={0.4}
-              max={1}
-              step={0.02}
-              value={settings.activeOpacity}
-              onChange={event => onPatch({ activeOpacity: Number(event.target.value) })}
-            />
-            <output>{Math.round(settings.activeOpacity * 100)}%</output>
-          </label>
-          <label className="slider-row">
-            <span>Inactive</span>
-            <input
-              type="range"
-              min={0.05}
-              max={0.9}
-              step={0.02}
-              value={settings.inactiveOpacity}
-              onChange={event => onPatch({ inactiveOpacity: Number(event.target.value) })}
-            />
-            <output>{Math.round(settings.inactiveOpacity * 100)}%</output>
-          </label>
-          <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked={settings.showCredits}
-              onChange={event => onPatch({ showCredits: event.target.checked })}
-            />
-            <span>Show songwriters</span>
-          </label>
-          <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked={settings.passiveScroll}
-              onChange={event => onPatch({ passiveScroll: event.target.checked })}
-            />
-            <span>Auto-scroll unsynced lyrics</span>
-          </label>
-        </div>
-      ) : null}
-
-      {languageOpen ? (
-        <div className="dock-popover dock-languages">
+      {languagesPresence.mounted ? (
+        <div className={`dock-popover dock-languages ${languagesPresence.phaseClass}`} data-presence={languagesPresence.phase}>
+          <div className="popover-title">Translation source</div>
+          <div className="translation-source-options">
+            {(["auto", "local", "ai"] as const).map(source => (
+              <button key={source} type="button" className={`source-row ${translationSource === source ? "active" : ""}`} onClick={() => onPatch({ translationSource: source })}>
+                <strong>{source === "auto" ? "Automatic" : source === "local" ? "Local" : "AI"}</strong>
+              </button>
+            ))}
+          </div>
+          {translationNotice ? <div className="muted" role="status">{translationNotice}</div> : null}
           <div className="popover-title">Translate to</div>
           <button
             type="button"
-            className={`source-row ${settings.translationLanguage === "" ? "active" : ""}`}
+            className={`source-row ${translationSource === "auto" && translateTarget === "" ? "active" : ""}`}
             onClick={() => {
-              onPatch({ translationLanguage: "" });
+              onPatch({
+                translationSource: "auto",
+                translationLanguage: "",
+                ...(settings.aiTranslation?.enabled ? { aiTranslation: { ...settings.aiTranslation, enabled: false } } : {}),
+              });
               setLanguageOpen(false);
             }}
           >
@@ -573,9 +588,9 @@ export function LyricsDock({
               <button
                 type="button"
                 key={language.code}
-                className={`source-row ${settings.translationLanguage === language.code ? "active" : ""}`}
+                className={`source-row ${translateTarget === language.code ? "active" : ""}`}
                 onClick={() => {
-                  onPatch({ translationLanguage: language.code });
+                  patchTranslateTarget(language.code);
                   setLanguageOpen(false);
                 }}
               >
@@ -589,6 +604,33 @@ export function LyricsDock({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * A tiny data-driven preview, not a screenshot: artwork size, lyric weight and measure
+ * come from the profile's fullscreen proportions, so custom profiles preview truthfully
+ * without mounting a second Now Playing tree or running an off-screen renderer.
+ */
+function NowPlayingProfileThumbnail({ profile }: { profile: NowPlayingProfile }) {
+  const config = profile.fullscreen;
+  const artworkSize = Math.min(24, Math.max(12, Math.round(18 * config.artworkScale)));
+  const lineHeight = Math.min(7, Math.max(4, 5 * config.lyricsScale));
+  const lineWidth = Math.min(100, Math.max(58, config.lyricsMaxWidth / 12));
+  return (
+    <span className="profile-thumb" aria-hidden="true">
+      {config.artworkVisible ? (
+        <span
+          className="profile-thumb-art"
+          style={{ width: artworkSize, height: artworkSize }}
+        />
+      ) : null}
+      <span className="profile-thumb-lines">
+        <span style={{ height: lineHeight, width: `${lineWidth}%` }} />
+        <span style={{ height: lineHeight, width: `${Math.max(48, lineWidth * 0.82)}%` }} />
+        <span style={{ height: lineHeight, width: `${Math.max(38, lineWidth * 0.62)}%` }} />
+      </span>
+    </span>
   );
 }
 

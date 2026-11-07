@@ -23,6 +23,7 @@
  */
 
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import {
   createReadStream,
   existsSync,
@@ -78,7 +79,10 @@ const restartBackend = (nextVersion = appVersion) => {
 /** Reads the raw `listening_history` rows directly from the on-disk SQLite `library.db` file. */
 const readSqliteHistoryRows = (): Array<{
   id: number;
-  track_id: number;
+  source_kind: string;
+  track_id: number | null;
+  remote_id: string | null;
+  canonical_url: string | null;
   played_at: number;
   payload: string;
 }> => {
@@ -86,8 +90,18 @@ const readSqliteHistoryRows = (): Array<{
   const db = new DatabaseSync(dbPath);
   try {
     return db
-      .prepare("SELECT id, track_id, played_at, payload FROM listening_history ORDER BY played_at DESC, id DESC")
-      .all() as Array<{ id: number; track_id: number; played_at: number; payload: string }>;
+      .prepare(
+        "SELECT id, source_kind, track_id, remote_id, canonical_url, played_at, payload FROM listening_history ORDER BY played_at DESC, id DESC"
+      )
+      .all() as Array<{
+        id: number;
+        source_kind: string;
+        track_id: number | null;
+        remote_id: string | null;
+        canonical_url: string | null;
+        played_at: number;
+        payload: string;
+      }>;
   } finally {
     db.close();
   }
@@ -98,8 +112,13 @@ const injectMalformedSqliteRow = () => {
   store.close();
   const db = new DatabaseSync(dbPath);
   try {
-    db.prepare("INSERT INTO listening_history (track_id, played_at, payload) VALUES (?, ?, ?)").run(
+    db.prepare(
+      "INSERT INTO listening_history (source_kind, track_id, remote_id, canonical_url, played_at, payload) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(
+      "local",
       999999,
+      null,
+      null,
       Date.now() + 5000,
       "{corrupt-json-payload",
     );
@@ -145,6 +164,10 @@ const server = createServer(async (req, res) => {
     res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
     res.end(JSON.stringify(body));
   };
+  const sendTrack = (id: number) => {
+    const track = store.getTrack(id);
+    return sendJson(track ? store.toTrack(track) : null);
+  };
 
   if (url.pathname.startsWith("/api/")) {
     try {
@@ -185,25 +208,96 @@ const server = createServer(async (req, res) => {
           store.recordPlay(id);
           return sendJson({ ok: true });
         }
+        case "/api/library/updateTrackMetadata": {
+          const { id, edit } = (body ?? {}) as { id: number; edit: Parameters<typeof store.setTrackMetadata>[1] };
+          store.setTrackMetadata(id, edit);
+          return sendTrack(id);
+        }
+        case "/api/library/resetTrackMetadata": {
+          const { id } = (body ?? {}) as { id: number };
+          store.clearTrackMetadata(id);
+          return sendTrack(id);
+        }
+        case "/api/library/setTrackArtwork": {
+          const { id, dataBase64, mimeType } = (body ?? {}) as {
+            id: number;
+            dataBase64: string;
+            mimeType: string;
+          };
+          if (!store.getTrack(id)) return sendJson(null);
+          const bytes = Buffer.from(dataBase64, "base64");
+          const ext =
+            mimeType === "image/png"
+              ? ".png"
+              : mimeType === "image/webp"
+                ? ".webp"
+                : mimeType === "image/gif"
+                  ? ".gif"
+                  : mimeType === "image/bmp"
+                    ? ".bmp"
+                    : ".jpg";
+          const fileName = `${createHash("sha1").update(bytes).digest("hex")}${ext}`;
+          const target = join(artworkDir, fileName);
+          if (!existsSync(target)) writeFileSync(target, bytes);
+          store.setTrackArtwork(id, fileName);
+          return sendTrack(id);
+        }
+        case "/api/library/removeTrackArtwork": {
+          const { id } = (body ?? {}) as { id: number };
+          store.removeTrackArtwork(id);
+          return sendTrack(id);
+        }
+        case "/api/library/resetTrackArtwork": {
+          const { id } = (body ?? {}) as { id: number };
+          store.resetTrackArtwork(id);
+          return sendTrack(id);
+        }
         case "/api/history/add": {
-          // Enforce the exact Tauri v2 IPC contract: { trackId, playedAt, payload }
+          // Enforce the exact flat Tauri v2 IPC contract. `payload` is a JSON string, matching
+          // Rust `cmd_history_add(..., payload: String)`; remote rows use remoteId/canonicalUrl
+          // and must never borrow a local trackId.
           const args = (body ?? {}) as {
-            trackId?: number;
-            playedAt?: number;
+            sourceKind?: unknown;
+            trackId?: unknown;
+            remoteId?: unknown;
+            canonicalUrl?: unknown;
+            playedAt?: unknown;
             payload?: unknown;
           };
+          let payload: unknown = null;
+          try {
+            payload = typeof args.payload === "string" ? JSON.parse(args.payload) : null;
+          } catch {
+            payload = null;
+          }
+          const source =
+            args.sourceKind === "local" && typeof args.trackId === "number"
+              ? ({ kind: "local", trackId: args.trackId } as const)
+              : (args.sourceKind === "youtube" || args.sourceKind === "youtube-music") &&
+                  typeof args.remoteId === "string" &&
+                  args.remoteId.length > 0 &&
+                  typeof args.canonicalUrl === "string" &&
+                  args.canonicalUrl.length > 0
+                ? ({
+                    kind: args.sourceKind,
+                    remoteId: args.remoteId,
+                    canonicalUrl: args.canonicalUrl,
+                  } as const)
+                : null;
           if (
-            typeof args.trackId !== "number" ||
+            !source ||
+            (source.kind === "local" && args.remoteId !== null) ||
+            (source.kind !== "local" && args.trackId !== null) ||
             typeof args.playedAt !== "number" ||
-            !args.payload ||
-            typeof args.payload !== "object"
+            !payload ||
+            typeof payload !== "object"
           ) {
             return sendJson({ error: "Invalid cmd_history_add arguments" }, 400);
           }
           if (failAdd) {
             return sendJson({ error: "Disk full (os error 112)" }, 500);
           }
-          const entry = store.addHistoryEntry(args.trackId, args.playedAt, args.payload as any);
+          const entry = store.addHistoryEntry(source, args.playedAt, payload as any);
           return sendJson({ id: entry.id });
         }
         case "/api/history/list":
@@ -214,6 +308,64 @@ const server = createServer(async (req, res) => {
           }
           store.clearHistory();
           return sendJson({ ok: true });
+        case "/api/playlists/list":
+          return sendJson(store.getPlaylists());
+        case "/api/playlists/create": {
+          const { name, trackIds } = (body ?? {}) as { name: string; trackIds?: number[] };
+          return sendJson(store.createPlaylist(name, trackIds ?? []));
+        }
+        case "/api/playlists/createSmart": {
+          const { name, rule } = (body ?? {}) as {
+            name: string;
+            rule: Parameters<typeof store.createSmartPlaylist>[1];
+          };
+          const created = store.createSmartPlaylist(name, rule);
+          return created ? sendJson(created) : sendJson({ error: "Invalid smart playlist rule" }, 400);
+        }
+        case "/api/playlists/updateSmart": {
+          const { id, rule } = (body ?? {}) as {
+            id: number;
+            rule: Parameters<typeof store.updateSmartPlaylist>[1];
+          };
+          return store.updateSmartPlaylist(id, rule)
+            ? sendJson({ ok: true })
+            : sendJson({ error: "Invalid smart playlist rule" }, 400);
+        }
+        case "/api/playlists/rename": {
+          const { id, name } = (body ?? {}) as { id: number; name: string };
+          store.renamePlaylist(id, name);
+          return sendJson({ ok: true });
+        }
+        case "/api/playlists/remove": {
+          const { id } = (body ?? {}) as { id: number };
+          store.deletePlaylist(id);
+          return sendJson({ ok: true });
+        }
+        case "/api/playlists/addTracks": {
+          const { id, trackIds } = (body ?? {}) as { id: number; trackIds: number[] };
+          store.addTracksToPlaylist(id, trackIds);
+          return sendJson({ ok: true });
+        }
+        case "/api/playlists/removeTrack": {
+          const { id, trackId } = (body ?? {}) as { id: number; trackId: number };
+          store.removeTrackFromPlaylist(id, trackId);
+          return sendJson({ ok: true });
+        }
+        case "/api/playlists/reorder": {
+          const { id, trackIds } = (body ?? {}) as { id: number; trackIds: number[] };
+          store.reorderPlaylist(id, trackIds);
+          return sendJson({ ok: true });
+        }
+        case "/api/playlists/tracks": {
+          const { id } = (body ?? {}) as { id: number };
+          return sendJson(
+            store
+              .getPlaylistTrackIds(id)
+              .map(trackId => store.getTrack(trackId))
+              .filter(track => track !== null)
+              .map(track => store.toTrack(track)),
+          );
+        }
         case "/api/settings/get":
           return sendJson(settings.get());
         case "/api/settings/patch":
@@ -349,12 +501,39 @@ const launchAppPage = async (): Promise<Page> => {
         recordPlay: async (id: number) => {
           await call("/api/library/recordPlay", { id });
         },
+        updateTrackMetadata: (id: number, edit: unknown) =>
+          call("/api/library/updateTrackMetadata", { id, edit }),
+        resetTrackMetadata: (id: number) => call("/api/library/resetTrackMetadata", { id }),
+        setTrackArtwork: async (id: number, data: ArrayBuffer, mimeType: string) => {
+          const bytes = new Uint8Array(data);
+          let binary = "";
+          for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+            binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+          }
+          return call("/api/library/setTrackArtwork", { id, dataBase64: btoa(binary), mimeType });
+        },
+        removeTrackArtwork: (id: number) => call("/api/library/removeTrackArtwork", { id }),
+        resetTrackArtwork: (id: number) => call("/api/library/resetTrackArtwork", { id }),
         onScanProgress: () => () => {},
         onChanged: () => () => {},
       },
       history: {
-        add: async (args: { trackId: number; playedAt: number; payload: unknown }) => {
-          const res = await call("/api/history/add", args);
+        add: async (args: {
+          source:
+            | { kind: "local"; trackId: number }
+            | { kind: "youtube" | "youtube-music"; remoteId: string; canonicalUrl: string };
+          playedAt: number;
+          payload: unknown;
+        }) => {
+          // Mirror src/tauri/bridge.ts: high-level Cadence API in, flat Tauri IPC fields out.
+          const res = await call("/api/history/add", {
+            sourceKind: args.source.kind,
+            trackId: args.source.kind === "local" ? args.source.trackId : null,
+            remoteId: args.source.kind === "local" ? null : args.source.remoteId,
+            canonicalUrl: args.source.kind === "local" ? null : args.source.canonicalUrl,
+            playedAt: args.playedAt,
+            payload: JSON.stringify(args.payload),
+          });
           return res?.id;
         },
         list: () => call("/api/history/list"),
@@ -363,14 +542,29 @@ const launchAppPage = async (): Promise<Page> => {
         },
       },
       playlists: {
-        list: async () => [],
-        create: async () => ({}),
-        rename: async () => undefined,
-        remove: async () => undefined,
-        addTracks: async () => undefined,
-        removeTrack: async () => undefined,
-        reorder: async () => undefined,
-        tracks: async () => [],
+        list: () => call("/api/playlists/list"),
+        create: (name: string, trackIds: number[] = []) =>
+          call("/api/playlists/create", { name, trackIds }),
+        createSmart: (name: string, rule: unknown) => call("/api/playlists/createSmart", { name, rule }),
+        updateSmart: async (id: number, rule: unknown) => {
+          await call("/api/playlists/updateSmart", { id, rule });
+        },
+        rename: async (id: number, name: string) => {
+          await call("/api/playlists/rename", { id, name });
+        },
+        remove: async (id: number) => {
+          await call("/api/playlists/remove", { id });
+        },
+        addTracks: async (id: number, trackIds: number[]) => {
+          await call("/api/playlists/addTracks", { id, trackIds });
+        },
+        removeTrack: async (id: number, trackId: number) => {
+          await call("/api/playlists/removeTrack", { id, trackId });
+        },
+        reorder: async (id: number, trackIds: number[]) => {
+          await call("/api/playlists/reorder", { id, trackIds });
+        },
+        tracks: (id: number) => call("/api/playlists/tracks", { id }),
       },
       settings: {
         get: () => call("/api/settings/get"),
@@ -458,6 +652,17 @@ const playTrackByTitleInSongsView = async (page: Page, title: string) => {
 
 const readHistoryViewTitles = async (page: Page): Promise<string[]> => {
   await clickNav(page, "History");
+  // Wait for the view to settle (entries, empty state, or error) instead of a fixed
+  // delay: on a cold first launch the bootstrap restore can outlast a short wait.
+  await page
+    .waitForFunction(
+      () =>
+        document.querySelector(
+          '[data-testid="history-entry"], [data-testid="history-empty"], [data-testid="history-error"]',
+        ) !== null,
+      { timeout: 10_000 },
+    )
+    .catch(() => null);
   await wait(200);
   return page.evaluate(() =>
     Array.from(document.querySelectorAll('[data-testid="history-entry"] .history-info strong')).map(
@@ -468,6 +673,8 @@ const readHistoryViewTitles = async (page: Page): Promise<string[]> => {
 
 const readHomeRecentlyPlayedTitles = async (page: Page): Promise<string[]> => {
   await clickNav(page, "Home");
+  // Home renders from the history store; wait until its shelves have mounted.
+  await page.waitForSelector(".shelf", { timeout: 10_000 }).catch(() => null);
   await wait(200);
   return page.evaluate(() =>
     Array.from(
@@ -488,6 +695,7 @@ try {
     () => document.querySelectorAll('[data-testid="home-recently-played"]').length,
   );
   await clickNav(page, "History");
+  await page.waitForSelector('[data-testid="history-empty"]', { timeout: 10_000 }).catch(() => null);
   const initialEmptyVisible = Boolean(await page.$('[data-testid="history-empty"]'));
   check(
     "launch1-empty-initial-state",
@@ -636,12 +844,362 @@ try {
 
   const launch4Recent = await readHomeRecentlyPlayedTitles(page);
   await clickNav(page, "History");
+  await page.waitForSelector('[data-testid="history-empty"]', { timeout: 10_000 }).catch(() => null);
   const launch4EmptyVisible = Boolean(await page.$('[data-testid="history-empty"]'));
   await page.screenshot({ path: join(shotDir, "04-launch4-cleared-after-restart.png") });
   check(
     "launch4-cleared-history-persists-across-restart",
     launch4Recent.length === 0 && launch4EmptyVisible && readSqliteHistoryRows().length === 0,
     `recent=${launch4Recent.length}, emptyVisible=${launch4EmptyVisible}`,
+  );
+
+  /* =================================================================================
+   * Launch 5: Listening stats & Home discovery read the same persisted history.
+   * Seed controlled play starts (recent repeats + long-quiet tracks) straight into
+   * SQLite, restart, and verify the rendered Stats view and Home shelves.
+   * ================================================================================= */
+  await page.close();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const seedNow = Date.now();
+  const libraryTracks = store.getTracks().map(t => store.toTrack(t));
+  const seedPlay = (title: string, playedAt: number) => {
+    const t = libraryTracks.find(candidate => candidate.title === title);
+    if (!t) throw new Error(`Fixture track not found: ${title}`);
+    store.addHistoryEntry({ kind: "local", trackId: t.id }, playedAt, {
+      source: { kind: "local", trackId: t.id },
+      trackId: t.id,
+      path: t.path,
+      title: t.title,
+      artist: t.artist,
+      albumArtist: t.albumArtist,
+      album: t.album,
+      artworkUrl: t.artworkUrl,
+      duration: t.duration,
+    });
+  };
+  // Fixture Opus / Fixture ALAC were never played in the UI above, so their library
+  // counters stay untouched and only these old history rows describe them.
+  seedPlay("Fixture FLAC", seedNow - 2 * dayMs);
+  seedPlay("Fixture FLAC", seedNow - dayMs);
+  seedPlay("Fixture FLAC", seedNow - 60_000);
+  seedPlay("Fixture MP3", seedNow - 30 * 60_000);
+  seedPlay("Fixture Opus", seedNow - 45 * dayMs);
+  seedPlay("Fixture ALAC", seedNow - 60 * dayMs);
+
+  restartBackend("1.0.1");
+  page = await launchAppPage();
+
+  await clickNav(page, "Stats");
+  await page.waitForSelector('[data-testid="stats-view"]', { timeout: 10_000 });
+  await page.waitForSelector('[data-testid="stats-summary"]', { timeout: 10_000 }).catch(() => null);
+  const recordedPlays = await page
+    .$eval('[data-testid="stats-summary"] .stat-card strong', el => el.textContent?.trim() ?? "")
+    .catch(() => "");
+  const statsTopTracks = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('[data-testid="stats-top-tracks"] .stats-rank-row')).map(
+      el => el.textContent?.replace(/\s+/g, " ").trim() ?? "",
+    ),
+  );
+  const statsBarCounts = await page.evaluate(() => ({
+    days: document.querySelectorAll('[data-testid="stats-day-chart"] .stats-bar-column').length,
+    hours: document.querySelectorAll('[data-testid="stats-hour-chart"] .stats-bar-column').length,
+  }));
+  await page.screenshot({ path: join(shotDir, "05-launch5-stats.png") });
+  check(
+    "launch5-stats-summary-and-top-tracks-render",
+    recordedPlays === "6" &&
+      (statsTopTracks[0]?.includes("Fixture FLAC") ?? false) &&
+      (statsTopTracks[0]?.includes("3 plays") ?? false),
+    `recorded=${recordedPlays}, top=${JSON.stringify(statsTopTracks[0] ?? "")}`,
+  );
+  check(
+    "launch5-stats-charts-render-30-days-and-24-hours",
+    statsBarCounts.days === 30 && statsBarCounts.hours === 24,
+    JSON.stringify(statsBarCounts),
+  );
+
+  await clickNav(page, "Home");
+  await page.waitForSelector('[data-testid="home-top-tracks"]', { timeout: 10_000 }).catch(() => null);
+  const homeShelves = await page.evaluate(() => ({
+    top: Array.from(document.querySelectorAll('[data-testid="home-top-tracks"] .title-text')).map(
+      el => el.textContent?.trim() ?? "",
+    ),
+    onRepeat: Array.from(
+      document.querySelectorAll('[data-testid="home-on-repeat"] [data-testid="on-repeat-item"] strong'),
+    ).map(el => el.textContent?.trim() ?? ""),
+    rediscover: Array.from(
+      document.querySelectorAll('[data-testid="home-rediscover"] [data-testid="rediscover-item"] strong'),
+    ).map(el => el.textContent?.trim() ?? ""),
+  }));
+  await page.screenshot({ path: join(shotDir, "06-launch5-home-shelves.png") });
+  check(
+    "launch5-home-discovery-shelves-render",
+    homeShelves.top[0] === "Fixture FLAC" &&
+      homeShelves.onRepeat.includes("Fixture FLAC") &&
+      homeShelves.rediscover.includes("Fixture Opus") &&
+      homeShelves.rediscover.includes("Fixture ALAC"),
+    JSON.stringify(homeShelves),
+  );
+
+  /* =================================================================================
+   * Launch 6: Library tools. Edit a track's title + cover in the UI, force a real
+   * rescan and restart, then verify smart playlists and duplicate detection render.
+   * ================================================================================= */
+  const editedTitle = "Edited Fixture FLAC";
+  const flacBeforeEdit = store.getTracks().find(track => track.title === "Fixture FLAC")!;
+  const artworkBeforeEdit = flacBeforeEdit.artworkFile;
+  const coverPath = join(stateDir, "custom-cover.png");
+  writeFileSync(
+    coverPath,
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAwMCAO+ip1sAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  );
+
+  const openTrackEditorByTitle = async (title: string) => {
+    await clickNav(page, "Songs");
+    await page.waitForSelector('[data-testid="track-row"]', { timeout: 10_000 });
+    for (const row of await page.$$('[data-testid="track-row"]')) {
+      const text = await row.$eval(".title-text", node => node.textContent?.trim() ?? "").catch(() => "");
+      if (text !== title) continue;
+      const button = await row.$('button[aria-label="More actions"]');
+      if (!button) break;
+      await button.click();
+      await page.waitForSelector('[data-testid="track-edit-details"]', { timeout: 10_000 });
+      await page.click('[data-testid="track-edit-details"]');
+      await page.waitForSelector('[data-testid="track-editor"]', { timeout: 10_000 });
+      return;
+    }
+    throw new Error(`Could not open track editor for: ${title}`);
+  };
+
+  const replaceInputValue = async (selector: string, value: string) => {
+    await page.focus(selector);
+    await page.keyboard.down("Control");
+    await page.keyboard.press("KeyA");
+    await page.keyboard.up("Control");
+    await page.keyboard.press("Backspace");
+    await page.type(selector, value);
+  };
+
+  const saveTrackTitle = async (title: string) => {
+    await replaceInputValue('[data-testid="track-editor-title"]', title);
+    await page.click('[data-testid="track-editor-save"]');
+    await page
+      .waitForFunction(
+        (expected: string) =>
+          Array.from(document.querySelectorAll('[data-testid="track-row"] .title-text')).some(
+            el => el.textContent?.trim() === expected,
+          ),
+        { timeout: 10_000 },
+        title,
+      )
+      .catch(() => null);
+    await wait(250);
+  };
+
+  await openTrackEditorByTitle("Fixture FLAC");
+  const artworkInput = await page.$('[data-testid="track-editor-artwork-input"]');
+  await (
+    artworkInput as unknown as { uploadFile: (path: string) => Promise<void> } | null
+  )?.uploadFile(coverPath);
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    if (store.getTrack(flacBeforeEdit.id)?.artworkFile !== flacBeforeEdit.artworkFile) break;
+    await wait(100);
+  }
+  const artworkAfterUpload = store.getTrack(flacBeforeEdit.id)?.artworkFile ?? null;
+  await replaceInputValue('[data-testid="track-editor-title"]', editedTitle);
+  await page.screenshot({ path: join(shotDir, "07-launch6-track-editor.png") });
+  await page.click('[data-testid="track-editor-save"]');
+  await page
+    .waitForFunction(
+      (expected: string) =>
+        Array.from(document.querySelectorAll('[data-testid="track-row"] .title-text')).some(
+          el => el.textContent?.trim() === expected,
+        ),
+      { timeout: 10_000 },
+      editedTitle,
+    )
+    .catch(() => null);
+  await wait(250);
+  check(
+    "launch6-track-editor-saves-metadata-and-artwork",
+    store.getTrack(flacBeforeEdit.id)?.title === editedTitle &&
+      artworkAfterUpload !== null &&
+      artworkAfterUpload.endsWith(".png") &&
+      artworkAfterUpload !== artworkBeforeEdit,
+    `title=${store.getTrack(flacBeforeEdit.id)?.title}, artwork=${artworkAfterUpload}`,
+  );
+
+  // Close completely, force a genuine rescan of the files on disk, and relaunch: the
+  // Cadence edit must still win over the file tags the scanner reads again.
+  await page.close();
+  await scanLibrary(store, { folders: [audioDir], force: true });
+  restartBackend("1.0.1");
+  page = await launchAppPage();
+  await clickNav(page, "Songs");
+  await page.waitForSelector('[data-testid="track-row"]', { timeout: 10_000 });
+  const titlesAfterRescan = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('[data-testid="track-row"] .title-text')).map(
+      el => el.textContent?.trim() ?? "",
+    ),
+  );
+  check(
+    "launch6-metadata-edit-survives-force-rescan-and-restart",
+    titlesAfterRescan.includes(editedTitle) && !titlesAfterRescan.includes("Fixture FLAC"),
+    JSON.stringify(titlesAfterRescan),
+  );
+
+  await clickNav(page, "Playlists");
+  await page.click('[data-testid="new-smart-playlist"]');
+  await page.waitForSelector('[data-testid="smart-playlist-form"]', { timeout: 10_000 });
+  const smartPreviewText = await page.$eval(
+    '[data-testid="smart-playlist-preview"]',
+    el => el.textContent?.replace(/\s+/g, " ").trim() ?? "",
+  );
+  await page.type('[data-testid="smart-playlist-name"]', "Most played check");
+  await page.click('[data-testid="smart-playlist-form"] button[type="submit"]');
+  await page.waitForSelector('[data-testid="smart-rule-banner"]', { timeout: 10_000 });
+  const smartBannerText = await page.$eval(
+    '[data-testid="smart-rule-banner"]',
+    el => el.textContent?.replace(/\s+/g, " ").trim() ?? "",
+  );
+  const smartTrackTitles = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('[data-testid="playlist-track-list"] .title-text')).map(
+      el => el.textContent?.trim() ?? "",
+    ),
+  );
+  await page.screenshot({ path: join(shotDir, "08-launch6-smart-playlist.png") });
+  check(
+    "launch6-smart-playlist-renders-live-membership",
+    smartPreviewText.includes("match right now") &&
+      smartBannerText.includes("Most played") &&
+      smartTrackTitles[0] === editedTitle,
+    `preview=${smartPreviewText}; tracks=${JSON.stringify(smartTrackTitles)}`,
+  );
+
+  // Give a second fixture the same title/artist so the duplicate finder has a real pair
+  // (the fixture files share artist and near-identical lengths by construction).
+  await openTrackEditorByTitle("Fixture MP3");
+  await saveTrackTitle(editedTitle);
+  await clickNav(page, "Songs");
+  await page.click('[data-testid="find-duplicates"]');
+  await page.waitForSelector('[data-testid="duplicate-group"]', { timeout: 10_000 });
+  const duplicatePanel = await page.evaluate(() => ({
+    text: document.querySelector('[data-testid="duplicates-panel"]')?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+    paths: Array.from(document.querySelectorAll('[data-testid="duplicate-track"] .duplicate-track-copy em')).map(
+      el => el.textContent?.trim() ?? "",
+    ),
+  }));
+  await page.screenshot({ path: join(shotDir, "09-launch6-duplicates.png") });
+  check(
+    "launch6-duplicates-panel-groups-the-pair-with-a-keeper",
+    duplicatePanel.text.includes("Recommended keeper") &&
+      duplicatePanel.paths.some(path => path.endsWith("fixture.flac")) &&
+      duplicatePanel.paths.some(path => path.endsWith("fixture.mp3")),
+    JSON.stringify(duplicatePanel.paths),
+  );
+
+  await page.click('[data-testid="duplicate-review-all"]');
+  await page.waitForSelector('[data-testid="playlist-track-list"]', { timeout: 10_000 }).catch(() => null);
+  await wait(400);
+  const reviewTitles = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('[data-testid="playlist-track-list"] .title-text')).map(
+      el => el.textContent?.trim() ?? "",
+    ),
+  );
+  check(
+    "launch6-duplicate-review-playlist-opens-with-both-copies",
+    reviewTitles.length >= 2 && reviewTitles.every(title => title === editedTitle),
+    JSON.stringify(reviewTitles),
+  );
+
+  /* =================================================================================
+   * Launch 7: System integration surfaces that can render in a browser harness —
+   * mini-player mode, the shortcut reference, and last.fm credential settings.
+   * (The native tray and OS window resize are verified by the Windows build.)
+   * ================================================================================= */
+  await page.click('[data-testid="open-mini-player"]');
+  await page.waitForSelector('[data-testid="mini-player"]', { timeout: 10_000 });
+  // Match the native mini-player window size so the screenshot judges the real layout.
+  await page.setViewport({ width: 460, height: 160 });
+  await wait(250);
+  const miniPlayerState = await page.evaluate(() => ({
+    text: document.querySelector('[data-testid="mini-player"]')?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+    sidebarVisible: Boolean(document.querySelector(".sidebar")),
+    hasPlayToggle: Boolean(document.querySelector('[data-testid="mini-player"] [data-testid="play-toggle"]')),
+    hasSeek: Boolean(document.querySelector('[data-testid="mini-player"] input[aria-label="Seek"]')),
+  }));
+  await page.screenshot({ path: join(shotDir, "10-launch7-mini-player.png") });
+  await page.keyboard.press("Escape");
+  await page.waitForSelector(".sidebar", { timeout: 10_000 });
+  await page.setViewport({ width: 1440, height: 900 });
+  await wait(250);
+  check(
+    "launch7-mini-player-renders-and-escape-restores-full-player",
+    !miniPlayerState.sidebarVisible &&
+      miniPlayerState.hasPlayToggle &&
+      miniPlayerState.hasSeek &&
+      miniPlayerState.text.includes("Cadence"),
+    JSON.stringify(miniPlayerState),
+  );
+
+  await page.keyboard.press("?");
+  await page.waitForSelector('[data-testid="shortcuts-help"]', { timeout: 10_000 });
+  await wait(400); // let the modal entrance settle before judging/screenshot
+  const shortcutsText = await page.$eval(
+    '[data-testid="shortcuts-help"]',
+    el => el.textContent?.replace(/\s+/g, " ").trim() ?? "",
+  );
+  await page.screenshot({ path: join(shotDir, "11-launch7-shortcuts.png") });
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(
+    () => !document.querySelector('[data-testid="shortcuts-help"]'),
+    { timeout: 10_000 },
+  );
+  check(
+    "launch7-shortcut-help-opens-with-question-mark-and-closes-with-escape",
+    shortcutsText.includes("Keyboard shortcuts") &&
+      shortcutsText.includes("Mini player") &&
+      shortcutsText.includes("Favourite current track"),
+    shortcutsText.slice(0, 240),
+  );
+
+  await clickNav(page, "Settings");
+  await page.waitForSelector('[data-testid="settings-view"]', { timeout: 10_000 });
+  await page.evaluate(() => {
+    const tab = Array.from(document.querySelectorAll(".settings-tabs button")).find(
+      button => button.textContent?.trim() === "Playback",
+    ) as HTMLButtonElement | undefined;
+    tab?.click();
+  });
+  await page.waitForSelector('[data-testid="settings-lastfm"]', { timeout: 10_000 });
+  await page.type('[data-testid="lastfm-api-key"]', "test-key-123");
+  await page.type('[data-testid="lastfm-api-secret"]', "test-secret-456");
+  await page.evaluate(() => {
+    const button = Array.from(
+      document.querySelectorAll('[data-testid="settings-lastfm"] button'),
+    ).find(candidate => candidate.textContent?.trim() === "Save credentials") as
+      | HTMLButtonElement
+      | undefined;
+    button?.click();
+  });
+  await page.waitForSelector('[data-testid="lastfm-message"]', { timeout: 10_000 });
+  const lastFmMessage = await page.$eval(
+    '[data-testid="lastfm-message"]',
+    el => el.textContent?.trim() ?? "",
+  );
+  await page.$eval('[data-testid="settings-lastfm"]', el => el.scrollIntoView({ block: "start" }));
+  await wait(300);
+  await page.screenshot({ path: join(shotDir, "12-launch7-lastfm-settings.png") });
+  check(
+    "launch7-lastfm-credentials-save-through-settings",
+    lastFmMessage.includes("credentials saved") &&
+      settings.get().scrobbling.apiKey === "test-key-123" &&
+      settings.get().scrobbling.apiSecret === "test-secret-456" &&
+      settings.get().scrobbling.enabled === false,
+    `message=${lastFmMessage}; saved=${JSON.stringify(settings.get().scrobbling)}`,
   );
 
   await page.close();

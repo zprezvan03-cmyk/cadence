@@ -7,6 +7,10 @@ import type { AppSettings, DeepPartial } from "../shared/types";
 import { DEFAULT_FONT_ID } from "../shared/fonts";
 import { DEFAULT_PROVIDER_ORDER, migrateProviderOrder } from "../shared/upstream/better-lyrics/constants";
 import { DEFAULT_GRADIENT_SETTINGS } from "../shared/upstream/shaders/gradientSettings";
+import {
+  createDefaultNowPlayingProfilesSettings,
+  normalizeNowPlayingProfilesSettings,
+} from "../shared/nowPlayingProfiles";
 
 export const DEFAULT_SETTINGS: AppSettings = {
   version: 1,
@@ -17,17 +21,42 @@ export const DEFAULT_SETTINGS: AppSettings = {
     repeat: "off",
     playbackRate: 1,
     resumeOnLaunch: true,
+    crossfadeSeconds: 0,
+    gaplessPlayback: false,
+    replayGainMode: "off",
+    replayGainPreampDb: 0,
+    replayGainPreventClipping: true,
+    equalizer: {
+      enabled: false,
+      preampDb: 0,
+      bandsDb: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      presetId: "flat",
+    },
   },
   appearance: {
     accent: "#ff3d71",
     reduceMotion: false,
     compactSidebar: false,
+    compactSidebarHoverExpand: true,
     blurArtwork: true,
     fontFamily: DEFAULT_FONT_ID,
   },
   lyrics: {
+    translationSource: "auto",
+    aiTranslation: {
+      enabled: false, protocol: "openai-compatible", baseUrl: "https://api.openai.com/v1", chatPath: "/chat/completions",
+      modelsPath: "/models", apiKey: "", model: "", temperature: 0.25, maxOutputTokens: 4096, timeoutMs: 60000, thinkingMode: "auto",
+      targetLanguage: "en", customHeaders: "{}",
+    },
+    aiRomanization: {
+      enabled: false, protocol: "ollama-native", baseUrl: "http://localhost:11434", chatPath: "/api/chat", modelsPath: "/api/tags",
+      apiKey: "", model: "", temperature: 0.1, maxOutputTokens: 4096, timeoutMs: 120000, thinkingMode: "auto",
+      romanizationStandard: "auto", customHeaders: "{}",
+    },
     providerOrder: [...DEFAULT_PROVIDER_ORDER],
     autoFetch: true,
+    notFoundCooldownDays: 7,
+    fetchConcurrency: "balanced",
     offsetMs: 0,
     translationLanguage: "",
     romanization: false,
@@ -47,12 +76,24 @@ export const DEFAULT_SETTINGS: AppSettings = {
     fullscreenOnOpen: false,
     showLyricsInFullscreen: true,
   },
+  nowPlayingProfiles: createDefaultNowPlayingProfilesSettings(),
   shaders: {
     ...DEFAULT_GRADIENT_SETTINGS,
     performanceMode: "balanced",
   },
   advanced: {
     showLogs: false,
+  },
+  general: {
+    onboardingCompleted: false,
+    onboardingStep: 0,
+  },
+  scrobbling: {
+    enabled: false,
+    apiKey: "",
+    apiSecret: "",
+    sessionKey: "",
+    username: "",
   },
 };
 
@@ -74,6 +115,96 @@ export function mergeSettings<T>(base: T, patch: unknown): T {
   return result as T;
 }
 
+/** Clamps bounded settings fields; applied on load and on every patch. */
+function normalizeSettings(settings: AppSettings): AppSettings {
+  const clampNumber = (value: unknown, fallback: number, min: number, max: number): number => {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+  };
+  const playback = isPlainObject(settings.playback)
+    ? settings.playback
+    : structuredClone(DEFAULT_SETTINGS.playback);
+  const equalizer = isPlainObject(playback.equalizer)
+    ? playback.equalizer
+    : structuredClone(DEFAULT_SETTINGS.playback.equalizer);
+  playback.crossfadeSeconds = clampNumber(playback.crossfadeSeconds, 0, 0, 12);
+  playback.gaplessPlayback = Boolean(playback.gaplessPlayback);
+  if (!["off", "track", "album"].includes(playback.replayGainMode)) {
+    playback.replayGainMode = DEFAULT_SETTINGS.playback.replayGainMode;
+  }
+  playback.replayGainPreampDb = clampNumber(playback.replayGainPreampDb, 0, -12, 12);
+  playback.replayGainPreventClipping =
+    typeof playback.replayGainPreventClipping === "boolean"
+      ? playback.replayGainPreventClipping
+      : DEFAULT_SETTINGS.playback.replayGainPreventClipping;
+  playback.equalizer = {
+    enabled: Boolean(equalizer.enabled),
+    preampDb: clampNumber(equalizer.preampDb, 0, -12, 12),
+    bandsDb: Array.from({ length: 10 }, (_, index) =>
+      clampNumber(Array.isArray(equalizer.bandsDb) ? equalizer.bandsDb[index] : 0, 0, -12, 12)
+    ),
+    presetId:
+      typeof equalizer.presetId === "string" && equalizer.presetId.trim()
+        ? equalizer.presetId.trim().slice(0, 64)
+        : DEFAULT_SETTINGS.playback.equalizer.presetId,
+  };
+  settings.playback = playback as AppSettings["playback"];
+
+  const normalizeAi = (candidate: unknown, fallback: AppSettings["lyrics"]["aiTranslation"]): AppSettings["lyrics"]["aiTranslation"] => {
+    const source = isPlainObject(candidate) ? candidate : {};
+    const text = (value: unknown, defaultValue: string, limit = 2048) => typeof value === "string" ? value.trim().slice(0, limit) : defaultValue;
+    return {
+      ...fallback,
+      enabled: Boolean(source.enabled),
+      protocol: source.protocol === "ollama-native" ? "ollama-native" : "openai-compatible",
+      baseUrl: text(source.baseUrl, fallback.baseUrl), chatPath: text(source.chatPath, fallback.chatPath, 256),
+      modelsPath: text(source.modelsPath, fallback.modelsPath, 256), apiKey: text(source.apiKey, "", 4096),
+      model: text(source.model, "", 256), customHeaders: text(source.customHeaders, "{}", 8192),
+      temperature: clampNumber(source.temperature, fallback.temperature, 0, 2),
+      maxOutputTokens: Math.round(clampNumber(source.maxOutputTokens, fallback.maxOutputTokens, 1, 32768)),
+      timeoutMs: Math.round(clampNumber(source.timeoutMs, fallback.timeoutMs, 1000, 300000)),
+      thinkingMode: ["off", "low", "medium", "high", "maximum", "auto"].includes(String(source.thinkingMode))
+        ? source.thinkingMode as AppSettings["lyrics"]["aiTranslation"]["thinkingMode"]
+        : "auto",
+      ...(fallback.targetLanguage !== undefined ? { targetLanguage: text(source.targetLanguage, fallback.targetLanguage, 32) } : {}),
+      ...(fallback.romanizationStandard !== undefined ? { romanizationStandard: text(source.romanizationStandard, fallback.romanizationStandard, 80) } : {}),
+    };
+  };
+  settings.lyrics.translationSource = ["auto", "local", "ai"].includes(String(settings.lyrics.translationSource))
+    ? settings.lyrics.translationSource
+    : "auto";
+  settings.lyrics.aiTranslation = normalizeAi(settings.lyrics.aiTranslation, DEFAULT_SETTINGS.lyrics.aiTranslation);
+  settings.lyrics.aiRomanization = normalizeAi(settings.lyrics.aiRomanization, DEFAULT_SETTINGS.lyrics.aiRomanization);
+  settings.lyrics.providerOrder = migrateProviderOrder(settings.lyrics.providerOrder);
+  const cooldown = Number(settings.lyrics.notFoundCooldownDays);
+  settings.lyrics.notFoundCooldownDays = Number.isFinite(cooldown)
+    ? Math.min(30, Math.max(1, Math.round(cooldown)))
+    : DEFAULT_SETTINGS.lyrics.notFoundCooldownDays;
+  if (!["low", "balanced", "high"].includes(settings.lyrics.fetchConcurrency)) {
+    settings.lyrics.fetchConcurrency = DEFAULT_SETTINGS.lyrics.fetchConcurrency;
+  }
+  const step = Number(settings.general?.onboardingStep);
+  settings.general = {
+    onboardingCompleted: Boolean(settings.general?.onboardingCompleted),
+    onboardingStep: Number.isFinite(step) ? Math.min(4, Math.max(0, Math.round(step))) : 0,
+  };
+  settings.nowPlayingProfiles = normalizeNowPlayingProfilesSettings(settings.nowPlayingProfiles);
+  const scrobblingSource: AnyRecord = isPlainObject(settings.scrobbling) ? settings.scrobbling : {};
+  const credential = (value: unknown): string =>
+    typeof value === "string" ? value.trim().slice(0, 256) : "";
+  settings.scrobbling = {
+    enabled: Boolean(scrobblingSource.enabled),
+    apiKey: credential(scrobblingSource.apiKey),
+    apiSecret: credential(scrobblingSource.apiSecret),
+    sessionKey: credential(scrobblingSource.sessionKey),
+    username: credential(scrobblingSource.username),
+  };
+  // The Data API catalog was removed from the product. Drop the legacy section (including any
+  // stored API key) instead of carrying an unused credential in the active settings schema.
+  delete (settings as unknown as AnyRecord).youtubeCatalog;
+  return settings;
+}
+
 export function parseSettingsJson(rawJson: string | null | undefined): AppSettings {
   let settings: AppSettings;
   if (!rawJson) {
@@ -87,8 +218,7 @@ export function parseSettingsJson(rawJson: string | null | undefined): AppSettin
       return structuredClone(DEFAULT_SETTINGS);
     }
   }
-  settings.lyrics.providerOrder = migrateProviderOrder(settings.lyrics.providerOrder);
-  return settings;
+  return normalizeSettings(settings);
 }
 
 export interface SettingsPersistence {
@@ -108,7 +238,7 @@ export class SettingsCore {
   }
 
   patch(patch: DeepPartial<AppSettings>): AppSettings {
-    this.settings = mergeSettings(this.settings, patch);
+    this.settings = normalizeSettings(mergeSettings(this.settings, patch));
     this.save();
     return this.settings;
   }

@@ -8,6 +8,7 @@ import {
   Heart,
   ListPlus,
   MoreHorizontal,
+  Pencil,
   Play,
   Plus,
   Rows3,
@@ -20,6 +21,7 @@ import { usePlayer } from "../state/playerStore";
 import { useUi } from "../state/uiStore";
 import { codecSupport } from "../audio/codecs";
 import { currentTrackId } from "../state/playerStore";
+import { useLastNonNull, usePresence } from "../app/usePresence";
 import { Artwork } from "./Artwork";
 
 const ROW_HEIGHT_PX = 58;
@@ -142,6 +144,10 @@ export const TrackList = memo(function TrackList({
   testId,
 }: TrackListProps) {
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // Menu actions and dismissal flip `menu` instantly; presence only keeps the surface
+  // mounted for its fast pop-out, rendering the last target so it never blanks mid-exit.
+  const menuPresence = usePresence(menu !== null);
+  const renderedMenu = useLastNonNull(menu);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const [visibleRange, setVisibleRange] = useState({ start: 0, end: 40 });
@@ -153,6 +159,7 @@ export const TrackList = memo(function TrackList({
   const toggle = usePlayer(state => state.toggle);
   const setFavorite = useLibrary(state => state.setFavorite);
   const openPlaylistPicker = useUi(state => state.openPlaylistPicker);
+  const openTrackEditor = useUi(state => state.openTrackEditor);
   const navigate = useUi(state => state.navigate);
 
   const trackIds = useMemo(() => tracks.map(track => track.id), [tracks]);
@@ -262,21 +269,36 @@ export const TrackList = memo(function TrackList({
         <div aria-hidden="true" style={{ height: (tracks.length - end) * ROW_HEIGHT_PX, flexShrink: 0 }} />
       ) : null}
 
-      {menu ? (
-        <div className="context-menu" style={{ left: Math.max(12, menu.x - 220), top: menu.y }} ref={menuRef}>
-          <button type="button" onClick={() => { playNext([menu.track.id]); setMenu(null); }}>
+      {menuPresence.mounted && renderedMenu ? (
+        <div
+          className={`context-menu ${menuPresence.phaseClass}`}
+          data-presence={menuPresence.phase}
+          style={{ left: Math.max(12, renderedMenu.x - 220), top: renderedMenu.y }}
+          ref={menuRef}
+        >
+          <button type="button" onClick={() => { playNext([renderedMenu.track.id]); setMenu(null); }}>
             <Play size={15} /> Play next
           </button>
-          <button type="button" onClick={() => { addToQueue([menu.track.id]); setMenu(null); }}>
+          <button type="button" onClick={() => { addToQueue([renderedMenu.track.id]); setMenu(null); }}>
             <ListPlus size={15} /> Add to queue
           </button>
-          <button type="button" onClick={() => { openPlaylistPicker([menu.track.id]); setMenu(null); }}>
+          <button type="button" onClick={() => { openPlaylistPicker([renderedMenu.track.id]); setMenu(null); }}>
             <Plus size={15} /> Add to playlist…
           </button>
           <button
             type="button"
+            data-testid="track-edit-details"
             onClick={() => {
-              navigate({ name: "album", albumId: `${menu.track.albumArtist || menu.track.artist}\u0000${menu.track.album}` });
+              openTrackEditor(renderedMenu.track.id);
+              setMenu(null);
+            }}
+          >
+            <Pencil size={15} /> Edit details…
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              navigate({ name: "album", albumId: `${renderedMenu.track.albumArtist || renderedMenu.track.artist}\u0000${renderedMenu.track.album}` });
               setMenu(null);
             }}
           >
@@ -287,7 +309,7 @@ export const TrackList = memo(function TrackList({
               type="button"
               className="danger"
               onClick={() => {
-                onRemove(menu.track);
+                onRemove(renderedMenu.track);
                 setMenu(null);
               }}
             >

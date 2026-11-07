@@ -12,6 +12,7 @@ import { usePlayer } from "../../state/playerStore";
 import { useUi } from "../../state/uiStore";
 import { formatTime } from "../../player/queue";
 import { Artwork } from "../../components/Artwork";
+import { SourceBadge } from "../../components/SourceBadge";
 
 export function HistoryView() {
   const { entries, loading, error, load, clear } = useHistory(state => state);
@@ -24,12 +25,16 @@ export function HistoryView() {
 
   const handlePlay = useCallback(
     (entry: HistoryEntry) => {
-      const track = selectTrack(entry.trackId);
-      if (!track) {
-        void showToast("This track is no longer in your library.");
+      if (entry.source.kind === "local") {
+        const track = selectTrack(entry.source.trackId);
+        if (!track) {
+          void showToast("This track is no longer in your library.");
+          return;
+        }
+        void playTrack(entry.source.trackId);
         return;
       }
-      void playTrack(entry.trackId);
+      void showToast("Remote playback is not available in this build.");
     },
     [playTrack, showToast],
   );
@@ -49,7 +54,12 @@ export function HistoryView() {
     return <div className="view-loading">Loading history…</div>;
   }
 
-  if (error) {
+  // A storage error (e.g. a failed clear) must never hide entries that are safely
+  // in the store: that would make history look deleted when it is not, and with the
+  // clear button gone there would be no way to recover in-session. The full-page
+  // error is only for having nothing to show; otherwise the list renders with the
+  // error surfaced as a banner above it.
+  if (error && entries.length === 0) {
     return (
       <div className="empty-state" data-testid="history-error">
         <p>Unable to load listening history.</p>
@@ -89,10 +99,17 @@ export function HistoryView() {
         </div>
       </header>
 
+      {error ? (
+        <div className="empty-state" data-testid="history-error">
+          <p>Something went wrong with listening history storage.</p>
+          <p className="muted">{error}</p>
+        </div>
+      ) : null}
+
       <div className="history-list">
         {entries.map(entry => {
-          const track = selectTrack(entry.trackId);
-          const available = track !== null;
+          const track = entry.source.kind === "local" ? selectTrack(entry.source.trackId) : null;
+          const available = entry.source.kind === "local" && track !== null;
           const payload = entry.payload;
           const title = payload.title || "Unknown title";
           return (
@@ -102,6 +119,7 @@ export function HistoryView() {
               className={`history-row${available ? "" : " history-row-unavailable"}`}
               onClick={() => void handlePlay(entry)}
               data-testid="history-entry"
+              data-source-kind={entry.source.kind}
             >
               <div className="history-artwork">
                 <Artwork src={payload.artworkUrl ?? null} alt={payload.album || title} size="xs" />
@@ -112,9 +130,17 @@ export function HistoryView() {
                   {payload.artist}{payload.album ? ` · ${payload.album}` : ""}
                 </span>
               </div>
+              <SourceBadge source={entry.source} />
               <span className="history-time">{formatTime(payload.duration)}</span>
               {!available ? (
-                <span className="history-muted" title="This file was removed from the library.">
+                <span
+                  className="history-muted"
+                  title={
+                    entry.source.kind === "local"
+                      ? "This file was removed from the library."
+                      : "Remote playback is not available in this build."
+                  }
+                >
                   unavailable
                 </span>
               ) : null}

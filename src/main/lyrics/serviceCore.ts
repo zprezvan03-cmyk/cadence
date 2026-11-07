@@ -30,7 +30,14 @@ import { fetchBetterLyrics, searchBetterLyrics } from "./betterLyrics";
 import { fetchUnison, searchUnison } from "./unison";
 import { fetchBinimum, searchBinimum } from "./binimum";
 import type { LocalLyrics, LocalLyricsReader } from "./localLyricsCore";
-import { isAbort, type ProviderOutcome, type ProviderQuery, type ProviderStatus } from "./http";
+import {
+  ConcurrencyLimiter,
+  FETCH_CONCURRENCY_PRESETS,
+  isAbort,
+  type ProviderOutcome,
+  type ProviderQuery,
+  type ProviderStatus,
+} from "./http";
 import { inspectLyricsPayload } from "./syncInspection";
 
 interface NetworkModule {
@@ -96,6 +103,37 @@ interface NetworkResult {
   definitive: boolean;
   /** Where the answer came from: a fresh fan-out, the stored answer, or no lookup at all. */
   source: "network" | "cache" | "skipped";
+  /** Provider modules that completed normally, persisted as cache coverage. */
+  queriedModules?: string[];
+}
+
+/**
+ * Whether a library track still needs provider work, used to build the Fetch All queue and the
+ * onboarding/Settings coverage statistics without issuing any request.
+ */
+export interface TrackLyricsAssessment {
+  needsWork: boolean;
+  reason:
+    | "invalid-metadata"
+    | "never-queried"
+    | "providers-unchecked"
+    | "stale"
+    | "not-found-cooldown"
+    | "fully-processed";
+  /** Some usable lyrics already exist (local file/tag, manual choice or cached remote). */
+  hasLyrics: boolean;
+  /** Every currently-enabled provider module has a fresh cached answer. */
+  fullyProcessed: boolean;
+}
+
+export interface AssessableTrack {
+  id: number;
+  title: string;
+  artist: string;
+  album: string;
+  duration: number;
+  hasSidecarLyrics?: boolean;
+  hasEmbeddedLyrics?: boolean;
 }
 
 /** One locally sourced candidate plus the format and provenance it should be cached with. */
@@ -167,7 +205,7 @@ function shareInFlight<T>(
     });
   }
 
-  return new Promise<T>((resolve, reject) => {
+  const consumer = new Promise<T>((resolve, reject) => {
     let settled = false;
     const onAbort = () => {
       if (settled) return;
@@ -203,6 +241,11 @@ function shareInFlight<T>(
       }
     );
   });
+  // Abandoning a consumer (track switch, superseded search) is normal operation, and with
+  // bounded provider concurrency the rejection can settle a turn before a late caller attaches
+  // its handler. Mark the branch handled; callers that do await still receive the rejection.
+  consumer.catch(() => undefined);
+  return consumer;
 }
 
 export type LyricsLibraryLookup = Pick<LibraryStoreCore, "getTrack" | "getLyrics">;
@@ -211,12 +254,35 @@ export class LyricsServiceCore {
   private readonly inFlight = new Map<string, InFlightEntry<NetworkResult>>();
   private readonly searchInFlight = new Map<string, InFlightEntry<LyricsSearchResponse>>();
   private readonly rateLimitedUntil = new Map<string, number>();
+  /**
+   * The one central limiter every provider module run passes through — Autofetch, Fetch All and
+   * manual searches alike — so total provider concurrency is bounded globally, never per caller.
+   */
+  private readonly providerLimiter = new ConcurrencyLimiter(
+    FETCH_CONCURRENCY_PRESETS.balanced.providerRequests
+  );
+  /** Hard cap per provider module; the providers' own per-request HTTP timeouts fire first. */
+  private moduleTimeoutMs = 25_000;
 
   constructor(
     private readonly store: LyricsLibraryLookup,
     private readonly cache: LyricsCacheCore,
     private readonly localReader: LocalLyricsReader
   ) {}
+
+  /** Applies the Settings concurrency preset to the central provider limiter. */
+  setProviderConcurrency(maxConcurrentProviderRequests: number): void {
+    this.providerLimiter.setLimit(maxConcurrentProviderRequests);
+  }
+
+  getProviderConcurrency(): number {
+    return this.providerLimiter.limit;
+  }
+
+  /** Test/embedding hook for the per-provider independent timeout. */
+  setModuleTimeoutMs(ms: number): void {
+    if (Number.isFinite(ms) && ms > 0) this.moduleTimeoutMs = ms;
+  }
 
   private orderFor(providerOrder: string[] | undefined): string[] {
     const migrated = migrateProviderOrder(providerOrder);
@@ -448,12 +514,14 @@ export class LyricsServiceCore {
               origin: "network" as const,
             })),
             negative: networkResult.candidates.length === 0,
+            ...(networkResult.queriedModules ? { queriedModules: networkResult.queriedModules } : {}),
+            enabledKeys: [...enabledKeys],
           }
         : null,
       generation
     );
 
-    return { candidates, providerStatus };
+    return { candidates, providerStatus, definitive: networkResult.definitive };
   }
 
   /** Identity used for the per-track cache entry; the library row wins over the request fields. */
@@ -539,6 +607,47 @@ export class LyricsServiceCore {
     }
   }
 
+  /**
+   * Provider modules a cached answer already covers. Entries written before coverage tracking
+   * (`queriedModules`/`enabledKeys` absent) are treated as covering everything, preserving
+   * their previous serve-from-cache behaviour exactly.
+   */
+  private coveredModuleIds(
+    cached: CachedNetworkSection | null,
+    activeModules: readonly NetworkModule[]
+  ): Set<string> {
+    if (!cached) return new Set();
+    if (cached.queriedModules) return new Set(cached.queriedModules);
+    if (cached.enabledKeys) {
+      const thenEnabled = new Set(cached.enabledKeys);
+      return new Set(
+        activeModules.filter(module => module.keys.some(key => thenEnabled.has(key))).map(m => m.id)
+      );
+    }
+    return new Set(activeModules.map(module => module.id));
+  }
+
+  private servesCachedNetwork(
+    cached: CachedNetworkSection,
+    enabledKeys: ReadonlySet<string>,
+    offline: boolean
+  ): NetworkResult {
+    const wanted = cached.candidates.filter(candidate => enabledKeys.has(candidate.source));
+    // Cached results for a slot the user has since switched off are dropped, never re-labelled
+    // as an enabled sibling — and the status says so rather than claiming a cached miss.
+    const droppedByConfig = cached.candidates.filter(candidate => !enabledKeys.has(candidate.source));
+    return {
+      candidates: wanted.map(stripCacheMeta),
+      definitive: true,
+      source: "cache",
+      status: NETWORK_MODULES.map(module =>
+        module.keys.some(key => enabledKeys.has(key))
+          ? this.cachedStatus(module, wanted, droppedByConfig, offline ? "Cached copy (offline)" : undefined)
+          : { provider: module.id, status: "skipped" as const, detail: "Provider disabled" }
+      ),
+    };
+  }
+
   private async resolveNetwork(
     request: LyricsResolveRequest,
     enabledKeys: ReadonlySet<string>,
@@ -553,12 +662,54 @@ export class LyricsServiceCore {
     };
 
     const activeModules = NETWORK_MODULES.filter(module => module.keys.some(key => enabledKeys.has(key)));
+    const force = Boolean(request.forceRefresh);
 
     // Offline mode only stops the *network*: a remotely fetched copy that is already on disk is
     // local data now, so it keeps working (and a stale copy beats no lyrics on a plane).
-    const serveCached = cached !== null && (request.localOnly || LyricsCacheCore.networkIsFresh(cached));
+    const fresh = cached !== null && this.cache.networkFresh(cached);
+    const serveCached = cached !== null && (request.localOnly || (fresh && !force));
 
-    if (!serveCached && (request.localOnly || activeModules.length === 0)) {
+    if (serveCached && cached) {
+      const covered = this.coveredModuleIds(cached, activeModules);
+      const missing = activeModules.filter(module => !covered.has(module.id));
+      // A fresh cached answer short-circuits the network — unless providers that are enabled
+      // now were never queried for this recording. Only those run; already-cached valid
+      // provider results are never blindly re-fetched.
+      if (request.localOnly || missing.length === 0 || activeModules.length === 0) {
+        return this.servesCachedNetwork(cached, enabledKeys, Boolean(request.localOnly));
+      }
+      const subset = await this.sharedLookup(
+        LyricsCacheCore.key(request.artist, request.title, request.album, request.duration),
+        query,
+        enabledKeys,
+        signal,
+        missing
+      );
+      const cachedWanted = cached.candidates
+        .filter(candidate => enabledKeys.has(candidate.source))
+        .map(stripCacheMeta);
+      const seen = new Set<string>();
+      const merged: LyricsCandidate[] = [];
+      for (const candidate of [...cachedWanted, ...subset.candidates]) {
+        const dedupe = `${candidate.source}\u0000${candidate.text}`;
+        if (seen.has(dedupe)) continue;
+        seen.add(dedupe);
+        merged.push(candidate);
+      }
+      const subsetIds = new Set(missing.map(module => module.id));
+      const cachedStatus = this.servesCachedNetwork(cached, enabledKeys, false).status.filter(
+        entry => !subsetIds.has(entry.provider)
+      );
+      return {
+        candidates: merged,
+        definitive: subset.definitive,
+        source: "network",
+        status: [...cachedStatus, ...subset.status],
+        queriedModules: [...new Set([...covered, ...(subset.queriedModules ?? [])])],
+      };
+    }
+
+    if (request.localOnly || activeModules.length === 0) {
       const detail = request.localOnly ? "Offline mode" : "Provider disabled";
       return {
         candidates: [],
@@ -568,24 +719,125 @@ export class LyricsServiceCore {
       };
     }
 
-    if (serveCached && cached) {
-      const wanted = cached.candidates.filter(candidate => enabledKeys.has(candidate.source));
-      // Cached results for a slot the user has since switched off are dropped, never re-labelled
-      // as an enabled sibling — and the status says so rather than claiming a cached miss.
-      const droppedByConfig = cached.candidates.filter(candidate => !enabledKeys.has(candidate.source));
+    const result = await this.sharedLookup(
+      LyricsCacheCore.key(request.artist, request.title, request.album, request.duration),
+      query,
+      enabledKeys,
+      signal,
+      activeModules
+    );
+    // Keep the historical status list complete: modules the user switched off still report a
+    // "skipped" row for the provider picker, they just never run.
+    const activeIds = new Set(activeModules.map(module => module.id));
+    const disabledStatus = NETWORK_MODULES.filter(module => !activeIds.has(module.id)).map(module => ({
+      provider: module.id,
+      status: "skipped" as const,
+      detail: "Provider disabled",
+    }));
+    return disabledStatus.length ? { ...result, status: [...result.status, ...disabledStatus] } : result;
+  }
+
+  /**
+   * Cache-only assessment for Fetch All queue generation and coverage statistics. Mirrors the
+   * freshness/coverage rules `resolveNetwork` applies, without touching the network or local
+   * files (sidecar/embedded presence comes from the library row's flags).
+   */
+  assessTrack(track: AssessableTrack, providerOrder?: string[]): TrackLyricsAssessment {
+    if (!track.title?.trim()) {
+      return { needsWork: false, reason: "invalid-metadata", hasLyrics: false, fullyProcessed: false };
+    }
+    const order = this.orderFor(providerOrder);
+    const enabledKeys = new Set<string>(order.filter(key => !key.startsWith("d_")));
+    const activeModules = NETWORK_MODULES.filter(module =>
+      module.keys.some(key => enabledKeys.has(key))
+    );
+    const identity: CachedTrackIdentity = {
+      id: track.id,
+      title: track.title,
+      artist: track.artist,
+      album: track.album,
+      duration: track.duration,
+    };
+    const entry = this.cachedTrackEntry(LyricsCacheCore.trackKey(track.id, identity), identity);
+    const hasLyrics = Boolean(
+      track.hasSidecarLyrics ||
+        track.hasEmbeddedLyrics ||
+        (entry && entry.candidates.length > 0) ||
+        (entry?.network && entry.network.candidates.length > 0)
+    );
+    if (activeModules.length === 0) {
+      return { needsWork: false, reason: "fully-processed", hasLyrics, fullyProcessed: true };
+    }
+    if (!entry?.network) {
+      return { needsWork: true, reason: "never-queried", hasLyrics, fullyProcessed: false };
+    }
+    const covered = this.coveredModuleIds(entry.network, activeModules);
+    const missing = activeModules.filter(module => !covered.has(module.id));
+    const fresh = this.cache.networkFresh(entry.network);
+    if (fresh && missing.length === 0) {
       return {
-        candidates: wanted.map(stripCacheMeta),
-        definitive: true,
-        source: "cache",
-        status: NETWORK_MODULES.map(module =>
-          module.keys.some(key => enabledKeys.has(key))
-            ? this.cachedStatus(module, wanted, droppedByConfig, request.localOnly ? "Cached copy (offline)" : undefined)
-            : { provider: module.id, status: "skipped" as const, detail: "Provider disabled" }
-        ),
+        needsWork: false,
+        reason: entry.network.negative ? "not-found-cooldown" : "fully-processed",
+        hasLyrics,
+        fullyProcessed: true,
       };
     }
+    return {
+      needsWork: true,
+      reason: missing.length > 0 ? "providers-unchecked" : "stale",
+      hasLyrics,
+      fullyProcessed: false,
+    };
+  }
 
-    return this.sharedLookup(LyricsCacheCore.key(request.artist, request.title, request.album, request.duration), query, enabledKeys, signal);
+  /**
+   * Shares one recording's definitive network answer with a duplicate library file (same
+   * normalized metadata + duration cluster), so the duplicate needs no provider requests of its
+   * own. Local files/tags and manual choices stay per-file and are never copied.
+   */
+  shareRecordingResult(fromTrackId: number, toTrack: AssessableTrack): boolean {
+    const fromTrack = this.store.getTrack(fromTrackId);
+    const fromIdentity: CachedTrackIdentity = {
+      id: fromTrackId,
+      title: fromTrack?.title ?? "",
+      artist: fromTrack?.artist ?? "",
+      album: fromTrack?.album ?? "",
+      duration: fromTrack?.duration ?? 0,
+    };
+    const source = this.cachedTrackEntry(
+      LyricsCacheCore.trackKey(fromTrackId, fromIdentity),
+      fromIdentity
+    );
+    if (!source?.network) return false;
+    const toIdentity: CachedTrackIdentity = {
+      id: toTrack.id,
+      title: toTrack.title,
+      artist: toTrack.artist,
+      album: toTrack.album,
+      duration: toTrack.duration,
+    };
+    const toKey = LyricsCacheCore.trackKey(toTrack.id, toIdentity);
+    const existing = this.cachedTrackEntry(toKey, toIdentity);
+    if (existing?.network && this.cache.networkFresh(existing.network)) return false;
+    this.cache.putTrack(
+      toKey,
+      toIdentity,
+      (existing?.candidates ?? []).map(candidate => ({
+        candidate: stripCacheMeta(candidate),
+        format: candidate.format,
+        origin: candidate.origin,
+      })),
+      {
+        candidates: source.network.candidates.map(candidate => ({
+          candidate: stripCacheMeta(candidate),
+          origin: "network" as const,
+        })),
+        negative: source.network.negative,
+        ...(source.network.queriedModules ? { queriedModules: source.network.queriedModules } : {}),
+        ...(source.network.enabledKeys ? { enabledKeys: source.network.enabledKeys } : {}),
+      }
+    );
+    return true;
   }
 
   private inFlightKey(cacheKey: string, enabledKeys: ReadonlySet<string>): string {
@@ -703,7 +955,27 @@ export class LyricsServiceCore {
     }
     const blocked = this.checkRateLimit(module.id);
     if (blocked) return Promise.resolve(blocked);
-    return module.run(query, enabledKeys, signal);
+    // Every provider run passes the central limiter and gets its own timeout: a slow provider
+    // can neither exceed the global request budget nor block the whole search. A module timeout
+    // is reported as that provider's error — never as an abort of the caller's resolve and
+    // never as "not found" (the fan-out marks the answer non-definitive).
+    return this.providerLimiter.run(async () => {
+      const timeout = AbortSignal.timeout(this.moduleTimeoutMs);
+      const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+      // A queued run whose caller already left must not start a request nobody can abort.
+      if (combined.aborted && !timeout.aborted) throw makeAbortError();
+      try {
+        return await module.run(query, enabledKeys, combined);
+      } catch (error) {
+        if (isAbort(error) && !signal?.aborted && timeout.aborted) {
+          return {
+            candidates: [],
+            statuses: [{ provider: module.id, status: "error" as const, detail: "Request timed out" }],
+          };
+        }
+        throw error;
+      }
+    });
   }
 
   private async runSearch(
@@ -780,34 +1052,42 @@ export class LyricsServiceCore {
     cacheKey: string,
     query: ProviderQuery,
     enabledKeys: ReadonlySet<string>,
-    signal?: AbortSignal
+    signal: AbortSignal | undefined,
+    modules: readonly NetworkModule[]
   ): Promise<NetworkResult> {
-    const flightKey = this.inFlightKey(cacheKey, enabledKeys);
+    // The flight key includes the module subset, so a full fan-out and a "newly enabled
+    // providers only" pass never masquerade as each other, while identical concurrent asks
+    // (Autofetch + Fetch All + manual) share one underlying request set.
+    const moduleKeys = new Set(modules.flatMap(module => module.keys.filter(key => enabledKeys.has(key))));
+    const flightKey = this.inFlightKey(cacheKey, moduleKeys);
     return shareInFlight(this.inFlight, flightKey, signal, sharedSignal =>
-      this.runNetworkModules(query, enabledKeys, sharedSignal)
+      this.runNetworkModules(query, enabledKeys, sharedSignal, modules)
     );
   }
 
   private async runNetworkModules(
     query: ProviderQuery,
     enabledKeys: ReadonlySet<string>,
-    signal?: AbortSignal
+    signal: AbortSignal | undefined,
+    modules: readonly NetworkModule[]
   ): Promise<NetworkResult> {
     const settled = await Promise.allSettled(
-      NETWORK_MODULES.map(module => this.runModule(module, query, enabledKeys, signal))
+      modules.map(module => this.runModule(module, query, enabledKeys, signal))
     );
 
     const candidates: LyricsCandidate[] = [];
     const status: ProviderStatus[] = [];
+    const queriedModules: string[] = [];
     let definitive = true;
 
     settled.forEach((outcome, index) => {
-      const module = NETWORK_MODULES[index];
+      const module = modules[index];
       if (outcome.status === "fulfilled") {
         this.recordRateLimits(module.id, outcome.value.statuses);
         candidates.push(...outcome.value.candidates);
         status.push(...outcome.value.statuses);
         if (outcome.value.statuses.some(entry => entry.status === "error")) definitive = false;
+        else queriedModules.push(module.id);
         return;
       }
       if (isAbort(outcome.reason)) throw outcome.reason;
@@ -819,7 +1099,7 @@ export class LyricsServiceCore {
       });
     });
 
-    return { candidates, status, definitive, source: "network" };
+    return { candidates, status, definitive, source: "network", queriedModules };
   }
 
   /**

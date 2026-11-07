@@ -8,12 +8,22 @@ import { useEffect } from "react";
 import type { AppSettings, MediaCommand } from "../../shared/types";
 import { inferArtworkMimeType } from "../../main/media/protocolHandler";
 import { audioEngine } from "../audio/engine";
+import { computeReplayGain } from "../audio/replayGain";
 import { applyFontFamily } from "./fonts";
 import { useLibrary } from "../state/libraryStore";
-import { readSession, usePlayer, currentTrackId } from "../state/playerStore";
+import {
+  currentMediaItem as currentPlayerMediaItem,
+  currentQueueEntry,
+  pruneSessionQueue,
+  readSession,
+  usePlayer,
+  currentTrackId,
+} from "../state/playerStore";
+import { getTrackById } from "../state/trackRegistry";
 import { useSettings } from "../state/settingsStore";
 import { useUi } from "../state/uiStore";
 import { useHistory } from "../state/historyStore";
+import { mediaItemFromLocalTrack, trackSourceKey } from "../../shared/media";
 import { formatTime } from "../player/queue";
 import {
   explainPlaybackFailure,
@@ -60,14 +70,20 @@ export function useBootstrap(): void {
       if (settings.playback.shuffle !== player.shuffle) player.toggleShuffle();
 
       if (settings.playback.resumeOnLaunch && savedSession) {
-        // Drop queue entries whose files no longer exist in the library.
-        const available = useLibrary.getState().tracksById;
-        const queue = savedSession.queue.filter(id => available.has(id));
-        if (queue.length > 0) {
-          await usePlayer.getState().restore({ ...savedSession, queue });
+        // Drop local entries whose files no longer exist and legacy non-local entries, remapping
+        // the playback order/current occurrence in the same operation.
+        const available = new Set(useLibrary.getState().tracksById.keys());
+        const session = pruneSessionQueue(savedSession, available);
+        if (session.queue.length > 0) {
+          await usePlayer.getState().restore(session);
         }
       }
     })();
+
+    const isLocalCurrent = (): boolean => {
+      const entry = currentQueueEntry(usePlayer.getState());
+      return !entry || entry.item.source.kind === "local";
+    };
 
     const unsubscribers = [
       audioEngine.on("time", ({ position, duration, buffered }) => {
@@ -77,9 +93,10 @@ export function useBootstrap(): void {
         usePlayer.getState().syncState(state);
       }),
       audioEngine.on("metadata", ({ duration }) => {
-        if (duration > 0) usePlayer.setState({ duration });
+        if (duration > 0 && isLocalCurrent()) usePlayer.setState({ duration });
       }),
       audioEngine.on("error", ({ message, code, mediaMessage, src }) => {
+        if (!isLocalCurrent()) return;
         // Turn a bare media error code into something the listener can act on, while keeping
         // file-access errors (403/404) separate from unsupported-codec and decode errors.
         const trackId = currentTrackId(usePlayer.getState());
@@ -113,10 +130,10 @@ export function useBootstrap(): void {
         }
       }),
       audioEngine.on("volume", ({ volume, muted }) => {
-        usePlayer.setState({ volume, muted });
+        if (isLocalCurrent()) usePlayer.setState({ volume, muted });
       }),
       audioEngine.on("rate", ({ rate }) => {
-        usePlayer.setState({ rate });
+        if (isLocalCurrent()) usePlayer.setState({ rate });
       }),
     ];
 
@@ -171,6 +188,7 @@ export function useBootstrap(): void {
       if (action === "add-folder") void useLibrary.getState().addFolder();
       if (action === "rescan") void useLibrary.getState().rescan();
       if (action === "toggle-fullscreen-lyrics") useUi.getState().toggleFullscreenLyrics();
+      if (action === "toggle-mini-player") useUi.getState().toggleMiniPlayer();
     });
 
     const unsubscribeProgress = window.cadence?.library?.onScanProgress?.(progress => {
@@ -192,15 +210,28 @@ export function useBootstrap(): void {
 
     const updateMediaSession = () => {
       const state = usePlayer.getState();
+      const entry = currentQueueEntry(state);
       const trackId = currentTrackId(state);
       const track = trackId === null ? null : useLibrary.getState().tracksById.get(trackId) ?? null;
+      const queuedItem = currentPlayerMediaItem(state);
+      const item = !entry
+        ? null
+        : entry.item.source.kind === "local"
+          ? track
+            ? mediaItemFromLocalTrack(track, entry.item.fetchedAt || Date.now())
+            : queuedItem
+          : queuedItem;
+      const source = item?.source ?? null;
+      const sourceKey = source ? trackSourceKey(source) : "none";
 
-      // Report discrete state transitions to the desktop bridge without spamming 10 Hz ticks.
-      const reportKey = `${trackId ?? "none"}|${state.isPlaying}|${state.repeat}|${state.shuffle}|${state.orderPosition}`;
+      // Report discrete state transitions to the desktop bridge without spamming clock ticks.
+      const reportKey = `${entry?.occurrenceId ?? "none"}|${sourceKey}|${state.isPlaying}|${state.playbackMechanism}|${state.repeat}|${state.shuffle}|${state.orderPosition}`;
       if (reportKey !== lastReportedKey) {
         lastReportedKey = reportKey;
         void window.cadence?.player?.reportState?.({
           trackId,
+          source,
+          playbackMechanism: state.playbackMechanism,
           position: state.position,
           duration: state.duration,
           playing: state.isPlaying,
@@ -209,14 +240,14 @@ export function useBootstrap(): void {
           playbackRate: state.rate,
           shuffle: state.shuffle,
           repeat: state.repeat,
-          queue: state.queue,
+          queue: state.queue.map(queueEntry => queueEntry.item.source),
           queueIndex: state.orderPosition,
         });
       }
 
       if (!("mediaSession" in navigator)) return;
 
-      if (!track) {
+      if (!item) {
         if (lastMetadataSignature !== "") {
           lastMetadataSignature = "";
           try {
@@ -230,19 +261,19 @@ export function useBootstrap(): void {
       }
 
       try {
-        const signature = `${track.id}\u0000${track.title}\u0000${track.artist}\u0000${track.album}\u0000${track.artworkUrl ?? ""}`;
+        const signature = `${sourceKey}\u0000${item.title}\u0000${item.artistLabel}\u0000${item.albumLabel ?? ""}\u0000${item.artworkUrl ?? ""}`;
         if (signature !== lastMetadataSignature && typeof MediaMetadata !== "undefined") {
           lastMetadataSignature = signature;
           navigator.mediaSession.metadata = new MediaMetadata({
-            title: track.title,
-            artist: track.artist,
-            album: track.album,
-            artwork: track.artworkUrl
+            title: item.title,
+            artist: item.artistLabel,
+            album: item.albumLabel ?? "",
+            artwork: item.artworkUrl
               ? [
                   {
-                    src: track.artworkUrl,
+                    src: item.artworkUrl,
                     sizes: "512x512",
-                    type: inferArtworkMimeType(track.artworkUrl),
+                    type: inferArtworkMimeType(item.artworkUrl),
                   },
                 ]
               : [],
@@ -265,23 +296,16 @@ export function useBootstrap(): void {
       [
         "play",
         () => {
-          if (performance.now() - lastHardwareCommandAt < MEDIA_ACTION_DEDUP_MS) return;
-          if (!usePlayer.getState().isPlaying) void usePlayer.getState().toggle();
+          if (!usePlayer.getState().isPlaying) dispatchMediaCommand("play-pause", false);
         },
       ],
       [
         "pause",
         () => {
-          if (performance.now() - lastHardwareCommandAt < MEDIA_ACTION_DEDUP_MS) return;
-          if (usePlayer.getState().isPlaying) void usePlayer.getState().toggle();
+          if (usePlayer.getState().isPlaying) dispatchMediaCommand("play-pause", false);
         },
       ],
-      [
-        "stop",
-        () => {
-          audioEngine.pause();
-        },
-      ],
+      ["stop", () => dispatchMediaCommand("stop", false)],
       ["previoustrack", () => dispatchMediaCommand("previous", false)],
       ["nexttrack", () => dispatchMediaCommand("next", false)],
       ["seekbackward", () => dispatchMediaCommand("seek-back", false)],
@@ -318,6 +342,16 @@ export function useBootstrap(): void {
       const cmd = event.ctrlKey || event.metaKey;
       const lower = event.key.toLowerCase();
 
+      // The shortcut reference is modal: while it is open, playback shortcuts
+      // must not keep firing behind it. Escape and ? both dismiss it.
+      if (ui.shortcutsHelpOpen) {
+        if (event.key === "Escape" || event.key === "?") {
+          event.preventDefault();
+          ui.setShortcutsHelpOpen(false);
+        }
+        return;
+      }
+
       if (cmd && lower === "k") {
         event.preventDefault();
         document.getElementById("global-search")?.focus();
@@ -336,6 +370,18 @@ export function useBootstrap(): void {
       if (cmd && !event.shiftKey && lower === "p") {
         event.preventDefault();
         void player.toggle();
+        return;
+      }
+      if (cmd && event.shiftKey && lower === "p") {
+        event.preventDefault();
+        ui.toggleMiniPlayer();
+        return;
+      }
+      if (cmd && !event.shiftKey && lower === "l") {
+        event.preventDefault();
+        const trackId = currentTrackId(player);
+        const track = trackId === null ? null : useLibrary.getState().tracksById.get(trackId) ?? null;
+        if (track) void useLibrary.getState().setFavorite(track.id, !track.favorite);
         return;
       }
       if (cmd && event.key === "ArrowRight") {
@@ -423,6 +469,10 @@ export function useBootstrap(): void {
         case "R":
           player.cycleRepeat();
           break;
+        case "?":
+          event.preventDefault();
+          ui.setShortcutsHelpOpen(true);
+          break;
         case "Escape":
           // Overlays consume Escape before the immersive view does. QueuePanel also listens for
           // this key; toggling to false in both places is idempotent and prevents a double exit.
@@ -434,6 +484,11 @@ export function useBootstrap(): void {
             event.preventDefault();
             event.stopImmediatePropagation();
             ui.toggleQueue(false);
+            return;
+          }
+          if (ui.miniPlayer) {
+            event.preventDefault();
+            ui.setMiniPlayer(false);
             return;
           }
           if (ui.fullscreenLyrics) {
@@ -492,6 +547,10 @@ export function useBootstrap(): void {
         if (player.rate !== settings.playback.playbackRate) player.setRate(settings.playback.playbackRate);
         if (player.repeat !== settings.playback.repeat) player.setRepeat(settings.playback.repeat);
         if (player.shuffle !== settings.playback.shuffle) player.toggleShuffle();
+        audioEngine.applyEqualizer(settings.playback.equalizer);
+        const trackId = currentTrackId(player);
+        const track = trackId === null ? null : getTrackById(trackId);
+        audioEngine.setTrackGain(computeReplayGain(track, settings.playback).linear);
       } finally {
         applyingSettings = false;
       }
@@ -528,8 +587,16 @@ export function useBootstrap(): void {
       root.style.setProperty("--accent", settings.appearance.accent);
       root.dataset.reduceMotion = settings.appearance.reduceMotion ? "true" : "false";
       root.dataset.compactSidebar = settings.appearance.compactSidebar ? "true" : "false";
+      root.dataset.compactSidebarHoverExpand = settings.appearance.compactSidebarHoverExpand ? "true" : "false";
       root.dataset.blurArtwork = settings.appearance.blurArtwork ? "true" : "false";
       applyFontFamily(settings.appearance.fontFamily, root);
+      // Enable the sidebar-width transition only after the restored layout has painted, so a
+      // saved compact sidebar starts compact instead of visibly shrinking on every launch.
+      if (root.dataset.motionReady !== "true") {
+        requestAnimationFrame(() => {
+          root.dataset.motionReady = "true";
+        });
+      }
     };
     // Settings that loaded before this effect ran (a remount, StrictMode) still reach the root.
     apply(useSettings.getState().settings);
@@ -569,10 +636,9 @@ export function useBootstrap(): void {
   // Document title, so the taskbar and window capture reflect the current song.
   useEffect(() => {
     return usePlayer.subscribe(state => {
-      const trackId = currentTrackId(state);
-      const track = trackId === null ? null : useLibrary.getState().tracksById.get(trackId);
-      document.title = track ? `${track.title} · ${track.artist} — Cadence` : "Cadence";
-      if (track && state.duration > 0) {
+      const item = currentPlayerMediaItem(state);
+      document.title = item ? `${item.title} · ${item.artistLabel} — Cadence` : "Cadence";
+      if (item && state.duration > 0) {
         document.body.dataset.playback = state.isPlaying ? "playing" : "paused";
         document.body.dataset.position = formatTime(state.position);
       }

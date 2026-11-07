@@ -3,7 +3,7 @@
  * Written for Cadence.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Disc3 } from "lucide-react";
 import { measureArtworkAccent } from "../upstream/shaders/artworkBrightness";
 
@@ -60,10 +60,13 @@ const FALLBACK_GRADIENTS = [
 
 export function Artwork({ src, alt, size = "md", rounded = "md", className = "", accentVar }: ArtworkProps) {
   const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const imgRef = useRef<HTMLImageElement | null>(null);
   const [accent, setAccent] = useState<string | null>(() => (src && accentVar ? cachedAccent(src) : null));
 
   useEffect(() => {
     setFailed(false);
+    setLoaded(false);
     // Ordinary artwork only needs the <img>; decoding another bitmap for an unused CSS variable
     // made every song row fetch and analyse its cover. Accent work is opt-in and shared per URL.
     if (!src || !accentVar) {
@@ -84,6 +87,13 @@ export function Artwork({ src, alt, size = "md", rounded = "md", className = "",
     };
   }, [src, accentVar]);
 
+  // A cached cover can finish before React's onLoad is observed; treat an
+  // already-complete image as loaded so the fade-in can never strand it invisible.
+  useEffect(() => {
+    const img = imgRef.current;
+    if (img?.complete && img.naturalWidth > 0) setLoaded(true);
+  }, [src]);
+
   const gradient = useMemo(() => {
     let hash = 0;
     for (let i = 0; i < alt.length; i++) hash = (hash * 31 + alt.charCodeAt(i)) >>> 0;
@@ -102,7 +112,17 @@ export function Artwork({ src, alt, size = "md", rounded = "md", className = "",
       data-accent={accentVar ? accent ?? undefined : undefined}
     >
       {!showFallback ? (
-        <img src={src} alt={alt} loading="lazy" decoding="async" onError={() => setFailed(true)} draggable={false} />
+        <img
+          ref={imgRef}
+          src={src}
+          alt={alt}
+          loading="lazy"
+          decoding="async"
+          data-loaded={loaded}
+          onLoad={() => setLoaded(true)}
+          onError={() => setFailed(true)}
+          draggable={false}
+        />
       ) : (
         <Disc3 className="artwork-fallback-icon" aria-hidden="true" />
       )}

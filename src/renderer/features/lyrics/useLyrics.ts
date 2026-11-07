@@ -10,7 +10,7 @@
  * Written for Cadence.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Lyric, LyricSyncType } from "@braccato/types";
 import type {
   LyricsCandidate,
@@ -29,10 +29,12 @@ import {
   type SearchDraft,
   type YouTubeResolveState,
 } from "../../state/lyricsStore";
+import { isManualSelection, pickPreferredCandidate, shouldApplyUpgrade } from "./upgrade";
 import {
   applyFileRomanization,
   applyRomanization,
   applyTranslations,
+  availableEmbeddedTranslationLanguages,
   embeddedTranslationsForLanguage,
   lyricLines,
   parseLyricsText,
@@ -57,6 +59,15 @@ const parsedIds = new Map<ParsedLyrics, string>();
 let parsedSequence = 0;
 /** Last automatic-resolution request actually issued; remounts with the same key do nothing. */
 let resolvedForKey: string | null = null;
+
+/**
+ * Drops the resolution memo after cache maintenance (Settings → clear cache / remove entry),
+ * so the next ensure re-resolves instead of serving candidates the user just deleted. The
+ * on-screen lyrics themselves are untouched until that next resolve lands.
+ */
+export function invalidateLyricsResolution(): void {
+  resolvedForKey = null;
+}
 /** Parse + language combinations already decorated, so remounts don't re-request translation. */
 let appliedTranslationKey: string | null = null;
 let appliedRomanizationKey: string | null = null;
@@ -64,6 +75,8 @@ let reloadToken = 0;
 
 export interface UseLyricsResult {
   status: LyricsStatus;
+  /** A background upgrade pass is running behind lyrics that are already on screen. */
+  refreshing: boolean;
   candidates: LyricsCandidate[];
   activeSource: string | null;
   parsed: ParsedLyrics | null;
@@ -74,10 +87,12 @@ export interface UseLyricsResult {
   translating: boolean;
   romanizing: boolean;
   translatedLanguage: string | null;
+  translationNotice: string | null;
   detectedLanguage: string | null;
   selectSource: (source: string) => void;
   reload: () => void;
   saveSidecar: () => Promise<string | null>;
+  saveTtml: () => Promise<string | null>;
   chooseFile: () => Promise<void>;
   /** Manual-search state for the Lyrics Selector; never alters active lyrics on its own. */
   manualSearchState: ManualSearchState;
@@ -92,6 +107,8 @@ export interface UseLyricsResult {
   /** Explicit reset: back to the track's tag defaults and an empty search session. */
   clearSearch: () => void;
   hasLyrics: boolean;
+  regenerateTranslation: () => void;
+  regenerateRomanization: () => void;
 }
 
 /**
@@ -119,9 +136,233 @@ function textHash(value: string): string {
   return (hash >>> 0).toString(36);
 }
 
+/** Module-level parse cache shared by the hook and the app-level Autofetch driver. */
+function parseCandidateForTrack(
+  identity: { id: number; title?: string; artist?: string } | null,
+  candidate: LyricsCandidate,
+  durationSeconds: number
+): ParsedLyrics {
+  const key = `${identity?.id ?? 0}:${candidate.source}:${durationSeconds.toFixed(0)}:${candidate.text.length}:${textHash(candidate.text)}`;
+  const cached = parsedCache.get(key);
+  if (cached) return cached;
+  const parsed = parseLyricsText(candidate.text, durationSeconds * 1000, {
+    title: identity?.title,
+    artist: identity?.artist,
+  });
+  if (parsedCache.size > 24) {
+    parsedCache.clear();
+    parsedIds.clear();
+  }
+  parsedCache.set(key, parsed);
+  parsedIds.set(parsed, `p${parsedSequence++}`);
+  return parsed;
+}
+
+/** Set by `reload()` so the next resolve is an explicit retry that bypasses cache cooldowns. */
+let forceNextResolve = false;
+
+/**
+ * Applies one resolve result to the store. Honours manual-selection protection and the
+ * seamless-upgrade rule: an automatic result only replaces what is on screen when its
+ * provider-order rank is at least as high, and an empty/failed upgrade pass never blanks
+ * fallback lyrics that are already showing.
+ */
+function applyResolveResult(
+  track: Track,
+  settings: LyricsSettings,
+  result: {
+    candidates: LyricsCandidate[];
+    providerStatus: ProviderStatusEntry[];
+    definitive?: boolean;
+  },
+  interim: boolean
+): void {
+  const store = useLyricsStore.getState();
+  const sameTrackOnScreen = store.trackId === track.id;
+  const hasOnScreen = sameTrackOnScreen && Boolean(store.lyrics?.length);
+
+  if (result.candidates.length === 0) {
+    // An empty *inconclusive* pass (providers timed out / errored) must never blank fallback
+    // lyrics that are already showing. An empty *definitive* pass — a true Not Found, or the
+    // user disabling the provider that produced the on-screen lyrics — clears to the empty
+    // state exactly as before, stale source rows included.
+    const authoritativeEmpty = result.definitive === true || !settings.autoFetch;
+    if (hasOnScreen && !authoritativeEmpty) {
+      store.setActive(track.id, {
+        status: "ready",
+        refreshing: interim,
+        providerStatus: result.providerStatus,
+        error: null,
+      });
+      return;
+    }
+    store.setActive(track.id, {
+      status: "empty",
+      refreshing: false,
+      candidates: [],
+      activeSource: null,
+      parsed: null,
+      lyrics: null,
+      syncType: "none",
+      providerStatus: result.providerStatus,
+      error: null,
+    });
+    return;
+  }
+
+  const chosenSource = store.selectedSources[track.id];
+  const preferred = pickPreferredCandidate(result.candidates, chosenSource) ?? result.candidates[0];
+  const manual = hasOnScreen && isManualSelection(store.activeSource, chosenSource);
+
+  // Manual protection works through `preferred`: while the user's pick (loaded file / chosen
+  // search result) is still in the result set it stays the pick, so automatic passes never
+  // replace it. If a fresh authoritative result no longer contains it — the user removed that
+  // cache entry, or cleared the cache — the display falls back to priority order as before
+  // instead of pinning a copy the user just deleted. The rank guard below therefore only
+  // arbitrates between automatic candidates (fallback already showing vs. upgrade pass).
+  const keepCurrentDisplay =
+    hasOnScreen &&
+    store.activeSource !== null &&
+    !manual &&
+    !shouldApplyUpgrade({
+      currentSource: store.activeSource,
+      nextSource: preferred.source,
+      providerOrder: settings.providerOrder,
+      manual: false,
+    });
+
+  if (keepCurrentDisplay) {
+    // Refresh the candidate list/provider status only; the displayed lyrics (a higher-priority
+    // fallback the upgrade pass could not beat) stay exactly as they are, decorations included.
+    const activeStillListed = result.candidates.some(c => c.source === store.activeSource);
+    const currentCandidate = store.candidates.find(c => c.source === store.activeSource);
+    store.setActive(track.id, {
+      status: "ready",
+      refreshing: interim,
+      candidates:
+        activeStillListed || !currentCandidate
+          ? result.candidates
+          : [currentCandidate, ...result.candidates],
+      providerStatus: result.providerStatus,
+      error: null,
+    });
+    return;
+  }
+
+  const parsed = parseCandidateForTrack(track, preferred, track.duration);
+  const previous = useLyricsStore.getState();
+  const sameParse = previous.parsed === parsed;
+  store.setActive(track.id, {
+    status: "ready",
+    refreshing: interim,
+    candidates: result.candidates,
+    activeSource: preferred.source,
+    parsed,
+    lyrics: sameParse && previous.lyrics ? previous.lyrics : parsed.lyrics,
+    syncType: parsed.syncType,
+    providerStatus: result.providerStatus,
+    error: null,
+  });
+}
+
+/**
+ * The one automatic lyrics pipeline, shared by the Now Playing hook and the app-level
+ * Autofetch driver so a lookup starts the moment a track becomes active — no tab needs to be
+ * open. Two phases when online fetching is enabled:
+ *   1. a local-only resolve surfaces sidecar/embedded/cached lyrics immediately as fallback;
+ *   2. the full resolve (cache-aware, provider fan-out through the shared service coordinator)
+ *      then upgrades them in place when it lands.
+ * Playback state is never touched; only the lyrics store changes.
+ */
+export async function ensureLyricsForTrack(
+  track: Track,
+  settings: LyricsSettings,
+  options?: { reloadTick?: number; force?: boolean }
+): Promise<void> {
+  const force = Boolean(options?.force || forceNextResolve);
+  const requestKey = `${track.id}:${settings.autoFetch ? "online" : "local"}:${settings.providerOrder.join(",")}:${options?.reloadTick ?? reloadToken}:${force ? "force" : ""}`;
+  const current = lyricsStore();
+  if (
+    resolvedForKey === requestKey &&
+    current.trackId === track.id &&
+    (current.status === "loading" || current.candidates.length > 0 || current.status === "empty")
+  ) {
+    return;
+  }
+  forceNextResolve = false;
+  const token = ++generations.resolve;
+  resolvedForKey = requestKey;
+
+  const sameTrack = current.trackId === track.id;
+  useLyricsStore.getState().beginResolve(track.id);
+  // A track change drops the decorated lines, so the "already decorated this parse" guards must
+  // reset; a same-track refresh keeps its lines (and decorations) until the upgrade lands.
+  if (!sameTrack) {
+    appliedTranslationKey = null;
+    appliedRomanizationKey = null;
+  }
+
+  const request = {
+    trackId: track.id,
+    title: track.title,
+    artist: track.artist,
+    album: track.album,
+    duration: track.duration,
+  };
+
+  try {
+    if (settings.autoFetch && !force) {
+      try {
+        const fallback = await bridge.lyrics.resolve({ ...request, localOnly: true });
+        if (token !== generations.resolve) return;
+        if (fallback.candidates.length > 0) {
+          applyResolveResult(track, settings, fallback, true);
+        }
+      } catch {
+        // The fallback pass is an optimisation; the full resolve below is authoritative.
+        if (token !== generations.resolve) return;
+      }
+    }
+
+    const result = await bridge.lyrics.resolve({
+      ...request,
+      localOnly: !settings.autoFetch,
+      ...(force ? { forceRefresh: true } : {}),
+    });
+    if (token !== generations.resolve) return;
+    applyResolveResult(track, settings, result, false);
+  } catch (error) {
+    if (token !== generations.resolve) return;
+    if (
+      (error as Error)?.name === "AbortError" ||
+      (error as { kind?: string })?.kind === "aborted"
+    ) {
+      return;
+    }
+    resolvedForKey = null;
+    const store = useLyricsStore.getState();
+    if (store.trackId === track.id && store.lyrics?.length) {
+      // A failed background upgrade never takes lyrics off the screen.
+      store.setActive(track.id, { status: "ready", refreshing: false });
+      return;
+    }
+    store.setActive(track.id, {
+      status: "error",
+      refreshing: false,
+      error: (error as Error).message,
+      lyrics: null,
+    });
+  }
+}
+
 export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyricsResult {
   const store = useLyricsStore();
   const [reloadTick, setReloadTick] = useState(reloadToken);
+  const [translationRevision, setTranslationRevision] = useState(0);
+  const [romanizationRevision, setRomanizationRevision] = useState(0);
+  const [translationNotice, setTranslationNotice] = useState<string | null>(null);
+  const forceTranslationRef = useRef(false);
+  const forceRomanizationRef = useRef(false);
 
   // Ensure this track owns a search session (drafts may be rehydrated from localStorage).
   useEffect(() => {
@@ -135,133 +376,40 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
   const session = track ? store.sessions[track.id] : undefined;
 
   const parseCandidate = useCallback(
-    (candidate: LyricsCandidate, durationSeconds: number): ParsedLyrics => {
-      const key = `${track?.id ?? 0}:${candidate.source}:${durationSeconds.toFixed(0)}:${candidate.text.length}:${textHash(candidate.text)}`;
-      const cached = parsedCache.get(key);
-      if (cached) return cached;
-      const parsed = parseLyricsText(candidate.text, durationSeconds * 1000, {
-        title: track?.title,
-        artist: track?.artist,
-      });
-      if (parsedCache.size > 24) {
-        parsedCache.clear();
-        parsedIds.clear();
-      }
-      parsedCache.set(key, parsed);
-      parsedIds.set(parsed, `p${parsedSequence++}`);
-      return parsed;
-    },
-    [track?.id, track?.title, track?.artist]
+    (candidate: LyricsCandidate, durationSeconds: number): ParsedLyrics =>
+      parseCandidateForTrack(track, candidate, durationSeconds),
+    [track]
   );
 
-  // Resolve candidates whenever the track or the provider configuration changes. On remount with
-  // the same request key this returns immediately: the store already holds everything (or is
-  // already resolving that exact request).
+  // Resolve candidates whenever the track or the provider configuration changes. The pipeline
+  // itself lives in `ensureLyricsForTrack` so the app-level Autofetch driver can run it before
+  // (or without) this view mounting; on remount with the same request key it returns at once.
   useEffect(() => {
     if (!track) {
       generations.resolve += 1;
       resolvedForKey = null;
       return;
     }
-    const requestKey = `${track.id}:${settings.autoFetch ? "online" : "local"}:${settings.providerOrder.join(",")}:${reloadTick}`;
-    const current = lyricsStore();
-    if (
-      resolvedForKey === requestKey &&
-      current.trackId === track.id &&
-      (current.status === "loading" || current.candidates.length > 0 || current.status === "empty")
-    ) {
-      return;
-    }
-    const token = ++generations.resolve;
-    resolvedForKey = requestKey;
-
-    // Clears the previous track's candidates/provider identity when the track changed, so a
-    // fallback to another provider never renders under the old provider's name.
-    useLyricsStore.getState().beginResolve(track.id);
-    // `beginResolve` drops the decorated line array, so the "already decorated this parse" guards
-    // no longer describe what is in the store. Leaving them set would skip the decoration passes
-    // for the lyrics that land next (e.g. A → B → A reuses A's cached parse, whose id still
-    // matched the guard) and show the new lines without their translation/romanization.
-    appliedTranslationKey = null;
-    appliedRomanizationKey = null;
-
-    void (async () => {
-      try {
-        const result = await bridge.lyrics.resolve({
-          trackId: track.id,
-          title: track.title,
-          artist: track.artist,
-          album: track.album,
-          duration: track.duration,
-          localOnly: !settings.autoFetch,
-        });
-        if (token !== generations.resolve) return;
-
-        if (result.candidates.length === 0) {
-          useLyricsStore.getState().setActive(track.id, {
-            status: "empty",
-            candidates: [],
-            activeSource: null,
-            parsed: null,
-            lyrics: null,
-            syncType: "none",
-            providerStatus: result.providerStatus,
-            error: null,
-          });
-          return;
-        }
-
-        // Restore the user's explicit choice for this track (persisted across restarts), else default.
-        const chosenSource = useLyricsStore.getState().selectedSources[track.id];
-        const preferred =
-          result.candidates.find(candidate => candidate.source === chosenSource) ??
-          // A file the user loaded by hand outranks every automatic match — including after a
-          // restart, where the cached copy in the bundle is all that is left of that choice.
-          result.candidates.find(candidate => candidate.source === "user-file") ??
-          result.candidates[0];
-        const parsed = parseCandidate(preferred, track.duration);
-        const previous = useLyricsStore.getState();
-        // A re-resolve can hand back the same cached parse (provider order / auto-fetch changed).
-        // Its line objects are still the ones carrying the translation and generated romanization,
-        // so keep them instead of rebuilding undecorated lines.
-        const sameParse = previous.parsed === parsed;
-        useLyricsStore.getState().setActive(track.id, {
-          status: "ready",
-          candidates: result.candidates,
-          activeSource: preferred.source,
-          parsed,
-          lyrics: sameParse && previous.lyrics ? previous.lyrics : parsed.lyrics,
-          syncType: parsed.syncType,
-          providerStatus: result.providerStatus,
-          error: null,
-        });
-      } catch (error) {
-        if (token !== generations.resolve) return;
-        if (
-          (error as Error)?.name === "AbortError" ||
-          (error as { kind?: string })?.kind === "aborted"
-        ) {
-          return;
-        }
-        resolvedForKey = null;
-        useLyricsStore.getState().setActive(track.id, {
-          status: "error",
-          error: (error as Error).message,
-          lyrics: null,
-        });
-      }
-    })();
-    // parseCandidate is stable per track; reloadTick mirrors the module token that survives remounts.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [track?.id, track?.duration, settings.autoFetch, settings.providerOrder, reloadTick, parseCandidate]);
+    void ensureLyricsForTrack(track, settings, { reloadTick });
+    // reloadTick mirrors the module token that survives remounts.
+  }, [track, settings, reloadTick]);
 
   // Translation pass (ported Better Lyrics batching lives in the main process).
   useEffect(() => {
     const parsed = store.parsed;
     if (!parsed || store.status !== "ready") return;
-    if (!settings.translationLanguage) {
-      // Switching translation off removes only the translation decoration; a romanization already
-      // hanging off the same lines stays.
+    const forceRegenerate = forceTranslationRef.current;
+    forceTranslationRef.current = false;
+    const translationConfig = settings.aiTranslation;
+    const translationSource = settings.translationSource ?? "auto";
+    const availableLocalLanguages = availableEmbeddedTranslationLanguages(parsed.lyrics);
+    const targetLanguage = translationSource === "local"
+      ? (settings.translationLanguage || availableLocalLanguages[0] || "")
+      : translationConfig?.enabled
+        ? (translationConfig.targetLanguage ?? "en")
+        : settings.translationLanguage;
+    if (!targetLanguage) {
+      setTranslationNotice(translationSource === "local" ? "No local translation is available in these lyrics." : translationSource === "ai" && !translationConfig?.enabled ? "Enable AI translation in Settings to use this source." : null);
       useLyricsStore.setState(current => {
         const stripped = current.lyrics ? stripTranslations(current.lyrics) : current.lyrics;
         appliedTranslationKey = null;
@@ -271,16 +419,29 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
       });
       return;
     }
-
+    setTranslationNotice(null);
     const parsedId = parsedIds.get(parsed);
-    const applyKey = `${parsedId}:${settings.translationLanguage}`;
+    const applyKey = `${parsedId}:${translationSource}:${targetLanguage}:${translationConfig?.enabled ? `${translationConfig.protocol}:${translationConfig.baseUrl}:${translationConfig.model}` : "legacy"}`;
     // Decorated before a remount: the store still holds those lines. Every path that resets them
     // (re-resolve, source switch, chosen file) either keeps them, registers a fresh parse id or
     // clears this key, so a matching key means there is nothing left to do.
-    if (applyKey === appliedTranslationKey) return;
+    if (!forceRegenerate && applyKey === appliedTranslationKey) return;
 
-    const embedded = embeddedTranslationsForLanguage(parsed.lyrics, settings.translationLanguage);
-    const gaps = translationGaps(parsed.lyrics, settings.translationLanguage);
+    const embedded = embeddedTranslationsForLanguage(parsed.lyrics, targetLanguage);
+    if (translationSource === "local" || (translationSource === "ai" && !translationConfig?.enabled)) {
+      const localOnly = translationSource === "local";
+      const localCount = embedded.filter(Boolean).length;
+      setTranslationNotice(localOnly && localCount === 0 ? `No local translation is available for ${targetLanguage}.` : !localOnly ? "Enable AI translation in Settings to use this source." : null);
+      appliedTranslationKey = applyKey;
+      useLyricsStore.setState(previous => {
+        if (previous.parsed !== parsed) return previous;
+        const base = previous.lyrics ?? parsed.lyrics;
+        return { ...previous, translating: false, error: null, translatedLanguage: localCount > 0 ? targetLanguage : null,
+          lyrics: localCount > 0 ? applyTranslations(stripTranslations(base), embedded, targetLanguage) : stripTranslations(base) };
+      });
+      return;
+    }
+    const gaps = translationGaps(parsed.lyrics, targetLanguage);
     if (gaps.length === 0) {
       // Every sung line already carries an embedded translation in the requested language.
       appliedTranslationKey = applyKey;
@@ -292,10 +453,10 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
           ...previous,
           translating: false,
           error: null,
-          translatedLanguage: embeddedCount > 0 ? settings.translationLanguage : null,
+          translatedLanguage: embeddedCount > 0 ? targetLanguage : null,
           lyrics:
             embeddedCount > 0
-              ? applyTranslations(stripTranslations(base), embedded, settings.translationLanguage)
+              ? applyTranslations(stripTranslations(base), embedded, targetLanguage)
               : stripTranslations(base),
         };
       });
@@ -309,8 +470,11 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
         const lines = lyricLines(parsed.lyrics);
         const result = await bridge.lyrics.translate({
           lines: gaps.map(index => lines[index]),
-          targetLanguage: settings.translationLanguage,
+          targetLanguage,
           sourceLanguage: parsed.language,
+          forceRegenerate,
+          segmentIds: gaps.map(index => `line-${index}`),
+          contextLines: lines,
         });
         if (cancelled) return;
         appliedTranslationKey = applyKey;
@@ -328,11 +492,11 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
             ...previous,
             translating: false,
             error: null,
-            translatedLanguage: translatedCount > 0 ? settings.translationLanguage : null,
+            translatedLanguage: translatedCount > 0 ? targetLanguage : null,
             detectedLanguage: result.detectedLanguage || parsed.language,
             lyrics:
               translatedCount > 0
-                ? applyTranslations(stripTranslations(base), merged, settings.translationLanguage)
+                ? applyTranslations(stripTranslations(base), merged, targetLanguage)
                 : stripTranslations(base),
           };
         });
@@ -352,7 +516,7 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     return () => {
       cancelled = true;
     };
-  }, [store.parsed, store.status, settings.translationLanguage]);
+  }, [store.parsed, store.status, settings.translationLanguage, settings.translationSource, settings.aiTranslation?.enabled, settings.aiTranslation?.targetLanguage, settings.aiTranslation?.protocol, settings.aiTranslation?.baseUrl, settings.aiTranslation?.model, settings.aiTranslation?.temperature, settings.aiTranslation?.maxOutputTokens, settings.aiTranslation?.timeoutMs, settings.aiTranslation?.chatPath, settings.aiTranslation?.modelsPath, settings.aiTranslation?.apiKey, settings.aiTranslation?.customHeaders, translationRevision]);
 
   // Romanization pass. The toggle decides whether romanization is shown at all. Romanization the
   // lyrics file itself supplied is preferred over generated text (it keeps the file's word timing);
@@ -361,6 +525,8 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
   useEffect(() => {
     const parsed = store.parsed;
     if (!parsed || store.status !== "ready") return;
+    const forceRegenerate = forceRomanizationRef.current;
+    forceRomanizationRef.current = false;
     if (!settings.romanization) {
       useLyricsStore.setState(previous => {
         const stripped = previous.lyrics ? stripRomanization(previous.lyrics) : previous.lyrics;
@@ -372,19 +538,34 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
       return;
     }
     const parsedId = parsedIds.get(parsed);
-    if (parsedId && appliedRomanizationKey === parsedId) return; // decorated before a remount
+    const romanizationConfig = settings.aiRomanization;
+    const romanizationKey = `${parsedId ?? ""}:${romanizationConfig?.enabled ? `${romanizationConfig.protocol}:${romanizationConfig.baseUrl}:${romanizationConfig.model}:${romanizationConfig.romanizationStandard}` : "legacy"}`;
+    if (!forceRegenerate && parsedId && appliedRomanizationKey === romanizationKey) return; // decorated before a remount
+    if (parsedId && appliedRomanizationKey && appliedRomanizationKey !== romanizationKey) {
+      useLyricsStore.setState(previous => {
+        if (previous.parsed !== parsed || !previous.lyrics) return previous;
+        const undecorated = stripRomanization(previous.lyrics);
+        return { ...previous, lyrics: applyFileRomanization(undecorated, parsed.lyrics) };
+      });
+    }
 
     const gaps = romanizationGaps(parsed.lyrics);
     if (gaps.length === 0) {
       // Every sung line already carries the file's romanization; only make sure the current lines
       // show it (the toggle may have hidden it since they were parsed) and never generate.
       applyFileRomanizationToStore(parsed);
-      appliedRomanizationKey = parsedId ?? null;
+      appliedRomanizationKey = romanizationKey;
       return;
     }
 
-    // File transliterations show immediately, even while the gaps are being generated or if the
-    // request fails; generation only ever adds to those lines.
+    // File transliterations show immediately. On deliberate regeneration, remove generated text
+    // only, then restore source-file romanization (including its timing) before requesting again.
+    if (forceRegenerate) {
+      useLyricsStore.setState(previous => {
+        if (previous.parsed !== parsed || !previous.lyrics) return previous;
+        return { ...previous, lyrics: applyFileRomanization(stripRomanization(previous.lyrics), parsed.lyrics) };
+      });
+    }
     applyFileRomanizationToStore(parsed);
     let cancelled = false;
     useLyricsStore.setState(previous => ({ ...previous, romanizing: true }));
@@ -395,9 +576,12 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
           lines: gaps.map(index => lines[index]),
           targetLanguage: "en",
           sourceLanguage: parsed.language,
+          forceRegenerate,
+          segmentIds: gaps.map(index => `line-${index}`),
+          contextLines: lines,
         });
         if (cancelled) return;
-        appliedRomanizationKey = parsedId ?? null;
+        appliedRomanizationKey = romanizationKey;
         const romanizations = scatterRomanizations(parsed.lyrics.length, gaps, result.romanizations);
         const count = romanizations.filter(Boolean).length;
         useLyricsStore.setState(previous => {
@@ -414,15 +598,15 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
                 : previous.lyrics ?? parsed.lyrics,
           };
         });
-      } catch {
+      } catch (error) {
         if (cancelled) return;
-        useLyricsStore.setState(previous => (previous.parsed === parsed ? { ...previous, romanizing: false } : previous));
+        useLyricsStore.setState(previous => (previous.parsed === parsed ? { ...previous, romanizing: false, error: `Romanization failed: ${(error as Error).message}` } : previous));
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [store.parsed, store.status, settings.romanization]);
+  }, [store.parsed, store.status, settings.romanization, settings.aiRomanization?.enabled, settings.aiRomanization?.protocol, settings.aiRomanization?.baseUrl, settings.aiRomanization?.model, settings.aiRomanization?.romanizationStandard, settings.aiRomanization?.temperature, settings.aiRomanization?.maxOutputTokens, settings.aiRomanization?.timeoutMs, settings.aiRomanization?.chatPath, settings.aiRomanization?.modelsPath, settings.aiRomanization?.apiKey, settings.aiRomanization?.customHeaders, romanizationRevision]);
 
   const selectSource = useCallback(
     (source: string) => {
@@ -445,6 +629,9 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
   );
 
   const reload = useCallback(() => {
+    // An explicit reload is a manual retry: it bypasses the cached answer and the Not Found
+    // cooldown so previously unsuccessful providers are genuinely queried again.
+    forceNextResolve = true;
     resolvedForKey = null;
     parsedCache.clear();
     parsedIds.clear();
@@ -459,6 +646,24 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     const { lyricsToLrc } = await import("./parseLyrics");
     const lrc = lyricsToLrc(parsed.lyrics, { title: track.title, artist: track.artist });
     const result = await bridge.lyrics.saveSidecar(track.id, lrc);
+    return result.path;
+  }, [track]);
+
+  const saveTtml = useCallback(async () => {
+    if (!track) return null;
+    const current = lyricsStore();
+    const parsed = current.parsed;
+    if (!parsed) return null;
+    const { lyricsToTtml } = await import("./parseLyrics");
+    const ttml = lyricsToTtml(current.lyrics ?? parsed.lyrics, {
+      title: track.title,
+      artist: track.artist,
+      language: parsed.language,
+      songwriters: parsed.songwriters,
+      durationMs: track.duration * 1000,
+      sourceText: parsed.sourceText,
+    });
+    const result = await bridge.lyrics.saveTtmlSidecar(track.id, ttml);
     return result.path;
   }, [track]);
 
@@ -625,9 +830,24 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     useLyricsStore.getState().clearSearch(track.id, track);
   }, [track]);
 
+  const regenerateTranslation = useCallback(() => {
+    if (!lyricsStore().parsed || lyricsStore().status !== "ready" || (!settings.aiTranslation?.enabled && !settings.translationLanguage)) return;
+    forceTranslationRef.current = true;
+    appliedTranslationKey = null;
+    setTranslationRevision(value => value + 1);
+  }, [settings.aiTranslation, settings.translationLanguage]);
+
+  const regenerateRomanization = useCallback(() => {
+    if (!lyricsStore().parsed || !settings.romanization) return;
+    forceRomanizationRef.current = true;
+    appliedRomanizationKey = null;
+    setRomanizationRevision(value => value + 1);
+  }, [settings.romanization]);
+
   return useMemo<UseLyricsResult>(
     () => ({
       status: store.status,
+      refreshing: store.refreshing,
       candidates: store.candidates,
       activeSource: store.activeSource,
       parsed: store.parsed,
@@ -638,10 +858,12 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
       translating: store.translating,
       romanizing: store.romanizing,
       translatedLanguage: store.translatedLanguage,
+      translationNotice,
       detectedLanguage: store.detectedLanguage,
       selectSource,
       reload,
       saveSidecar,
+      saveTtml,
       chooseFile,
       manualSearchState: session?.manual ?? EMPTY_SEARCH,
       manualSearch,
@@ -652,6 +874,8 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
       patchDraft,
       clearSearch,
       hasLyrics: Boolean(store.lyrics && store.lyrics.length > 0),
+      regenerateTranslation,
+      regenerateRomanization,
     }),
     [
       store,
@@ -659,12 +883,18 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
       selectSource,
       reload,
       saveSidecar,
+      saveTtml,
       chooseFile,
       manualSearch,
       selectSearchResult,
       resolveYouTube,
       patchDraft,
       clearSearch,
+      regenerateTranslation,
+      regenerateRomanization,
+      translationRevision,
+      romanizationRevision,
+      translationNotice,
     ]
   );
 }
