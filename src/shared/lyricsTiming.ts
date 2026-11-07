@@ -51,3 +51,22 @@ export function lineHasSyllableTiming(line: TimedLine): boolean {
 export function hasSyllableTiming(lines: readonly TimedLine[]): boolean {
   return lines.some(line => lineHasSyllableTiming(line));
 }
+
+/** Joins already-romanized timed spans without altering any span's own text. */
+export function joinRomanizedSpans(spans: readonly { source: string; romanized: string }[]): string {
+  let result = "";
+  let previousSource = "";
+  for (const span of spans) {
+    const value = span.romanized.trim();
+    if (!value) continue;
+    if (result) {
+      const source = span.source.trim();
+      const noSpaceBefore = /^[,.;:!?、。，．！？…・:;)}\]」』】〉》]/u.test(source);
+      const noSpaceAfter = /[(\[{「『【〈《]$/u.test(previousSource);
+      if (!noSpaceBefore && !noSpaceAfter && !/\s$/u.test(result) && !/^\s/u.test(value)) result += " ";
+    }
+    result += value;
+    previousSource = span.source;
+  }
+  return result;
+}

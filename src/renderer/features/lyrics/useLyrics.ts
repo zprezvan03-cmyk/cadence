@@ -34,6 +34,7 @@ import {
   applyFileRomanization,
   applyRomanization,
   applyTranslations,
+  availableEmbeddedTranslationLanguages,
   embeddedTranslationsForLanguage,
   lyricLines,
   parseLyricsText,
@@ -86,10 +87,12 @@ export interface UseLyricsResult {
   translating: boolean;
   romanizing: boolean;
   translatedLanguage: string | null;
+  translationNotice: string | null;
   detectedLanguage: string | null;
   selectSource: (source: string) => void;
   reload: () => void;
   saveSidecar: () => Promise<string | null>;
+  saveTtml: () => Promise<string | null>;
   chooseFile: () => Promise<void>;
   /** Manual-search state for the Lyrics Selector; never alters active lyrics on its own. */
   manualSearchState: ManualSearchState;
@@ -357,6 +360,7 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
   const [reloadTick, setReloadTick] = useState(reloadToken);
   const [translationRevision, setTranslationRevision] = useState(0);
   const [romanizationRevision, setRomanizationRevision] = useState(0);
+  const [translationNotice, setTranslationNotice] = useState<string | null>(null);
   const forceTranslationRef = useRef(false);
   const forceRomanizationRef = useRef(false);
 
@@ -397,10 +401,15 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     const forceRegenerate = forceTranslationRef.current;
     forceTranslationRef.current = false;
     const translationConfig = settings.aiTranslation;
-    const targetLanguage = translationConfig?.enabled ? (translationConfig.targetLanguage ?? "en") : settings.translationLanguage;
+    const translationSource = settings.translationSource ?? "auto";
+    const availableLocalLanguages = availableEmbeddedTranslationLanguages(parsed.lyrics);
+    const targetLanguage = translationSource === "local"
+      ? (settings.translationLanguage || availableLocalLanguages[0] || "")
+      : translationConfig?.enabled
+        ? (translationConfig.targetLanguage ?? "en")
+        : settings.translationLanguage;
     if (!targetLanguage) {
-      // Switching translation off removes only the translation decoration; a romanization already
-      // hanging off the same lines stays.
+      setTranslationNotice(translationSource === "local" ? "No local translation is available in these lyrics." : translationSource === "ai" && !translationConfig?.enabled ? "Enable AI translation in Settings to use this source." : null);
       useLyricsStore.setState(current => {
         const stripped = current.lyrics ? stripTranslations(current.lyrics) : current.lyrics;
         appliedTranslationKey = null;
@@ -410,15 +419,28 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
       });
       return;
     }
-
+    setTranslationNotice(null);
     const parsedId = parsedIds.get(parsed);
-    const applyKey = `${parsedId}:${targetLanguage}:${translationConfig?.enabled ? `${translationConfig.protocol}:${translationConfig.baseUrl}:${translationConfig.model}` : "legacy"}`;
+    const applyKey = `${parsedId}:${translationSource}:${targetLanguage}:${translationConfig?.enabled ? `${translationConfig.protocol}:${translationConfig.baseUrl}:${translationConfig.model}` : "legacy"}`;
     // Decorated before a remount: the store still holds those lines. Every path that resets them
     // (re-resolve, source switch, chosen file) either keeps them, registers a fresh parse id or
     // clears this key, so a matching key means there is nothing left to do.
     if (!forceRegenerate && applyKey === appliedTranslationKey) return;
 
     const embedded = embeddedTranslationsForLanguage(parsed.lyrics, targetLanguage);
+    if (translationSource === "local" || (translationSource === "ai" && !translationConfig?.enabled)) {
+      const localOnly = translationSource === "local";
+      const localCount = embedded.filter(Boolean).length;
+      setTranslationNotice(localOnly && localCount === 0 ? `No local translation is available for ${targetLanguage}.` : !localOnly ? "Enable AI translation in Settings to use this source." : null);
+      appliedTranslationKey = applyKey;
+      useLyricsStore.setState(previous => {
+        if (previous.parsed !== parsed) return previous;
+        const base = previous.lyrics ?? parsed.lyrics;
+        return { ...previous, translating: false, error: null, translatedLanguage: localCount > 0 ? targetLanguage : null,
+          lyrics: localCount > 0 ? applyTranslations(stripTranslations(base), embedded, targetLanguage) : stripTranslations(base) };
+      });
+      return;
+    }
     const gaps = translationGaps(parsed.lyrics, targetLanguage);
     if (gaps.length === 0) {
       // Every sung line already carries an embedded translation in the requested language.
@@ -494,7 +516,7 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     return () => {
       cancelled = true;
     };
-  }, [store.parsed, store.status, settings.translationLanguage, settings.aiTranslation?.enabled, settings.aiTranslation?.targetLanguage, settings.aiTranslation?.protocol, settings.aiTranslation?.baseUrl, settings.aiTranslation?.model, settings.aiTranslation?.temperature, settings.aiTranslation?.maxOutputTokens, settings.aiTranslation?.timeoutMs, settings.aiTranslation?.chatPath, settings.aiTranslation?.modelsPath, settings.aiTranslation?.apiKey, settings.aiTranslation?.customHeaders, translationRevision]);
+  }, [store.parsed, store.status, settings.translationLanguage, settings.translationSource, settings.aiTranslation?.enabled, settings.aiTranslation?.targetLanguage, settings.aiTranslation?.protocol, settings.aiTranslation?.baseUrl, settings.aiTranslation?.model, settings.aiTranslation?.temperature, settings.aiTranslation?.maxOutputTokens, settings.aiTranslation?.timeoutMs, settings.aiTranslation?.chatPath, settings.aiTranslation?.modelsPath, settings.aiTranslation?.apiKey, settings.aiTranslation?.customHeaders, translationRevision]);
 
   // Romanization pass. The toggle decides whether romanization is shown at all. Romanization the
   // lyrics file itself supplied is preferred over generated text (it keeps the file's word timing);
@@ -557,10 +579,19 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
           forceRegenerate,
           segmentIds: gaps.map(index => `line-${index}`),
           contextLines: lines,
+          timedRomanizationLines: gaps.map((index, lineIndex) => ({
+            lineIndex,
+            lineId: `line-${index}`,
+            lineText: lines[index],
+            spans: parsed.lyrics[index].parts?.map(part => part.words) ?? [],
+          })).filter(line => line.spans.length > 1),
         });
         if (cancelled) return;
         appliedRomanizationKey = romanizationKey;
         const romanizations = scatterRomanizations(parsed.lyrics.length, gaps, result.romanizations);
+        const timedPositions = gaps.map((lineIndex, resultIndex) => ({ lineIndex, resultIndex })).filter(({ lineIndex }) => (parsed.lyrics[lineIndex].parts?.length ?? 0) > 1);
+        const timedLineIndexes = timedPositions.map(({ lineIndex }) => lineIndex);
+        const timedValues = timedPositions.map(({ resultIndex }) => result.timedRomanizations?.[resultIndex] ?? null);
         const count = romanizations.filter(Boolean).length;
         useLyricsStore.setState(previous => {
           // The parse changed under the request (track/provider switch): its result belongs to
@@ -572,7 +603,7 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
             detectedLanguage: result.detectedLanguage || parsed.language,
             lyrics:
               count > 0
-                ? applyRomanization(previous.lyrics ?? parsed.lyrics, romanizations)
+                ? applyRomanization(previous.lyrics ?? parsed.lyrics, romanizations, timedLineIndexes, timedValues)
                 : previous.lyrics ?? parsed.lyrics,
           };
         });
@@ -624,6 +655,24 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     const { lyricsToLrc } = await import("./parseLyrics");
     const lrc = lyricsToLrc(parsed.lyrics, { title: track.title, artist: track.artist });
     const result = await bridge.lyrics.saveSidecar(track.id, lrc);
+    return result.path;
+  }, [track]);
+
+  const saveTtml = useCallback(async () => {
+    if (!track) return null;
+    const current = lyricsStore();
+    const parsed = current.parsed;
+    if (!parsed) return null;
+    const { lyricsToTtml } = await import("./parseLyrics");
+    const ttml = lyricsToTtml(current.lyrics ?? parsed.lyrics, {
+      title: track.title,
+      artist: track.artist,
+      language: parsed.language,
+      songwriters: parsed.songwriters,
+      durationMs: track.duration * 1000,
+      sourceText: parsed.sourceText,
+    });
+    const result = await bridge.lyrics.saveTtmlSidecar(track.id, ttml);
     return result.path;
   }, [track]);
 
@@ -818,10 +867,12 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
       translating: store.translating,
       romanizing: store.romanizing,
       translatedLanguage: store.translatedLanguage,
+      translationNotice,
       detectedLanguage: store.detectedLanguage,
       selectSource,
       reload,
       saveSidecar,
+      saveTtml,
       chooseFile,
       manualSearchState: session?.manual ?? EMPTY_SEARCH,
       manualSearch,
@@ -841,6 +892,7 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
       selectSource,
       reload,
       saveSidecar,
+      saveTtml,
       chooseFile,
       manualSearch,
       selectSearchResult,
@@ -851,6 +903,7 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
       regenerateRomanization,
       translationRevision,
       romanizationRevision,
+      translationNotice,
     ]
   );
 }

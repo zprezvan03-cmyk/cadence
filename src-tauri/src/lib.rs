@@ -297,6 +297,7 @@ pub fn run() {
             commands::cmd_read_sidecar_text,
             commands::cmd_list_directory,
             commands::cmd_write_sidecar_lrc,
+            commands::cmd_write_sidecar_ttml,
             commands::cmd_decode_delete_files,
             commands::cmd_decode_export_list,
             commands::cmd_http_fetch,

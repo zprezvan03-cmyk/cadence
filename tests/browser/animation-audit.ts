@@ -602,7 +602,7 @@ const aiSettingsSections = await page.evaluate(() => ({
   autoOption: [...document.querySelectorAll(".ai-thinking-control option")].some(option => (option as HTMLOptionElement).value === "auto"),
 }));
 check("independent-ai-translation-and-romanization-settings", aiSettingsSections.translation && aiSettingsSections.romanization && aiSettingsSections.modelsButtons >= 4, JSON.stringify(aiSettingsSections));
-check("ollama-thinking-mode-control-renders", aiSettingsSections.thinkingSelectors === 1 && aiSettingsSections.autoOption, JSON.stringify(aiSettingsSections));
+check("ollama-thinking-mode-control-renders", aiSettingsSections.thinkingSelectors === 2 && aiSettingsSections.autoOption, JSON.stringify(aiSettingsSections));
 await page.evaluate(() => document.querySelector(".ai-thinking-row")?.scrollIntoView({ block: "center" }));
 await wait(160);
 await shot("06-settings-ai-thinking");

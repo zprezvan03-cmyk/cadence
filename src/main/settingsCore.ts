@@ -42,6 +42,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     fontFamily: DEFAULT_FONT_ID,
   },
   lyrics: {
+    translationSource: "auto",
     aiTranslation: {
       enabled: false, protocol: "openai-compatible", baseUrl: "https://api.openai.com/v1", chatPath: "/chat/completions",
       modelsPath: "/models", apiKey: "", model: "", temperature: 0.25, maxOutputTokens: 4096, timeoutMs: 60000, thinkingMode: "auto",
@@ -162,13 +163,16 @@ function normalizeSettings(settings: AppSettings): AppSettings {
       temperature: clampNumber(source.temperature, fallback.temperature, 0, 2),
       maxOutputTokens: Math.round(clampNumber(source.maxOutputTokens, fallback.maxOutputTokens, 1, 32768)),
       timeoutMs: Math.round(clampNumber(source.timeoutMs, fallback.timeoutMs, 1000, 300000)),
-      thinkingMode: ["off", "low", "medium", "high", "auto"].includes(String(source.thinkingMode))
+      thinkingMode: ["off", "low", "medium", "high", "maximum", "auto"].includes(String(source.thinkingMode))
         ? source.thinkingMode as AppSettings["lyrics"]["aiTranslation"]["thinkingMode"]
         : "auto",
       ...(fallback.targetLanguage !== undefined ? { targetLanguage: text(source.targetLanguage, fallback.targetLanguage, 32) } : {}),
       ...(fallback.romanizationStandard !== undefined ? { romanizationStandard: text(source.romanizationStandard, fallback.romanizationStandard, 80) } : {}),
     };
   };
+  settings.lyrics.translationSource = ["auto", "local", "ai"].includes(String(settings.lyrics.translationSource))
+    ? settings.lyrics.translationSource
+    : "auto";
   settings.lyrics.aiTranslation = normalizeAi(settings.lyrics.aiTranslation, DEFAULT_SETTINGS.lyrics.aiTranslation);
   settings.lyrics.aiRomanization = normalizeAi(settings.lyrics.aiRomanization, DEFAULT_SETTINGS.lyrics.aiRomanization);
   settings.lyrics.providerOrder = migrateProviderOrder(settings.lyrics.providerOrder);

@@ -48,6 +48,8 @@ interface LyricsDockProps {
   onRegenerateTranslation: () => void;
   onRegenerateRomanization: () => void;
   onSaveSidecar: () => void;
+  onSaveTtml: () => void;
+  translationNotice?: string | null;
   onChooseFile: () => void;
   /** Remote queue items have no local file/sidecar; all other dock controls still apply. */
   localFileActions?: boolean;
@@ -95,6 +97,8 @@ export function LyricsDock({
   onRegenerateTranslation,
   onRegenerateRomanization,
   onSaveSidecar,
+  onSaveTtml,
+  translationNotice,
   onChooseFile,
   localFileActions = true,
   syncLabel,
@@ -157,11 +161,14 @@ export function LyricsDock({
     if (!effective.title || manualSearchState.status === "loading") return;
     onManualSearch(searchDraft);
   };
-  const translateTarget = settings.aiTranslation?.enabled
-    ? (settings.aiTranslation.targetLanguage ?? "en")
-    : settings.translationLanguage;
+  const translationSource = settings.translationSource ?? "auto";
+  const translateTarget = translationSource === "local"
+    ? settings.translationLanguage
+    : settings.aiTranslation?.enabled
+      ? (settings.aiTranslation.targetLanguage ?? "en")
+      : settings.translationLanguage;
   const patchTranslateTarget = (language: string) => {
-    if (settings.aiTranslation?.enabled) {
+    if (translationSource === "ai" && settings.aiTranslation?.enabled) {
       if (!language) onPatch({ aiTranslation: { ...settings.aiTranslation, enabled: false }, translationLanguage: "" });
       else onPatch({ aiTranslation: { ...settings.aiTranslation, targetLanguage: language } });
     } else onPatch({ translationLanguage: language });
@@ -202,7 +209,7 @@ export function LyricsDock({
           title="Translate lyrics"
           aria-expanded={languageOpen}
         >
-          <Languages size={16} /> {translateTarget ? languageLabel(translateTarget) : "Translate"}
+          <Languages size={16} /> {translationSource === "local" ? `Local${translateTarget ? ` · ${languageLabel(translateTarget)}` : ""}` : translationSource === "ai" ? `AI${translateTarget ? ` · ${languageLabel(translateTarget)}` : ""}` : translateTarget ? languageLabel(translateTarget) : "Translate"}
         </button>
         <button
           type="button"
@@ -212,7 +219,7 @@ export function LyricsDock({
         >
           <Wand2 size={16} /> Romanize
         </button>
-        {(settings.aiTranslation?.enabled || settings.translationLanguage) ? (
+        {translationSource !== "local" && (settings.aiTranslation?.enabled || settings.translationLanguage) ? (
           <button type="button" className="dock-button" onClick={onRegenerateTranslation} disabled={busy} title="Force-regenerate translation">
             <RefreshCw size={15} /> Regenerate translation
           </button>
@@ -243,8 +250,11 @@ export function LyricsDock({
             <button type="button" className="dock-icon" onClick={onChooseFile} title="Open a lyrics file">
               <FolderOpen size={16} />
             </button>
-            <button type="button" className="dock-icon" onClick={onSaveSidecar} title="Save lyrics next to the track">
+            <button type="button" className="dock-icon" onClick={onSaveSidecar} title="Save lyrics as LRC next to the track">
               <Download size={16} />
+            </button>
+            <button type="button" className="dock-icon dock-save-ttml" onClick={onSaveTtml} title="Save as TTML" aria-label="Save as TTML">
+              <Download size={16} /> <span>Save as TTML</span>
             </button>
           </>
         ) : null}
@@ -547,12 +557,25 @@ export function LyricsDock({
 
       {languagesPresence.mounted ? (
         <div className={`dock-popover dock-languages ${languagesPresence.phaseClass}`} data-presence={languagesPresence.phase}>
+          <div className="popover-title">Translation source</div>
+          <div className="translation-source-options">
+            {(["auto", "local", "ai"] as const).map(source => (
+              <button key={source} type="button" className={`source-row ${translationSource === source ? "active" : ""}`} onClick={() => onPatch({ translationSource: source })}>
+                <strong>{source === "auto" ? "Automatic" : source === "local" ? "Local" : "AI"}</strong>
+              </button>
+            ))}
+          </div>
+          {translationNotice ? <div className="muted" role="status">{translationNotice}</div> : null}
           <div className="popover-title">Translate to</div>
           <button
             type="button"
-            className={`source-row ${translateTarget === "" ? "active" : ""}`}
+            className={`source-row ${translationSource === "auto" && translateTarget === "" ? "active" : ""}`}
             onClick={() => {
-              patchTranslateTarget("");
+              onPatch({
+                translationSource: "auto",
+                translationLanguage: "",
+                ...(settings.aiTranslation?.enabled ? { aiTranslation: { ...settings.aiTranslation, enabled: false } } : {}),
+              });
               setLanguageOpen(false);
             }}
           >

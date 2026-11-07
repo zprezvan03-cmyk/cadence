@@ -331,6 +331,15 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
     }
   }, [lyrics, flash]);
 
+  const handleSaveTtml = useCallback(async () => {
+    try {
+      const path = await lyrics.saveTtml();
+      if (path) flash(`TTML saved to ${path}`);
+    } catch (error) {
+      flash(`Could not save TTML: ${(error as Error).message}`);
+    }
+  }, [lyrics, flash]);
+
   const toggleLyricsVisible = useCallback(() => {
     patchLyrics({ showLyricsInFullscreen: !showLyrics });
   }, [patchLyrics, showLyrics]);
@@ -600,6 +609,8 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
             onRegenerateTranslation={lyrics.regenerateTranslation}
             onRegenerateRomanization={lyrics.regenerateRomanization}
             onSaveSidecar={() => void handleSave()}
+            onSaveTtml={() => void handleSaveTtml()}
+            translationNotice={lyrics.translationNotice}
             onChooseFile={() => void lyrics.chooseFile()}
             trackDuration={track.duration ?? 0}
             searchDraft={lyrics.searchDraft}
@@ -642,6 +653,7 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
 }
 
 const fallbackLyricsSettings: AppSettings["lyrics"] = {
+  translationSource: "auto",
   aiTranslation: { enabled: false, protocol: "openai-compatible", baseUrl: "https://api.openai.com/v1", chatPath: "/chat/completions", modelsPath: "/models", apiKey: "", model: "", temperature: 0.25, maxOutputTokens: 4096, timeoutMs: 60000, thinkingMode: "auto", targetLanguage: "en", customHeaders: "{}" },
   aiRomanization: { enabled: false, protocol: "ollama-native", baseUrl: "http://localhost:11434", chatPath: "/api/chat", modelsPath: "/api/tags", apiKey: "", model: "", temperature: 0.1, maxOutputTokens: 4096, timeoutMs: 120000, thinkingMode: "auto", romanizationStandard: "auto", customHeaders: "{}" },
   providerOrder: [...DEFAULT_PROVIDER_ORDER],

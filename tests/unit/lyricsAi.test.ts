@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { getOllamaThinkingCapabilities, listModels, testConnection, transformLyrics, clearAiCache, initializeAiCache, LyricsAiError } from "../../src/main/lyrics/ai";
+import { getThinkingCapabilities, listModels, testConnection, transformLyrics, clearAiCache, initializeAiCache, LyricsAiError } from "../../src/main/lyrics/ai";
 import { setRuntimeFetch } from "../../src/main/lyrics/http";
 import type { LyricsAiConfig } from "../../src/shared/types";
 import { applyRomanization, applyTranslations, parseLyricsText } from "../../src/renderer/features/lyrics/parseLyrics";
@@ -35,7 +35,7 @@ describe("central lyrics AI adapters", () => {
       req.on("end", () => {
         const body = JSON.parse(text); requests.push({ path: req.url ?? "", body });
         res.setHeader("Content-Type", "application/json");
-        if (req.url === "/api/show") res.end(JSON.stringify({ model_info: { thinking: { values: [false, "low", "medium", "high"], default: "medium" } } }));
+        if (req.url === "/api/show") res.end(JSON.stringify({ model_info: { thinking: { values: [false, "low", "medium", "high", "xhigh"], default: "medium" } } }));
         else res.end(JSON.stringify({ message: { content: '{"results":[{"id":"L0","text":"result"}]}' } }));
       });
     });
@@ -44,17 +44,17 @@ describe("central lyrics AI adapters", () => {
     const config = { ...native, baseUrl: `http://127.0.0.1:${address.port}`, model: "thinking-test" };
     setRuntimeFetch(globalThis.fetch as typeof globalThis.fetch);
     try {
-      const capabilities = await getOllamaThinkingCapabilities(config, true);
-      expect(capabilities).toMatchObject({ modes: ["off", "low", "medium", "high", "auto"], defaultMode: "medium", metadataAvailable: true });
+      const capabilities = await getThinkingCapabilities(config, true);
+      expect(capabilities).toMatchObject({ modes: ["off", "low", "medium", "high", "maximum", "auto"], defaultMode: "medium", metadataAvailable: true });
       for (const mode of capabilities.modes) {
         await transformLyrics("romanization", { ...config, thinkingMode: mode }, ["君は"], "", "ja");
       }
       await transformLyrics("translation", { ...config, thinkingMode: "low" }, ["愛してる"], "en", "ja");
       const chatRequests = requests.filter(request => request.path === "/api/chat");
       expect(requests.filter(request => request.path === "/api/show")).toHaveLength(1);
-      expect(chatRequests.map(request => request.body.think)).toEqual([false, "low", "medium", "high", undefined, "low"]);
-      expect(Object.hasOwn(chatRequests[4].body, "think")).toBe(false);
-      expect(chatRequests[5].body.think).toBe("low");
+      expect(chatRequests.map(request => request.body.think)).toEqual([false, "low", "medium", "high", "xhigh", undefined, "low"]);
+      expect(Object.hasOwn(chatRequests[5].body, "think")).toBe(false);
+      expect(chatRequests[6].body.think).toBe("low");
     } finally { server.close(); await once(server, "close"); }
   });
   it("keeps unsupported or missing model metadata explicit and never sends stale thinking settings", async () => {
@@ -67,13 +67,65 @@ describe("central lyrics AI adapters", () => {
         : ollamaContent('{"results":[{"id":"L0","text":"result"}]}');
     });
     const limited = { ...native, model: "limited" };
-    const capabilities = await getOllamaThinkingCapabilities(limited, true);
+    const capabilities = await getThinkingCapabilities(limited, true);
     expect(capabilities.modes).toEqual(["low", "auto"]);
-    await expect(transformLyrics("romanization", { ...limited, thinkingMode: "high" }, ["君"], "", "ja")).rejects.toMatchObject({ code: "unsupported" });
-    expect(calls.filter(call => call.url.endsWith("/api/chat"))).toHaveLength(0);
-    const missing = await getOllamaThinkingCapabilities({ ...native, model: "no-metadata" }, true);
+    await transformLyrics("romanization", { ...limited, thinkingMode: "high" }, ["君"], "", "ja");
+    const chat = calls.find(call => call.url.endsWith("/api/chat"));
+    expect(chat).toBeDefined();
+    expect(Object.hasOwn(chat!.body, "think")).toBe(false);
+    const missing = await getThinkingCapabilities({ ...native, model: "no-metadata" }, true);
     expect(missing).toMatchObject({ modes: ["auto"], metadataAvailable: false });
     expect(missing.detail).toContain("did not report");
+  });
+  it("maps every OpenAI-compatible mode to OpenAI reasoning_effort and verifies outgoing payloads", async () => {
+    const config = { ...compatible, baseUrl: "https://api.openai.com/v1", model: "gpt-5.2" };
+    const capabilities = await getThinkingCapabilities(config, true);
+    expect(capabilities.modes).toEqual(["off", "low", "medium", "high", "maximum", "auto"]);
+    const bodies: Record<string, unknown>[] = [];
+    setRuntimeFetch(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)); bodies.push(body);
+      return openAiContent('{"results":[{"id":"L0","text":"ok"}]}');
+    });
+    for (const mode of ["auto", "off", "low", "medium", "high", "maximum"] as const) {
+      await transformLyrics("translation", { ...config, thinkingMode: mode }, ["愛してる"], "en", "ja");
+    }
+    expect(bodies.map(body => body.reasoning_effort)).toEqual([undefined, "none", "low", "medium", "high", "xhigh"]);
+    expect(bodies.every(body => body.stream === false)).toBe(true);
+    expect(Object.hasOwn(bodies[0], "reasoning_effort")).toBe(false);
+  });
+  it("uses Cerebras model-specific effort values and leaves unknown models in provider Auto mode", async () => {
+    const cerebras = { ...compatible, baseUrl: "https://api.cerebras.ai/v1", model: "kimi-k3" };
+    const capabilities = await getThinkingCapabilities(cerebras, true);
+    expect(capabilities.modes).toEqual(["low", "high", "maximum", "auto"]);
+    const bodies: Record<string, unknown>[] = [];
+    setRuntimeFetch(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)); bodies.push(body);
+      return openAiContent('{"results":[{"id":"L0","text":"ok"}]}');
+    });
+    for (const mode of ["low", "high", "maximum"] as const)
+      await transformLyrics("romanization", { ...cerebras, thinkingMode: mode }, ["君"], "", "ja");
+    await transformLyrics("romanization", { ...cerebras, model: "unknown-reasoner", thinkingMode: "maximum" }, ["君"], "", "ja");
+    expect(bodies.map(body => body.reasoning_effort)).toEqual(["low", "high", "max", undefined]);
+    expect(Object.hasOwn(bodies[3], "reasoning_effort")).toBe(false);
+    const qwen = { ...cerebras, model: "qwen-3.8-27b" };
+    expect((await getThinkingCapabilities(qwen, true)).modes).toEqual(["off", "low", "medium", "high", "auto"]);
+    for (const mode of ["off", "low", "medium", "high"] as const)
+      await transformLyrics("romanization", { ...qwen, thinkingMode: mode }, ["君"], "", "ja");
+    expect(bodies.slice(4).map(body => body.reasoning_effort)).toEqual(["none", "low", "medium", "high"]);
+  });
+  it("does not send OpenAI parameters to Ollama's OpenAI-compatible API or unknown compatible services", async () => {
+    const ollamaCompatible = { ...compatible, baseUrl: "http://localhost:11434/v1", thinkingMode: "high" as const };
+    expect((await getThinkingCapabilities(ollamaCompatible, true)).modes).toEqual(["auto"]);
+    const generic = { ...compatible, baseUrl: "https://proxy.example.test/v1", model: "reasoner", thinkingMode: "high" as const };
+    expect((await getThinkingCapabilities(generic, true)).modes).toEqual(["auto"]);
+    const bodies: Record<string, unknown>[] = [];
+    setRuntimeFetch(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)); bodies.push(body);
+      return openAiContent('{"results":[{"id":"L0","text":"ok"}]}');
+    });
+    await transformLyrics("translation", ollamaCompatible, ["hello"], "fr", "en");
+    await transformLyrics("translation", generic, ["hello"], "fr", "en");
+    expect(bodies.every(body => !Object.hasOwn(body, "reasoning_effort"))).toBe(true);
   });
   it("persists validated derived results and restores them without a request", async () => {
     let saved = "";

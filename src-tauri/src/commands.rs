@@ -768,6 +768,29 @@ pub async fn cmd_write_sidecar_lrc(
     Ok(returned)
 }
 
+
+#[tauri::command]
+pub async fn cmd_write_sidecar_ttml(
+    audio_path: String,
+    text: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let Some(allowed_audio) = state.allowlist.resolve_allowed_media(&audio_path) else {
+        return Err("Audio path is outside library allowlist".to_string());
+    };
+    if !is_audio_extension(&allowed_audio) {
+        return Err("Target is not an audio file".to_string());
+    }
+    let ttml_path = allowed_audio.with_extension("ttml");
+    let returned = ttml_path.to_string_lossy().into_owned();
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::write(&ttml_path, text.as_bytes()).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    Ok(returned)
+}
+
 /// Decode Tester: deletes explicitly confirmed library audio files.
 ///
 /// Every path must resolve inside the media allowlist and carry an audio extension; anything else

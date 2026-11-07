@@ -436,6 +436,8 @@ export interface LyricsFetchStats {
 
 export interface TranslationRequest {
   lines: string[];
+  /** Timed romanization input as line context plus existing timed spans; contains no timestamps. */
+  timedRomanizationLines?: { lineIndex: number; lineId: string; lineText: string; spans: string[] }[];
   /** Bypass only this transformation's derived result cache on explicit user regeneration. */
   forceRegenerate?: boolean;
   /** Plain neighboring lyric lines for context; never markup or timestamps. */
@@ -455,6 +457,8 @@ export interface TranslationResult {
 
 export interface RomanizationResult {
   romanizations: (string | null)[];
+  /** Per-line results for existing timed spans; null when line-level output was used. */
+  timedRomanizations?: ((string | null)[] | null)[];
   detectedLanguage: string;
 }
 
@@ -462,12 +466,14 @@ export interface RomanizationResult {
 export type LyricsFetchConcurrency = "low" | "balanced" | "high";
 
 export type LyricsAiProtocol = "ollama-native" | "openai-compatible";
-export type LyricsAiThinkingMode = "off" | "low" | "medium" | "high" | "auto";
+export type LyricsAiThinkingMode = "off" | "low" | "medium" | "high" | "maximum" | "auto";
 export interface LyricsAiThinkingCapabilities {
   modes: LyricsAiThinkingMode[];
   defaultMode: LyricsAiThinkingMode | null;
   metadataAvailable: boolean;
   detail?: string;
+  /** Provider-specific wire values; omitted for Auto and modes without a confirmed mapping. */
+  wireValues?: Partial<Record<LyricsAiThinkingMode, string | boolean>>;
 }
 export interface LyricsAiConfig {
   enabled: boolean;
@@ -488,7 +494,10 @@ export interface LyricsAiConfig {
   customHeaders: string;
 }
 
+export type LyricsTranslationSource = "auto" | "local" | "ai";
 export interface LyricsSettings {
+  /** Auto preserves the legacy source behavior; Local never calls a translation provider. */
+  translationSource: LyricsTranslationSource;
   aiTranslation: LyricsAiConfig;
   aiRomanization: LyricsAiConfig;
   providerOrder: string[];
@@ -902,6 +911,7 @@ export interface CadenceApi {
     aiTestConnection(kind: "translation" | "romanization"): Promise<string>;
     aiThinkingModes(kind: "translation" | "romanization", refresh?: boolean): Promise<LyricsAiThinkingCapabilities>;
     saveSidecar(trackId: number, text: string): Promise<{ path: string }>;
+    saveTtmlSidecar(trackId: number, text: string): Promise<{ path: string }>;
     /**
      * Empties the persistent remote-lyrics cache. Resolves only after the emptied cache file has
      * been written to disk and rejects with the filesystem error when it could not be, so the UI

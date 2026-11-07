@@ -50,11 +50,16 @@ describe("AI lyrics thinking mode settings", () => {
     const store = new SettingsStore(file);
     expect(store.get().lyrics.aiTranslation.thinkingMode).toBe("auto");
     expect(store.get().lyrics.aiRomanization.thinkingMode).toBe("auto");
-    store.patch({ lyrics: { aiTranslation: { ...DEFAULT_SETTINGS.lyrics.aiTranslation, thinkingMode: "high" } } });
-    store.patch({ lyrics: { aiRomanization: { ...DEFAULT_SETTINGS.lyrics.aiRomanization, thinkingMode: "off" } } });
+    store.patch({ lyrics: {
+      aiTranslation: { baseUrl: "https://api.openai.com/v1", chatPath: "/chat/completions", model: "gpt-5.2", apiKey: "keep-translation-key", thinkingMode: "auto" },
+      aiRomanization: { baseUrl: "https://api.cerebras.ai/v1", model: "kimi-k3", apiKey: "keep-romanization-key", thinkingMode: "auto" },
+    } });
+    store.patch({ lyrics: { aiTranslation: { thinkingMode: "maximum" }, aiRomanization: { thinkingMode: "off" } } });
     const reopened = new SettingsStore(file).get();
-    expect(reopened.lyrics.aiTranslation.thinkingMode).toBe("high");
+    expect(reopened.lyrics.aiTranslation.thinkingMode).toBe("maximum");
     expect(reopened.lyrics.aiRomanization.thinkingMode).toBe("off");
+    expect(reopened.lyrics.aiTranslation).toMatchObject({ baseUrl: "https://api.openai.com/v1", chatPath: "/chat/completions", model: "gpt-5.2", apiKey: "keep-translation-key" });
+    expect(reopened.lyrics.aiRomanization).toMatchObject({ baseUrl: "https://api.cerebras.ai/v1", model: "kimi-k3", apiKey: "keep-romanization-key" });
   });
 
   it("normalizes unknown persisted modes back to Auto", () => {
