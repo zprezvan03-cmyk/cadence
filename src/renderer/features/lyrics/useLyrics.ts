@@ -579,19 +579,10 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
           forceRegenerate,
           segmentIds: gaps.map(index => `line-${index}`),
           contextLines: lines,
-          timedRomanizationLines: gaps.map((index, lineIndex) => ({
-            lineIndex,
-            lineId: `line-${index}`,
-            lineText: lines[index],
-            spans: parsed.lyrics[index].parts?.map(part => part.words) ?? [],
-          })).filter(line => line.spans.length > 1),
         });
         if (cancelled) return;
         appliedRomanizationKey = romanizationKey;
         const romanizations = scatterRomanizations(parsed.lyrics.length, gaps, result.romanizations);
-        const timedPositions = gaps.map((lineIndex, resultIndex) => ({ lineIndex, resultIndex })).filter(({ lineIndex }) => (parsed.lyrics[lineIndex].parts?.length ?? 0) > 1);
-        const timedLineIndexes = timedPositions.map(({ lineIndex }) => lineIndex);
-        const timedValues = timedPositions.map(({ resultIndex }) => result.timedRomanizations?.[resultIndex] ?? null);
         const count = romanizations.filter(Boolean).length;
         useLyricsStore.setState(previous => {
           // The parse changed under the request (track/provider switch): its result belongs to
@@ -603,7 +594,7 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
             detectedLanguage: result.detectedLanguage || parsed.language,
             lyrics:
               count > 0
-                ? applyRomanization(previous.lyrics ?? parsed.lyrics, romanizations, timedLineIndexes, timedValues)
+                ? applyRomanization(previous.lyrics ?? parsed.lyrics, romanizations)
                 : previous.lyrics ?? parsed.lyrics,
           };
         });

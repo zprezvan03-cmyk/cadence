@@ -436,8 +436,6 @@ export interface LyricsFetchStats {
 
 export interface TranslationRequest {
   lines: string[];
-  /** Timed romanization input as line context plus existing timed spans; contains no timestamps. */
-  timedRomanizationLines?: { lineIndex: number; lineId: string; lineText: string; spans: string[] }[];
   /** Bypass only this transformation's derived result cache on explicit user regeneration. */
   forceRegenerate?: boolean;
   /** Plain neighboring lyric lines for context; never markup or timestamps. */
@@ -457,8 +455,6 @@ export interface TranslationResult {
 
 export interface RomanizationResult {
   romanizations: (string | null)[];
-  /** Per-line results for existing timed spans; null when line-level output was used. */
-  timedRomanizations?: ((string | null)[] | null)[];
   detectedLanguage: string;
 }
 

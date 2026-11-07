@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { joinRomanizedSpans } from "../../src/shared/lyricsTiming";
 import {
   applyFileRomanization,
   applyRomanization,
@@ -18,27 +17,12 @@ const LINE_LRC = "[ti:Test]\n[00:01.00]First line\n[00:03.50]Second line\n[00:06
 const RICH_LRC = "[00:01.00]<00:01.00>Word <00:01.30>level <00:01.70>sync\n[00:04.00]<00:04.00>Second <00:04.40>line";
 const RICH_QRC = `<?xml version="1.0" encoding="utf-8"?><QrcInfos><LyricInfo LyricContent="[1000,2000]QRC(1000,700) line(1700,1300)\n[3000,2000]Second(3000,800) line(3800,1200)\n"/></QrcInfos>`;
 
-describe("timed romanization and TTML round trip", () => {
-  it("joins Japanese, mixed-script and punctuation spans naturally", () => {
-    expect(joinRomanizedSpans([
-      { source: "東京", romanized: "Tokyo" },
-      { source: "へ", romanized: "e" },
-      { source: "、", romanized: "," },
-      { source: "帰る", romanized: "kaeru" },
-      { source: "!", romanized: "!" },
-    ])).toBe("Tokyo e, kaeru!");
-    expect(joinRomanizedSpans([
-      { source: "(", romanized: "(" },
-      { source: "mixed text", romanized: "mixed text" },
-      { source: ")", romanized: ")" },
-    ])).toBe("(mixed text)");
-  });
-
+describe("TTML export preserves line romanization and lyric word timing", () => {
   it("does not invent timing for plain unsynchronized lyrics", () => {
-    const parsed = parseLyricsText("plain lyric\\nnext line", 12_000);
+    const parsed = parseLyricsText("plain lyric\nnext line", 12_000);
     const xml = lyricsToTtml(parsed.lyrics, { durationMs: 12_000 });
     expect(xml).toContain("<p itunes:key=");
-    expect(xml).not.toMatch(/<p[^>]*\\bbegin=/);
+    expect(xml).not.toMatch(/<p[^>]*\bbegin=/);
     expect(xml).not.toContain("<span begin=");
   });
 
@@ -50,34 +34,20 @@ describe("timed romanization and TTML round trip", () => {
     expect(xml).toContain(`<style xml:id="s1" tts:color="white"/>`);
     expect(xml).toContain(`style="s1"`);
   });
-  it("applies complete timed results without changing original span timestamps", () => {
-    const parsed = parseLyricsText(RICH_LRC, 8_000);
-    const originalParts = parsed.lyrics[0].parts!.map(({ startTimeMs, durationMs }) => ({ startTimeMs, durationMs }));
-    const romanized = applyRomanization(parsed.lyrics, ["word level sync", null], [0], [["waado", "reberu", "shinku"]]);
-    expect(romanized[0].timedRomanization?.map(part => part.words)).toEqual(["waado", " reberu", " shinku"]);
-    expect(romanized[0].parts!.map(({ startTimeMs, durationMs }) => ({ startTimeMs, durationMs }))).toEqual(originalParts);
-    expect(romanized[0].romanization).toContain("waado");
-  });
 
-  it("rejects incomplete timed results without losing existing romanization", () => {
+  it("round-trips line-level romanization, translations and original word timings", () => {
     const parsed = parseLyricsText(RICH_LRC, 8_000);
-    const existing = { ...parsed.lyrics[0], romanization: "valid prior" };
-    const result = applyRomanization([existing], ["bad replacement"], [0], [["only one"]]);
-    expect(result[0]).toBe(existing);
-  });
-
-  it("exports local translations and timed romanization in re-importable TTML", () => {
-    const parsed = parseLyricsText(RICH_LRC, 8_000);
-    const timed = applyRomanization(parsed.lyrics, ["waado reberu shinku", null], [0], [["waado", "reberu", "shinku"]]);
-    const translated = applyTranslations(timed, ["言葉のレベル同期", "次の行"], "ja");
-    expect(availableEmbeddedTranslationLanguages(translated)).toContain("ja");
+    const originalParts = parsed.lyrics[0].parts!.map(part => [part.startTimeMs, part.durationMs]);
+    const decorated = applyRomanization(parsed.lyrics, ["word level sync", null]);
+    const translated = applyTranslations(decorated, ["言葉のレベル同期", "次の行"], "ja");
     const xml = lyricsToTtml(translated, { title: "Test", artist: "Artist", language: "ja", durationMs: 8_000 });
     expect(xml).toContain("xmlns:itunes=");
     expect(xml).toContain("<span begin=");
     expect(xml).toContain("言葉のレベル同期");
+    expect(xml).toContain("word level sync");
     const imported = parseLyricsText(xml, 8_000);
-    expect(imported.lyrics[0].parts?.map(part => part.startTimeMs)).toEqual(parsed.lyrics[0].parts?.map(part => part.startTimeMs));
-    expect(imported.lyrics[0].romanization).toContain("waado");
+    expect(imported.lyrics[0].parts?.map(part => [part.startTimeMs, part.durationMs])).toEqual(originalParts);
+    expect(imported.lyrics[0].romanization).toBe("word level sync");
     expect(availableEmbeddedTranslationLanguages(imported.lyrics)).toContain("ja");
   });
 });
@@ -243,6 +213,14 @@ describe("local file romanization priority", () => {
 </tt>`;
   const local = () => parseLyricsText(TTML, 10_000).lyrics;
 
+  it("keeps TTML lyric word timing but stores imported romanization only as a line string", () => {
+    const ttml = `<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" xml:lang="ja"><head><metadata><ttm:agent type="person" xml:id="v1"/><itunes:metadata><transliterations><transliteration xml:lang="ja-Latn"><text for="L1"><span begin="00:00.500" end="00:01.200">sakura </span><span begin="00:01.200" end="00:02.500">no hana</span></text></transliteration></transliterations></itunes:metadata></metadata></head><body dur="00:03.000"><div><p begin="00:00.500" end="00:02.500" itunes:key="L1" ttm:agent="v1"><span begin="00:00.500" end="00:01.200">桜</span><span begin="00:01.200" end="00:02.500">の花</span></p></div></body></tt>`;
+    const parsed = parseLyricsText(ttml, 3_000);
+    expect(parsed.lyrics[0].romanization).toBe("sakura no hana");
+    expect(parsed.lyrics[0].parts?.map(part => [part.startTimeMs, part.durationMs])).toEqual([[500, 700], [1200, 1300]]);
+    expect(Object.keys(parsed.lyrics[0])).not.toContain("timedRomanization");
+  });
+
   it("parses file-supplied romanization onto the lines it belongs to", () => {
     const lyrics = local();
     expect(lyrics).toHaveLength(3);
@@ -315,24 +293,5 @@ describe("local file romanization priority", () => {
     expect(applyFileRomanization(on, lyrics)).toBe(on);
   });
 
-  it("restores file romanization word timing together with the text", () => {
-    const lyrics = local();
-    const timed = lyrics.map((line, index) =>
-      index === 0
-        ? {
-            ...line,
-            timedRomanization: [
-              { startTimeMs: 1000, durationMs: 500, words: "sakura ", isBackground: false },
-              { startTimeMs: 1500, durationMs: 1000, words: "no hana", isBackground: false },
-            ],
-          }
-        : line
-    );
-    const decorated = applyFileRomanization(stripRomanization(timed), timed);
-    expect(decorated[0].romanization).toBe("sakura no hana ga saku");
-    expect(decorated[0].timedRomanization?.map(part => part.words)).toEqual(["sakura ", "no hana"]);
-    const stripped = stripRomanization(decorated);
-    expect(stripped[0].romanization).toBeUndefined();
-    expect(stripped[0].timedRomanization).toBeUndefined();
-  });
+
 });

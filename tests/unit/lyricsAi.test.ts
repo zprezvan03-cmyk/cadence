@@ -77,7 +77,7 @@ describe("central lyrics AI adapters", () => {
     expect(missing).toMatchObject({ modes: ["auto"], metadataAvailable: false });
     expect(missing.detail).toContain("did not report");
   });
-  it("sends timestamp-free timed span context through Cerebras OpenAI-compatible API and maps shuffled IDs", async () => {
+  it("sends complete line-level romanization context through Cerebras OpenAI-compatible API", async () => {
     let systemPrompt = "";
     let requestedUrl = "";
     const cerebras = { ...compatible, baseUrl: "https://api.cerebras.ai/v1", model: "llama3.1-8b" };
@@ -86,31 +86,27 @@ describe("central lyrics AI adapters", () => {
       const body = JSON.parse(String(init?.body));
       systemPrompt = body.messages[0].content;
       return openAiContent(JSON.stringify({ results: [
-        { id: "line-0-span-1", text: "no hana" },
-        { id: "line-0-span-0", text: "sakura" },
+        { id: "line-1", text: "tsukiakari no yoru" },
+        { id: "line-0", text: "sakura no hana" },
       ] }));
     });
     const result = await transformLyrics(
       "romanization",
       cerebras,
-      ["桜", "の花"],
+      ["桜の花", "月明かりの夜"],
       "",
       "ja",
       undefined,
       false,
-      ["line-0-span-0", "line-0-span-1"],
-      ["桜の花"],
-      [{ lineId: "line-0", lineText: "桜の花", spans: [
-        { id: "line-0-span-0", text: "桜" },
-        { id: "line-0-span-1", text: "の花" },
-      ] }],
+      ["line-0", "line-1"],
+      ["桜の花", "月明かりの夜", "隣の歌詞"],
     );
     expect(requestedUrl).toBe("https://api.cerebras.ai/v1/chat/completions");
-    expect(systemPrompt).toContain('"lineText":"桜の花"');
-    expect(systemPrompt).toContain('"text":"桜"');
-    expect(systemPrompt).not.toContain("startTimeMs");
-    expect(systemPrompt).not.toContain("durationMs");
-    expect(result.results).toEqual(["sakura", "no hana"]);
+    expect(systemPrompt).toContain('"text":"桜の花"');
+    expect(systemPrompt).toContain('"text":"月明かりの夜"');
+    expect(systemPrompt).toContain("隣の歌詞");
+    expect(systemPrompt).toContain("Never create or change timestamps");
+    expect(result.results).toEqual(["sakura no hana", "tsukiakari no yoru"]);
   });
 
   it("maps every OpenAI-compatible mode to OpenAI reasoning_effort and verifies outgoing payloads", async () => {

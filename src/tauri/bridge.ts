@@ -43,7 +43,6 @@ import {
 } from "../main/lyrics/translation";
 import { clearAiCache, getThinkingCapabilities, initializeAiCache, listModels, testConnection, transformLyrics } from "../main/lyrics/ai";
 import { analyzeLyrics } from "../main/lyrics/languageIntelligence";
-import { flattenTimedRomanizationBatch, groupTimedRomanizationResults } from "../main/lyrics/timedRomanization";
 import {
   artworkExtensionForMime,
   readTrackMetadataCore,
@@ -1011,15 +1010,8 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
           if (ai?.enabled) {
             const analysis = analyzeLyrics(request.contextLines?.length ? request.contextLines : request.lines);
             if (!analysis.romanizationLikelyNeeded && !request.forceRegenerate) return { romanizations: request.lines.map(() => null), detectedLanguage: analysis.language };
-            const timedLines = request.timedRomanizationLines ?? [];
-            if (timedLines.length === 0) {
-              const response = await transformLyrics("romanization", ai, request.lines, "", request.sourceLanguage ?? analysis.language, controller.signal, request.forceRegenerate, request.segmentIds, request.contextLines);
-              return { romanizations: response.results, detectedLanguage: response.analysis.language };
-            }
-            const batch = flattenTimedRomanizationBatch(request.lines, request.segmentIds, timedLines);
-            const response = await transformLyrics("romanization", ai, batch.flatLines, "", request.sourceLanguage ?? analysis.language, controller.signal, request.forceRegenerate, batch.flatIds, request.contextLines, batch.promptTimedLines);
-            const grouped = groupTimedRomanizationResults(response.results, batch.positions, timedLines);
-            return { ...grouped, detectedLanguage: response.analysis.language };
+            const response = await transformLyrics("romanization", ai, request.lines, "", request.sourceLanguage ?? analysis.language, controller.signal, request.forceRegenerate, request.segmentIds, request.contextLines);
+            return { romanizations: response.results, detectedLanguage: response.analysis.language };
           }
           if (request.forceRegenerate) for (const line of request.lines) translationCache.romanization.delete(line.trim());
           const response = await romanizeBatch(

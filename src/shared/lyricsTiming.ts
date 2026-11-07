@@ -51,26 +51,3 @@ export function lineHasSyllableTiming(line: TimedLine): boolean {
 export function hasSyllableTiming(lines: readonly TimedLine[]): boolean {
   return lines.some(line => lineHasSyllableTiming(line));
 }
-
-/** Returns per-span text with natural separators inserted only at the original span boundaries. */
-export function separateRomanizedSpans(spans: readonly { source: string; romanized: string }[]): string[] {
-  const result: string[] = [];
-  let previousSource = "";
-  let previousValue = "";
-  for (const span of spans) {
-    const value = span.romanized.trim();
-    const source = span.source.trim();
-    const noSpaceBefore = /^[,.;:!?、。，．！？…・:;)}\]」』】〉》]/u.test(source);
-    const noSpaceAfter = /[(\[{「『【〈《]$/u.test(previousSource);
-    const separator = result.length > 0 && value && previousValue && !noSpaceBefore && !noSpaceAfter ? " " : "";
-    result.push(`${separator}${value}`);
-    previousSource = span.source;
-    previousValue = value;
-  }
-  return result;
-}
-
-/** Joins already-romanized timed spans without editing span text except for boundary spacing. */
-export function joinRomanizedSpans(spans: readonly { source: string; romanized: string }[]): string {
-  return separateRomanizedSpans(spans).join("");
-}

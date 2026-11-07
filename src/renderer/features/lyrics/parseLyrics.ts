@@ -16,7 +16,7 @@ import {
   type LyricFormat,
 } from "@braccato/parsers";
 import type { LyricsSyncType } from "../../../shared/types";
-import { joinRomanizedSpans, lineHasSyllableTiming, separateRomanizedSpans } from "../../../shared/lyricsTiming";
+import { lineHasSyllableTiming } from "../../../shared/lyricsTiming";
 import { detectNonLatinLanguage } from "@braccato/core/text";
 
 export interface ParsedLyrics {
@@ -98,6 +98,10 @@ export function parseLyricsText(
   } else {
     lyrics = parser.parse(text, safeDurationMs);
   }
+
+  // Timed romanization is intentionally not part of Cadence's model; keep the parsed line-level
+  // transliteration but leave the original lyric parts/timestamps untouched.
+  lyrics = lyrics.map(({ timedRomanization: _timedRomanization, ...line }) => line);
 
   const songwriters = parser.metadata(text)?.songwriters?.filter(Boolean) ?? [];
   const syncType = detectSyncType(lyrics);
@@ -200,50 +204,25 @@ export function applyTranslations(
   });
 }
 
-/** Copies the romanization each line's own lyrics file supplied onto `lyrics`, matched by position
- * (the association every decoration pass in this module uses). File romanization carries the
- * file's word timing with it, so a restored line keeps its syllable-level timing instead of
- * flattening to a plain string. Translation decorations on `lyrics` are left untouched. */
+/** Restores file-supplied line-level romanization by position. Original lyric parts/timestamps and
+ * translation decorations on `lyrics` are left untouched. */
 export function applyFileRomanization(lyrics: readonly Lyric[], local: readonly Lyric[]): Lyric[] {
   let changed = false;
   const result = lyrics.map((line, index) => {
     const source = local[index];
     const fileRomanization = source?.romanization?.trim() ? source.romanization : undefined;
     if (!fileRomanization) return line;
-    const fileTiming = source.timedRomanization;
-    if (line.romanization === fileRomanization && (line.timedRomanization ?? undefined) === (fileTiming ?? undefined)) {
-      return line;
-    }
+    if (line.romanization === fileRomanization) return line;
     changed = true;
-    const next: Lyric = { ...line, romanization: fileRomanization };
-    if (fileTiming?.length) next.timedRomanization = fileTiming;
-    else delete next.timedRomanization;
-    return next;
+    return { ...line, romanization: fileRomanization };
   });
   return changed ? result : (lyrics as Lyric[]);
 }
 
-export function applyRomanization(
-  lyrics: readonly Lyric[],
-  romanizations: readonly (string | null)[],
-  timedLineIndexes: readonly number[] = [],
-  timedRomanizations: readonly ((string | null)[] | null)[] = []
-): Lyric[] {
-  const timedByLine = new Map(timedLineIndexes.map((lineIndex, resultIndex) => [lineIndex, timedRomanizations[resultIndex]]));
+export function applyRomanization(lyrics: readonly Lyric[], romanizations: readonly (string | null)[]): Lyric[] {
   return lyrics.map((line, index) => {
-    // File-supplied romanization always wins; generated output only fills gaps.
+    // File-supplied line-level romanization always wins; generated output only fills gaps.
     if (line.romanization?.trim()) return line;
-    if (timedByLine.has(index)) {
-      const spans = timedByLine.get(index);
-      if (!spans || !lineHasSyllableTiming(line) || line.parts?.length !== spans.length || !spans.every(text => !!text?.trim())) return line;
-      const timedTexts = separateRomanizedSpans(line.parts.map((part, partIndex) => ({ source: part.words, romanized: spans[partIndex]! })));
-      const timedRomanization = line.parts.map((part, partIndex) => ({ ...part, words: timedTexts[partIndex] }));
-      const romanization = joinRomanizedSpans(line.parts.map((part, partIndex) => ({
-        source: part.words,
-        romanized: timedRomanization[partIndex].words,
-      })));
-      return { ...line, romanization, timedRomanization };
-    }
     const romanized = romanizations[index];
     if (!romanized || romanized.trim().length === 0) return line;
     return { ...line, romanization: romanized };
@@ -291,18 +270,12 @@ export function stripTranslations(lyrics: readonly Lyric[]): Lyric[] {
   });
 }
 
-/**
- * Removes every romanization decoration, generated and file-supplied alike, together with the
- * word timing that came with it. The auto-romanize toggle controls whether romanization is shown,
- * so turning it off must hide the file's transliterations too; {@link applyFileRomanization}
- * restores them without another provider request when the toggle comes back on. Same identity
- * contract as {@link stripTranslations}.
- */
+/** Hides line-level romanization without changing original words, parts or timestamps. */
 export function stripRomanization(lyrics: readonly Lyric[]): Lyric[] {
-  if (!lyrics.some(line => line.romanization || line.timedRomanization)) return lyrics as Lyric[];
+  if (!lyrics.some(line => line.romanization)) return lyrics as Lyric[];
   return lyrics.map(line => {
-    if (!line.romanization && !line.timedRomanization) return line;
-    const { romanization: _romanization, timedRomanization: _timedRomanization, ...rest } = line;
+    if (!line.romanization) return line;
+    const { romanization: _romanization, ...rest } = line;
     return rest as Lyric;
   });
 }
@@ -391,11 +364,7 @@ export function lyricsToTtml(lyrics: readonly Lyric[], meta: TtmlExportMetadata 
     metadata.push(`<transliterations><transliteration xml:lang="${escapeXml(romanizationLanguage)}">${lyrics.map((line, index) => {
       const text = romanizations.get(uniqueKeys[index]);
       if (!text) return "";
-      const timed = line.timedRomanization;
-      const serialized = timed?.length && line.parts?.length === timed.length
-        ? timed.map(ttmlSpan).join("")
-        : escapeXml(text);
-      return `<text for="${escapeXml(uniqueKeys[index])}">${serialized}</text>`;
+      return `<text for="${escapeXml(uniqueKeys[index])}">${escapeXml(text)}</text>`;
     }).join("")}</transliteration></transliterations>`);
   }
   const duration = Math.max(meta.durationMs ?? 0, ...lyrics.map(line => line.startTimeMs + line.durationMs), 0);

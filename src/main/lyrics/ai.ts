@@ -240,14 +240,11 @@ export async function testConnection(config: AiProfile, signal?: AbortSignal): P
 
 export type TransformKind = "translation" | "romanization";
 export interface TransformResult { results: (string|null)[]; analysis: LanguageAnalysis }
-function promptFor(kind: TransformKind, analysis: LanguageAnalysis, target: string, standard: string, ids: {id:string;text:string}[], contextLines: string[], timedRomanizationLines: {lineId:string;lineText:string;spans:{id:string;text:string}[]}[] = []): string {
+function promptFor(kind: TransformKind, analysis: LanguageAnalysis, target: string, standard: string, ids: {id:string;text:string}[], contextLines: string[]): string {
   const task = kind === "translation"
     ? `Translate song lyrics from ${analysis.language} into ${target}. Preserve meaning, idiom, emotion, repeated lines, punctuation and intentional repetitions. Do not add explanations or lyrics.`
-    : `Romanize ${analysis.language} lyrics from ${analysis.script} into Latin characters. Do not translate, paraphrase, rewrite meaning, add or omit lyrics. Preserve punctuation and repetitions. Use ${standard}. If a segment is already Latin/romanized, copy it unchanged.`;
-  const timedInstruction = kind === "romanization" && timedRomanizationLines.length
-    ? "Some segments below are individual existing timed spans from the same continuous lyric line. Use the complete line only as context, romanize each supplied span as one indivisible unit, preserve span order and the relationship between each span ID and its romanized text. Do not split spans further, do not invent or return timestamps, and do not insert artificial spaces inside a span. Neighboring romanized span outputs will be joined at their existing boundaries by Cadence."
-    : "";
-  return `${task}\nOffline analysis: detected ${analysis.language} in ${analysis.script} script, confidence ${(analysis.confidence * 100).toFixed(0)}%, mixed-language=${analysis.mixed}. Treat low-confidence language as uncertain and use neighboring lyric context; do not transform an already-Latin segment.\nUse context across the entire song to resolve ambiguity and keep terminology/conventions consistent.\n${timedInstruction}\nReturn exactly one JSON object with key "results", an array containing exactly one {"id":"...","text":"..."} per supplied id. Do not return markdown or other keys. Preserve every id exactly. Each text must be a single line without timestamps, tags, markup or commentary. Neighboring source lines are context only and must not be returned.\nCONTEXT=${JSON.stringify(contextLines)}\nTIMED_ROMANIZATION_LINES=${JSON.stringify(timedRomanizationLines)}\nSEGMENTS=${JSON.stringify(ids)}`;
+    : `Romanize each complete ${analysis.language} lyric line from ${analysis.script} into Latin characters. Do not translate, paraphrase, rewrite meaning, add or omit lyrics. Preserve punctuation and repetitions. Use ${standard}. If a line is already Latin/romanized, copy it unchanged. Never create or change timestamps.`;
+  return `${task}\nOffline analysis: detected ${analysis.language} in ${analysis.script} script, confidence ${(analysis.confidence * 100).toFixed(0)}%, mixed-language=${analysis.mixed}. Treat low-confidence language as uncertain and use neighboring lyric context; do not transform an already-Latin segment.\nUse context across the entire song to resolve ambiguity and keep terminology/conventions consistent.\nReturn exactly one JSON object with key "results", an array containing exactly one {"id":"...","text":"..."} per supplied id. Do not return markdown or other keys. Preserve every id exactly. Each text must be a single complete line without timestamps, tags, markup or commentary. Neighboring source lines are context only and must not be returned.\nCONTEXT=${JSON.stringify(contextLines)}\nSEGMENTS=${JSON.stringify(ids)}`;
 }
 const derivedCache = new Map<string, { kind: TransformKind; results: (string|null)[] }>();
 let persistAiCache: ((json: string) => void | Promise<void>) | undefined;
@@ -288,14 +285,14 @@ export async function clearAiCache(kind?: TransformKind): Promise<void> {
   persistDerivedCache();
   await persistQueue;
 }
-export async function transformLyrics(kind: TransformKind, config: LyricsAiConfig, lines: string[], target: string, sourceHint?: string|null, signal?: AbortSignal, forceRegenerate = false, segmentIds?: string[], contextLines: string[] = lines, timedRomanizationLines: {lineId:string;lineText:string;spans:{id:string;text:string}[]}[] = []): Promise<TransformResult> {
+export async function transformLyrics(kind: TransformKind, config: LyricsAiConfig, lines: string[], target: string, sourceHint?: string|null, signal?: AbortSignal, forceRegenerate = false, segmentIds?: string[], contextLines: string[] = lines): Promise<TransformResult> {
   const analysis = analyzeLyrics(contextLines.length ? contextLines : lines);
   if (!forceRegenerate && kind === "translation" && analysis.language !== "und" && target && target.split("-")[0].toLowerCase() === analysis.language.split("-")[0].toLowerCase())
     return { results: lines.map(() => null), analysis };
   const context = (analysis.language === "und" || analysis.confidence < .65) && sourceHint && sourceHint !== "und"
     ? { ...analysis, language: sourceHint as LanguageAnalysis["language"] }
     : analysis;
-  const cacheKey = digest(JSON.stringify({ v: 2, kind, lines, contextLines, segmentIds, timedRomanizationLines, language: context.language, script: context.script, confidence: context.confidence, mixed: context.mixed,
+  const cacheKey = digest(JSON.stringify({ v: 2, kind, lines, contextLines, segmentIds, language: context.language, script: context.script, confidence: context.confidence, mixed: context.mixed,
     target, protocol: config.protocol, baseUrl: config.baseUrl, chatPath: config.chatPath, model: config.model,
     keyFingerprint: digest(config.apiKey), headersFingerprint: digest(config.customHeaders), standard: config.romanizationStandard ?? "",
     thinkingMode: config.thinkingMode ?? "auto", temperature: config.temperature, maxOutputTokens: config.maxOutputTokens,
@@ -307,7 +304,7 @@ export async function transformLyrics(kind: TransformKind, config: LyricsAiConfi
   const standards: Record<string,string> = { ja: "Hepburn romanization", ko: "Revised Romanization of Korean", zh: "Hanyu Pinyin with tone marks where natural", ru: "BGN/PCGN Russian transliteration", ar: "DIN 31635 Arabic romanization" };
   const configuredStandard = config.romanizationStandard ?? "auto";
   const standard = configuredStandard === "auto" ? (standards[context.language] ?? `a consistent standard for ${context.language}`) : configuredStandard;
-  const raw = await generate(config, promptFor(kind, context, target || config.targetLanguage || "English", standard, ids, contextLines, timedRomanizationLines), signal);
+  const raw = await generate(config, promptFor(kind, context, target || config.targetLanguage || "English", standard, ids, contextLines), signal);
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { throw new LyricsAiError("AI returned malformed structured lyrics. No results were applied.", "response"); }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || Object.keys(parsed as object).some(key => key !== "results"))
