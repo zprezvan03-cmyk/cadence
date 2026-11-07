@@ -16,7 +16,7 @@ import {
   type LyricFormat,
 } from "@braccato/parsers";
 import type { LyricsSyncType } from "../../../shared/types";
-import { joinRomanizedSpans, lineHasSyllableTiming } from "../../../shared/lyricsTiming";
+import { joinRomanizedSpans, lineHasSyllableTiming, separateRomanizedSpans } from "../../../shared/lyricsTiming";
 import { detectNonLatinLanguage } from "@braccato/core/text";
 
 export interface ParsedLyrics {
@@ -236,7 +236,8 @@ export function applyRomanization(
     if (timedByLine.has(index)) {
       const spans = timedByLine.get(index);
       if (!spans || !lineHasSyllableTiming(line) || line.parts?.length !== spans.length || !spans.every(text => !!text?.trim())) return line;
-      const timedRomanization = line.parts.map((part, partIndex) => ({ ...part, words: spans[partIndex]!.trim() }));
+      const timedTexts = separateRomanizedSpans(line.parts.map((part, partIndex) => ({ source: part.words, romanized: spans[partIndex]! })));
+      const timedRomanization = line.parts.map((part, partIndex) => ({ ...part, words: timedTexts[partIndex] }));
       const romanization = joinRomanizedSpans(line.parts.map((part, partIndex) => ({
         source: part.words,
         romanized: timedRomanization[partIndex].words,

@@ -224,7 +224,7 @@ const lyricsHarness = {
   settings: harnessAppSettings(),
   resolveCalls: 0,
   translateCalls: [] as { lines: string[]; targetLanguage: string }[],
-  romanizeCalls: [] as { lines: string[] }[],
+  romanizeCalls: [] as { lines: string[]; contextLines?: string[]; timedRomanizationLines?: { lineIndex: number; lineId: string; lineText: string; spans: string[] }[] }[],
   translationDelayMs: 0,
   romanizationDelayMs: 0,
   translationFailure: false,
@@ -276,13 +276,21 @@ function installLyricsHarnessBridge(): void {
           provider: "harness",
         };
       },
-      romanize: async (request: { lines: string[] }) => {
-        lyricsHarness.romanizeCalls.push({ lines: [...request.lines] });
+      romanize: async (request: { lines: string[]; contextLines?: string[]; timedRomanizationLines?: { lineIndex: number; lineId: string; lineText: string; spans: string[] }[] }) => {
+        lyricsHarness.romanizeCalls.push({ lines: [...request.lines], contextLines: request.contextLines, timedRomanizationLines: structuredClone(request.timedRomanizationLines ?? []) });
         if (lyricsHarness.romanizationDelayMs > 0) {
           await new Promise(resolve => setTimeout(resolve, lyricsHarness.romanizationDelayMs));
         }
         if (lyricsHarness.romanizationFailure) throw new Error("harness romanization failure");
-        return { romanizations: request.lines.map(line => `[rom] ${line}`), provider: "harness" };
+        const timedByLine = new Map((request.timedRomanizationLines ?? []).map(line => [line.lineIndex, line]));
+        return {
+          romanizations: request.lines.map(line => `[rom] ${line}`),
+          timedRomanizations: request.lines.map((_, index) => {
+            const timed = timedByLine.get(index);
+            return timed ? timed.spans.map((_, spanIndex) => ["sakura", "no hana", "yo"][spanIndex] ?? `span-${spanIndex}`) : null;
+          }),
+          provider: "harness",
+        };
       },
       aiModels: async () => [],
       aiTestConnection: async () => "Harness: no live AI endpoint configured.",
@@ -522,6 +530,8 @@ const harness = {
           words: line.words,
           romanization: line.romanization ?? null,
           timedRomanization: line.timedRomanization?.map(part => part.words) ?? null,
+          parts: line.parts?.map(part => ({ words: part.words, startTimeMs: part.startTimeMs, durationMs: part.durationMs })) ?? null,
+          romanizationParts: line.timedRomanization?.map(part => ({ words: part.words, startTimeMs: part.startTimeMs, durationMs: part.durationMs })) ?? null,
           translation: line.translation?.text ?? null,
         })) ?? [],
       parsedLanguage: state.parsed?.language ?? null,

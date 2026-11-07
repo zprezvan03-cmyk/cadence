@@ -43,7 +43,7 @@ import {
 } from "../main/lyrics/translation";
 import { clearAiCache, getThinkingCapabilities, initializeAiCache, listModels, testConnection, transformLyrics } from "../main/lyrics/ai";
 import { analyzeLyrics } from "../main/lyrics/languageIntelligence";
-import { joinRomanizedSpans } from "../shared/lyricsTiming";
+import { flattenTimedRomanizationBatch, groupTimedRomanizationResults } from "../main/lyrics/timedRomanization";
 import {
   artworkExtensionForMime,
   readTrackMetadataCore,
@@ -1011,45 +1011,15 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
           if (ai?.enabled) {
             const analysis = analyzeLyrics(request.contextLines?.length ? request.contextLines : request.lines);
             if (!analysis.romanizationLikelyNeeded && !request.forceRegenerate) return { romanizations: request.lines.map(() => null), detectedLanguage: analysis.language };
-            const timedByLine = new Map((request.timedRomanizationLines ?? []).map(line => [line.lineIndex, line]));
-            if (timedByLine.size === 0) {
+            const timedLines = request.timedRomanizationLines ?? [];
+            if (timedLines.length === 0) {
               const response = await transformLyrics("romanization", ai, request.lines, "", request.sourceLanguage ?? analysis.language, controller.signal, request.forceRegenerate, request.segmentIds, request.contextLines);
               return { romanizations: response.results, detectedLanguage: response.analysis.language };
             }
-            const flatLines: string[] = [];
-            const flatIds: string[] = [];
-            const promptTimedLines: { lineId: string; lineText: string; spans: { id: string; text: string }[] }[] = [];
-            const resultPositions: { start: number; count: number }[] = [];
-            request.lines.forEach((lineText, lineIndex) => {
-              const timed = timedByLine.get(lineIndex);
-              if (!timed || timed.spans.length === 0) {
-                resultPositions.push({ start: flatLines.length, count: 1 });
-                flatLines.push(lineText);
-                flatIds.push(request.segmentIds?.[lineIndex] ?? `line-${lineIndex}`);
-                return;
-              }
-              const lineId = timed.lineId || request.segmentIds?.[lineIndex] || `line-${lineIndex}`;
-              const spans = timed.spans.map((text, spanIndex) => ({ id: `${lineId}-span-${spanIndex}`, text }));
-              resultPositions.push({ start: flatLines.length, count: spans.length });
-              promptTimedLines.push({ lineId, lineText: timed.lineText || lineText, spans });
-              for (const span of spans) { flatLines.push(span.text); flatIds.push(span.id); }
-            });
-            const response = await transformLyrics("romanization", ai, flatLines, "", request.sourceLanguage ?? analysis.language, controller.signal, request.forceRegenerate, flatIds, request.contextLines, promptTimedLines);
-            const romanizations: (string | null)[] = [];
-            const timedRomanizations: ((string | null)[] | null)[] = [];
-            request.lines.forEach((lineText, lineIndex) => {
-              const position = resultPositions[lineIndex];
-              const values = response.results.slice(position.start, position.start + position.count);
-              const timed = timedByLine.get(lineIndex);
-              if (timed && values.length === timed.spans.length) {
-                timedRomanizations.push(values);
-                romanizations.push(joinRomanizedSpans(timed.spans.map((source, index) => ({ source, romanized: values[index] ?? "" }))));
-              } else {
-                timedRomanizations.push(null);
-                romanizations.push(values[0] ?? null);
-              }
-            });
-            return { romanizations, timedRomanizations, detectedLanguage: response.analysis.language };
+            const batch = flattenTimedRomanizationBatch(request.lines, request.segmentIds, timedLines);
+            const response = await transformLyrics("romanization", ai, batch.flatLines, "", request.sourceLanguage ?? analysis.language, controller.signal, request.forceRegenerate, batch.flatIds, request.contextLines, batch.promptTimedLines);
+            const grouped = groupTimedRomanizationResults(response.results, batch.positions, timedLines);
+            return { ...grouped, detectedLanguage: response.analysis.language };
           }
           if (request.forceRegenerate) for (const line of request.lines) translationCache.romanization.delete(line.trim());
           const response = await romanizeBatch(

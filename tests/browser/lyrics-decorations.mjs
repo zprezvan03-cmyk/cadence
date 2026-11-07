@@ -92,6 +92,15 @@ const TTML_INSTRUMENTAL = `<?xml version="1.0" encoding="UTF-8"?>
   </div></body>
 </tt>`;
 
+const TTML_TIMED_GENERATED = `<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xml:lang="ja">
+  <head><metadata><ttm:agent type="person" xml:id="v1"/></metadata></head>
+  <body dur="00:04.000"><div>
+    <p begin="00:00.500" end="00:02.500" ttm:agent="v1"><span begin="00:00.500" end="00:01.200">桜</span><span begin="00:01.200" end="00:02.500">の花</span></p>
+    <p begin="00:03.000" end="00:04.000" ttm:agent="v1">空</p>
+  </div></body>
+</tt>`;
+
 const PLAIN_LRC = `[ti:Remote fixture]
 [ar:Harness Artist]
 [al:Lyrics Bench]
@@ -124,6 +133,7 @@ const candidate = (source, provider, text) => ({
 });
 
 const TTML_CANDIDATE = candidate("local-ttml", "Local TTML", TTML_FULL);
+const TTML_TIMED_GENERATED_CANDIDATE = candidate("local-ttml-timed", "Local TTML timed spans", TTML_TIMED_GENERATED);
 const LRC_CANDIDATE = candidate("local-lrc", "Local LRC", PLAIN_LRC);
 const TTML_PARTIAL_CANDIDATE = candidate("local-partial", "Local TTML (partial)", TTML_PARTIAL);
 const TTML_INSTRUMENTAL_CANDIDATE = candidate("local-instrumental", "Local TTML (instrumental)", TTML_INSTRUMENTAL);
@@ -230,6 +240,7 @@ const dom = () =>
     return {
       lines: lineNodes.length,
       romanized: lineNodes.map(line => textOf(line.querySelector(":scope > .blyrics--romanized"))),
+      romanizedWords: lineNodes.map(line => [...line.querySelectorAll(":scope > .blyrics--romanized .blyrics-bidi-run:not(.blyrics-highlight-run) .blyrics--word")].map(word => word.textContent?.trim() ?? "")),
       translated: lineNodes.map(line => textOf(line.querySelector(":scope > .blyrics--translated"))),
       translatedLanguageAttrs: [...document.querySelectorAll("braccato-lyrics .blyrics--translated")].map(node => node.lang),
       romanizeActive: Boolean(document.querySelector('button[title="Romanize lyrics"].active')),
@@ -658,6 +669,40 @@ try {
     current.romanized[1] === "[rom] 空は青い" && pipeline.calls.romanize.length === romanizeCalls,
     `dom=${JSON.stringify(current.romanized)} extraCalls=${pipeline.calls.romanize.length - romanizeCalls}`
   );
+
+  // Minimal end-to-end word-synced AI mock: parsed TTML spans -> request context -> timed mapping -> DOM words.
+  const timedCallsBefore = (await state()).calls.romanize.length;
+  await mount({
+    track: { id: 712, title: "Generated Timed Romanization", duration: 4 },
+    candidates: [TTML_TIMED_GENERATED_CANDIDATE],
+    settings: { romanization: true, translationLanguage: "" },
+  });
+  current = await dom();
+  pipeline = await state();
+  const timedCall = pipeline.calls.romanize[timedCallsBefore];
+  const originalParts = pipeline.lines[0]?.parts ?? [];
+  const romanizedParts = pipeline.lines[0]?.romanizationParts ?? [];
+  check(
+    "timed-romanization-spans-extracted-and-context-sent",
+    originalParts.length === 2 &&
+      timedCall?.contextLines?.[0]?.includes("桜の花") &&
+      timedCall?.timedRomanizationLines?.[0]?.lineText?.includes("桜の花") &&
+      JSON.stringify(timedCall?.timedRomanizationLines?.[0]?.spans) === JSON.stringify(originalParts.map(part => part.words)),
+    JSON.stringify({ originalParts, call: timedCall }),
+  );
+  check(
+    "timed-romanization-maps-timestamps-and-renders-word-runs",
+    pipeline.lines[0]?.romanization === "sakura no hana" &&
+      JSON.stringify(romanizedParts.map(part => part.words)) === JSON.stringify(["sakura", " no hana"]) &&
+      JSON.stringify(romanizedParts.map(part => [part.startTimeMs, part.durationMs])) === JSON.stringify(originalParts.map(part => [part.startTimeMs, part.durationMs])) &&
+      current.romanized[0] === "sakura no hana" &&
+      JSON.stringify(current.romanizedWords[0]) === JSON.stringify(["sakura", "no", "hana"]),
+    JSON.stringify({ dom: current.romanized, words: current.romanizedWords[0], originalParts, romanizedParts }),
+  );
+
+  await seekPreview(1.5);
+  await wait(500);
+  await page.screenshot({ path: join(artifactDir, "timed-romanization.png"), fullPage: true });
 
   // Settings changed on another page (while Now Playing is unmounted) apply on return.
   await mount({

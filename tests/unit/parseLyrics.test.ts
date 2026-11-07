@@ -16,6 +16,7 @@ import {
 
 const LINE_LRC = "[ti:Test]\n[00:01.00]First line\n[00:03.50]Second line\n[00:06.00]Third line";
 const RICH_LRC = "[00:01.00]<00:01.00>Word <00:01.30>level <00:01.70>sync\n[00:04.00]<00:04.00>Second <00:04.40>line";
+const RICH_QRC = `<?xml version="1.0" encoding="utf-8"?><QrcInfos><LyricInfo LyricContent="[1000,2000]QRC(1000,700) line(1700,1300)\n[3000,2000]Second(3000,800) line(3800,1200)\n"/></QrcInfos>`;
 
 describe("timed romanization and TTML round trip", () => {
   it("joins Japanese, mixed-script and punctuation spans naturally", () => {
@@ -53,7 +54,7 @@ describe("timed romanization and TTML round trip", () => {
     const parsed = parseLyricsText(RICH_LRC, 8_000);
     const originalParts = parsed.lyrics[0].parts!.map(({ startTimeMs, durationMs }) => ({ startTimeMs, durationMs }));
     const romanized = applyRomanization(parsed.lyrics, ["word level sync", null], [0], [["waado", "reberu", "shinku"]]);
-    expect(romanized[0].timedRomanization?.map(part => part.words)).toEqual(["waado", "reberu", "shinku"]);
+    expect(romanized[0].timedRomanization?.map(part => part.words)).toEqual(["waado", " reberu", " shinku"]);
     expect(romanized[0].parts!.map(({ startTimeMs, durationMs }) => ({ startTimeMs, durationMs }))).toEqual(originalParts);
     expect(romanized[0].romanization).toContain("waado");
   });
@@ -105,6 +106,13 @@ describe("parseLyricsText", () => {
     expect(parsed.syncType).toBe("synced");
     // Line-level files must not gain per-word parts.
     expect(parsed.lyrics.every(line => !line.parts || line.parts.length === 0)).toBe(true);
+  });
+
+  it("extracts existing word timings from QRC as well as TTML", () => {
+    const qrc = parseLyricsText(RICH_QRC, 6_000);
+    expect(qrc.format).toBe("qrc");
+    expect(qrc.lyrics[0].parts?.map(part => part.words.trim())).toEqual(["QRC", "line"]);
+    expect(qrc.lyrics[0].parts?.map(part => part.startTimeMs)).toEqual([1_000, 1_700]);
   });
 
   it("parses enhanced LRC into word parts with their own timings", () => {

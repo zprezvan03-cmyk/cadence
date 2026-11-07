@@ -77,6 +77,42 @@ describe("central lyrics AI adapters", () => {
     expect(missing).toMatchObject({ modes: ["auto"], metadataAvailable: false });
     expect(missing.detail).toContain("did not report");
   });
+  it("sends timestamp-free timed span context through Cerebras OpenAI-compatible API and maps shuffled IDs", async () => {
+    let systemPrompt = "";
+    let requestedUrl = "";
+    const cerebras = { ...compatible, baseUrl: "https://api.cerebras.ai/v1", model: "llama3.1-8b" };
+    setRuntimeFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requestedUrl = String(input);
+      const body = JSON.parse(String(init?.body));
+      systemPrompt = body.messages[0].content;
+      return openAiContent(JSON.stringify({ results: [
+        { id: "line-0-span-1", text: "no hana" },
+        { id: "line-0-span-0", text: "sakura" },
+      ] }));
+    });
+    const result = await transformLyrics(
+      "romanization",
+      cerebras,
+      ["桜", "の花"],
+      "",
+      "ja",
+      undefined,
+      false,
+      ["line-0-span-0", "line-0-span-1"],
+      ["桜の花"],
+      [{ lineId: "line-0", lineText: "桜の花", spans: [
+        { id: "line-0-span-0", text: "桜" },
+        { id: "line-0-span-1", text: "の花" },
+      ] }],
+    );
+    expect(requestedUrl).toBe("https://api.cerebras.ai/v1/chat/completions");
+    expect(systemPrompt).toContain('"lineText":"桜の花"');
+    expect(systemPrompt).toContain('"text":"桜"');
+    expect(systemPrompt).not.toContain("startTimeMs");
+    expect(systemPrompt).not.toContain("durationMs");
+    expect(result.results).toEqual(["sakura", "no hana"]);
+  });
+
   it("maps every OpenAI-compatible mode to OpenAI reasoning_effort and verifies outgoing payloads", async () => {
     const config = { ...compatible, baseUrl: "https://api.openai.com/v1", model: "gpt-5.2" };
     const capabilities = await getThinkingCapabilities(config, true);
