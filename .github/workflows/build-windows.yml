@@ -10,7 +10,6 @@ on:
   push:
     branches:
       - arena/d2c7f76f-cadence
-      - arena/45c1b4bd-cadence
     paths:
       - .github/stage-build.txt
       - .github/workflows/build-windows.yml
