@@ -2,8 +2,9 @@
  * Home: recent activity, quick access and library shortcuts. Written for Cadence.
  */
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Clock3, FolderPlus, Heart, Mic2, Play, Shuffle } from "lucide-react";
+import { trackSourceKey } from "../../../shared/media";
 import type { HistoryPayload } from "../../../shared/types";
 import { useLibrary } from "../../state/libraryStore";
 import { useHistory } from "../../state/historyStore";
@@ -13,8 +14,9 @@ import { formatTime } from "../../player/queue";
 import { TrackList } from "../../components/TrackList";
 import { AlbumCard } from "../../components/Cards";
 import { Artwork } from "../../components/Artwork";
+import { SourceBadge } from "../../components/SourceBadge";
 import { shuffle } from "../../player/queue";
-
+import { onRepeatTracks, rediscoverTracks, topLibraryTracks } from "../stats/listeningStats";
 function greeting(): string {
   const hour = new Date().getHours();
   if (hour < 5) return "Still up?";
@@ -23,15 +25,26 @@ function greeting(): string {
   return "Good evening";
 }
 
+function formatLastPlayed(timestamp: number | null): string {
+  if (timestamp === null) return "Played before";
+  return `Last played ${new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(timestamp))}`;
+}
+
 export function HomeView() {
   const snapshot = useLibrary(state => state.snapshot);
   const addFolder = useLibrary(state => state.addFolder);
   const scanning = useLibrary(state => state.scanning);
   const navigate = useUi(state => state.navigate);
+  const showToast = useUi(state => state.showToast);
   const playQueue = usePlayer(state => state.playQueue);
   const playShuffled = usePlayer(state => state.playShuffled);
   const playTrack = usePlayer(state => state.playTrack);
   const { entries: historyEntries, load: loadHistory } = useHistory(state => state);
+  const [now] = useState(() => Date.now());
 
   // Recently played is a read-only view of the same persistent listening history the History tab
   // uses. Both views share the useHistory store, so a new play start or a clear-history updates
@@ -41,13 +54,14 @@ export function HomeView() {
   }, [loadHistory]);
 
   const recentlyPlayed = useMemo(() => {
-    const seen = new Set<number>();
+    const seen = new Set<string>();
     const result: HistoryPayload[] = [];
     for (const entry of [...historyEntries].sort(
       (a, b) => b.playedAt - a.playedAt || b.id - a.id,
     )) {
-      if (seen.has(entry.trackId)) continue;
-      seen.add(entry.trackId);
+      const key = trackSourceKey(entry.source);
+      if (seen.has(key)) continue;
+      seen.add(key);
       result.push(entry.payload);
       if (result.length >= 6) break;
     }
@@ -74,6 +88,21 @@ export function HomeView() {
   }, [snapshot?.albums]);
 
   const favorites = useMemo(() => (snapshot?.tracks ?? []).filter(track => track.favorite), [snapshot?.tracks]);
+
+  const topTracks = useMemo(
+    () => topLibraryTracks(snapshot?.tracks ?? [], historyEntries, { now, limit: 10 }),
+    [historyEntries, now, snapshot?.tracks],
+  );
+
+  const onRepeat = useMemo(
+    () => onRepeatTracks(snapshot?.tracks ?? [], historyEntries, { now, limit: 6 }),
+    [historyEntries, now, snapshot?.tracks],
+  );
+
+  const rediscover = useMemo(
+    () => rediscoverTracks(snapshot?.tracks ?? [], historyEntries, { now, limit: 6 }),
+    [historyEntries, now, snapshot?.tracks],
+  );
 
   if (!snapshot) {
     return <div className="view-loading">Loading your library…</div>;
@@ -161,7 +190,7 @@ export function HomeView() {
       </section>
 
       {recentlyPlayed.length > 0 ? (
-        <section className="shelf">
+        <section className="shelf" data-testid="home-recently-played">
           <div className="shelf-heading">
             <h2>Recently played</h2>
             <button type="button" className="link" onClick={() => navigate({ name: "history" })}>Show all</button>
@@ -170,14 +199,85 @@ export function HomeView() {
             {recentlyPlayed.map(track => (
               <button
                 type="button"
-                key={track.trackId}
+                key={trackSourceKey(track.source)}
                 className="quick-track"
-                onClick={() => void playTrack(track.trackId)}
+                data-testid="recently-played-item"
+                data-source-kind={track.source.kind}
+                onClick={() => {
+                  if (track.source.kind === "local") {
+                    void playTrack(track.source.trackId);
+                    return;
+                  }
+                  void showToast("Remote playback is not available in this build.");
+                }}
               >
                 <Artwork src={track.artworkUrl ?? null} alt={track.album || track.title} size="xs" />
                 <span>
                   <strong>{track.title}</strong>
                   <em>{track.artist}</em>
+                </span>
+                <SourceBadge source={track.source} />
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {topTracks.length > 0 ? (
+        <section className="shelf" data-testid="home-top-tracks">
+          <div className="shelf-heading">
+            <h2>Your top tracks</h2>
+            <button type="button" className="link" onClick={() => navigate({ name: "stats" })}>See stats</button>
+          </div>
+          <TrackList tracks={topTracks.map(item => item.track)} compact testId="top-tracks" />
+        </section>
+      ) : null}
+
+      {onRepeat.length > 0 ? (
+        <section className="shelf" data-testid="home-on-repeat">
+          <div className="shelf-heading">
+            <h2>On repeat</h2>
+            <span className="muted">What you have been looping lately</span>
+          </div>
+          <div className="quick-grid">
+            {onRepeat.map(item => (
+              <button
+                type="button"
+                key={item.track.id}
+                className="quick-track"
+                data-testid="on-repeat-item"
+                onClick={() => void playTrack(item.track.id)}
+              >
+                <Artwork src={item.track.artworkUrl ?? null} alt={item.track.album || item.track.title} size="xs" />
+                <span>
+                  <strong>{item.track.title}</strong>
+                  <em>{item.track.artist} · {item.recentPlayCount} plays in 14 days</em>
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {rediscover.length > 0 ? (
+        <section className="shelf" data-testid="home-rediscover">
+          <div className="shelf-heading">
+            <h2>Rediscover</h2>
+            <span className="muted">Old favourites you have not played in a while</span>
+          </div>
+          <div className="quick-grid">
+            {rediscover.map(item => (
+              <button
+                type="button"
+                key={item.track.id}
+                className="quick-track"
+                data-testid="rediscover-item"
+                onClick={() => void playTrack(item.track.id)}
+              >
+                <Artwork src={item.track.artworkUrl ?? null} alt={item.track.album || item.track.title} size="xs" />
+                <span>
+                  <strong>{item.track.title}</strong>
+                  <em>{item.track.artist} · {formatLastPlayed(item.lastPlayedAt)}</em>
                 </span>
               </button>
             ))}

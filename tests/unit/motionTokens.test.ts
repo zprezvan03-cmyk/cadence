@@ -1,0 +1,117 @@
+/**
+ * Motion foundation contracts: the JS token mirrors in `app/motion.ts` must stay in sync with
+ * the CSS custom properties, exits must remain inside the shared fast-exit budget, and stagger
+ * delays must stay capped so large lists never cascade row by row.
+ */
+
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+import {
+  EXIT_DURATION_MS,
+  MOTION_DURATION_MS,
+  MOTION_EASING,
+  STAGGER_CAP,
+  STAGGER_STEP_MS,
+  effectiveExitMs,
+  staggerDelayMs,
+} from "../../src/renderer/app/motion";
+
+const globalCss = readFileSync(new URL("../../src/renderer/styles/global.css", import.meta.url), "utf8");
+
+describe("motion tokens", () => {
+  it("mirror the CSS duration scale exactly", () => {
+    expect(globalCss).toContain(`--dur-0: ${MOTION_DURATION_MS.press}ms`);
+    expect(globalCss).toContain(`--dur-1: ${MOTION_DURATION_MS.fast}ms`);
+    expect(globalCss).toContain(`--dur-2: ${MOTION_DURATION_MS.surface}ms`);
+    expect(globalCss).toContain(`--dur-3: ${MOTION_DURATION_MS.view}ms`);
+    expect(globalCss).toContain(`--dur-4: ${MOTION_DURATION_MS.layout}ms`);
+    expect(globalCss).toContain(`--stagger-step: ${STAGGER_STEP_MS}ms`);
+  });
+
+  it("mirror the CSS easing family exactly", () => {
+    expect(globalCss).toContain(`--ease-out: ${MOTION_EASING.out}`);
+    expect(globalCss).toContain(`--ease-in: ${MOTION_EASING.in}`);
+    expect(globalCss).toContain(`--ease-in-out: ${MOTION_EASING.inOut}`);
+    expect(globalCss).toContain(`--ease-spring: ${MOTION_EASING.spring}`);
+  });
+
+  it("keeps exits inside the strictest dismissal budget", () => {
+    expect(EXIT_DURATION_MS).toBe(120);
+    expect(effectiveExitMs(90, false)).toBe(90);
+    expect(effectiveExitMs(240, false)).toBe(EXIT_DURATION_MS);
+    expect(effectiveExitMs(120, true)).toBe(0);
+    expect(effectiveExitMs(Number.NaN, false)).toBe(0);
+    expect(effectiveExitMs(-10, false)).toBe(0);
+  });
+
+  it("caps stagger delays and clamps invalid indices", () => {
+    expect(staggerDelayMs(0)).toBe(0);
+    expect(staggerDelayMs(1)).toBe(STAGGER_STEP_MS);
+    expect(staggerDelayMs(3)).toBe(72);
+    expect(staggerDelayMs(1000)).toBe(STAGGER_CAP * STAGGER_STEP_MS);
+    expect(staggerDelayMs(-5)).toBe(0);
+    expect(staggerDelayMs(Number.NaN)).toBe(0);
+    expect(staggerDelayMs(10, 4)).toBe(96);
+  });
+
+  it("keeps transition timing on the token scale", () => {
+    // Static guard for the normalization above: transition declarations must reference the
+    // --dur-* tokens instead of literal times. Deliberate non-exceptions: the `0s`/`0ms`
+    // visibility-delay idiom and the `0.001ms` reduced-motion collapse sentinel. Continuous
+    // `animation:` loop periods (spin/pulse) are cycles, not interaction timing, so the
+    // shorthand is intentionally not scanned.
+    const allowed = new Set(["0s", "0ms", "0.001ms"]);
+    const offenders: string[] = [];
+    for (const file of ["global.css", "views.css", "lyrics.css"]) {
+      const css = readFileSync(new URL(`../../src/renderer/styles/${file}`, import.meta.url), "utf8");
+      for (const match of css.matchAll(/(transition(?:-duration|-delay)?)\s*:\s*([^;}]+);/g)) {
+        const declaration = match[2].replace(/\s+/g, " ").trim();
+        const times = [...declaration.matchAll(/(?<![\w.-])(\d+(?:\.\d+)?m?s)\b/g)]
+          .map(entry => entry[1])
+          .filter(time => !allowed.has(time));
+        if (times.length) {
+          const line = css.slice(0, match.index).split("\n").length;
+          offenders.push(`${file}:${line} ${match[1]}: ${declaration}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("gives every dismissed surface a coordinated fast exit", () => {
+    // Stage 3 presence contract: the shared exit keyframes exist and every
+    // `.is-exiting` rule runs inside the `--dur-1` (120ms) exit budget with input
+    // released immediately, so no surface can linger or block the next click.
+    for (const keyframes of ["fade-out", "modal-out", "pop-out", "slide-out", "toast-out"]) {
+      expect(globalCss).toContain(`@keyframes ${keyframes}`);
+    }
+    const viewsCss = readFileSync(new URL("../../src/renderer/styles/views.css", import.meta.url), "utf8");
+    const lyricsCss = readFileSync(new URL("../../src/renderer/styles/lyrics.css", import.meta.url), "utf8");
+    const exitingRules = [globalCss, viewsCss, lyricsCss].flatMap(css =>
+      [...css.matchAll(/\.is-exiting[^{]*\{([^}]+)\}/g)].map(match => match[1])
+    );
+    expect(exitingRules.length).toBeGreaterThanOrEqual(5);
+    for (const rule of exitingRules) {
+      if (rule.includes("animation:")) expect(rule).toContain("var(--dur-1)");
+    }
+    expect(globalCss).toMatch(/\.modal-backdrop\.is-exiting\s*\{[^}]*pointer-events: none/);
+    expect(globalCss).toMatch(/\.context-menu\.is-exiting\s*\{[^}]*pointer-events: none/);
+  });
+
+  it("collapses reduced-motion layout layers but preserves the fast feedback layer", () => {
+    const reducedCss = globalCss.slice(globalCss.indexOf('[data-reduce-motion="true"] {'));
+    for (const token of ["--dur-0", "--dur-2", "--dur-3", "--dur-4"]) {
+      expect(reducedCss).toContain(`${token}: 0.01ms`);
+    }
+    // --dur-1 (120ms hover/press colour + opacity feedback) is deliberately not collapsed.
+    expect(reducedCss).not.toContain("--dur-1: 0.01ms");
+    expect(reducedCss).toContain("@media (prefers-reduced-motion: reduce)");
+  });
+
+  it("paints the buffered seek fill with a transform, never a width transition", () => {
+    const seekBuffer = globalCss.match(/\.seek-buffer\s*\{([^}]+)\}/)?.[1] ?? "";
+    expect(seekBuffer).toContain("transition: transform var(--dur-4) var(--ease-out)");
+    expect(seekBuffer).not.toContain("transition: width");
+    expect(seekBuffer).toContain("transform-origin: left center");
+  });
+});

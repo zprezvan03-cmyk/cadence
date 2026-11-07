@@ -152,7 +152,8 @@ export async function scanLibrary(store: LibraryStore, options: ScanOptions): Pr
         const result = store.upsertTrack({
           ...parsed,
           hasEmbeddedLyrics: parsed.embeddedLyrics !== null,
-          artworkFile: parsed.artworkFile ?? existing?.artworkFile ?? null,
+          artworkFile:
+            parsed.artworkFile ?? existing?.metadataOverride?.original.artworkFile ?? existing?.artworkFile ?? null,
           animatedArtPath: parsed.animatedArtPath ?? existing?.animatedArtPath ?? null,
           accentColor: existing?.accentColor ?? null,
         });

@@ -1,5 +1,13 @@
 /* Cadence shell styles. Written for Cadence. */
 
+/* Registered so the explicit compact/expanded toggle can interpolate the sidebar column instead
+   of swapping between two layout widths in one frame. */
+@property --sidebar-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 248px;
+}
+
 :root {
   color-scheme: dark;
   --bg: #08080b;
@@ -19,7 +27,9 @@
   --danger: #ff5d5d;
   --radius: 14px;
   --radius-sm: 9px;
-  --sidebar-width: 248px;
+  --sidebar-expanded-width: 248px;
+  --sidebar-compact-width: 76px;
+  --sidebar-width: var(--sidebar-expanded-width);
   --player-height: 92px;
   --topbar-height: 68px;
   --titlebar-height: 36px;
@@ -31,16 +41,44 @@
   --window-chrome-top: 0px;
   --shadow-lg: 0 24px 70px rgba(0, 0, 0, 0.55);
   --font: "Inter", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
-  /* Motion. One timing scale and two easings for the whole app, so a menu, a toggle and a view
-     change share the same rhythm. Durations stay short: a desktop player should react to the
-     pointer, not perform for it. Everything below animates transform/opacity unless a comment
-     says otherwise. */
-  --dur-1: 120ms; /* hover and press feedback */
+  /* Motion. One timing scale and a small easing family for the whole app, so a menu, a toggle
+     and a view change share the same rhythm: ease-out to enter, ease-in to leave, ease-in-out
+     for state changes that stay on screen, and a restrained spring only for deliberate
+     confirmation moments. Durations stay short: a desktop player should react to the pointer,
+     not perform for it. Everything below animates transform/opacity unless a comment says
+     otherwise. The JS mirrors in `app/motion.ts` must stay in sync with these values. */
+  --dur-0: 70ms; /* active press dips only — quicker than hover, so the eye reads the release */
+  --dur-1: 120ms; /* hover, press and exit feedback */
   --dur-2: 180ms; /* small surfaces: menus, toasts, toggles */
   --dur-3: 240ms; /* views, panels, the sidebar indicator */
+  --dur-4: 320ms; /* major layout: sidebar width, buffered-fill catch-up */
+  --stagger-step: 24ms; /* per-item delay for capped grid entrances */
   --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-in: cubic-bezier(0.55, 0.06, 0.68, 0.19);
   --ease-in-out: cubic-bezier(0.45, 0.05, 0.55, 0.95);
   --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+}
+
+/* Enabled after first paint by useBootstrap, so a restored compact sidebar does not animate on
+   launch. The root value itself flips instantly; each consumer interpolates it locally in
+   parallel (shell track, sidebar, title-bar segment) — transitioning the root property instead
+   made consumers chase its animated output and doubled the toggle duration. */
+:root[data-motion-ready="true"] .app-shell:not(.is-immersive) {
+  transition: grid-template-columns var(--dur-4) var(--ease-in-out);
+}
+
+:root[data-motion-ready="true"] .sidebar {
+  transition:
+    --sidebar-width var(--dur-4) var(--ease-in-out),
+    padding-inline var(--dur-4) var(--ease-in-out),
+    box-shadow var(--dur-2) var(--ease-out);
+}
+
+:root[data-motion-ready="true"] .title-bar-brand {
+  transition:
+    --sidebar-width var(--dur-4) var(--ease-in-out),
+    gap var(--dur-3) var(--ease-in-out),
+    padding-inline var(--dur-3) var(--ease-in-out);
 }
 
 * {
@@ -221,6 +259,11 @@ a {
   min-height: 0;
   overflow-y: auto;
   scroll-behavior: smooth;
+  /* The route viewport is the responsive reference for Now Playing. In windowed mode this
+     is exactly the area between the sidebar/top bar/player; in immersive mode the same box
+     expands to the whole window, so one set of container rules serves both. */
+  container-type: size;
+  container-name: app-content;
 }
 
 .view {
@@ -246,6 +289,7 @@ a {
 .view-loading {
   padding: 48px;
   color: var(--text-dim);
+  animation: fade-in var(--dur-2) var(--ease-out);
 }
 
 .error-banner {
@@ -268,6 +312,10 @@ a {
 /* --------------------------------------------------------------- sidebar */
 
 .sidebar {
+  position: relative;
+  z-index: 30;
+  justify-self: start;
+  width: var(--sidebar-width);
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -276,6 +324,13 @@ a {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 40%), var(--bg-elevated);
   min-height: 0;
   overflow: hidden;
+  /* Width is structural, so it is the one sanctioned layout transition. After first paint the
+     motion-ready rule above adds a local --sidebar-width transition here — never `width` —
+     so hover expansion (a local override of that property, below) widens only this element as
+     an overlay while the shell columns, which read the root value, never move. */
+  transition:
+    padding-inline var(--dur-4) var(--ease-in-out),
+    box-shadow var(--dur-2) var(--ease-out);
   /* Opacity only: the chrome around the page fades back in when leaving fullscreen Now Playing,
      and a transform here would move the window layout during that fade. */
   animation: chrome-in var(--dur-2) var(--ease-out);
@@ -288,6 +343,9 @@ a {
   padding: 6px 8px 12px;
   border-radius: var(--radius-sm);
   cursor: pointer;
+  transition:
+    gap var(--dur-3) var(--ease-in-out),
+    padding-inline var(--dur-3) var(--ease-in-out);
 }
 
 .brand-mark {
@@ -305,6 +363,15 @@ a {
   display: flex;
   flex-direction: column;
   line-height: 1.2;
+  min-width: 0;
+  max-width: 180px;
+  overflow: hidden;
+  white-space: nowrap;
+  transition:
+    max-width var(--dur-3) var(--ease-in-out),
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out),
+    visibility var(--dur-2) var(--ease-out);
 }
 
 .brand-text strong {
@@ -369,9 +436,30 @@ a {
   border-radius: 10px;
   color: var(--text-dim);
   font-weight: 550;
-  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    gap var(--dur-3) var(--ease-in-out),
+    padding-inline var(--dur-3) var(--ease-in-out);
   text-align: left;
   width: 100%;
+}
+
+.nav-item > svg {
+  flex: 0 0 auto;
+}
+
+.nav-item span {
+  display: block;
+  min-width: 0;
+  max-width: 180px;
+  overflow: hidden;
+  white-space: nowrap;
+  transition:
+    max-width var(--dur-3) var(--ease-in-out),
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out),
+    visibility var(--dur-2) var(--ease-out);
 }
 
 .nav-item:hover {
@@ -408,12 +496,27 @@ a {
   color: var(--text-faint);
 }
 
+.sidebar-heading > span {
+  min-width: 0;
+  max-width: 140px;
+  overflow: hidden;
+  white-space: nowrap;
+  transition:
+    max-width var(--dur-3) var(--ease-in-out),
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out),
+    visibility var(--dur-2) var(--ease-out);
+}
+
 .sidebar-playlists {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 1px;
   padding-bottom: 10px;
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    visibility var(--dur-2) var(--ease-out);
 }
 
 .sidebar-link {
@@ -457,11 +560,19 @@ a {
   font-size: 11.5px;
   color: var(--text-faint);
   padding: 0 12px 4px;
+  white-space: nowrap;
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    visibility var(--dur-2) var(--ease-out);
 }
 
-/* Compact mode keeps every destination and the playlist-create action available as icon buttons. */
+/* Compact mode keeps every destination and the playlist-create action available as icon buttons.
+   Labels no longer pop out with `display: none`: they collapse horizontally and fade as the
+   registered --sidebar-width interpolates, so icons glide to centre instead of jumping. The
+   vertical rhythm is preserved (playlists/footer keep their space) to avoid a sideways-plus-
+   vertical double jump during the toggle. */
 [data-compact-sidebar="true"] {
-  --sidebar-width: 76px;
+  --sidebar-width: var(--sidebar-compact-width);
 }
 
 [data-compact-sidebar="true"] .sidebar {
@@ -476,24 +587,89 @@ a {
 }
 
 [data-compact-sidebar="true"] .brand {
+  gap: 0;
+  padding-inline: 0;
+}
+
+[data-compact-sidebar="true"] .nav-item {
+  gap: 0;
+  padding-inline: 0;
+}
+
+[data-compact-sidebar="true"] .title-bar-brand {
+  gap: 0;
   padding-inline: 0;
 }
 
 [data-compact-sidebar="true"] .brand-text,
 [data-compact-sidebar="true"] .nav-item span,
-[data-compact-sidebar="true"] .sidebar-stats,
 [data-compact-sidebar="true"] .sidebar-heading > span,
-[data-compact-sidebar="true"] .sidebar-playlists,
 [data-compact-sidebar="true"] .title-bar-text {
-  display: none;
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(-4px);
+  visibility: hidden;
 }
 
-[data-compact-sidebar="true"] .nav-item {
-  padding-inline: 0;
+[data-compact-sidebar="true"] .sidebar-stats,
+[data-compact-sidebar="true"] .sidebar-playlists {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
-[data-compact-sidebar="true"] .title-bar-brand {
-  padding-inline: 0;
+/* Hover expansion (separate setting, default on) is an overlay, not a layout mode: the shell
+   column stays 76px and the content never reflows while the sidebar itself widens above it.
+   The dur-0 delay is hover intent — a pointer merely crossing the rail does not expand it,
+   while collapse on leave is immediate. Keyboard focus expands it the same way. */
+[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) {
+  --sidebar-width: var(--sidebar-expanded-width);
+  padding-inline: 14px;
+  box-shadow: 24px 0 60px rgba(0, 0, 0, 0.38);
+  transition-delay: var(--dur-0);
+}
+
+[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .brand {
+  justify-content: flex-start;
+  gap: 11px;
+  padding-inline: 8px;
+  transition-delay: var(--dur-0);
+}
+
+[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .nav-item {
+  justify-content: flex-start;
+  gap: 12px;
+  padding-inline: 12px;
+  transition-delay: 0s, 0s, var(--dur-0), var(--dur-0);
+}
+
+[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .sidebar-heading {
+  justify-content: space-between;
+}
+
+[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .brand-text,
+[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .nav-item span {
+  max-width: 180px;
+  opacity: 1;
+  transform: none;
+  visibility: visible;
+  transition-delay: var(--dur-0);
+}
+
+[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .sidebar-heading > span {
+  max-width: 140px;
+  opacity: 1;
+  transform: none;
+  visibility: visible;
+  transition-delay: var(--dur-0);
+}
+
+[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .sidebar-stats,
+[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .sidebar-playlists {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: var(--dur-0);
 }
 
 /* -------------------------------------------------------------- title bar */
@@ -524,6 +700,9 @@ a {
   background: var(--bg-elevated);
   color: var(--text-faint);
   overflow: hidden;
+  transition:
+    gap var(--dur-3) var(--ease-in-out),
+    padding-inline var(--dur-3) var(--ease-in-out);
 }
 
 .title-bar-mark {
@@ -542,6 +721,14 @@ a {
   font-weight: 600;
   letter-spacing: 0.01em;
   white-space: nowrap;
+  min-width: 0;
+  max-width: 140px;
+  overflow: hidden;
+  transition:
+    max-width var(--dur-3) var(--ease-in-out),
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out),
+    visibility var(--dur-2) var(--ease-out);
 }
 
 .title-bar-drag {
@@ -567,7 +754,7 @@ a {
   /* Caption buttons keep the standard arrow cursor on Windows rather than a hand. */
   cursor: default;
   color: var(--text-dim);
-  transition: background 120ms ease, color 120ms ease;
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
 }
 
 .window-control:hover {
@@ -636,7 +823,7 @@ a {
   border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--text-faint);
-  transition: border-color 160ms ease, background 160ms ease;
+  transition: border-color var(--dur-2) var(--ease-out), background var(--dur-2) var(--ease-out);
 }
 
 .global-search:focus-within {
@@ -709,7 +896,7 @@ a {
 /* Press feedback is quicker than hover: the eye reads the release, not the dip. */
 .icon-button:active {
   transform: scale(0.92);
-  transition-duration: 60ms;
+  transition-duration: var(--dur-0);
 }
 
 .icon-button.active {
@@ -747,7 +934,7 @@ a {
 
 .play-button:active {
   transform: scale(0.95);
-  transition-duration: 70ms;
+  transition-duration: var(--dur-0);
 }
 
 /* The transport swaps Play for Pause by remounting this span (keyed in PlaybackControls), so the
@@ -786,10 +973,20 @@ a {
   background: var(--surface-2);
   border: 1px solid var(--border);
   font-weight: 600;
-  transition: background 150ms ease, transform 150ms ease, border-color 150ms ease;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out);
 }
 
 .primary {
+  background: #fff;
+  color: #09090d;
+  border-color: transparent;
+}
+
+.heading-actions .primary,
+.heading-actions .primary:hover {
   background: #fff;
   color: #09090d;
   border-color: transparent;
@@ -854,12 +1051,22 @@ a {
 
 /* Covers fade in where they are large enough to be looked at (album grids, detail headers, the
    player, fullscreen). Song-row thumbnails deliberately do not: a 500-row list must not start 500
-   animations when it opens. */
+   transitions when it opens. The fade is keyed to the image actually loading (`data-loaded`,
+   set by Artwork on load / when already complete), not to mount, so a slow cover cannot pop in
+   after a mount-keyed animation already finished. */
 .media-card .artwork img,
 .detail-hero .artwork img,
 .fs-artwork .artwork img,
 .fs-panel-art .artwork img {
-  animation: artwork-in var(--dur-3) var(--ease-out);
+  opacity: 0;
+  transition: opacity var(--dur-3) var(--ease-out);
+}
+
+.media-card .artwork img[data-loaded="true"],
+.detail-hero .artwork img[data-loaded="true"],
+.fs-artwork .artwork img[data-loaded="true"],
+.fs-panel-art .artwork img[data-loaded="true"] {
+  opacity: 1;
 }
 
 .artwork-fallback-icon {
@@ -934,6 +1141,7 @@ a {
 
 .player-track-meta {
   min-width: 0;
+  overflow: hidden;
 }
 
 .player-track-meta.is-swapping {
@@ -976,11 +1184,52 @@ a {
   text-overflow: ellipsis;
 }
 
+.player-source-line {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin-top: 2px;
+}
+
+.player-open-now-playing {
+  display: block;
+  max-width: 100%;
+  margin-top: 2px;
+  padding: 0;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-open-now-playing:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.player-remote-error {
+  max-width: 100%;
+  margin-top: 2px;
+  color: #ff9c9c;
+  font-size: 11px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Native ALAC decode before playback: subtle, and only shown when the wait is perceptible. */
 .player-preparing {
+  max-width: 100%;
   font-size: 11px;
   color: rgba(255, 255, 255, 0.62);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   animation: player-preparing-pulse 1.4s ease-in-out infinite;
 }
 
@@ -1035,13 +1284,17 @@ a {
   position: absolute;
   left: 0;
   top: 50%;
-  transform: translateY(-50%);
+  width: 100%;
+  transform: translateY(-50%) scaleX(0);
+  transform-origin: left center;
   height: 3px;
   background: rgba(255, 255, 255, 0.14);
   border-radius: 3px;
   pointer-events: none;
-  /* Buffered audio may lag behind the pointer; the played fill must not (see below). */
-  transition: width 320ms var(--ease-out);
+  /* Buffered audio may lag behind the pointer; the played fill must not (see below).
+     The fill is a full-width bar scaled on X, so catch-up stays on the compositor
+     instead of relaying out the seek row on every buffered-range update. */
+  transition: transform var(--dur-4) var(--ease-out);
 }
 
 input[type="range"].seek,
@@ -1223,6 +1476,22 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   }
 }
 
+.queue-panel.is-exiting {
+  animation: slide-out var(--dur-1) var(--ease-in) forwards;
+  pointer-events: none;
+}
+
+@keyframes slide-out {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+
 .queue-header {
   display: flex;
   align-items: center;
@@ -1302,6 +1571,15 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   }
 }
 
+@keyframes fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 /* ----------------------------------------------------------------- modal */
 
 .modal-backdrop {
@@ -1336,6 +1614,29 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+/* Presence exits (see `app/usePresence.ts`): every dismissed surface leaves through the same
+   fast `--dur-1` fade/settle instead of a hard cut, and stops intercepting input immediately
+   so the exit can never block the click that follows the close. */
+.modal-backdrop.is-exiting {
+  animation: fade-out var(--dur-1) var(--ease-in) forwards;
+  pointer-events: none;
+}
+
+.modal-backdrop.is-exiting .modal {
+  animation: modal-out var(--dur-1) var(--ease-in) forwards;
+}
+
+@keyframes modal-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
   }
 }
 
@@ -1426,6 +1727,22 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   }
 }
 
+.context-menu.is-exiting {
+  animation: pop-out var(--dur-1) var(--ease-in) forwards;
+  pointer-events: none;
+}
+
+@keyframes pop-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.98);
+  }
+}
+
 .context-menu button {
   display: flex;
   align-items: center;
@@ -1475,6 +1792,21 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   }
 }
 
+.toast.is-exiting {
+  animation: toast-out var(--dur-1) var(--ease-in) forwards;
+}
+
+@keyframes toast-out {
+  from {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+}
+
 @keyframes fs-in {
   from {
     opacity: 0;
@@ -1501,6 +1833,204 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   }
 }
 
+/* ------------------------------------------------------------ mini player + shortcuts */
+
+.mini-shell {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #0c0c11;
+}
+
+.mini-player {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 12px 10px;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(255, 61, 113, 0.16), transparent 44%),
+    rgba(12, 12, 17, 0.97);
+  user-select: none;
+}
+
+.mini-player-chrome {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+}
+
+.mini-player-drag {
+  flex: 1;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: grab;
+}
+
+.mini-player-window-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.mini-window-button {
+  width: 27px;
+  height: 23px;
+  border-radius: 6px;
+}
+
+.mini-window-button.danger:hover {
+  background: #d92d20;
+  color: #fff;
+}
+
+.mini-player-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mini-player-artwork {
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.mini-player-meta {
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  cursor: grab;
+}
+
+.mini-player-title {
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mini-player-artist {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mini-player .transport {
+  flex-shrink: 0;
+  gap: 5px;
+}
+
+.mini-player .play-button {
+  width: 38px;
+  height: 38px;
+}
+
+.mini-player .seek-row {
+  gap: 7px;
+}
+
+.mini-player .time {
+  width: 34px;
+  font-size: 10px;
+}
+
+@media (max-width: 410px) {
+  .mini-player .transport > .icon-button:nth-child(1),
+  .mini-player .transport > .icon-button:nth-child(5) {
+    display: none;
+  }
+}
+
+.modal.shortcuts-modal {
+  width: min(780px, 94vw);
+  max-height: min(720px, 92vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.shortcuts-modal .modal-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  font-size: 18px;
+}
+
+.shortcuts-groups {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 22px;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.shortcuts-group h3 {
+  margin: 0 0 11px;
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.shortcuts-group dl {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 0;
+}
+
+.shortcuts-group dl > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.shortcuts-group dt {
+  flex-shrink: 0;
+}
+
+.shortcuts-group dd {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  text-align: right;
+}
+
+.shortcuts-note {
+  margin: 0;
+  border-top: 1px solid var(--border);
+  padding: 13px 20px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@media (max-width: 700px) {
+  .shortcuts-groups {
+    grid-template-columns: 1fr;
+  }
+}
+
 kbd {
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -1510,28 +2040,48 @@ kbd {
   font-family: inherit;
 }
 
+/* Reduced motion: animations and the larger transition layers collapse, but the 120ms
+   `--dur-1` layer — hover/press colour and opacity feedback — is preserved so controls
+   still acknowledge the pointer. Token overrides do the transition work: every app
+   transition runs on `--dur-*`, while a blanket `transition-duration` override cannot
+   tell a colour fade from a 320ms layout slide. Presence exits already unmount
+   immediately under reduced motion (see `app/motion.ts`), so nothing waits on a timer
+   for an animation that is not shown. */
+[data-reduce-motion="true"] {
+  --dur-0: 0.01ms;
+  --dur-2: 0.01ms;
+  --dur-3: 0.01ms;
+  --dur-4: 0.01ms;
+}
+
+[data-reduce-motion="true"],
 [data-reduce-motion="true"] *,
 [data-reduce-motion="true"] *::before,
 [data-reduce-motion="true"] *::after {
   animation-duration: 0.001ms !important;
   animation-delay: 0ms !important;
   animation-iteration-count: 1 !important;
-  transition-duration: 0.001ms !important;
   transition-delay: 0ms !important;
   scroll-behavior: auto !important;
 }
 
-/* The same collapse for the OS preference, so a reduced-motion system never sees the app move
-   even if the in-app toggle was never touched. The lyrics renderer applies its own upstream
-   reduced-motion rules on top of this. */
+/* The same treatment for the OS preference, so a reduced-motion system never sees the
+   app move even if the in-app toggle was never touched. The lyrics renderer applies its
+   own upstream reduced-motion rules on top of this. */
 @media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-0: 0.01ms;
+    --dur-2: 0.01ms;
+    --dur-3: 0.01ms;
+    --dur-4: 0.01ms;
+  }
+
   *,
   *::before,
   *::after {
     animation-duration: 0.001ms !important;
     animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
     transition-delay: 0ms !important;
     scroll-behavior: auto !important;
   }

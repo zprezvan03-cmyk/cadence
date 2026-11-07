@@ -186,6 +186,99 @@ export function describeHttpError(error: unknown): {
   return { status: "error", detail: (error as Error)?.message || "Request failed" };
 }
 
+/**
+ * Central, process-wide concurrency limiter for provider work. Autofetch, Fetch All and manual
+ * searches all run their provider modules through the single instance owned by
+ * `LyricsServiceCore`, so the total number of provider requests in flight is bounded no matter
+ * how many consumers ask at once. Queued work is FIFO; raising the limit immediately releases
+ * queued runners, lowering it lets in-flight work finish.
+ */
+export class ConcurrencyLimiter {
+  private active = 0;
+  private readonly queue: (() => void)[] = [];
+
+  constructor(private max: number) {}
+
+  get limit(): number {
+    return this.max;
+  }
+
+  get activeCount(): number {
+    return this.active;
+  }
+
+  get queuedCount(): number {
+    return this.queue.length;
+  }
+
+  setLimit(max: number): void {
+    this.max = Math.max(1, Math.floor(max) || 1);
+    this.pump();
+  }
+
+  run<T>(task: () => Promise<T>): Promise<T> {
+    // Fast path: with a free slot the task starts *synchronously*, exactly as an unlimited
+    // call would. Provider abort wiring depends on this: a caller that aborts in the same
+    // tick must find the request already listening for the abort, not queued behind a
+    // microtask with an already-aborted signal it never sees fire.
+    if (this.active < this.max && this.queue.length === 0) {
+      this.active += 1;
+      let result: Promise<T>;
+      try {
+        result = Promise.resolve(task());
+      } catch (error) {
+        result = Promise.reject(error);
+      }
+      return result.finally(() => {
+        this.active -= 1;
+        this.pump();
+      });
+    }
+    return this.runQueued(task);
+  }
+
+  private async runQueued<T>(task: () => Promise<T>): Promise<T> {
+    await this.acquire();
+    try {
+      return await task();
+    } finally {
+      this.active -= 1;
+      this.pump();
+    }
+  }
+
+  private acquire(): Promise<void> {
+    if (this.active < this.max && this.queue.length === 0) {
+      this.active += 1;
+      return Promise.resolve();
+    }
+    return new Promise<void>(resolve => {
+      this.queue.push(() => {
+        this.active += 1;
+        resolve();
+      });
+    });
+  }
+
+  private pump(): void {
+    while (this.active < this.max && this.queue.length > 0) {
+      const next = this.queue.shift();
+      if (next) next();
+    }
+  }
+}
+
+/**
+ * Provider-request parallelism per Settings preset. Deliberately small: the four provider
+ * modules fan out per track, so even "high" stays well below anything that could resemble
+ * hundreds of simultaneous requests, and low-memory systems stay responsive.
+ */
+export const FETCH_CONCURRENCY_PRESETS = {
+  low: { providerRequests: 2, parallelTracks: 1 },
+  balanced: { providerRequests: 4, parallelTracks: 2 },
+  high: { providerRequests: 8, parallelTracks: 4 },
+} as const;
+
 /** True when an error must abort the whole resolve rather than fall through to the next provider. */
 export function isAbort(error: unknown): boolean {
   return (error as Error)?.name === "AbortError" || (error instanceof LyricsHttpError && error.kind === "aborted");

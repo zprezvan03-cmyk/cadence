@@ -19,7 +19,11 @@ import Kawarp from "@kawarp/core";
 import type { ShaderSettings } from "../../../shared/types";
 import type { DynamicMultipliers } from "../../../shared/upstream/shaders/gradientSettings";
 import { audioEngine } from "../../audio/engine";
-import { brightnessForHighlight, measureArtworkHighlight } from "../../upstream/shaders/artworkBrightness";
+import {
+  brightnessForHighlight,
+  measureArtworkHighlight,
+  shouldLoadArtworkAsImage,
+} from "../../upstream/shaders/artworkBrightness";
 
 const SCALE_LERP_UP = 0.5;
 const SCALE_LERP_DOWN = 0.12;
@@ -190,6 +194,27 @@ export function KawarpBackground({
     applyArtworkBrightness(SETTING_CHANGE_FILTER_TRANSITION_MS, stateRef.current.videoMode);
   };
 
+  const loadArtworkIntoShader = async (instance: Kawarp, url: string): Promise<void> => {
+    if (!shouldLoadArtworkAsImage(url)) {
+      await instance.loadImage(url);
+      return;
+    }
+    // Kawarp's URL loader tries fetch() first. Remote thumbnails are deliberately allowed by
+    // img-src rather than connect-src, so load the CORS image ourselves and hand the decoded
+    // element to the shader. If the host does not grant CORS, the existing CSS artwork fallback
+    // remains visible and no CSP-violating fetch is attempted.
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.crossOrigin = "anonymous";
+      element.decoding = "async";
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error(`Failed to load remote artwork: ${url}`));
+      element.src = url;
+    });
+    if (instanceRef.current !== instance) return;
+    instance.loadImageElement(image);
+  };
+
   // Create the engine once per enabled mount.
   useEffect(() => {
     if (!settings.enabled || settings.performanceMode === "off") return;
@@ -267,7 +292,7 @@ export function KawarpBackground({
       state.isTransitioning = true;
       try {
         instance.transitionDuration = settingsRef.current.kawarpTransitionDuration;
-        const [, luminance] = await Promise.all([instance.loadImage(url), measureArtworkHighlight(url)]);
+        const [, luminance] = await Promise.all([loadArtworkIntoShader(instance, url), measureArtworkHighlight(url)]);
         state.highlightLuminance = luminance;
         state.currentImageUrl = url;
         state.failed = false;

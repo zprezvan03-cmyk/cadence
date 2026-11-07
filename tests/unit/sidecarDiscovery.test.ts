@@ -482,6 +482,10 @@ describe("Tauri bridge sidecar IPC path", () => {
       addedAt: 1,
       lastPlayedAt: null,
       playCount: 0,
+      replayGainTrackDb: null,
+      replayGainAlbumDb: null,
+      replayGainTrackPeak: null,
+      replayGainAlbumPeak: null,
     };
     const db = emptyDatabase();
     db.tracks.push(track);

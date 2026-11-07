@@ -12,6 +12,9 @@ import { usePlayer } from "../../state/playerStore";
 /** `trailing` is placed after the repeat button, in the same row (used by the fullscreen panel). */
 export function TransportButtons({ trailing }: { trailing?: ReactNode } = {}) {
   const { isPlaying, shuffle, repeat, toggle, next, previous, toggleShuffle, cycleRepeat } = usePlayer();
+  const handleToggle = () => {
+    void toggle();
+  };
 
   return (
     <div className="transport">
@@ -31,7 +34,7 @@ export function TransportButtons({ trailing }: { trailing?: ReactNode } = {}) {
         type="button"
         className="play-button"
         aria-label={isPlaying ? "Pause" : "Play"}
-        onClick={() => void toggle()}
+        onClick={handleToggle}
         data-testid="play-toggle"
       >
         <span className="play-icon" key={isPlaying ? "pause" : "play"} aria-hidden="true">
@@ -64,7 +67,12 @@ export function SeekRow() {
         {formatTime(position)}
       </span>
       <div className="seek-wrapper">
-        <div className="seek-buffer" style={{ width: `${duration ? (buffered / duration) * 100 : 0}%` }} />
+        <div
+          className="seek-buffer"
+          style={{
+            transform: `translateY(-50%) scaleX(${duration ? Math.min(1, Math.max(0, buffered / duration)) : 0})`,
+          }}
+        />
         <input
           className="seek"
           type="range"
