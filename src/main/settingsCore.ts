@@ -44,12 +44,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lyrics: {
     aiTranslation: {
       enabled: false, protocol: "openai-compatible", baseUrl: "https://api.openai.com/v1", chatPath: "/chat/completions",
-      modelsPath: "/models", apiKey: "", model: "", temperature: 0.25, maxOutputTokens: 4096, timeoutMs: 60000,
+      modelsPath: "/models", apiKey: "", model: "", temperature: 0.25, maxOutputTokens: 4096, timeoutMs: 60000, thinkingMode: "auto",
       targetLanguage: "en", customHeaders: "{}",
     },
     aiRomanization: {
       enabled: false, protocol: "ollama-native", baseUrl: "http://localhost:11434", chatPath: "/api/chat", modelsPath: "/api/tags",
-      apiKey: "", model: "", temperature: 0.1, maxOutputTokens: 4096, timeoutMs: 120000,
+      apiKey: "", model: "", temperature: 0.1, maxOutputTokens: 4096, timeoutMs: 120000, thinkingMode: "auto",
       romanizationStandard: "auto", customHeaders: "{}",
     },
     providerOrder: [...DEFAULT_PROVIDER_ORDER],
@@ -162,6 +162,9 @@ function normalizeSettings(settings: AppSettings): AppSettings {
       temperature: clampNumber(source.temperature, fallback.temperature, 0, 2),
       maxOutputTokens: Math.round(clampNumber(source.maxOutputTokens, fallback.maxOutputTokens, 1, 32768)),
       timeoutMs: Math.round(clampNumber(source.timeoutMs, fallback.timeoutMs, 1000, 300000)),
+      thinkingMode: ["off", "low", "medium", "high", "auto"].includes(String(source.thinkingMode))
+        ? source.thinkingMode as AppSettings["lyrics"]["aiTranslation"]["thinkingMode"]
+        : "auto",
       ...(fallback.targetLanguage !== undefined ? { targetLanguage: text(source.targetLanguage, fallback.targetLanguage, 32) } : {}),
       ...(fallback.romanizationStandard !== undefined ? { romanizationStandard: text(source.romanizationStandard, fallback.romanizationStandard, 80) } : {}),
     };

@@ -41,7 +41,7 @@ import {
   romanizeBatch,
   translateBatch,
 } from "../main/lyrics/translation";
-import { clearAiCache, initializeAiCache, listModels, testConnection, transformLyrics } from "../main/lyrics/ai";
+import { clearAiCache, getOllamaThinkingCapabilities, initializeAiCache, listModels, testConnection, transformLyrics } from "../main/lyrics/ai";
 import { analyzeLyrics } from "../main/lyrics/languageIntelligence";
 import {
   artworkExtensionForMime,
@@ -1040,6 +1040,11 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
       async aiTestConnection(kind) {
         const config = settings.get().lyrics[kind === "translation" ? "aiTranslation" : "aiRomanization"];
         return testConnection(config);
+      },
+
+      async aiThinkingModes(kind, refresh = false) {
+        const config = settings.get().lyrics[kind === "translation" ? "aiTranslation" : "aiRomanization"];
+        return getOllamaThinkingCapabilities(config, refresh);
       },
 
       async saveSidecar(trackId: number, text: string) {

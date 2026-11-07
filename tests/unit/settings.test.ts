@@ -44,6 +44,26 @@ describe("secondary font size settings", () => {
   });
 });
 
+describe("AI lyrics thinking mode settings", () => {
+  it("defaults to Auto and persists translation and romanization modes independently", () => {
+    const file = join(workDir, "thinking-mode.json");
+    const store = new SettingsStore(file);
+    expect(store.get().lyrics.aiTranslation.thinkingMode).toBe("auto");
+    expect(store.get().lyrics.aiRomanization.thinkingMode).toBe("auto");
+    store.patch({ lyrics: { aiTranslation: { ...DEFAULT_SETTINGS.lyrics.aiTranslation, thinkingMode: "high" } } });
+    store.patch({ lyrics: { aiRomanization: { ...DEFAULT_SETTINGS.lyrics.aiRomanization, thinkingMode: "off" } } });
+    const reopened = new SettingsStore(file).get();
+    expect(reopened.lyrics.aiTranslation.thinkingMode).toBe("high");
+    expect(reopened.lyrics.aiRomanization.thinkingMode).toBe("off");
+  });
+
+  it("normalizes unknown persisted modes back to Auto", () => {
+    const file = join(workDir, "invalid-thinking-mode.json");
+    writeFileSync(file, JSON.stringify({ lyrics: { aiTranslation: { thinkingMode: "turbo" } } }), "utf8");
+    expect(new SettingsStore(file).get().lyrics.aiTranslation.thinkingMode).toBe("auto");
+  });
+});
+
 describe("compact sidebar hover expansion setting", () => {
   it("defaults on, independently from compact mode itself", () => {
     expect(DEFAULT_SETTINGS.appearance.compactSidebar).toBe(false);

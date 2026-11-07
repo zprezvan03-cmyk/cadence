@@ -598,8 +598,14 @@ const aiSettingsSections = await page.evaluate(() => ({
   translation: [...document.querySelectorAll(".lyrics-ai-section > h3")].some(node => node.textContent?.trim() === "AI Translation"),
   romanization: [...document.querySelectorAll(".lyrics-ai-section > h3")].some(node => node.textContent?.trim() === "AI Romanization"),
   modelsButtons: document.querySelectorAll(".lyrics-ai-section button").length,
+  thinkingSelectors: document.querySelectorAll(".ai-thinking-control select").length,
+  autoOption: [...document.querySelectorAll(".ai-thinking-control option")].some(option => (option as HTMLOptionElement).value === "auto"),
 }));
 check("independent-ai-translation-and-romanization-settings", aiSettingsSections.translation && aiSettingsSections.romanization && aiSettingsSections.modelsButtons >= 4, JSON.stringify(aiSettingsSections));
+check("ollama-thinking-mode-control-renders", aiSettingsSections.thinkingSelectors === 1 && aiSettingsSections.autoOption, JSON.stringify(aiSettingsSections));
+await page.evaluate(() => document.querySelector(".ai-thinking-row")?.scrollIntoView({ block: "center" }));
+await wait(160);
+await shot("06-settings-ai-thinking");
 await clickText(".settings-tabs button", "Playback");
 await wait(200);
 await navItem("Home");

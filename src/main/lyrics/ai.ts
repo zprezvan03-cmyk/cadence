@@ -1,9 +1,9 @@
-import type { LyricsAiConfig } from "../../shared/types";
+import type { LyricsAiConfig, LyricsAiThinkingCapabilities, LyricsAiThinkingMode } from "../../shared/types";
 import { runtimeFetch } from "./http";
 import { analyzeLyrics, type LanguageAnalysis } from "./languageIntelligence";
 
 export interface AiCapabilities { listModels: boolean; testConnection: boolean; structuredText: boolean; nativeLocal: boolean }
-export interface AiProfile { protocol: LyricsAiConfig["protocol"]; baseUrl: string; chatPath: string; modelsPath: string; apiKey: string; model: string; timeoutMs: number; customHeaders: string }
+export interface AiProfile { protocol: LyricsAiConfig["protocol"]; baseUrl: string; chatPath: string; modelsPath: string; apiKey: string; model: string; timeoutMs: number; customHeaders: string; thinkingMode?: LyricsAiThinkingMode }
 export interface AiModel { id: string; name: string }
 export class LyricsAiError extends Error {
   constructor(message: string, readonly code: "configuration" | "connection" | "authentication" | "model" | "timeout" | "response" | "unsupported") { super(message); this.name = "LyricsAiError"; }
@@ -61,6 +61,77 @@ async function request(config: AiProfile, url: string, body?: unknown, signal?: 
   try { return await response.json(); }
   catch { throw new LyricsAiError("AI service returned invalid JSON.", "response"); }
 }
+const ollamaThinkingCache = new Map<string, { expiresAt: number; capabilities: LyricsAiThinkingCapabilities }>();
+const thinkingOrder: LyricsAiThinkingMode[] = ["off", "low", "medium", "high", "auto"];
+const modeFromWire = (value: unknown): LyricsAiThinkingMode | null => {
+  if (value === false || value === "off" || value === "false") return "off";
+  return value === "low" || value === "medium" || value === "high" || value === "auto" ? value : null;
+};
+function findThinkingMetadata(value: unknown, depth = 0): { values?: unknown; defaultValue?: unknown } | null {
+  if (!value || typeof value !== "object" || depth > 12) return null;
+  const record = value as Record<string, unknown>;
+  const thinking = record.thinking;
+  if (thinking && typeof thinking === "object" && !Array.isArray(thinking)) {
+    const metadata = thinking as Record<string, unknown>;
+    if (Array.isArray(metadata.values) || Object.hasOwn(metadata, "default"))
+      return { values: metadata.values, defaultValue: metadata.default };
+  }
+  for (const child of Object.values(record)) {
+    const found = findThinkingMetadata(child, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+export async function getOllamaThinkingCapabilities(
+  config: AiProfile,
+  refresh = false,
+  signal?: AbortSignal
+): Promise<LyricsAiThinkingCapabilities> {
+  if (config.protocol !== "ollama-native") {
+    return { modes: ["auto"], defaultMode: null, metadataAvailable: false, detail: "Thinking controls are available only with Ollama native API." };
+  }
+  if (!config.model.trim()) return { modes: ["auto"], defaultMode: null, metadataAvailable: false, detail: "Select an Ollama model to inspect its thinking modes." };
+  const cacheKey = `${config.baseUrl.trim().replace(/\/$/, "")}/${config.model.trim()}`;
+  const cached = ollamaThinkingCache.get(cacheKey);
+  if (!refresh && cached && cached.expiresAt > Date.now()) return cached.capabilities;
+  try {
+    const showUrl = endpoint(config, "/api/show");
+    const data = await request(config, showUrl, { model: config.model.trim() }, signal);
+    const metadata = findThinkingMetadata(data);
+    if (!metadata) {
+      const result: LyricsAiThinkingCapabilities = {
+        modes: ["auto"], defaultMode: null, metadataAvailable: false,
+        detail: "This model did not report thinking controls; Auto is the only confirmed mode.",
+      };
+      ollamaThinkingCache.set(cacheKey, { expiresAt: Date.now() + 300_000, capabilities: result });
+      return result;
+    }
+    const values = Array.isArray(metadata.values) ? metadata.values : [];
+    const supported = new Set<LyricsAiThinkingMode>();
+    for (const value of values) {
+      const mode = modeFromWire(value);
+      if (mode && mode !== "auto") supported.add(mode);
+    }
+    const defaultMode = modeFromWire(metadata.defaultValue);
+    if (defaultMode && defaultMode !== "auto") supported.add(defaultMode);
+    const modes: LyricsAiThinkingMode[] = [...thinkingOrder.filter(mode => supported.has(mode)), "auto"];
+    const result: LyricsAiThinkingCapabilities = {
+      modes, defaultMode, metadataAvailable: true,
+      detail: defaultMode ? `Model default: ${defaultMode === "off" ? "Off" : defaultMode[0].toUpperCase() + defaultMode.slice(1)}.` : "Thinking controls reported by this model.",
+    };
+    ollamaThinkingCache.set(cacheKey, { expiresAt: Date.now() + 300_000, capabilities: result });
+    return result;
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    const result: LyricsAiThinkingCapabilities = {
+      modes: ["auto"], defaultMode: null, metadataAvailable: false,
+      detail: error instanceof LyricsAiError ? `Thinking metadata unavailable: ${error.message}` : "Thinking metadata unavailable; using Auto only.",
+    };
+    ollamaThinkingCache.set(cacheKey, { expiresAt: Date.now() + 30_000, capabilities: result });
+    return result;
+  }
+}
+
 function validateProfile(config: AiProfile): void {
   if (!config.baseUrl.trim()) throw new LyricsAiError("AI service URL is required.", "configuration");
   if (!config.model.trim()) throw new LyricsAiError("Select or enter a model name.", "configuration");
@@ -80,9 +151,24 @@ async function generate(config: AiProfile, prompt: string, signal?: AbortSignal)
   validateProfile(config);
   const temperature = Math.max(0, Math.min(2, (config as LyricsAiConfig).temperature ?? .2));
   const maxTokens = Math.max(1, Math.min(32768, (config as LyricsAiConfig).maxOutputTokens ?? 4096));
-  const body = config.protocol === "ollama-native"
+  const body: Record<string, unknown> = config.protocol === "ollama-native"
     ? { model: config.model, stream: false, format: "json", messages: [{ role: "system", content: prompt }, { role: "user", content: "Transform the supplied lyric segments and return only the required JSON object." }], options: { temperature, num_predict: maxTokens } }
     : { model: config.model, stream: false, temperature, max_tokens: maxTokens, response_format: { type: "json_object" }, messages: [{ role: "system", content: prompt }, { role: "user", content: "Transform the supplied lyric segments and return only the required JSON object." }] };
+  if (config.protocol === "ollama-native") {
+    const thinkingMode = config.thinkingMode ?? "auto";
+    if (thinkingMode !== "auto") {
+      const capabilities = await getOllamaThinkingCapabilities(config, false, signal);
+      if (!capabilities.modes.includes(thinkingMode)) {
+        throw new LyricsAiError(
+          capabilities.metadataAvailable
+            ? `The selected model does not support Thinking Mode ${thinkingMode}. Choose Auto or a supported mode.`
+            : "The selected model's thinking capabilities could not be confirmed. Choose Auto or refresh model capabilities.",
+          "unsupported"
+        );
+      }
+      body.think = thinkingMode === "off" ? false : thinkingMode;
+    }
+  }
   const data = await request(config, endpoint(config, config.chatPath), body, signal) as Record<string, any>;
   const content = config.protocol === "ollama-native" ? data?.message?.content : data?.choices?.[0]?.message?.content;
   if (typeof content !== "string") throw new LyricsAiError("AI response did not contain message text.", "response");
@@ -159,7 +245,7 @@ export async function transformLyrics(kind: TransformKind, config: LyricsAiConfi
   const cacheKey = digest(JSON.stringify({ v: 1, kind, lines, contextLines, segmentIds, language: context.language, script: context.script, confidence: context.confidence, mixed: context.mixed,
     target, protocol: config.protocol, baseUrl: config.baseUrl, chatPath: config.chatPath, model: config.model,
     keyFingerprint: digest(config.apiKey), headersFingerprint: digest(config.customHeaders), standard: config.romanizationStandard ?? "",
-    temperature: config.temperature, maxOutputTokens: config.maxOutputTokens,
+    thinkingMode: config.thinkingMode ?? "auto", temperature: config.temperature, maxOutputTokens: config.maxOutputTokens,
   }));
   const cached = derivedCache.get(cacheKey);
   if (!forceRegenerate && cached) return { analysis, results: [...cached.results] };

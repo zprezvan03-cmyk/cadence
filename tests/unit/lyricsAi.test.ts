@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { listModels, testConnection, transformLyrics, clearAiCache, initializeAiCache, LyricsAiError } from "../../src/main/lyrics/ai";
+import { getOllamaThinkingCapabilities, listModels, testConnection, transformLyrics, clearAiCache, initializeAiCache, LyricsAiError } from "../../src/main/lyrics/ai";
 import { setRuntimeFetch } from "../../src/main/lyrics/http";
 import type { LyricsAiConfig } from "../../src/shared/types";
 import { applyRomanization, applyTranslations, parseLyricsText } from "../../src/renderer/features/lyrics/parseLyrics";
 
-const native: LyricsAiConfig = { enabled:true,protocol:"ollama-native",baseUrl:"http://localhost:11434",chatPath:"/api/chat",modelsPath:"/api/tags",apiKey:"",model:"qwen2.5",temperature:.1,maxOutputTokens:1000,timeoutMs:30000,romanizationStandard:"Hepburn",customHeaders:"{}" };
+const native: LyricsAiConfig = { enabled:true,protocol:"ollama-native",baseUrl:"http://localhost:11434",chatPath:"/api/chat",modelsPath:"/api/tags",apiKey:"",model:"qwen2.5",temperature:.1,maxOutputTokens:1000,timeoutMs:30000,thinkingMode:"auto",romanizationStandard:"Hepburn",customHeaders:"{}" };
 const compatible: LyricsAiConfig = { ...native,protocol:"openai-compatible",baseUrl:"http://127.0.0.1:1234/v1",chatPath:"/chat/completions",modelsPath:"/models" };
 const response = (body: unknown) => new Response(JSON.stringify(body), {status:200,headers:{"Content-Type":"application/json"}});
 const ollamaContent = (text: string) => response({message:{content:text}});
@@ -27,6 +27,53 @@ describe("central lyrics AI adapters", () => {
     const first = await transformLyrics("romanization",native,["君は"],"", "ja");
     const cached = await transformLyrics("romanization",native,["君は"],"", "ja");
     expect(first.results).toEqual(["kimiwa"]); expect(cached.results).toEqual(first.results); expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it("discovers model thinking modes and sends the selected Ollama think value for every supported mode", async () => {
+    const requests: { path: string; body: any }[] = [];
+    const server = createServer((req, res) => {
+      let text = ""; req.setEncoding("utf8"); req.on("data", chunk => { text += chunk; });
+      req.on("end", () => {
+        const body = JSON.parse(text); requests.push({ path: req.url ?? "", body });
+        res.setHeader("Content-Type", "application/json");
+        if (req.url === "/api/show") res.end(JSON.stringify({ model_info: { thinking: { values: [false, "low", "medium", "high"], default: "medium" } } }));
+        else res.end(JSON.stringify({ message: { content: '{"results":[{"id":"L0","text":"result"}]}' } }));
+      });
+    });
+    server.listen(0, "127.0.0.1"); await once(server, "listening");
+    const address = server.address(); if (!address || typeof address === "string") throw new Error("No test server address");
+    const config = { ...native, baseUrl: `http://127.0.0.1:${address.port}`, model: "thinking-test" };
+    setRuntimeFetch(globalThis.fetch as typeof globalThis.fetch);
+    try {
+      const capabilities = await getOllamaThinkingCapabilities(config, true);
+      expect(capabilities).toMatchObject({ modes: ["off", "low", "medium", "high", "auto"], defaultMode: "medium", metadataAvailable: true });
+      for (const mode of capabilities.modes) {
+        await transformLyrics("romanization", { ...config, thinkingMode: mode }, ["君は"], "", "ja");
+      }
+      await transformLyrics("translation", { ...config, thinkingMode: "low" }, ["愛してる"], "en", "ja");
+      const chatRequests = requests.filter(request => request.path === "/api/chat");
+      expect(requests.filter(request => request.path === "/api/show")).toHaveLength(1);
+      expect(chatRequests.map(request => request.body.think)).toEqual([false, "low", "medium", "high", undefined, "low"]);
+      expect(Object.hasOwn(chatRequests[4].body, "think")).toBe(false);
+      expect(chatRequests[5].body.think).toBe("low");
+    } finally { server.close(); await once(server, "close"); }
+  });
+  it("keeps unsupported or missing model metadata explicit and never sends stale thinking settings", async () => {
+    const calls: { url: string; body: any }[] = [];
+    setRuntimeFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input); const body = init?.body ? JSON.parse(String(init.body)) : {};
+      calls.push({ url, body });
+      return url.endsWith("/api/show")
+        ? response(body.model === "limited" ? { thinking: { values: ["low"], default: "low" } } : { details: "no thinking metadata" })
+        : ollamaContent('{"results":[{"id":"L0","text":"result"}]}');
+    });
+    const limited = { ...native, model: "limited" };
+    const capabilities = await getOllamaThinkingCapabilities(limited, true);
+    expect(capabilities.modes).toEqual(["low", "auto"]);
+    await expect(transformLyrics("romanization", { ...limited, thinkingMode: "high" }, ["君"], "", "ja")).rejects.toMatchObject({ code: "unsupported" });
+    expect(calls.filter(call => call.url.endsWith("/api/chat"))).toHaveLength(0);
+    const missing = await getOllamaThinkingCapabilities({ ...native, model: "no-metadata" }, true);
+    expect(missing).toMatchObject({ modes: ["auto"], metadataAvailable: false });
+    expect(missing.detail).toContain("did not report");
   });
   it("persists validated derived results and restores them without a request", async () => {
     let saved = "";

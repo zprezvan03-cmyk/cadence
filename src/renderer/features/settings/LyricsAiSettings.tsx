@@ -1,5 +1,5 @@
-import { useState } from "react";
-import type { LyricsAiConfig, LyricsSettings } from "../../../shared/types";
+import { useEffect, useState } from "react";
+import type { LyricsAiConfig, LyricsAiThinkingCapabilities, LyricsAiThinkingMode, LyricsSettings } from "../../../shared/types";
 import { bridge } from "../../state/bridge";
 import { TRANSLATION_LANGUAGES } from "../lyrics/translationLanguages";
 
@@ -15,7 +15,66 @@ function AiPanel({ kind, title, config, onChange }: { kind: Kind; title: string;
   const [models, setModels] = useState<{id:string;name:string}[]>([]);
   const [status, setStatus] = useState(EMPTY);
   const [busy, setBusy] = useState(false);
+  const [thinking, setThinking] = useState<LyricsAiThinkingCapabilities | null>(null);
+  const [thinkingNotice, setThinkingNotice] = useState("");
   const patch = (value: Partial<LyricsAiConfig>) => onChange({ ...config, ...value });
+
+  const refreshThinkingModes = async (refresh = true) => {
+    if (config.protocol !== "ollama-native") return;
+    setThinking(null);
+    setThinkingNotice("");
+    try {
+      const capabilities = await bridge.lyrics.aiThinkingModes(kind, refresh);
+      setThinking(capabilities);
+      if (!capabilities.modes.includes(config.thinkingMode)) {
+        patch({ thinkingMode: "auto" });
+        setThinkingNotice(`This model does not report ${config.thinkingMode === "off" ? "Off" : config.thinkingMode} support. Switched to Auto.`);
+      }
+    } catch (error) {
+      setThinking({ modes: ["auto"], defaultMode: null, metadataAvailable: false, detail: error instanceof Error ? error.message : "Could not inspect Ollama model capabilities." });
+      if (config.thinkingMode !== "auto") {
+        patch({ thinkingMode: "auto" });
+        setThinkingNotice("Thinking metadata could not be confirmed. Switched to Auto.");
+      }
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+    if (config.protocol !== "ollama-native") {
+      setThinking(null);
+      setThinkingNotice("");
+      return;
+    }
+    if (!config.model.trim()) {
+      setThinking({ modes: ["auto"], defaultMode: null, metadataAvailable: false, detail: "Choose a model to inspect its supported thinking modes." });
+      if (config.thinkingMode !== "auto") {
+        patch({ thinkingMode: "auto" });
+        setThinkingNotice("No model selected. Switched to Auto.");
+      }
+      return;
+    }
+    setThinking(null);
+    setThinkingNotice("");
+    const timer = window.setTimeout(() => {
+      void bridge.lyrics.aiThinkingModes(kind, true).then(capabilities => {
+        if (!active) return;
+        setThinking(capabilities);
+        if (!capabilities.modes.includes(config.thinkingMode)) {
+          patch({ thinkingMode: "auto" });
+          setThinkingNotice(`This model does not report ${config.thinkingMode === "off" ? "Off" : config.thinkingMode} support. Switched to Auto.`);
+        }
+      }).catch(error => {
+        if (!active) return;
+        setThinking({ modes: ["auto"], defaultMode: null, metadataAvailable: false, detail: error instanceof Error ? error.message : "Thinking metadata is unavailable." });
+        if (config.thinkingMode !== "auto") {
+          patch({ thinkingMode: "auto" });
+          setThinkingNotice("Thinking metadata could not be confirmed. Switched to Auto.");
+        }
+      });
+    }, 350);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [kind, config.protocol, config.baseUrl, config.model]);
   const setProtocol = (protocol: LyricsAiConfig["protocol"]) => patch(protocol === "ollama-native"
     ? { protocol, baseUrl: "http://localhost:11434", chatPath: "/api/chat", modelsPath: "/api/tags", apiKey: "" }
     : { protocol, baseUrl: "http://localhost:11434/v1", chatPath: "/chat/completions", modelsPath: "/models" });
@@ -39,6 +98,17 @@ function AiPanel({ kind, title, config, onChange }: { kind: Kind; title: string;
     <label className="setting-row"><span><strong>Models endpoint path</strong><em>Used for model discovery when supported.</em></span><input value={config.modelsPath} onChange={event => patch({modelsPath:event.target.value})}/></label>
     {config.protocol !== "ollama-native" ? <label className="setting-row"><span><strong>API key</strong><em>Optional for local endpoints; stored in Cadence settings and never logged.</em></span><input type="password" autoComplete="new-password" value={config.apiKey} onChange={event => patch({apiKey:event.target.value})} placeholder="Optional bearer token"/></label> : null}
     <label className="setting-row"><span><strong>Model</strong><em>Discover installed models or enter an identifier.</em></span><span className="ai-model-control"><input list={`ai-models-${kind}`} value={config.model} onChange={event => patch({model:event.target.value})} placeholder="e.g. qwen2.5"/><datalist id={`ai-models-${kind}`}>{models.map(model => <option key={model.id} value={model.id}/>)}</datalist><button type="button" disabled={busy || !config.modelsPath} onClick={() => void invoke("models")}>Models</button></span></label>
+    {config.protocol === "ollama-native" ? (
+      <div className="setting-row ai-thinking-row">
+        <span><strong>Thinking Mode</strong><em>{thinkingNotice || thinking?.detail || (thinking ? "Supported modes loaded for this model." : "Checking selected model…")}</em></span>
+        <span className="ai-thinking-control">
+          <select aria-label={`${title} Thinking Mode`} disabled={!thinking} value={thinking?.modes.includes(config.thinkingMode) ? config.thinkingMode : "auto"} onChange={event => patch({thinkingMode:event.target.value as LyricsAiThinkingMode})}>
+            {(thinking?.modes ?? ["auto"]).map(mode => <option key={mode} value={mode}>{mode === "auto" ? "Auto (model default)" : mode === "off" ? "Off" : mode[0].toUpperCase() + mode.slice(1)}</option>)}
+          </select>
+          <button type="button" disabled={!config.model.trim() || busy} onClick={() => void refreshThinkingModes(true)}>Refresh</button>
+        </span>
+      </div>
+    ) : <div className="setting-row"><span><strong>Thinking Mode</strong><em>Thinking controls are only sent with Ollama native API; this OpenAI-compatible profile does not receive a think field.</em></span></div>}
     {kind === "translation" ? <div className="setting-row"><span><strong>Target language</strong></span><select value={config.targetLanguage ?? "en"} onChange={event => patch({targetLanguage:event.target.value})}>{TRANSLATION_LANGUAGES.map(language => <option key={language.code} value={language.code}>{language.name}</option>)}</select></div> : <div className="setting-row"><span><strong>Romanization standard</strong></span><select value={config.romanizationStandard ?? "auto"} onChange={event => patch({romanizationStandard:event.target.value})}><option value="auto">Automatic by language</option><option value="Hepburn romanization">Japanese — Hepburn</option><option value="Revised Romanization of Korean">Korean — Revised Romanization</option><option value="Hanyu Pinyin with tone marks where natural">Chinese — Hanyu Pinyin</option><option value="BGN/PCGN Russian transliteration">Russian — BGN/PCGN</option><option value="DIN 31635 Arabic romanization">Arabic — DIN 31635</option></select></div>}
     <label className="setting-row"><span><strong>Temperature</strong></span><input type="number" min="0" max="2" step="0.05" value={config.temperature} onChange={event => patch({temperature:Number(event.target.value)})}/></label>
     <label className="setting-row"><span><strong>Maximum output tokens</strong></span><input type="number" min="1" max="32768" step="256" value={config.maxOutputTokens} onChange={event => patch({maxOutputTokens:Number(event.target.value)})}/></label>

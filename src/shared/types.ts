@@ -462,6 +462,13 @@ export interface RomanizationResult {
 export type LyricsFetchConcurrency = "low" | "balanced" | "high";
 
 export type LyricsAiProtocol = "ollama-native" | "openai-compatible";
+export type LyricsAiThinkingMode = "off" | "low" | "medium" | "high" | "auto";
+export interface LyricsAiThinkingCapabilities {
+  modes: LyricsAiThinkingMode[];
+  defaultMode: LyricsAiThinkingMode | null;
+  metadataAvailable: boolean;
+  detail?: string;
+}
 export interface LyricsAiConfig {
   enabled: boolean;
   protocol: LyricsAiProtocol;
@@ -473,6 +480,8 @@ export interface LyricsAiConfig {
   temperature: number;
   maxOutputTokens: number;
   timeoutMs: number;
+  /** Ollama native API thinking control. Auto omits the `think` request field. */
+  thinkingMode: LyricsAiThinkingMode;
   targetLanguage?: string;
   romanizationStandard?: string;
   /** JSON object of optional custom headers. Never included in logs or status text. */
@@ -891,6 +900,7 @@ export interface CadenceApi {
     romanize(request: TranslationRequest): Promise<RomanizationResult>;
     aiModels(kind: "translation" | "romanization"): Promise<{id: string; name: string}[]>;
     aiTestConnection(kind: "translation" | "romanization"): Promise<string>;
+    aiThinkingModes(kind: "translation" | "romanization", refresh?: boolean): Promise<LyricsAiThinkingCapabilities>;
     saveSidecar(trackId: number, text: string): Promise<{ path: string }>;
     /**
      * Empties the persistent remote-lyrics cache. Resolves only after the emptied cache file has

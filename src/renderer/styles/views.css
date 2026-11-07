@@ -869,8 +869,23 @@
 }
 
 .ai-model-control button,
+.ai-thinking-control button,
 .lyrics-ai-section .setting-row > button {
   white-space: nowrap;
+}
+
+.ai-thinking-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-thinking-control select {
+  min-width: 190px;
+}
+
+.ai-thinking-row em {
+  max-width: 52ch;
 }
 
 .lyrics-ai-section .error-text {
