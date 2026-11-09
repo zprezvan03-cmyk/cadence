@@ -1042,10 +1042,10 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         return testConnection(config);
       },
 
-      async saveSidecar(trackId: number, text: string) {
+      async saveSidecar(trackId: number, text: string, format: "ttml" | "lrc" = "lrc") {
         const track = store.getTrack(trackId);
         if (!track) throw new Error("Track not found");
-        const savedPath = await invoke<string>("cmd_write_sidecar_lrc", {
+        const command = format === "ttml" ? "cmd_write_sidecar_ttml" : "cmd_write_sidecar_lrc"; const savedPath = await invoke<string>(command, {
           audioPath: track.path,
           text,
         });

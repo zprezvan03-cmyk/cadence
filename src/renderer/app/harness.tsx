@@ -283,7 +283,7 @@ function installLyricsHarnessBridge(): void {
         if (lyricsHarness.romanizationFailure) throw new Error("harness romanization failure");
         return { romanizations: request.lines.map(line => `[rom] ${line}`), provider: "harness" };
       },
-      saveSidecar: async () => "/harness/lyrics.lrc",
+      saveSidecar: async (_format?: "ttml" | "lrc") => "/harness/lyrics.lrc",
       clearCache: async () => ({ removedEntries: 0 }),
       listCache: async () => ({
         entries: [],

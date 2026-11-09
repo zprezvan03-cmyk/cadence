@@ -322,9 +322,9 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
     [lyrics.resolveYouTube]
   );
 
-  const handleSave = useCallback(async () => {
+  const handleSave = useCallback(async (format: "ttml" | "lrc" = "lrc") => {
     try {
-      const path = await lyrics.saveSidecar();
+      const path = await lyrics.saveSidecar(format);
       if (path) flash(`Lyrics saved to ${path}`);
     } catch (error) {
       flash(`Could not save lyrics: ${(error as Error).message}`);
@@ -599,7 +599,7 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
             onReload={lyrics.reload}
             onRegenerateTranslation={lyrics.regenerateTranslation}
             onRegenerateRomanization={lyrics.regenerateRomanization}
-            onSaveSidecar={() => void handleSave()}
+            onSaveSidecar={(format) => void handleSave(format)}
             onChooseFile={() => void lyrics.chooseFile()}
             trackDuration={track.duration ?? 0}
             searchDraft={lyrics.searchDraft}

@@ -47,7 +47,7 @@ interface LyricsDockProps {
   onReload: () => void;
   onRegenerateTranslation: () => void;
   onRegenerateRomanization: () => void;
-  onSaveSidecar: () => void;
+  onSaveSidecar: (format?: "ttml" | "lrc") => void;
   onChooseFile: () => void;
   /** Remote queue items have no local file/sidecar; all other dock controls still apply. */
   localFileActions?: boolean;
@@ -113,6 +113,8 @@ export function LyricsDock({
 }: LyricsDockProps) {
   const [panel, setPanel] = useState<"none" | "sources" | "profiles" | "search">("none");
   const [languageOpen, setLanguageOpen] = useState(false);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [regenerateOpen, setRegenerateOpen] = useState(false);
   // Popovers close the instant their state flips; presence only keeps each mounted for
   // its fast pop-out. Switching panels crossfades for one 120ms beat instead of cutting.
   const sourcesPresence = usePresence(panel === "sources");
@@ -125,8 +127,8 @@ export function LyricsDock({
   const { title: searchTitle, artist: searchArtist, album: searchAlbum, youtubeUrl } = searchDraft;
 
   useEffect(() => {
-    onPopoverChange?.(panel !== "none" || languageOpen);
-  }, [panel, languageOpen, onPopoverChange]);
+    onPopoverChange?.(panel !== "none" || languageOpen || saveOpen || regenerateOpen);
+  }, [panel, languageOpen, saveOpen, regenerateOpen, onPopoverChange]);
 
   // Debounce link pastes so typing a URL does not fire a lookup per keystroke. The lookup itself
   // is main-process and keyless; an empty field resets the resolved card immediately.
@@ -212,15 +214,41 @@ export function LyricsDock({
         >
           <Wand2 size={16} /> Romanize
         </button>
-        {(settings.aiTranslation?.enabled || settings.translationLanguage) ? (
-          <button type="button" className="dock-button" onClick={onRegenerateTranslation} disabled={busy} title="Force-regenerate translation">
-            <RefreshCw size={15} /> Regenerate translation
-          </button>
-        ) : null}
-        {settings.romanization ? (
-          <button type="button" className="dock-button" onClick={onRegenerateRomanization} disabled={busy} title="Force-regenerate romanization">
-            <RefreshCw size={15} /> Regenerate romanization
-          </button>
+        {(settings.aiTranslation?.enabled || settings.translationLanguage || settings.romanization) ? (
+          <div className="dock-regenerate-wrap" style={{ position: "relative" }}>
+            <button
+              type="button"
+              className="dock-button"
+              onClick={() => setRegenerateOpen(open => !open)}
+              disabled={busy}
+              title="Regenerate lyrics"
+              aria-expanded={regenerateOpen}
+            >
+              <RefreshCw size={15} /> Regenerate <ChevronDown size={14} />
+            </button>
+            {regenerateOpen ? (
+              <div className="dock-popover dock-regenerate-popover">
+                {(settings.aiTranslation?.enabled || settings.translationLanguage) ? (
+                  <button
+                    type="button"
+                    className="source-row"
+                    onClick={() => { setRegenerateOpen(false); onRegenerateTranslation(); }}
+                  >
+                    <span><strong>Translation</strong><em>Force-regenerate translated lines</em></span>
+                  </button>
+                ) : null}
+                {settings.romanization ? (
+                  <button
+                    type="button"
+                    className="source-row"
+                    onClick={() => { setRegenerateOpen(false); onRegenerateRomanization(); }}
+                  >
+                    <span><strong>Romanization</strong><em>Force-regenerate romanized lines</em></span>
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         ) : null}
       </div>
 
@@ -243,9 +271,35 @@ export function LyricsDock({
             <button type="button" className="dock-icon" onClick={onChooseFile} title="Open a lyrics file">
               <FolderOpen size={16} />
             </button>
-            <button type="button" className="dock-icon" onClick={onSaveSidecar} title="Save lyrics next to the track">
-              <Download size={16} />
-            </button>
+            <div className="dock-save-wrap" style={{ position: "relative", display: "inline-flex" }}>
+              <button
+                type="button"
+                className="dock-button"
+                onClick={() => setSaveOpen(open => !open)}
+                title="Save lyrics next to the track"
+                aria-expanded={saveOpen}
+              >
+                <Download size={16} /> Save <ChevronDown size={14} />
+              </button>
+              {saveOpen ? (
+                <div className="dock-popover dock-save-popover">
+                  <button
+                    type="button"
+                    className="source-row"
+                    onClick={() => { setSaveOpen(false); onSaveSidecar("ttml"); }}
+                  >
+                    <span><strong>TTML</strong><em>Timed text markup</em></span>
+                  </button>
+                  <button
+                    type="button"
+                    className="source-row"
+                    onClick={() => { setSaveOpen(false); onSaveSidecar("lrc"); }}
+                  >
+                    <span><strong>LRC</strong><em>Lyric text</em></span>
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </>
         ) : null}
       </div>

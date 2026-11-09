@@ -89,7 +89,7 @@ export interface UseLyricsResult {
   detectedLanguage: string | null;
   selectSource: (source: string) => void;
   reload: () => void;
-  saveSidecar: () => Promise<string | null>;
+  saveSidecar: (format?: "ttml" | "lrc") => Promise<string | null>;
   chooseFile: () => Promise<void>;
   /** Manual-search state for the Lyrics Selector; never alters active lyrics on its own. */
   manualSearchState: ManualSearchState;
@@ -617,13 +617,19 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     setReloadTick(reloadToken);
   }, []);
 
-  const saveSidecar = useCallback(async () => {
+  const saveSidecar = useCallback(async (format: "ttml" | "lrc" = "lrc") => {
     if (!track) return null;
     const parsed = lyricsStore().parsed;
     if (!parsed) return null;
-    const { lyricsToLrc } = await import("./parseLyrics");
-    const lrc = lyricsToLrc(parsed.lyrics, { title: track.title, artist: track.artist });
-    const result = await bridge.lyrics.saveSidecar(track.id, lrc);
+    let text: string;
+    if (format === "ttml") {
+      const { lyricsToTtml } = await import("./parseLyrics");
+      text = lyricsToTtml(parsed.lyrics, { title: track.title, artist: track.artist });
+    } else {
+      const { lyricsToLrc } = await import("./parseLyrics");
+      text = lyricsToLrc(parsed.lyrics, { title: track.title, artist: track.artist });
+    }
+    const result = await bridge.lyrics.saveSidecar(track.id, text, format);
     return result.path;
   }, [track]);
 

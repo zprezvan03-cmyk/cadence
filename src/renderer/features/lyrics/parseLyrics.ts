@@ -289,7 +289,55 @@ export function lyricsToPlainText(lyrics: readonly Lyric[]): string {
     .join("\n");
 }
 
-/** LRC export for "save next to the track". */
+/** TTML export for "save next to the track". */
+export function lyricsToTtml(lyrics: readonly Lyric[], meta: { title?: string; artist?: string; language?: string }): string {
+  const escapeXml = (value: string) =>
+    value
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;");
+  const formatTime = (ms: number) => {
+    const total = Math.max(0, ms) / 1000;
+    const minutes = Math.floor(total / 60);
+    const seconds = Math.floor(total - minutes * 60);
+    const millis = Math.round((total - minutes * 60 - seconds) * 1000);
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(millis).padStart(3, "0")}`;
+  };
+  const lines = lyrics.map((line, index) => {
+    const nextStart = lyrics[index + 1]?.startTimeMs ?? line.startTimeMs + (line.durationMs || 2000);
+    const endMs = line.startTimeMs + (line.durationMs || Math.max(0, nextStart - line.startTimeMs) || 1000);
+    const parts = line.parts?.length
+      ? line.parts
+          .map(part => {
+            const partStart = formatTime(part.startTimeMs || line.startTimeMs);
+            const partEnd = formatTime(part.startTimeMs + (part.durationMs || 0) || line.startTimeMs + (line.durationMs || 1000));
+            return `<span begin="${partStart}" end="${partEnd}">${escapeXml(part.words)}</span>`;
+          })
+          .join("")
+      : escapeXml(line.words);
+    return `      <p begin="${formatTime(line.startTimeMs)}" end="${formatTime(endMs)}">${parts}</p>`;
+  });
+  const title = meta.title ? `        <ttm:title>${escapeXml(meta.title)}</ttm:title>` : null;
+  const artist = meta.artist ? `        <ttm:agent type="person">${escapeXml(meta.artist)}</ttm:agent>` : null;
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xml:lang="${escapeXml(meta.language ?? "en")}">`,
+    '  <head>',
+    '    <metadata>',
+    ...(title ? [title] : []),
+    ...(artist ? [artist] : []),
+    '    </metadata>',
+    '  </head>',
+    '  <body>',
+    '    <div>',
+    ...lines,
+    '    </div>',
+    '  </body>',
+    '</tt>',
+  ].join("\n");
+}
 export function lyricsToLrc(lyrics: readonly Lyric[], meta: { title?: string; artist?: string }): string {
   const header = [
     meta.title ? `[ti:${meta.title}]` : null,

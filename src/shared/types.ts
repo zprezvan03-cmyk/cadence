@@ -891,7 +891,7 @@ export interface CadenceApi {
     romanize(request: TranslationRequest): Promise<RomanizationResult>;
     aiModels(kind: "translation" | "romanization"): Promise<{id: string; name: string}[]>;
     aiTestConnection(kind: "translation" | "romanization"): Promise<string>;
-    saveSidecar(trackId: number, text: string): Promise<{ path: string }>;
+    saveSidecar(trackId: number, text: string, format?: "ttml" | "lrc"): Promise<{ path: string }>;
     /**
      * Empties the persistent remote-lyrics cache. Resolves only after the emptied cache file has
      * been written to disk and rejects with the filesystem error when it could not be, so the UI
