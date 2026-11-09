@@ -255,11 +255,68 @@ export function scatterRomanizationWords(
 }
 
 /** Builds timed romanization from source parts and AI word tokens. Returns null when alignment is impossible. */
-export function buildTimedRomanization(line: Lyric, words: readonly string[] | null | undefined): LyricPart[] | null {
+export function buildTimedRomanization(line: Lyric, words: readonly string[] | null | undefined, fullText?: string | null): LyricPart[] | null {
   if (!words || !line.parts || line.parts.length === 0) return null;
 
-  // Span-aligned input: words has one token per non-space span. Map spaces back to " ".
+  // Span-aligned input: words has one token per non-space span. The full romanized
+  // line supplies natural word boundaries, so timing can space full words without
+  // forcing a space at every syllable span.
   const nonSpaceParts = line.parts.filter(part => part.words.trim().length > 0);
+  const cleanedWords = words.map(word => typeof word === "string" ? word.trim() : "");
+  if (fullText && cleanedWords.length === nonSpaceParts.length) {
+    const fullNorm = fullText.trim().toLowerCase().replace(/\s+/g, "");
+    const tokenNorm = cleanedWords.join("").toLowerCase().replace(/\s+/g, "");
+    if (fullNorm && tokenNorm === fullNorm) {
+      const lineWords = fullText.trim().split(/\s+/).map(word => word.toLowerCase().replace(/\s+/g, ""));
+      const trailingSpaceTokenIndexes = new Set<number>();
+      let run = "";
+      let wordCursor = 0;
+      let ok = true;
+      for (let i = 0; i < cleanedWords.length; i++) {
+        run += cleanedWords[i].toLowerCase().replace(/\s+/g, "");
+        if (wordCursor >= lineWords.length || run.length > lineWords[wordCursor].length) {
+          ok = false;
+          break;
+        }
+        if (run === lineWords[wordCursor]) {
+          if (wordCursor < lineWords.length - 1) trailingSpaceTokenIndexes.add(i);
+          wordCursor += 1;
+          run = "";
+        }
+      }
+      if (ok && wordCursor === lineWords.length && run.length === 0) {
+        let wordIndex = 0;
+        let nonSpaceIndex = 0;
+        return line.parts.map(part => {
+          if (part.words.trim().length === 0) {
+            // Source-timed spaces are already represented by the trailing space
+            // attached to the preceding boundary token.
+            return {
+              startTimeMs: part.startTimeMs,
+              words: "",
+              durationMs: part.durationMs,
+              isBackground: part.isBackground,
+              explicit: part.explicit,
+            };
+          }
+          const token = cleanedWords[wordIndex] ?? "";
+          const needsSpace = trailingSpaceTokenIndexes.has(nonSpaceIndex);
+          wordIndex += 1;
+          nonSpaceIndex += 1;
+          return {
+            startTimeMs: part.startTimeMs,
+            words: needsSpace ? `${token} ` : token,
+            durationMs: part.durationMs,
+            isBackground: part.isBackground,
+            explicit: part.explicit,
+          };
+        });
+      }
+    }
+  }
+
+  // Existing span-aligned path when full text is not usable: tokens are emitted
+  // verbatim, with no parser-manufactured spacing.
   if (words.length === nonSpaceParts.length) {
     const hasSourceSpaces = nonSpaceParts.length < line.parts.length;
     let wordIndex = 0;
@@ -332,12 +389,12 @@ export function buildTimedRomanization(line: Lyric, words: readonly string[] | n
     const first = group[0];
     const last = group[group.length - 1];
     const token = tokens[index] ?? "";
-    // Preserve AI-provided spacing. Fallback grouping does not get automatic
-    // separator spaces from the parser; if spacing is needed, it must come from
-    // the token itself.
+    // Group boundaries are word-level separation points. If the AI did not leave
+    // a trailing boundary space, preserve one here instead of concatenating words.
+    const needsTrailingSpace = index !== groups.length - 1 && !/\s$/.test(token);
     return {
       startTimeMs: first.startTimeMs,
-      words: token,
+      words: needsTrailingSpace ? `${token} ` : token,
       durationMs: Math.max(1, last.startTimeMs + last.durationMs - first.startTimeMs),
       isBackground: first.isBackground,
       explicit: first.explicit,
@@ -357,13 +414,13 @@ export function applyRomanization(
     const romanized = romanizations[index];
     if (!romanized || romanized.trim().length === 0) return line;
     if (mode === "word") {
-      const timed = buildTimedRomanization(line, words[index]);
+      const timed = buildTimedRomanization(line, words[index] ?? null, romanized);
       if (timed) {
         console.log("[Cadence parser] romanization", { index, mode, romanization: romanized, timedWords: timed.map(part => part.words) });
         return { ...line, romanization: romanized, timedRomanization: timed };
       }
       // Fallback split by whitespace if AI did not provide usable words.
-      const fallback = buildTimedRomanization(line, romanized.split(/\s+/));
+      const fallback = buildTimedRomanization(line, romanized.split(/\s+/), romanized);
       if (fallback) {
         console.log("[Cadence parser] romanization fallback", { index, mode, romanization: romanized, timedWords: fallback.map(part => part.words) });
         return { ...line, romanization: romanized, timedRomanization: fallback };

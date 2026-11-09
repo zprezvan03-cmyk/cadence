@@ -41,7 +41,7 @@ describe("matasaburo full", () => {
       source: line,
       text: result.results[i],
       words: result.words?.[i] ?? null,
-      timed: buildTimedRomanization(parsed.lyrics[wordIndexes[i]], result.words?.[i] ?? null)?.map(p => p.words) ?? null,
+      timed: buildTimedRomanization(parsed.lyrics[wordIndexes[i]], result.words?.[i] ?? null, result.results[i] ?? null)?.map(p => p.words) ?? null,
     }));
     const payload = { analysis: result.analysis, samples };
     writeFileSync(String.raw`C:\Users\Tyas\AppData\Local\Temp\opencode\matasaburo-full.json`, JSON.stringify(payload, null, 2), "utf8");

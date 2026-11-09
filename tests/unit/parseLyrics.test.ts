@@ -276,4 +276,12 @@ describe("buildTimedRomanization spacing", () => {
     const words = line.parts!.map(() => "word");
     expect(buildTimedRomanization(line, words)?.map(part => part.words)).toEqual(words);
   });
+
+  it("uses the full line to insert spaces at word boundaries", () => {
+    const parsed = parseLyricsText(RICH_LRC, 10_000);
+    const line = parsed.lyrics![0];
+    const words = line.parts!.map(part => part.words.trim());
+    const built = buildTimedRomanization(line, words, words.join(" "));
+    expect(built?.map(part => part.words)).toEqual(words.map((word, index) => (index === words.length - 1 ? word : `${word} `)));
+  });
 });
