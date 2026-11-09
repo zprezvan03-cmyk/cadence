@@ -294,9 +294,11 @@ export function buildTimedRomanization(line: Lyric, words: readonly string[] | n
   if (words.length === line.parts.length) {
     return line.parts.map((part, index) => {
       const token = words[index] ?? "";
+      // Preserve the AI token exactly. Empty tokens stay empty; spaces in direct
+      // input are carried by tokens that explicitly contain them.
       return {
         startTimeMs: part.startTimeMs,
-        words: token.trim().length === 0 ? " " : token,
+        words: token,
         durationMs: part.durationMs,
         isBackground: part.isBackground,
         explicit: part.explicit,
@@ -330,13 +332,12 @@ export function buildTimedRomanization(line: Lyric, words: readonly string[] | n
     const first = group[0];
     const last = group[group.length - 1];
     const token = tokens[index] ?? "";
-    // AI tokens may already carry their own trailing space. Fallback tokens (plain
-    // whitespace-split words) do not, so separate grouped words with one trailing
-    // space unless the AI token already provides one or this is the last group.
-    const needsTrailingSpace = index !== groups.length - 1 && !/\s$/.test(token);
+    // Preserve AI-provided spacing. Fallback grouping does not get automatic
+    // separator spaces from the parser; if spacing is needed, it must come from
+    // the token itself.
     return {
       startTimeMs: first.startTimeMs,
-      words: needsTrailingSpace ? `${token} ` : token,
+      words: token,
       durationMs: Math.max(1, last.startTimeMs + last.durationMs - first.startTimeMs),
       isBackground: first.isBackground,
       explicit: first.explicit,

@@ -4,6 +4,7 @@ import {
   applyRomanization,
   applyTranslations,
   detectSyncType,
+  buildTimedRomanization,
   parseLyricsText,
   romanizationGaps,
   scatterRomanizations,
@@ -259,5 +260,20 @@ describe("local file romanization priority", () => {
     const stripped = stripRomanization(decorated);
     expect(stripped[0].romanization).toBeUndefined();
     expect(stripped[0].timedRomanization).toBeUndefined();
+  });
+});
+describe("buildTimedRomanization spacing", () => {
+  const parsed = parseLyricsText(RICH_LRC, 10_000);
+  const line = parsed.lyrics[0];
+
+  it("preserves AI-provided token spacing without parser auto-insertion", () => {
+    const parts = line.parts!;
+    const words = parts.map((_, index) => (index === parts.length - 1 ? "last" : "token "));
+    expect(buildTimedRomanization(line, words)?.map(part => part.words)).toEqual(words);
+  });
+
+  it("does not manufacture spaces for tokens that have none", () => {
+    const words = line.parts!.map(() => "word");
+    expect(buildTimedRomanization(line, words)?.map(part => part.words)).toEqual(words);
   });
 });
