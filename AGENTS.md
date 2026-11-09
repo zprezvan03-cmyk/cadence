@@ -42,7 +42,7 @@ npm run dev
 - Google legacy romanization also lowercases non-Latin output.
 
 ### Prompt / AI Cache
-- AI prompt version bumped to `v: 15` (cache key version).
+- AI prompt version bumped to `v: 16` (cache key version).
 - Validation now accepts `text` and optional `words`.
 
 ### Settings / UI
