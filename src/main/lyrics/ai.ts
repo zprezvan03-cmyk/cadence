@@ -134,7 +134,7 @@ function promptForRomanization(analysis: LanguageAnalysis, standard: string, ids
   return `${task}
 Offline analysis: detected ${analysis.language} in ${analysis.script} script, confidence ${(analysis.confidence * 100).toFixed(0)}%, mixed-language=${analysis.mixed}. Treat low-confidence language as uncertain and use neighboring lyric context. Do not transform an already-Latin segment.
 Use context across the entire song to resolve ambiguity and keep terminology/conventions consistent.
-Return exactly one JSON object with key "results", an array containing exactly one {"id":"...","text":"...","words":["..."]} per supplied id. Do not return markdown or other keys. Preserve every id exactly. "text" must be a single line without timestamps, tags, markup or commentary. "words" must contain only romanized word tokens, excluding spaces. Neighboring source lines are context only and must not be returned.
+Return exactly one JSON object with key "results", an array containing exactly one {"id":"...","text":"...","words":["..."]} per supplied id. Do not return markdown or other keys. Preserve every id exactly. "text" must be a single line without timestamps, tags, markup or commentary. "words" must contain only romanized word tokens, including trailing spaces where needed between words. Neighboring source lines are context only and must not be returned.
 CONTEXT=${JSON.stringify(contextLines)}
 SEGMENTS=${JSON.stringify(promptIds)}`;
 }
@@ -187,7 +187,7 @@ export async function transformLyrics(kind: TransformKind, config: LyricsAiConfi
     ? { ...analysis, language: sourceHint as LanguageAnalysis["language"] }
     : analysis;
   console.log("[Cadence AI] transform start", kind, { language: context.language, lines: lines.length, forceRegenerate, target });
-const cacheKey = digest(JSON.stringify({ v: 14, kind, lines, contextLines, segmentIds, segmentSpans, language: context.language, script: context.script, confidence: context.confidence, mixed: context.mixed,
+const cacheKey = digest(JSON.stringify({ v: 15, kind, lines, contextLines, segmentIds, segmentSpans, language: context.language, script: context.script, confidence: context.confidence, mixed: context.mixed,
     target, protocol: config.protocol, baseUrl: config.baseUrl, chatPath: config.chatPath, model: config.model,
     keyFingerprint: digest(config.apiKey), headersFingerprint: digest(config.customHeaders), standard: config.romanizationStandard ?? "",
     temperature: config.temperature, maxOutputTokens: config.maxOutputTokens,

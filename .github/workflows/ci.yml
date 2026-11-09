@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main, fix/translation-output]
+  pull_request:
+    branches: [main, fix/translation-output]
+
+jobs:
+  frontend:
+    name: Frontend typecheck, tests, and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  desktop:
+    name: Tauri desktop build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - run: npm run tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cadence-windows
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/cadence.exe
+          if-no-files-found: warn
