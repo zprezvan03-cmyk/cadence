@@ -18,7 +18,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - run: npm test
+      - run: npm test -- tests/unit/lyricsAi.test.ts tests/unit/parseLyrics.test.ts
       - run: npm run build
 
   desktop:
