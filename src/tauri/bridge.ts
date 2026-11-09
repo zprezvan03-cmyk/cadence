@@ -976,10 +976,12 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         translateController?.abort();
         const controller = new AbortController();
         translateController = controller;
+        console.log("[Cadence bridge] translate start", { lines: request.lines.length, targetLanguage: request.targetLanguage, sourceLanguage: request.sourceLanguage, forceRegenerate: request.forceRegenerate });
         try {
           const ai = settings.get().lyrics.aiTranslation;
           if (ai?.enabled) {
             const response = await transformLyrics("translation", ai, request.lines, request.targetLanguage || ai.targetLanguage || "en", request.sourceLanguage, controller.signal, request.forceRegenerate, request.segmentIds, request.contextLines);
+            console.log("[Cadence bridge] translate AI result", { detectedLanguage: response.analysis.language, translated: response.results.filter(Boolean).length, total: response.results.length });
             return { translations: response.results, detectedLanguage: response.analysis.language };
           }
           if (request.forceRegenerate) for (const line of request.lines) translationCache.translation.delete(`${request.targetLanguage}_${line.trim()}`);

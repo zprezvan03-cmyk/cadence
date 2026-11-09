@@ -420,6 +420,7 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
 
     const embedded = embeddedTranslationsForLanguage(parsed.lyrics, targetLanguage);
     const gaps = translationGaps(parsed.lyrics, targetLanguage);
+    console.log("[Cadence lyrics] translation pass", { parsedId, enabled: Boolean(translationConfig?.enabled), targetLanguage, gaps: gaps.length, embedded: embedded.filter(Boolean).length });
     if (gaps.length === 0) {
       // Every sung line already carries an embedded translation in the requested language.
       appliedTranslationKey = applyKey;
@@ -459,6 +460,7 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
         const generated = scatterRomanizations(parsed.lyrics.length, gaps, result.translations);
         const merged = embedded.map((localText, idx) => localText ?? generated[idx] ?? null);
         const translatedCount = merged.filter(Boolean).length;
+        console.log("[Cadence lyrics] translation result", { translatedCount, total: parsed.lyrics.length });
         useLyricsStore.setState(previous => {
           // The parse changed under the request (track/provider switch): its result belongs to
           // lyrics that are no longer on screen and must not overwrite them.

@@ -43,6 +43,7 @@ async function request(config: AiProfile, url: string, body?: unknown, signal?: 
   const timeout = AbortSignal.timeout(timeoutMs);
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
   let response: Response;
+  console.log("[Cadence AI] request body", body === undefined ? null : body);
   try {
     response = await runtimeFetch(url, {
       method: body === undefined ? "GET" : "POST", headers: headers(config),
@@ -53,13 +54,17 @@ async function request(config: AiProfile, url: string, body?: unknown, signal?: 
     if (timeout.aborted || (error as Error)?.name === "TimeoutError") throw new LyricsAiError("AI request timed out. Increase the request timeout or check whether the model is still loading.", "timeout");
     throw new LyricsAiError("Could not connect to the configured AI service. Check that it is running and the endpoint is reachable.", "connection");
   }
+  console.log("[Cadence AI] HTTP", url, response.status, response.statusText);
   if (response.status === 401 || response.status === 403) throw new LyricsAiError("AI service rejected authentication. Check the API key and access permissions.", "authentication");
   if (response.status === 404) throw new LyricsAiError("AI endpoint or model was not found. Verify the model identifier and API path.", "model");
   if (response.status === 400) throw new LyricsAiError("AI service rejected the model or request format (HTTP 400). Check the model identifier, protocol, and supported request options.", "unsupported");
   if (response.status === 429) throw new LyricsAiError("AI service rate limit reached. Wait before retrying.", "connection");
   if (!response.ok) throw new LyricsAiError(`AI service returned HTTP ${response.status}.`, "connection");
-  try { return await response.json(); }
+  let data: unknown;
+  try { data = await response.json(); }
   catch { throw new LyricsAiError("AI service returned invalid JSON.", "response"); }
+  console.log("[Cadence AI] response body", data);
+  return data;
 }
 function validateProfile(config: AiProfile): void {
   if (!config.baseUrl.trim()) throw new LyricsAiError("AI service URL is required.", "configuration");
@@ -80,11 +85,13 @@ async function generate(config: AiProfile, prompt: string, signal?: AbortSignal)
   validateProfile(config);
   const temperature = Math.max(0, Math.min(2, (config as LyricsAiConfig).temperature ?? .2));
   const maxTokens = Math.max(1, Math.min(32768, (config as LyricsAiConfig).maxOutputTokens ?? 4096));
+  console.log("[Cadence AI] generate", { model: config.model, promptChars: prompt.length, promptPreview: aiLogPreview(prompt) });
   const body = config.protocol === "ollama-native"
     ? { model: config.model, stream: false, format: "json", messages: [{ role: "system", content: prompt }, { role: "user", content: "Transform the supplied lyric segments and return only the required JSON object." }], options: { temperature, num_predict: maxTokens } }
     : { model: config.model, stream: false, temperature, max_tokens: maxTokens, response_format: { type: "json_object" }, messages: [{ role: "system", content: prompt }, { role: "user", content: "Transform the supplied lyric segments and return only the required JSON object." }] };
   const data = await request(config, endpoint(config, config.chatPath), body, signal) as Record<string, any>;
   const content = config.protocol === "ollama-native" ? data?.message?.content : data?.choices?.[0]?.message?.content;
+  console.log("[Cadence AI] generated content", { chars: typeof content === "string" ? content.length : 0, preview: typeof content === "string" ? aiLogPreview(content) : content });
   if (typeof content !== "string") throw new LyricsAiError("AI response did not contain message text.", "response");
   return content;
 }
@@ -104,11 +111,28 @@ export async function testConnection(config: AiProfile, signal?: AbortSignal): P
 
 export type TransformKind = "translation" | "romanization";
 export interface TransformResult { results: (string|null)[]; analysis: LanguageAnalysis }
-function promptFor(kind: TransformKind, analysis: LanguageAnalysis, target: string, standard: string, ids: {id:string;text:string}[], contextLines: string[]): string {
-  const task = kind === "translation"
-    ? `Translate song lyrics from ${analysis.language} into ${target}. Preserve meaning, idiom, emotion, repeated lines, punctuation and intentional repetitions. Do not add explanations or lyrics.`
-    : `Romanize ${analysis.language} lyrics from ${analysis.script} into Latin characters. Do not translate, paraphrase, rewrite meaning, add or omit lyrics. Preserve punctuation and repetitions. Use ${standard}. If a segment is already Latin/romanized, copy it unchanged. For characters from non-Latin scripts, lowercase the entire romanized result; lowercase all non-Latin-derived text.`;
-  return `${task}\nOffline analysis: detected ${analysis.language} in ${analysis.script} script, confidence ${(analysis.confidence * 100).toFixed(0)}%, mixed-language=${analysis.mixed}. Treat low-confidence language as uncertain and use neighboring lyric context; do not transform an already-Latin segment.\nUse context across the entire song to resolve ambiguity and keep terminology/conventions consistent.\nReturn exactly one JSON object with key "results", an array containing exactly one {"id":"...","text":"..."} per supplied id. Do not return markdown or other keys. Preserve every id exactly. Each text must be a single line without timestamps, tags, markup or commentary. Neighboring source lines are context only and must not be returned.\nCONTEXT=${JSON.stringify(contextLines)}\nSEGMENTS=${JSON.stringify(ids)}`;
+function promptForTranslation(analysis: LanguageAnalysis, target: string, ids: {id:string;text:string}[], contextLines: string[]): string {
+  const task = `Translate song lyrics from ${analysis.language} into ${target}. Preserve meaning, idiom, emotion, repeated lines, punctuation and intentional repetitions. Do not add explanations or lyrics.`;
+  const perLine = ids.map((item, index) => `${item.id}: ${analysis.lineLanguages[index] ?? analysis.language} | ${item.text}`).join("\n");
+  return `${task}
+Translate EVERY supplied segment into ${target}, including English and other Latin-script segments. Do not echo, skip, or leave any segment in its source language. If a segment is already written in ${target}, return it unchanged; otherwise translate it. Neighboring source lines are context only and must not be returned.
+Offline analysis: detected ${analysis.language} in ${analysis.script} script, confidence ${(analysis.confidence * 100).toFixed(0)}%, mixed-language=${analysis.mixed}. Treat low-confidence language as uncertain and use neighboring lyric context.
+Per-line source languages:
+${perLine}
+Use context across the entire song to resolve ambiguity and keep terminology/conventions consistent.
+Return exactly one JSON object with key "results", an array containing exactly one {"id":"...","text":"..."} per supplied id. Do not return markdown or other keys. Preserve every id exactly. Each text must be a single line without timestamps, tags, markup or commentary.
+CONTEXT=${JSON.stringify(contextLines)}
+SEGMENTS=${JSON.stringify(ids)}`;
+}
+
+function promptForRomanization(analysis: LanguageAnalysis, standard: string, ids: {id:string;text:string}[], contextLines: string[]): string {
+  const task = `Romanize ${analysis.language} lyrics from ${analysis.script} into Latin characters. Do not translate, paraphrase, rewrite meaning, add or omit lyrics. Preserve punctuation and repetitions. Use ${standard}. If a segment is already Latin/romanized, copy it unchanged. For characters from non-Latin scripts, lowercase the entire romanized result; lowercase all non-Latin-derived text.`;
+  return `${task}
+Offline analysis: detected ${analysis.language} in ${analysis.script} script, confidence ${(analysis.confidence * 100).toFixed(0)}%, mixed-language=${analysis.mixed}. Treat low-confidence language as uncertain and use neighboring lyric context. Do not transform an already-Latin segment.
+Use context across the entire song to resolve ambiguity and keep terminology/conventions consistent.
+Return exactly one JSON object with key "results", an array containing exactly one {"id":"...","text":"..."} per supplied id. Do not return markdown or other keys. Preserve every id exactly. Each text must be a single line without timestamps, tags, markup or commentary. Neighboring source lines are context only and must not be returned.
+CONTEXT=${JSON.stringify(contextLines)}
+SEGMENTS=${JSON.stringify(ids)}`;
 }
 const derivedCache = new Map<string, { kind: TransformKind; results: (string|null)[] }>();
 let persistAiCache: ((json: string) => void | Promise<void>) | undefined;
@@ -149,6 +173,7 @@ export async function clearAiCache(kind?: TransformKind): Promise<void> {
   persistDerivedCache();
   await persistQueue;
 }
+function aiLogPreview(value: string): string { return value.length > 500 ? `${value.slice(0, 500)}…` : value; }
 export async function transformLyrics(kind: TransformKind, config: LyricsAiConfig, lines: string[], target: string, sourceHint?: string|null, signal?: AbortSignal, forceRegenerate = false, segmentIds?: string[], contextLines: string[] = lines): Promise<TransformResult> {
   const analysis = analyzeLyrics(contextLines.length ? contextLines : lines);
   if (!forceRegenerate && kind === "translation" && analysis.language !== "und" && target && target.split("-")[0].toLowerCase() === analysis.language.split("-")[0].toLowerCase())
@@ -156,41 +181,57 @@ export async function transformLyrics(kind: TransformKind, config: LyricsAiConfi
   const context = (analysis.language === "und" || analysis.confidence < .65) && sourceHint && sourceHint !== "und"
     ? { ...analysis, language: sourceHint as LanguageAnalysis["language"] }
     : analysis;
-  const cacheKey = digest(JSON.stringify({ v: 1, kind, lines, contextLines, segmentIds, language: context.language, script: context.script, confidence: context.confidence, mixed: context.mixed,
+  console.log("[Cadence AI] transform start", kind, { language: context.language, lines: lines.length, forceRegenerate, target });
+const cacheKey = digest(JSON.stringify({ v: 3, kind, lines, contextLines, segmentIds, language: context.language, script: context.script, confidence: context.confidence, mixed: context.mixed,
     target, protocol: config.protocol, baseUrl: config.baseUrl, chatPath: config.chatPath, model: config.model,
     keyFingerprint: digest(config.apiKey), headersFingerprint: digest(config.customHeaders), standard: config.romanizationStandard ?? "",
     temperature: config.temperature, maxOutputTokens: config.maxOutputTokens,
   }));
   const cached = derivedCache.get(cacheKey);
+  console.log("[Cadence AI] cache", kind, cached ? "hit" : "miss", cacheKey.slice(0, 12));
   if (!forceRegenerate && cached) return { analysis, results: [...cached.results] };
   const ids = lines.map((text,index) => ({ id: segmentIds?.[index] ?? `L${index}`, text }));
   if (new Set(ids.map(row => row.id)).size !== ids.length) throw new LyricsAiError("Lyric segment IDs must be unique.", "configuration");
   const standards: Record<string,string> = { ja: "Hepburn romanization", ko: "Revised Romanization of Korean", zh: "Hanyu Pinyin with tone marks where natural", ru: "BGN/PCGN Russian transliteration", ar: "DIN 31635 Arabic romanization" };
   const configuredStandard = config.romanizationStandard ?? "auto";
   const standard = configuredStandard === "auto" ? (standards[context.language] ?? `a consistent standard for ${context.language}`) : configuredStandard;
-  const raw = await generate(config, promptFor(kind, context, target || config.targetLanguage || "English", standard, ids, contextLines), signal);
+  const prompt = kind === "translation"
+    ? promptForTranslation(context, target || config.targetLanguage || "English", ids, contextLines)
+    : promptForRomanization(context, standard, ids, contextLines);
+  console.log("[Cadence AI] prompt", aiLogPreview(prompt));
+  const raw = await generate(config, prompt, signal);
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { throw new LyricsAiError("AI returned malformed structured lyrics. No results were applied.", "response"); }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || Object.keys(parsed as object).some(key => key !== "results"))
     throw new LyricsAiError("AI response contained unexpected fields or commentary. No results were applied.", "response");
   const rows = (parsed as {results?:unknown})?.results;
+  console.log("[Cadence AI] parsed response", { rows: Array.isArray(rows) ? rows.length : rows });
   if (!Array.isArray(rows) || rows.length !== ids.length) throw new LyricsAiError("AI response is incomplete or contains unexpected lyric segments.", "response");
   const mapped = new Map<string,string>();
   for (const row of rows) {
-    if (!row || typeof row !== "object" || typeof (row as any).id !== "string" || typeof (row as any).text !== "string") throw new LyricsAiError("AI response contains an invalid segment.", "response");
+    if (!row || typeof row !== "object" || typeof (row as any).id !== "string" || typeof (row as any).text !== "string") {
+      console.log("[Cadence AI] invalid row shape", row);
+      throw new LyricsAiError("AI response contains an invalid segment.", "response");
+    }
     const {id,text} = row as {id:string;text:string};
-    if (!ids.some(item => item.id === id) || mapped.has(id)) throw new LyricsAiError("AI response has duplicate or unknown segment IDs.", "response");
+    if (ids.some(item => item.id === id) === false || mapped.has(id)) {
+      console.log("[Cadence AI] duplicate/unknown id", id);
+      throw new LyricsAiError("AI response has duplicate or unknown segment IDs.", "response");
+    }
     let value = text.trim();
     const original = ids.find(item => item.id === id)!.text;
     const nonLatin = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Cyrillic}\p{Script=Arabic}\p{Script=Devanagari}\p{Script=Greek}\p{Script=Hebrew}\p{Script=Thai}]/u;
     if (!value || value.includes("\n") || /\[(?:\d{1,2}:)?\d{2}[.:]\d{2}\]|<\/?[\w:.-]+\b[^>]*>/u.test(value) || /```/.test(value) || /^(?:translation|romanization|here(?:'s| is) (?:the )?(?:translation|romanization)\s*:)/i.test(value) ||
-        kind === "romanization" && nonLatin.test(original) && nonLatin.test(value))
+        kind === "romanization" && nonLatin.test(original) && nonLatin.test(value)) {
+console.log("[Cadence AI] validation rejected", { id, original: aiLogPreview(original), value: aiLogPreview(value) });
       throw new LyricsAiError("AI output failed lyric text validation. No results were applied.", "response");
+    }
     if (kind === "romanization" && nonLatin.test(original)) value = value.toLowerCase();
     mapped.set(id,value);
   }
   if (mapped.size !== ids.length) throw new LyricsAiError("AI response omitted required lyric segments.", "response");
   const result = { results: ids.map(({id}) => mapped.get(id) ?? null), analysis };
+console.log("[Cadence AI] validated results", ids.length, result.results.map(value => aiLogPreview(String(value ?? "null"))));
   if (derivedCache.size >= 512) {
     const oldest = derivedCache.keys().next().value;
     if (oldest !== undefined) derivedCache.delete(oldest);
