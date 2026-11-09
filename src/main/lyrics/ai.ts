@@ -107,7 +107,7 @@ export interface TransformResult { results: (string|null)[]; analysis: LanguageA
 function promptFor(kind: TransformKind, analysis: LanguageAnalysis, target: string, standard: string, ids: {id:string;text:string}[], contextLines: string[]): string {
   const task = kind === "translation"
     ? `Translate song lyrics from ${analysis.language} into ${target}. Preserve meaning, idiom, emotion, repeated lines, punctuation and intentional repetitions. Do not add explanations or lyrics.`
-    : `Romanize ${analysis.language} lyrics from ${analysis.script} into Latin characters. Do not translate, paraphrase, rewrite meaning, add or omit lyrics. Preserve punctuation and repetitions. Use ${standard}. If a segment is already Latin/romanized, copy it unchanged.`;
+    : `Romanize ${analysis.language} lyrics from ${analysis.script} into Latin characters. Do not translate, paraphrase, rewrite meaning, add or omit lyrics. Preserve punctuation and repetitions. Use ${standard}. If a segment is already Latin/romanized, copy it unchanged. For characters from non-Latin scripts, lowercase the entire romanized result; lowercase all non-Latin-derived text.`;
   return `${task}\nOffline analysis: detected ${analysis.language} in ${analysis.script} script, confidence ${(analysis.confidence * 100).toFixed(0)}%, mixed-language=${analysis.mixed}. Treat low-confidence language as uncertain and use neighboring lyric context; do not transform an already-Latin segment.\nUse context across the entire song to resolve ambiguity and keep terminology/conventions consistent.\nReturn exactly one JSON object with key "results", an array containing exactly one {"id":"...","text":"..."} per supplied id. Do not return markdown or other keys. Preserve every id exactly. Each text must be a single line without timestamps, tags, markup or commentary. Neighboring source lines are context only and must not be returned.\nCONTEXT=${JSON.stringify(contextLines)}\nSEGMENTS=${JSON.stringify(ids)}`;
 }
 const derivedCache = new Map<string, { kind: TransformKind; results: (string|null)[] }>();
@@ -180,12 +180,13 @@ export async function transformLyrics(kind: TransformKind, config: LyricsAiConfi
     if (!row || typeof row !== "object" || typeof (row as any).id !== "string" || typeof (row as any).text !== "string") throw new LyricsAiError("AI response contains an invalid segment.", "response");
     const {id,text} = row as {id:string;text:string};
     if (!ids.some(item => item.id === id) || mapped.has(id)) throw new LyricsAiError("AI response has duplicate or unknown segment IDs.", "response");
-    const value = text.trim();
+    let value = text.trim();
     const original = ids.find(item => item.id === id)!.text;
     const nonLatin = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Cyrillic}\p{Script=Arabic}\p{Script=Devanagari}\p{Script=Greek}\p{Script=Hebrew}\p{Script=Thai}]/u;
     if (!value || value.includes("\n") || /\[(?:\d{1,2}:)?\d{2}[.:]\d{2}\]|<\/?[\w:.-]+\b[^>]*>/u.test(value) || /```/.test(value) || /^(?:translation|romanization|here(?:'s| is) (?:the )?(?:translation|romanization)\s*:)/i.test(value) ||
         kind === "romanization" && nonLatin.test(original) && nonLatin.test(value))
       throw new LyricsAiError("AI output failed lyric text validation. No results were applied.", "response");
+    if (kind === "romanization" && nonLatin.test(original)) value = value.toLowerCase();
     mapped.set(id,value);
   }
   if (mapped.size !== ids.length) throw new LyricsAiError("AI response omitted required lyric segments.", "response");

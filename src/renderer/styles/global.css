@@ -979,15 +979,20 @@ a {
     border-color var(--dur-1) var(--ease-out);
 }
 
-.primary {
+.primary,
+.heading-actions button.primary,
+.empty-actions button.primary,
+.inline-create button.primary {
   background: #fff;
   color: #09090d;
   border-color: transparent;
 }
 
-.primary:hover {
+.primary:hover,
+.heading-actions button.primary:hover {
   transform: translateY(-1px);
   box-shadow: 0 10px 24px rgba(255, 255, 255, 0.12);
+  background: #fff;
 }
 
 .heading-actions button:hover,
