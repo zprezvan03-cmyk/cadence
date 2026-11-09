@@ -334,6 +334,13 @@ export function SettingsView() {
               checked={settings.lyrics.romanization}
               onChange={value => patchLyrics({ romanization: value })}
             />
+            <div className="setting-row">
+              <span><strong>Romanization display</strong><em>Line keeps one romanized line; Word aligns romanization to each lyric word when timing is available.</em></span>
+              <select value={settings.lyrics.romanizationMode} onChange={event => patchLyrics({ romanizationMode: event.target.value as "line" | "word" })}>
+                <option value="line">Line</option>
+                <option value="word">Word-by-word</option>
+              </select>
+            </div>
             <Toggle
               label="Show songwriters"
               hint="Renders the credits line after the last lyric."

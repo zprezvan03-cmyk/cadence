@@ -980,7 +980,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         try {
           const ai = settings.get().lyrics.aiTranslation;
           if (ai?.enabled) {
-            const response = await transformLyrics("translation", ai, request.lines, request.targetLanguage || ai.targetLanguage || "en", request.sourceLanguage, controller.signal, request.forceRegenerate, request.segmentIds, request.contextLines);
+            const response = await transformLyrics("translation", ai, request.lines, request.targetLanguage || ai.targetLanguage || "en", request.sourceLanguage, controller.signal, request.forceRegenerate, request.segmentIds, undefined, request.contextLines);
             console.log("[Cadence bridge] translate AI result", { detectedLanguage: response.analysis.language, translated: response.results.filter(Boolean).length, total: response.results.length });
             return { translations: response.results, detectedLanguage: response.analysis.language };
           }
@@ -1012,8 +1012,8 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
           if (ai?.enabled) {
             const analysis = analyzeLyrics(request.contextLines?.length ? request.contextLines : request.lines);
             if (!analysis.romanizationLikelyNeeded && !request.forceRegenerate) return { romanizations: request.lines.map(() => null), detectedLanguage: analysis.language };
-            const response = await transformLyrics("romanization", ai, request.lines, "", request.sourceLanguage ?? analysis.language, controller.signal, request.forceRegenerate, request.segmentIds, request.contextLines);
-            return { romanizations: response.results, detectedLanguage: response.analysis.language };
+            const response = await transformLyrics("romanization", ai, request.lines, "", request.sourceLanguage ?? analysis.language, controller.signal, request.forceRegenerate, request.segmentIds, request.segmentSpans, request.contextLines);
+            return { romanizations: response.results, detectedLanguage: response.analysis.language, words: response.words };
           }
           if (request.forceRegenerate) for (const line of request.lines) translationCache.romanization.delete(line.trim());
           const response = await romanizeBatch(

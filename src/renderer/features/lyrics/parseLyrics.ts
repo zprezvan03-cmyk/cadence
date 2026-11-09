@@ -14,6 +14,7 @@ import {
   parseTTMLContent,
   type Lyric,
   type LyricFormat,
+  type LyricPart,
 } from "@braccato/parsers";
 import type { LyricsSyncType } from "../../../shared/types";
 import { lineHasSyllableTiming } from "../../../shared/lyricsTiming";
@@ -212,18 +213,6 @@ export function applyFileRomanization(lyrics: readonly Lyric[], local: readonly 
   return changed ? result : (lyrics as Lyric[]);
 }
 
-export function applyRomanization(lyrics: readonly Lyric[], romanizations: readonly (string | null)[]): Lyric[] {
-  return lyrics.map((line, index) => {
-    // Romanization the line already carries came from the lyrics file itself (e.g. a TTML
-    // transliteration) and always wins: generated text only fills lines that have none, and an
-    // empty generated result never erases a supplied one. Upstream resolves it the same way —
-    // `item.romanization` first, batch generation only for lines without one.
-    if (line.romanization?.trim()) return line;
-    const romanized = romanizations[index];
-    if (!romanized || romanized.trim().length === 0) return line;
-    return { ...line, romanization: romanized };
-  });
-}
 
 /**
  * Indexes of lines that still need generated romanization: sung lines whose lyrics file supplied
@@ -250,6 +239,135 @@ export function scatterRomanizations(
     if (lineIndex >= 0 && lineIndex < lineCount) scattered[lineIndex] = generated[resultIndex] ?? null;
   });
   return scattered;
+}
+
+/** Scatters generated word arrays back into a full-length per-line array. */
+export function scatterRomanizationWords(
+  lineCount: number,
+  indexes: readonly number[],
+  generated: readonly (string[] | null)[]
+): (string[] | null)[] {
+  const scattered: (string[] | null)[] = Array.from({ length: lineCount }, () => null);
+  indexes.forEach((lineIndex, resultIndex) => {
+    if (lineIndex >= 0 && lineIndex < lineCount) scattered[lineIndex] = generated[resultIndex] ?? null;
+  });
+  return scattered;
+}
+
+/** Builds timed romanization from source parts and AI word tokens. Returns null when alignment is impossible. */
+export function buildTimedRomanization(line: Lyric, words: readonly string[] | null | undefined): LyricPart[] | null {
+  if (!words || !line.parts || line.parts.length === 0) return null;
+
+  // Span-aligned input: words has one token per non-space span. Map spaces back to " ".
+  const nonSpaceParts = line.parts.filter(part => part.words.trim().length > 0);
+  if (words.length === nonSpaceParts.length) {
+    const hasSourceSpaces = nonSpaceParts.length < line.parts.length;
+    let wordIndex = 0;
+    let nonSpaceIndex = 0;
+    return line.parts.map(part => {
+      if (part.words.trim().length === 0) {
+        // Keep an explicit space when the source had one; otherwise it is already
+        // carried by the preceding token.
+        return {
+          startTimeMs: part.startTimeMs,
+          words: hasSourceSpaces ? " " : "",
+          durationMs: part.durationMs,
+          isBackground: part.isBackground,
+          explicit: part.explicit,
+        };
+      }
+      const token = words[wordIndex] ?? "";
+      const isLast = nonSpaceIndex === nonSpaceParts.length - 1;
+      wordIndex += 1;
+      nonSpaceIndex += 1;
+      const needsSpace = !hasSourceSpaces && !isLast && !/\s$/.test(token);
+      return {
+        startTimeMs: part.startTimeMs,
+        words: needsSpace ? `${token} ` : token,
+        durationMs: part.durationMs,
+        isBackground: part.isBackground,
+        explicit: part.explicit,
+      };
+    });
+  }
+
+  // Direct old-format alignment: AI returned one token per part, including empty space tokens.
+  if (words.length === line.parts.length) {
+    return line.parts.map((part, index) => {
+      const token = words[index] ?? "";
+      return {
+        startTimeMs: part.startTimeMs,
+        words: token.trim().length === 0 ? " " : token,
+        durationMs: part.durationMs,
+        isBackground: part.isBackground,
+        explicit: part.explicit,
+      };
+    });
+  }
+
+  // Group syllable/space parts into source words. Rich-sync TTML often stores spaces as their own
+  // parts, so a straight part count does not equal the word count.
+  const groups: LyricPart[][] = [];
+  let current: LyricPart[] = [];
+  for (const part of line.parts) {
+    if (part.words.trim().length === 0) {
+      if (current.length > 0) {
+        groups.push(current);
+        current = [];
+      }
+      continue;
+    }
+    current.push(part);
+  }
+  if (current.length > 0) groups.push(current);
+  if (groups.length === 0) return null;
+
+  const tokens = words && words.length === groups.length
+    ? words.map(word => word.trim()).filter(Boolean)
+    : null;
+  if (!tokens || tokens.length !== groups.length) return null;
+
+  return groups.map((group, index) => {
+    const first = group[0];
+    const last = group[group.length - 1];
+    const token = tokens[index] ?? "";
+    return {
+      startTimeMs: first.startTimeMs,
+      words: index === groups.length - 1 ? token : `${token} `,
+      durationMs: Math.max(1, last.startTimeMs + last.durationMs - first.startTimeMs),
+      isBackground: first.isBackground,
+      explicit: first.explicit,
+    };
+  });
+}
+
+export function applyRomanization(
+  lyrics: readonly Lyric[],
+  romanizations: readonly (string | null)[],
+  words: readonly (string[] | null)[] = [],
+  mode: "line" | "word" = "line"
+): Lyric[] {
+  return lyrics.map((line, index) => {
+    // File-supplied romanization always wins, including its timing.
+    if (line.romanization?.trim()) return line;
+    const romanized = romanizations[index];
+    if (!romanized || romanized.trim().length === 0) return line;
+    if (mode === "word") {
+      const timed = buildTimedRomanization(line, words[index]);
+      if (timed) {
+        console.log("[Cadence parser] romanization", { index, mode, romanization: romanized, timedWords: timed.map(part => part.words) });
+        return { ...line, romanization: romanized, timedRomanization: timed };
+      }
+      // Fallback split by whitespace if AI did not provide usable words.
+      const fallback = buildTimedRomanization(line, romanized.split(/\s+/));
+      if (fallback) {
+        console.log("[Cadence parser] romanization fallback", { index, mode, romanization: romanized, timedWords: fallback.map(part => part.words) });
+        return { ...line, romanization: romanized, timedRomanization: fallback };
+      }
+    }
+    console.log("[Cadence parser] romanization", { index, mode, romanization: romanized, timedWords: null });
+    return { ...line, romanization: romanized };
+  });
 }
 
 /**

@@ -39,7 +39,7 @@ import {
   parseLyricsText,
   romanizationGaps,
   scatterRomanizations,
-  stripRomanization,
+  scatterRomanizationWords,  stripRomanization,
   stripTranslations,
   translationGaps,
   type ParsedLyrics,
@@ -519,7 +519,7 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     }
     const parsedId = parsedIds.get(parsed);
     const romanizationConfig = settings.aiRomanization;
-    const romanizationKey = `${parsedId ?? ""}:${romanizationConfig?.enabled ? `${romanizationConfig.protocol}:${romanizationConfig.baseUrl}:${romanizationConfig.model}:${romanizationConfig.romanizationStandard}` : "legacy"}`;
+    const romanizationKey = `${parsedId ?? ""}:${settings.romanizationMode ?? "line"}:${romanizationConfig?.enabled ? `${romanizationConfig.protocol}:${romanizationConfig.baseUrl}:${romanizationConfig.model}:${romanizationConfig.romanizationStandard}` : "legacy"}`;
     if (!forceRegenerate && parsedId && appliedRomanizationKey === romanizationKey) return; // decorated before a remount
     if (parsedId && appliedRomanizationKey && appliedRomanizationKey !== romanizationKey) {
       useLyricsStore.setState(previous => {
@@ -552,17 +552,24 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     void (async () => {
       try {
         const lines = lyricLines(parsed.lyrics);
+        const spans = (settings.romanizationMode ?? "line") === "word"
+          ? gaps.map(index => parsed.lyrics[index].parts && parsed.lyrics[index].parts!.length > 0
+              ? parsed.lyrics[index].parts!.map(part => part.words)
+              : undefined)
+          : undefined;
         const result = await bridge.lyrics.romanize({
           lines: gaps.map(index => lines[index]),
           targetLanguage: "en",
           sourceLanguage: parsed.language,
           forceRegenerate,
           segmentIds: gaps.map(index => `line-${index}`),
+          segmentSpans: spans,
           contextLines: lines,
         });
         if (cancelled) return;
         appliedRomanizationKey = romanizationKey;
         const romanizations = scatterRomanizations(parsed.lyrics.length, gaps, result.romanizations);
+        const romanizationWords = scatterRomanizationWords(parsed.lyrics.length, gaps, result.words ?? []);
         const count = romanizations.filter(Boolean).length;
         useLyricsStore.setState(previous => {
           // The parse changed under the request (track/provider switch): its result belongs to
@@ -574,7 +581,7 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
             detectedLanguage: result.detectedLanguage || parsed.language,
             lyrics:
               count > 0
-                ? applyRomanization(previous.lyrics ?? parsed.lyrics, romanizations)
+                ? applyRomanization(previous.lyrics ?? parsed.lyrics, romanizations, romanizationWords, settings.romanizationMode ?? "line")
                 : previous.lyrics ?? parsed.lyrics,
           };
         });
@@ -586,7 +593,7 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     return () => {
       cancelled = true;
     };
-  }, [store.parsed, store.status, settings.romanization, settings.aiRomanization?.enabled, settings.aiRomanization?.protocol, settings.aiRomanization?.baseUrl, settings.aiRomanization?.model, settings.aiRomanization?.romanizationStandard, settings.aiRomanization?.temperature, settings.aiRomanization?.maxOutputTokens, settings.aiRomanization?.timeoutMs, settings.aiRomanization?.chatPath, settings.aiRomanization?.modelsPath, settings.aiRomanization?.apiKey, settings.aiRomanization?.customHeaders, romanizationRevision]);
+  }, [store.parsed, store.status, settings.romanization, settings.romanizationMode, settings.aiRomanization?.enabled, settings.aiRomanization?.protocol, settings.aiRomanization?.baseUrl, settings.aiRomanization?.model, settings.aiRomanization?.romanizationStandard, settings.aiRomanization?.temperature, settings.aiRomanization?.maxOutputTokens, settings.aiRomanization?.timeoutMs, settings.aiRomanization?.chatPath, settings.aiRomanization?.modelsPath, settings.aiRomanization?.apiKey, settings.aiRomanization?.customHeaders, romanizationRevision]);
 
   const selectSource = useCallback(
     (source: string) => {

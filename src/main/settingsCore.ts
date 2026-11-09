@@ -59,6 +59,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     offsetMs: 0,
     translationLanguage: "",
     romanization: false,
+    romanizationMode: "line",
     themeId: "default",
     customThemeCss: "",
     fontSizeRem: 3,
@@ -169,6 +170,7 @@ function normalizeSettings(settings: AppSettings): AppSettings {
   settings.lyrics.aiTranslation = normalizeAi(settings.lyrics.aiTranslation, DEFAULT_SETTINGS.lyrics.aiTranslation);
   settings.lyrics.aiRomanization = normalizeAi(settings.lyrics.aiRomanization, DEFAULT_SETTINGS.lyrics.aiRomanization);
   settings.lyrics.providerOrder = migrateProviderOrder(settings.lyrics.providerOrder);
+  if (settings.lyrics.romanizationMode !== "line" && settings.lyrics.romanizationMode !== "word") settings.lyrics.romanizationMode = "line";
   const cooldown = Number(settings.lyrics.notFoundCooldownDays);
   settings.lyrics.notFoundCooldownDays = Number.isFinite(cooldown)
     ? Math.min(30, Math.max(1, Math.round(cooldown)))

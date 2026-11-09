@@ -329,7 +329,8 @@ export async function romanizeBatch(
       }
 
       chunk.forEach((item, i) => {
-        const romanizedText = romanizedLines[i]?.trim();
+        let romanizedText = romanizedLines[i]?.trim();
+        if (romanizedText && scripts.hasNonLatinScript(item.text)) romanizedText = romanizedText.toLowerCase();
         if (romanizedText && romanizedText.toLowerCase() !== item.text.toLowerCase()) {
           cache.romanization.set(item.text, romanizedText);
           results[item.index] = romanizedText;

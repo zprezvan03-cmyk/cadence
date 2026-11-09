@@ -161,6 +161,7 @@ const defaultLyricsSettings: LyricsSettings = {
   offsetMs: 0,
   translationLanguage: "",
   romanization: false,
+  romanizationMode: "line",
   themeId: "default",
   customThemeCss: "",
   fontSizeRem: 3,

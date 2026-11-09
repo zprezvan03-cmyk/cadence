@@ -21,7 +21,7 @@ describe("central lyrics AI adapters", () => {
       const body = JSON.parse(String(init?.body));
       expect(body.model).toBe("qwen2.5"); expect(body.stream).toBe(false); expect(body.format).toBe("json");
       expect(body.options.temperature).toBe(.1);
-      return ollamaContent('{"results":[{"id":"L0","text":"kimiwa"}]}');
+      return ollamaContent('{"results":[{"id":"L0","words":["kimiwa"]}]}');
     });
     setRuntimeFetch(fetch as typeof globalThis.fetch);
     const first = await transformLyrics("romanization",native,["君は"],"", "ja");
@@ -31,13 +31,13 @@ describe("central lyrics AI adapters", () => {
   it("persists validated derived results and restores them without a request", async () => {
     let saved = "";
     initializeAiCache(null, json => { saved = json; });
-    setRuntimeFetch(async () => ollamaContent('{"results":[{"id":"line-4","text":"kimi"}]}'));
-    await transformLyrics("romanization",native,["君"],"","ja",undefined,false,["line-4"],["君","が好き"]);
+    setRuntimeFetch(async () => ollamaContent('{"results":[{"id":"line-4","words":["kimi"]}]}'));
+    await transformLyrics("romanization",native,["君"],"","ja",undefined,false,["line-4"],undefined,["君","が好き"]);
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(JSON.parse(saved).version).toBe(1);
     initializeAiCache(saved);
     const fetch = vi.fn(); setRuntimeFetch(fetch as typeof globalThis.fetch);
-    const cached = await transformLyrics("romanization",native,["君"],"","ja",undefined,false,["line-4"],["君","が好き"]);
+    const cached = await transformLyrics("romanization",native,["君"],"","ja",undefined,false,["line-4"],undefined,["君","が好き"]);
     expect(cached.results).toEqual(["kimi"]); expect(fetch).not.toHaveBeenCalled();
   });
   it("uses the OpenAI-compatible request/response schema and API key header", async () => {
@@ -55,7 +55,8 @@ describe("central lyrics AI adapters", () => {
     let calls = 0;
     setRuntimeFetch(async (_input:RequestInfo|URL, init?:RequestInit) => {
       calls += 1; const body = JSON.parse(String(init?.body));
-      return openAiContent(JSON.stringify({results:[{id:"L0",text:body.messages[0].content.includes("Romanize") ? "aishiteru" : "I love you"}]}));
+      const isRoman = body.messages[0].content.includes("Romanize");
+return openAiContent(JSON.stringify({results:[{id:"L0", ...(isRoman ? {words:["aishiteru"]} : {text:"I love you"})}]}));
     });
     const romanizer = {...compatible,model:"roman-model"};
     const translator = {...compatible,model:"translate-model"};
@@ -117,7 +118,7 @@ describe("central lyrics AI adapters", () => {
       req.on("end",() => {
         const body = JSON.parse(text); requests.push({path:req.url ?? "",body,authorization:req.headers.authorization ?? null});
         res.setHeader("Content-Type","application/json");
-        if (req.url === "/api/chat") res.end(JSON.stringify({message:{content:'{"results":[{"id":"line-2","text":"kimiwa"}]}'}}));
+        if (req.url === "/api/chat") res.end(JSON.stringify({message:{content:'{"results":[{"id":"line-2","words":["kimiwa"]}]}'}}));
         else res.end(JSON.stringify({choices:[{message:{content:'{"results":[{"id":"line-3","text":"You are my love"}]}'}}]}));
       });
     });
@@ -125,8 +126,8 @@ describe("central lyrics AI adapters", () => {
     const address = server.address(); if (!address || typeof address === "string") throw new Error("No test server address");
     setRuntimeFetch(globalThis.fetch as typeof globalThis.fetch);
     try {
-      await transformLyrics("romanization",{...native,baseUrl:`http://127.0.0.1:${address.port}`},["君は"],"","ja",undefined,false,["line-2"],["君は","愛している"]);
-      await transformLyrics("translation",{...compatible,baseUrl:`http://127.0.0.1:${address.port}/v1`,apiKey:"local-secret"},["愛してる"],"en","ja",undefined,false,["line-3"],["愛してる"]);
+      await transformLyrics("romanization",{...native,baseUrl:`http://127.0.0.1:${address.port}`},["君は"],"","ja",undefined,false,["line-2"],undefined,["君は","愛している"]);
+      await transformLyrics("translation",{...compatible,baseUrl:`http://127.0.0.1:${address.port}/v1`,apiKey:"local-secret"},["愛してる"],"en","ja",undefined,false,["line-3"],undefined,["愛してる"]);
       expect(requests.map(item => item.path)).toEqual(["/api/chat","/v1/chat/completions"]);
       expect(requests[0].body.options.num_predict).toBe(1000);
       expect(requests[1].body.model).toBe("qwen2.5");

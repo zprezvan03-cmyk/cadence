@@ -442,6 +442,8 @@ export interface TranslationRequest {
   contextLines?: string[];
   /** Stable identities from the parsed source lyric positions. */
   segmentIds?: string[];
+  /** Optional per-segment source spans for word/syllable-aligned romanization. */
+  segmentSpans?: Array<string[] | undefined>;
   targetLanguage: string;
   /** Optional song language hint used for romanization. */
   sourceLanguage?: string | null;
@@ -453,9 +455,13 @@ export interface TranslationResult {
   detectedLanguage: string;
 }
 
+export type RomanizationMode = "line" | "word";
+
 export interface RomanizationResult {
   romanizations: (string | null)[];
   detectedLanguage: string;
+  /** Optional per-line word arrays aligned to the source words; used by word romanization mode. */
+  words?: (string[] | null)[];
 }
 
 /** Bounded provider-request parallelism for Autofetch / Fetch All (see the central limiter). */
@@ -496,6 +502,8 @@ export interface LyricsSettings {
   offsetMs: number;
   translationLanguage: string;
   romanization: boolean;
+  /** Whether generated romanization is shown as a full line or aligned word-by-word. */
+  romanizationMode: RomanizationMode;
   themeId: string;
   customThemeCss: string;
   fontSizeRem: number;
