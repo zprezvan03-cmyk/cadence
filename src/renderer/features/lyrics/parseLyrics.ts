@@ -256,24 +256,37 @@ export function scatterRomanizationWords(
 
 /** Builds timed romanization from source parts and AI word tokens. Returns null when alignment is impossible. */
 export function buildTimedRomanization(line: Lyric, words: readonly string[] | null | undefined, fullText?: string | null): LyricPart[] | null {
-  if (!words || !line.parts || line.parts.length === 0) return null;
+  if (!words || !line.parts || line.parts.length === 0) {
+    console.log("[Cadence parser] timed romanization unavailable", { reason: "missing-words-or-parts" });
+    return null;
+  }
 
   // Span-aligned input: words has one token per non-space span. The full romanized
   // line supplies natural word boundaries, so timing can space full words without
   // forcing a space at every syllable span.
   const nonSpaceParts = line.parts.filter(part => part.words.trim().length > 0);
-  const cleanedWords = words.map(word => typeof word === "string" ? word.trim() : "");
+  const rawWords = words.map(word => typeof word === "string" ? word : "");
+  const trimmedWords = rawWords.map(word => word.trim());
+  // Some older providers included an empty item for each explicit source-space
+  // span. Convert that unambiguous shape to the current non-space contract.
+  const hasLegacySpaceTokens = rawWords.length === line.parts.length && nonSpaceParts.length !== line.parts.length &&
+    line.parts.every((part, index) => part.words.trim().length > 0 || trimmedWords[index] === "");
+  const cleanedWords = hasLegacySpaceTokens
+    ? trimmedWords.filter((_, index) => line.parts![index].words.trim().length > 0)
+    : trimmedWords;
+  const spanWords = hasLegacySpaceTokens ? cleanedWords : rawWords;
+  const comparable = (value: string) => value.toLocaleLowerCase().replace(/[\s\p{P}\p{S}]+/gu, "");
   if (fullText && cleanedWords.length === nonSpaceParts.length) {
-    const fullNorm = fullText.trim().toLowerCase().replace(/\s+/g, "");
-    const tokenNorm = cleanedWords.join("").toLowerCase().replace(/\s+/g, "");
+    const fullNorm = comparable(fullText);
+    const tokenNorm = comparable(cleanedWords.join(""));
     if (fullNorm && tokenNorm === fullNorm) {
-      const lineWords = fullText.trim().split(/\s+/).map(word => word.toLowerCase().replace(/\s+/g, ""));
+      const lineWords = fullText.trim().split(/\s+/).map(comparable).filter(Boolean);
       const trailingSpaceTokenIndexes = new Set<number>();
       let run = "";
       let wordCursor = 0;
       let ok = true;
       for (let i = 0; i < cleanedWords.length; i++) {
-        run += cleanedWords[i].toLowerCase().replace(/\s+/g, "");
+        run += comparable(cleanedWords[i]);
         if (wordCursor >= lineWords.length || run.length > lineWords[wordCursor].length) {
           ok = false;
           break;
@@ -312,12 +325,13 @@ export function buildTimedRomanization(line: Lyric, words: readonly string[] | n
           };
         });
       }
+      console.log("[Cadence parser] timed romanization full-text alignment failed", { tokens: cleanedWords.length, lineWords: lineWords.length });
     }
   }
 
   // Existing span-aligned path when full text is not usable: tokens are emitted
   // verbatim, with no parser-manufactured spacing.
-  if (words.length === nonSpaceParts.length) {
+  if (spanWords.length === nonSpaceParts.length) {
     const hasSourceSpaces = nonSpaceParts.length < line.parts.length;
     let wordIndex = 0;
     let nonSpaceIndex = 0;
@@ -333,7 +347,7 @@ export function buildTimedRomanization(line: Lyric, words: readonly string[] | n
           explicit: part.explicit,
         };
       }
-      const token = words[wordIndex] ?? "";
+      const token = spanWords[wordIndex] ?? "";
       wordIndex += 1;
       nonSpaceIndex += 1;
       // Spacing is controlled by the AI token itself; never append an automatic space.
@@ -348,9 +362,9 @@ export function buildTimedRomanization(line: Lyric, words: readonly string[] | n
   }
 
   // Direct old-format alignment: AI returned one token per part, including empty space tokens.
-  if (words.length === line.parts.length) {
+  if (rawWords.length === line.parts.length) {
     return line.parts.map((part, index) => {
-      const token = words[index] ?? "";
+      const token = rawWords[index] ?? "";
       // Preserve the AI token exactly. Empty tokens stay empty; spaces in direct
       // input are carried by tokens that explicitly contain them.
       return {
@@ -380,10 +394,13 @@ export function buildTimedRomanization(line: Lyric, words: readonly string[] | n
   if (current.length > 0) groups.push(current);
   if (groups.length === 0) return null;
 
-  const tokens = words && words.length === groups.length
-    ? words.map(word => (typeof word === "string" ? word : ""))
+  const tokens = cleanedWords.length === groups.length
+    ? cleanedWords
     : null;
-  if (!tokens || tokens.length !== groups.length || tokens.some(token => token.trim().length === 0)) return null;
+  if (!tokens || tokens.length !== groups.length || tokens.some(token => token.trim().length === 0)) {
+    console.log("[Cadence parser] timed romanization unavailable", { reason: "token-count-mismatch", tokens: cleanedWords.length, nonSpaceParts: nonSpaceParts.length, groups: groups.length, parts: line.parts.length });
+    return null;
+  }
 
   return groups.map((group, index) => {
     const first = group[0];

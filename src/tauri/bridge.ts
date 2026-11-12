@@ -1011,7 +1011,9 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
           const ai = settings.get().lyrics.aiRomanization;
           if (ai?.enabled) {
             const analysis = analyzeLyrics(request.contextLines?.length ? request.contextLines : request.lines);
-            if (!analysis.romanizationLikelyNeeded && !request.forceRegenerate) return { romanizations: request.lines.map(() => null), detectedLanguage: analysis.language };
+            // Word-mode callers provide spans precisely because they need tokens; mixed-script
+            // analysis is only a heuristic and must not suppress that request.
+            if (!analysis.romanizationLikelyNeeded && !request.forceRegenerate && !request.segmentSpans?.some(spans => spans?.length)) return { romanizations: request.lines.map(() => null), detectedLanguage: analysis.language };
             const response = await transformLyrics("romanization", ai, request.lines, "", request.sourceLanguage ?? analysis.language, controller.signal, request.forceRegenerate, request.segmentIds, request.segmentSpans, request.contextLines);
             return { romanizations: response.results, detectedLanguage: response.analysis.language, words: response.words };
           }

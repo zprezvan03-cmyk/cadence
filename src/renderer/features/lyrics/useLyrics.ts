@@ -70,6 +70,8 @@ export function invalidateLyricsResolution(): void {
 /** Parse + language combinations already decorated, so remounts don't re-request translation. */
 let appliedTranslationKey: string | null = null;
 let appliedRomanizationKey: string | null = null;
+/** One automatic retry lets an old line-only decoration recover without looping on bad AI output. */
+let retriedTimedRomanizationKey: string | null = null;
 let reloadToken = 0;
 
 export interface UseLyricsResult {
@@ -520,7 +522,14 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     const parsedId = parsedIds.get(parsed);
     const romanizationConfig = settings.aiRomanization;
     const romanizationKey = `${parsedId ?? ""}:${settings.romanizationMode ?? "line"}:${romanizationConfig?.enabled ? `${romanizationConfig.protocol}:${romanizationConfig.baseUrl}:${romanizationConfig.model}:${romanizationConfig.romanizationStandard}` : "legacy"}`;
-    if (!forceRegenerate && parsedId && appliedRomanizationKey === romanizationKey) return; // decorated before a remount
+    const needsTimedRetry = (settings.romanizationMode ?? "line") === "word" && romanizationGaps(parsed.lyrics).some(index =>
+      Boolean(parsed.lyrics[index].parts?.length) && !store.lyrics?.[index]?.timedRomanization?.length
+    );
+    if (!forceRegenerate && parsedId && appliedRomanizationKey === romanizationKey && (!needsTimedRetry || retriedTimedRomanizationKey === romanizationKey)) {
+      console.log("[Cadence lyrics] romanization skip", { romanizationKey, needsTimedRetry });
+      return;
+    }
+    if (needsTimedRetry) console.log("[Cadence lyrics] romanization retrying missing timed words", { romanizationKey });
     if (parsedId && appliedRomanizationKey && appliedRomanizationKey !== romanizationKey) {
       useLyricsStore.setState(previous => {
         if (previous.parsed !== parsed || !previous.lyrics) return previous;
@@ -571,6 +580,11 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
         const romanizations = scatterRomanizations(parsed.lyrics.length, gaps, result.romanizations);
         const romanizationWords = scatterRomanizationWords(parsed.lyrics.length, gaps, result.words ?? []);
         const count = romanizations.filter(Boolean).length;
+        const gotTimedRomanization = (settings.romanizationMode ?? "line") !== "word" || gaps.every(index =>
+          !parsed.lyrics[index].parts?.length || Boolean(romanizationWords[index]?.length)
+        );
+        if (!gotTimedRomanization) retriedTimedRomanizationKey = romanizationKey;
+        else if (retriedTimedRomanizationKey === romanizationKey) retriedTimedRomanizationKey = null;
         useLyricsStore.setState(previous => {
           // The parse changed under the request (track/provider switch): its result belongs to
           // lyrics that are no longer on screen.

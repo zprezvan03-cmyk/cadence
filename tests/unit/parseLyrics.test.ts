@@ -284,4 +284,22 @@ describe("buildTimedRomanization spacing", () => {
     const built = buildTimedRomanization(line, words, words.join(" "));
     expect(built?.map(part => part.words)).toEqual(words.map((word, index) => (index === words.length - 1 ? word : `${word} `)));
   });
+
+  it("aligns non-space tokens when legacy output includes empty source-space tokens", () => {
+    const spacedLine = {
+      ...line,
+      parts: [
+        { ...line.parts![0], words: "君" },
+        { ...line.parts![0], startTimeMs: 1100, words: " " },
+        { ...line.parts![0], startTimeMs: 1200, words: "は" },
+      ],
+    };
+    expect(buildTimedRomanization(spacedLine, ["kimi", "", "wa"], "kimi wa")?.map(part => part.words)).toEqual(["kimi ", "", "wa"]);
+  });
+
+  it("uses full-text word boundaries despite punctuation differences", () => {
+    const words = ["hel", "lo", "world"];
+    const built = buildTimedRomanization(line, words, "hello, world!");
+    expect(built?.[1].words).toBe("lo ");
+  });
 });

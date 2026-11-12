@@ -145,9 +145,9 @@ let persistQueue: Promise<void> = Promise.resolve();
 function persistDerivedCache(): void {
   if (!persistAiCache) return;
   let entries = [...derivedCache].map(([key,value]) => [key,{kind:value.kind,results:value.results,words:value.words}] as const);
-  let json = JSON.stringify({ version: 1, entries });
+  let json = JSON.stringify({ version: 2, entries });
   while (json.length > 4_000_000 && entries.length) {
-    entries = entries.slice(1); json = JSON.stringify({version:1,entries});
+    entries = entries.slice(1); json = JSON.stringify({version:2,entries});
   }
   persistQueue = persistQueue.then(() => Promise.resolve(persistAiCache?.(json))).then(() => undefined).catch(() => undefined);
 }
@@ -156,9 +156,11 @@ export function initializeAiCache(initialJson: string | null | undefined, persis
   try {
     if ((initialJson?.length ?? 0) > 4_000_000) return;
     const file = JSON.parse(initialJson ?? "null") as {version?:number;entries?:[string,{kind:TransformKind;results:(string|null)[];words?:(string[]|null)[]}][]}|null;
-    if (file?.version !== 1 || !Array.isArray(file.entries)) return;
+    if (file?.version !== 2 || !Array.isArray(file.entries)) return;
     for (const [key,value] of file.entries.slice(-512)) {
-      const validWords = value?.words === undefined || (Array.isArray(value.words) && value.words.every(word => word === null || (Array.isArray(word) && word.every(item => typeof item === "string"))));
+      // Word-mode needs the per-span tokens.  Old romanization entries omitted
+      // them, which silently turned a cache hit into an unalignable line result.
+      const validWords = value?.kind !== "romanization" || (Array.isArray(value.words) && value.words.every(word => word === null || (Array.isArray(word) && word.every(item => typeof item === "string"))));
       if (typeof key === "string" && value && ["translation","romanization"].includes(value.kind) && Array.isArray(value.results) && value.results.every(text => text === null || typeof text === "string") && validWords)
         derivedCache.set(key,{kind:value.kind,results:value.results,words:value.words});
     }
@@ -236,18 +238,25 @@ const cacheKey = digest(JSON.stringify({ v: 19, kind, lines, contextLines, segme
           console.log("[Cadence AI] invalid words array", { id, rawWords });
           throw new LyricsAiError("AI response contains an invalid word array.", "response");
         }
-        const normalizedWords = (rawWords as string[]).map(item => String(item));
+        const normalizedWords = (rawWords as string[]).map(item => item.trim());
         const rowSpans = segmentSpans?.[ids.findIndex(item => item.id === id)];
         const spanCount = Array.isArray(rowSpans) ? rowSpans.length : 0;
         const nonSpaceSpanCount = Array.isArray(rowSpans) ? rowSpans.filter(span => span.trim().length > 0).length : 0;
-        if (spanCount > 0 && normalizedWords.length !== spanCount && normalizedWords.length !== nonSpaceSpanCount) {
-          console.log("[Cadence AI] words/span count mismatch", { id, expected: `${spanCount} or ${nonSpaceSpanCount}`, got: normalizedWords.length, words: normalizedWords });
+        if (spanCount > 0 && (normalizedWords.length !== nonSpaceSpanCount || normalizedWords.some(word => !word))) {
+          console.log("[Cadence AI] words/span count mismatch", { id, expected: nonSpaceSpanCount, got: normalizedWords.length, words: normalizedWords });
           words = null;
         } else {
           words = normalizedWords.length > 0 ? normalizedWords : null;
         }
       }
       if (!value && words && words.length > 0) value = words.filter(Boolean).join(" ");
+      if (words && value) {
+        const comparable = (text: string) => text.toLocaleLowerCase().replace(/[\s\p{P}\p{S}]+/gu, "");
+        if (comparable(words.join("")) !== comparable(value)) {
+          console.log("[Cadence AI] words/text mismatch", { id, words, value });
+          words = null;
+        }
+      }
       if (nonLatin.test(original)) {
         value = value.toLowerCase();
         if (words) words = words.map(word => word.toLowerCase());

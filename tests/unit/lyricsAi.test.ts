@@ -34,7 +34,7 @@ describe("central lyrics AI adapters", () => {
     setRuntimeFetch(async () => ollamaContent('{"results":[{"id":"line-4","words":["kimi"]}]}'));
     await transformLyrics("romanization",native,["君"],"","ja",undefined,false,["line-4"],undefined,["君","が好き"]);
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(JSON.parse(saved).version).toBe(1);
+    expect(JSON.parse(saved).version).toBe(2);
     initializeAiCache(saved);
     const fetch = vi.fn(); setRuntimeFetch(fetch as typeof globalThis.fetch);
     const cached = await transformLyrics("romanization",native,["君"],"","ja",undefined,false,["line-4"],undefined,["君","が好き"]);
