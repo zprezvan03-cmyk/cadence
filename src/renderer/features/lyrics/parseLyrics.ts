@@ -254,6 +254,33 @@ export function scatterRomanizationWords(
   return scattered;
 }
 
+/**
+ * TTML word timings are often sung chunks, rather than written-word chunks. For Japanese
+ * source text we can preserve those timings while deriving visible spaces from the source
+ * sentence. A break is used only when it lands exactly between two timed spans.
+ */
+function japaneseSourceWordBreaks(parts: readonly LyricPart[]): Set<number> | null {
+  const source = parts.map(part => part.words).join("");
+  if (!/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(source) || typeof Intl.Segmenter !== "function") return null;
+
+  const segmenter = new Intl.Segmenter("ja", { granularity: "word" });
+  const ends = new Set<number>();
+  for (const segment of segmenter.segment(source)) {
+    if (segment.isWordLike) ends.add(segment.index + segment.segment.length);
+  }
+
+  const isJapaneseWordCharacter = (value: string | undefined) => Boolean(value && /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(value));
+  const breaks = new Set<number>();
+  let offset = 0;
+  parts.forEach((part, index) => {
+    offset += part.words.length;
+    if (index < parts.length - 1 && ends.has(offset) && isJapaneseWordCharacter(part.words.at(-1)) && isJapaneseWordCharacter(source[offset])) {
+      breaks.add(index);
+    }
+  });
+  return breaks;
+}
+
 /** Builds timed romanization from source parts and AI word tokens. Returns null when alignment is impossible. */
 export function buildTimedRomanization(line: Lyric, words: readonly string[] | null | undefined, fullText?: string | null): LyricPart[] | null {
   if (!words || !line.parts || line.parts.length === 0) {
@@ -276,6 +303,7 @@ export function buildTimedRomanization(line: Lyric, words: readonly string[] | n
     : trimmedWords;
   const spanWords = hasLegacySpaceTokens ? cleanedWords : rawWords;
   const comparable = (value: string) => value.toLocaleLowerCase().replace(/[\s\p{P}\p{S}]+/gu, "");
+  const sourceWordBreaks = japaneseSourceWordBreaks(nonSpaceParts);
   if (fullText && cleanedWords.length === nonSpaceParts.length) {
     const fullNorm = comparable(fullText);
     const tokenNorm = comparable(cleanedWords.join(""));
@@ -312,8 +340,16 @@ export function buildTimedRomanization(line: Lyric, words: readonly string[] | n
               explicit: part.explicit,
             };
           }
-          const token = cleanedWords[wordIndex] ?? "";
-          const needsSpace = trailingSpaceTokenIndexes.has(nonSpaceIndex);
+          let token = cleanedWords[wordIndex] ?? "";
+          // Models sometimes romanize a span ending in small tsu as "kitt" and
+          // the following "to" separately. Remove only the duplicate final
+          // consonant so their timed pieces join as the natural "kitto".
+          const nextToken = cleanedWords[wordIndex + 1]?.trim().toLowerCase() ?? "";
+          const nextInitial = nextToken.charAt(0);
+          if (part.words.endsWith("っ") && /^[bcdfghjklmnpqrstvwxyz]$/.test(nextInitial) && token.toLowerCase().endsWith(nextInitial.repeat(2))) {
+            token = token.slice(0, -1);
+          }
+          const needsSpace = sourceWordBreaks ? sourceWordBreaks.has(nonSpaceIndex) : trailingSpaceTokenIndexes.has(nonSpaceIndex);
           wordIndex += 1;
           nonSpaceIndex += 1;
           return {
@@ -347,13 +383,18 @@ export function buildTimedRomanization(line: Lyric, words: readonly string[] | n
           explicit: part.explicit,
         };
       }
-      const token = spanWords[wordIndex] ?? "";
+      let token = spanWords[wordIndex] ?? "";
+      const nextToken = spanWords[wordIndex + 1]?.trim().toLowerCase() ?? "";
+      const nextInitial = nextToken.charAt(0);
+      if (part.words.endsWith("っ") && /^[bcdfghjklmnpqrstvwxyz]$/.test(nextInitial) && token.toLowerCase().endsWith(nextInitial.repeat(2))) {
+        token = token.slice(0, -1);
+      }
+      const needsNaturalSpace = sourceWordBreaks?.has(nonSpaceIndex) && !/\s$/.test(token);
       wordIndex += 1;
       nonSpaceIndex += 1;
-      // Spacing is controlled by the AI token itself; never append an automatic space.
       return {
         startTimeMs: part.startTimeMs,
-        words: token,
+        words: needsNaturalSpace ? `${token} ` : token,
         durationMs: part.durationMs,
         isBackground: part.isBackground,
         explicit: part.explicit,

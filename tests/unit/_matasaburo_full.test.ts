@@ -32,8 +32,8 @@ describe("matasaburo full", () => {
     const xml = readFileSync(file, "utf8");
     const parsed = parseLyricsText(xml, 240000);
     const allLines = lyricLines(parsed.lyrics);
-    // first 3 word-level lines
-    const wordIndexes = parsed.lyrics.map((line, index) => (line.parts && line.parts.length > 0 ? index : -1)).filter(i => i >= 0).slice(0, 3);
+    // Include the screenshot's L6, whose TTML spans split きっと and 過ぎるから.
+    const wordIndexes = [1, 2, 3, 6];
     const subset = wordIndexes.map(index => allLines[index]);
     const spans = wordIndexes.map(index => parsed.lyrics[index].parts!.map(part => part.words));
     const result = await transformLyrics("romanization", config, subset, "", parsed.language || "ja", undefined, false, subset.map((_, i) => `L${i}`), spans, subset);
@@ -47,5 +47,6 @@ describe("matasaburo full", () => {
     writeFileSync(String.raw`C:\Users\Tyas\AppData\Local\Temp\opencode\matasaburo-full.json`, JSON.stringify(payload, null, 2), "utf8");
     console.log(JSON.stringify(payload, null, 2));
     expect(result.results.length).toBe(subset.length);
+    expect(samples.find(sample => sample.source === "何もない生活はきっと退屈過ぎるから")?.timed?.join("")).toBe("nanimonai seikatsu wa kitto taikutsu sugirukara");
   }, 300000);
 });

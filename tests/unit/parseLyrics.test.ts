@@ -302,4 +302,27 @@ describe("buildTimedRomanization spacing", () => {
     const built = buildTimedRomanization(line, words, "hello, world!");
     expect(built?.[1].words).toBe("lo ");
   });
+
+  it("uses Japanese source word boundaries instead of AI spaces between timed spans", () => {
+    const sourceParts = ["何もない", "生活", "は", "きっ", "と", "退屈", "過ぎるか", "ら"];
+    const matasaburoLine = {
+      ...line,
+      parts: sourceParts.map((words, index) => ({ ...line.parts![0], startTimeMs: 1000 + index * 100, words })),
+    };
+    const generated = ["nanimonai", "seikatsu", "wa", "kitt", "to", "taikutsu", "sugiruka", "ra"];
+    const built = buildTimedRomanization(matasaburoLine, generated, generated.join(" "));
+    expect(built?.map(part => part.words)).toEqual(["nanimonai ", "seikatsu ", "wa ", "kit", "to ", "taikutsu ", "sugiruka", "ra"]);
+  });
+
+  it("keeps Japanese source spacing when AI text and span tokens disagree", () => {
+    const sourceParts = ["何もない", "生活", "は", "きっ", "と", "退屈", "過ぎるか", "ら"];
+    const matasaburoLine = {
+      ...line,
+      parts: sourceParts.map((words, index) => ({ ...line.parts![0], startTimeMs: 1000 + index * 100, words })),
+    };
+    const generated = ["nanimonai", "seikatsu", "wa", "kit", "to", "taikutsu", "sugiruka", "ra"];
+    expect(buildTimedRomanization(matasaburoLine, generated, "nanimonai seikatsu wa kitto taikutsu sugiruka ra")?.map(part => part.words)).toEqual(
+      ["nanimonai ", "seikatsu ", "wa ", "kit", "to ", "taikutsu ", "sugiruka", "ra"]
+    );
+  });
 });
