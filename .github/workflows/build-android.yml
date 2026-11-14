@@ -220,8 +220,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ -f /tmp/android-build.log ]; then
-            TAIL="$(tail -n 120 /tmp/android-build.log)"
+            ERRS="$(grep -nE '^e: |error\[|FAILURE:|Execution failed' /tmp/android-build.log | tail -n 80 || true)"
+            TAIL="$(tail -n 60 /tmp/android-build.log)"
             jq -n --arg body "\`\`\`text
+          $ERRS
+          ---
           $TAIL
           \`\`\`" '{body: $body}' | gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" --input -
           fi

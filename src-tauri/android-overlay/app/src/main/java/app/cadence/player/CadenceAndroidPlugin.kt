@@ -221,8 +221,8 @@ class CadenceAndroidPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun exportTextFile(invoke: Invoke) {
         val args = invoke.getArgs()
-        val fileName = args.getString("fileName", "cadence-export.txt")
-        val content = args.getString("content", "")
+        val fileName = args.getString("fileName", "cadence-export.txt") ?: "cadence-export.txt"
+        val content = args.getString("content", "") ?: ""
         pendingExports[invoke.id] = content
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -260,7 +260,9 @@ class CadenceAndroidPlugin(private val activity: Activity) : Plugin(activity) {
     fun walkFolders(invoke: Invoke) {
         val args = invoke.getArgs()
         val arr = args.optJSONArray("folders") ?: JSONArray()
-        val folders = (0 until arr.length()).mapNotNull { arr.optString(it, null) }
+        val folders = (0 until arr.length()).mapNotNull { idx ->
+            arr.optString(idx).takeIf { it.isNotEmpty() }
+        }
         ioExecutor.execute {
             try {
                 val res = CadenceStorageHelper.walkFolders(activity, folders)
@@ -342,7 +344,7 @@ class CadenceAndroidPlugin(private val activity: Activity) : Plugin(activity) {
         val args = invoke.getArgs()
         val audioUri = args.getString("audioUri")
         val text = args.getString("text")
-        val ext = args.getString("ext", "lrc")
+        val ext = args.getString("ext", "lrc") ?: "lrc"
         ioExecutor.execute {
             try {
                 val written = CadenceStorageHelper.writeSafSidecar(activity, audioUri, text, ext)
@@ -356,7 +358,9 @@ class CadenceAndroidPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun deleteContentUris(invoke: Invoke) {
         val arr = invoke.getArgs().optJSONArray("uris") ?: JSONArray()
-        val uris = (0 until arr.length()).mapNotNull { arr.optString(it, null) }
+        val uris = (0 until arr.length()).mapNotNull { idx ->
+            arr.optString(idx).takeIf { it.isNotEmpty() }
+        }
         ioExecutor.execute {
             val outcomes = CadenceStorageHelper.deleteContentUris(activity, uris)
             val list = (0 until outcomes.length()).map { idx ->
