@@ -43,6 +43,8 @@ import {
 } from "../main/lyrics/translation";
 import { clearAiCache, initializeAiCache, listModels, testConnection, transformLyrics } from "../main/lyrics/ai";
 import { analyzeLyrics } from "../main/lyrics/languageIntelligence";
+import { romanizeJapanese } from "../main/lyrics/japaneseRomanization";
+import type { JapaneseRomanizationResult } from "../main/lyrics/japaneseRomanization";
 import {
   artworkExtensionForMime,
   readTrackMetadataCore,
@@ -1008,9 +1010,35 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         const controller = new AbortController();
         romanizeController = controller;
         try {
+          const analysis = analyzeLyrics(request.contextLines?.length ? request.contextLines : request.lines);
+          const language = (request.sourceLanguage ?? analysis.language ?? "").toLowerCase();
+          const isJapanese = language.startsWith("ja") || analysis.language === "ja" || analysis.script === "Japanese";
+          if (isJapanese) {
+            // Local offline engine (Kuroshiro + Kuromoji) for Japanese input.
+            const romanizations: (string | null)[] = [];
+            const words: (string[] | null)[] = [];
+            let hasWords = false;
+            for (let i = 0; i < request.lines.length; i++) {
+              const line = request.lines[i];
+              const spans = request.segmentSpans?.[i];
+              if (spans && spans.some(span => span.trim().length > 0)) {
+                const result = await romanizeJapanese(line, spans) as JapaneseRomanizationResult;
+                romanizations.push(result.text);
+                words.push(result.words);
+                if (result.words) hasWords = true;
+              } else {
+                romanizations.push(await romanizeJapanese(line) as unknown as string);
+                words.push(null);
+              }
+            }
+            return {
+              romanizations,
+              detectedLanguage: "ja",
+              words: hasWords ? words : undefined,
+            };
+          }
           const ai = settings.get().lyrics.aiRomanization;
           if (ai?.enabled) {
-            const analysis = analyzeLyrics(request.contextLines?.length ? request.contextLines : request.lines);
             // Word-mode callers provide spans precisely because they need tokens; mixed-script
             // analysis is only a heuristic and must not suppress that request.
             if (!analysis.romanizationLikelyNeeded && !request.forceRegenerate && !request.segmentSpans?.some(spans => spans?.length)) return { romanizations: request.lines.map(() => null), detectedLanguage: analysis.language };
