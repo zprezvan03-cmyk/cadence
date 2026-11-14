@@ -36,15 +36,15 @@ class AndroidContractsTest {
     fun mapsTenBandEqToFiveBandAndroidHardwareAndClamps() {
         val cfg = AndroidContracts.EqConfig(
             enabled = true,
-            preampDb = 3.0,
+            preampDb = 4.5,
             bandsDb = listOf(6.0, 6.0, 2.0, 0.0, 0.0, 0.0, 0.0, 4.0, 8.0, 12.0),
         )
         val deviceCenters = intArrayOf(60_000, 230_000, 910_000, 3_600_000, 14_000_000)
         val mapped = AndroidContracts.mapEqToDeviceMillibels(cfg, deviceCenters, -1500, 1500)
         assertEquals(5, mapped.size)
-        // Bass band (~60Hz) gets ~6dB + 3dB preamp = ~900 mB
-        assertTrue(mapped[0].toInt() in 850..950)
-        // High band (~14kHz) gets clamped to hardware max 1500 mB
+        // Bass band (~60Hz) gets 6dB + 4.5dB preamp = 1050 mB
+        assertEquals(1050.toShort(), mapped[0])
+        // High band (~14kHz, ~11.23dB + 4.5dB = 1573 mB) clamps to hardware max 1500 mB
         assertEquals(1500.toShort(), mapped[4])
     }
 
