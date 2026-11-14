@@ -146,7 +146,12 @@ jobs:
           set -euo pipefail
           cd src-tauri/gen/android
           chmod +x gradlew
-          (./gradlew testUniversalReleaseUnitTest --no-daemon || ./gradlew testArm64ReleaseUnitTest --no-daemon) 2>&1 | tee /tmp/android-build.log
+          TARGET="${{ inputs.target || 'universal' }}"
+          if [ "$TARGET" = "aarch64" ]; then
+            ./gradlew :app:testArm64DebugUnitTest --no-daemon 2>&1 | tee /tmp/android-build.log
+          else
+            ./gradlew :app:testUniversalDebugUnitTest --no-daemon 2>&1 | tee /tmp/android-build.log
+          fi
 
       - name: Align, sign, and verify APK
         env:
@@ -214,14 +219,28 @@ jobs:
           path: artifacts/android/*
           if-no-files-found: error
 
+      - name: Stage APK temporarily on arena branch for Drive delivery
+        if: github.event_name != 'pull_request' && startsWith(github.ref_name, 'arena/')
+        run: |
+          set -euo pipefail
+          mkdir -p stage-build
+          python3 -c "import zipfile; z=zipfile.ZipFile('stage-build/Cadence-Android.zip','w',zipfile.ZIP_DEFLATED,compresslevel=9); z.write('artifacts/android/Cadence-Android.apk','Cadence-Android.apk'); z.close()"
+          cp artifacts/android/Cadence-Android.apk.sha256 stage-build/Cadence-Android.apk.sha256
+          ls -lh stage-build/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f stage-build/Cadence-Android.zip stage-build/Cadence-Android.apk.sha256
+          git commit -m "Stage Android APK artifact (temporary, for Drive delivery) [skip ci]"
+          git push origin "HEAD:${{ github.ref_name }}"
+
       - name: Post failure log tail on error
         if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ -f /tmp/android-build.log ]; then
-            ERRS="$(grep -nE '^e: |error\[|FAILURE:|Execution failed' /tmp/android-build.log | tail -n 80 || true)"
-            TAIL="$(tail -n 60 /tmp/android-build.log)"
+            ERRS="$(grep -nE '^e: |error\[|FAILURE:|Execution failed|Exception|Test .* FAILED|not found' /tmp/android-build.log | tail -n 80 || true)"
+            TAIL="$(tail -n 100 /tmp/android-build.log)"
             jq -n --arg body "\`\`\`text
           $ERRS
           ---

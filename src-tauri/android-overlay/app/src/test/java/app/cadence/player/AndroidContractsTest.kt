@@ -43,7 +43,7 @@ class AndroidContractsTest {
         val mapped = AndroidContracts.mapEqToDeviceMillibels(cfg, deviceCenters, -1500, 1500)
         assertEquals(5, mapped.size)
         // Bass band (~60Hz) gets ~6dB + 3dB preamp = ~900 mB
-        assertTrue(mapped[0] in 850..950)
+        assertTrue(mapped[0].toInt() in 850..950)
         // High band (~14kHz) gets clamped to hardware max 1500 mB
         assertEquals(1500.toShort(), mapped[4])
     }
