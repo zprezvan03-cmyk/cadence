@@ -31,7 +31,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: android-${{ github.ref }}
@@ -134,9 +134,21 @@ jobs:
             EXTRA_FLAGS="--aab"
           fi
           if [ "$TARGET" = "aarch64" ]; then
-            npx tauri android build --apk --ci --target aarch64 $EXTRA_FLAGS
+            npx tauri android build --apk --ci --target aarch64 $EXTRA_FLAGS 2>&1 | tee /tmp/android-build.log
           else
-            npx tauri android build --apk --ci $EXTRA_FLAGS
+            npx tauri android build --apk --ci $EXTRA_FLAGS 2>&1 | tee /tmp/android-build.log
+          fi
+
+      - name: Post failure log tail on error
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f /tmp/android-build.log ]; then
+            TAIL="$(tail -n 120 /tmp/android-build.log)"
+            jq -n --arg body "\`\`\`text
+          $TAIL
+          \`\`\`" '{body: $body}' | gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" --input -
           fi
 
       - name: Run Kotlin JUnit4 unit tests
