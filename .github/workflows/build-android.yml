@@ -139,25 +139,14 @@ jobs:
             npx tauri android build --apk --ci $EXTRA_FLAGS 2>&1 | tee /tmp/android-build.log
           fi
 
-      - name: Post failure log tail on error
-        if: failure()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if [ -f /tmp/android-build.log ]; then
-            TAIL="$(tail -n 120 /tmp/android-build.log)"
-            jq -n --arg body "\`\`\`text
-          $TAIL
-          \`\`\`" '{body: $body}' | gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" --input -
-          fi
-
       - name: Run Kotlin JUnit4 unit tests
         env:
           GRADLE_OPTS: "-Xmx4g -XX:MaxMetaspaceSize=768m -Dorg.gradle.daemon=false"
         run: |
+          set -euo pipefail
           cd src-tauri/gen/android
           chmod +x gradlew
-          ./gradlew testUniversalReleaseUnitTest --no-daemon || ./gradlew testArm64ReleaseUnitTest --no-daemon
+          (./gradlew testUniversalReleaseUnitTest --no-daemon || ./gradlew testArm64ReleaseUnitTest --no-daemon) 2>&1 | tee /tmp/android-build.log
 
       - name: Align, sign, and verify APK
         env:
@@ -224,3 +213,15 @@ jobs:
           name: cadence-android-apk
           path: artifacts/android/*
           if-no-files-found: error
+
+      - name: Post failure log tail on error
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f /tmp/android-build.log ]; then
+            TAIL="$(tail -n 120 /tmp/android-build.log)"
+            jq -n --arg body "\`\`\`text
+          $TAIL
+          \`\`\`" '{body: $body}' | gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" --input -
+          fi

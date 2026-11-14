@@ -11,6 +11,7 @@ pub mod db;
 pub mod protocol;
 
 use std::collections::HashMap;
+#[cfg(desktop)]
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -240,7 +241,7 @@ pub fn run() {
     #[cfg(target_os = "android")]
     {
         builder = builder.plugin(
-            tauri::plugin::Builder::new("cadence-android")
+            tauri::plugin::Builder::<tauri::Wry, ()>::new("cadence-android")
                 .setup(|app, api| {
                     let handle =
                         api.register_android_plugin("app.cadence.player", "CadenceAndroidPlugin")?;
