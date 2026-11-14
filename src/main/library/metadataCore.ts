@@ -58,6 +58,19 @@ export interface ParsedTrack {
 }
 
 export function pathBasename(filePath: string, suffix?: string): string {
+  if (filePath.startsWith("content://")) {
+    let decoded = filePath;
+    try {
+      decoded = decodeURIComponent(filePath);
+    } catch {
+      /* keep raw */
+    }
+    const tail = decoded.split(/[\\/:]/).filter(Boolean).pop() ?? decoded;
+    if (suffix && tail.toLowerCase().endsWith(suffix.toLowerCase())) {
+      return tail.slice(0, tail.length - suffix.length);
+    }
+    return tail;
+  }
   const trimmed = filePath.replace(/[\\/]+$/, "");
   const lastSep = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
   const base = lastSep >= 0 ? trimmed.slice(lastSep + 1) : trimmed;
@@ -74,6 +87,28 @@ export function pathExtname(filePath: string): string {
 }
 
 export function pathDirname(filePath: string): string {
+  if (filePath.startsWith("content://")) {
+    const docMarker = "/document/";
+    const idx = filePath.indexOf(docMarker);
+    if (idx >= 0) {
+      const prefix = filePath.slice(0, idx + docMarker.length);
+      let docId = filePath.slice(idx + docMarker.length);
+      try {
+        docId = decodeURIComponent(docId);
+      } catch {
+        /* keep raw */
+      }
+      const sepIdx = docId.lastIndexOf("/");
+      if (sepIdx > 0) {
+        return prefix + encodeURIComponent(docId.slice(0, sepIdx));
+      }
+      const colonIdx = docId.lastIndexOf(":");
+      if (colonIdx >= 0) {
+        return prefix + encodeURIComponent(docId.slice(0, colonIdx + 1));
+      }
+      return filePath.slice(0, idx);
+    }
+  }
   const trimmed = filePath.replace(/[\\/]+$/, "");
   const lastSep = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
   if (lastSep < 0) return ".";
@@ -83,6 +118,24 @@ export function pathDirname(filePath: string): string {
 }
 
 export function pathJoin(dir: string, ...parts: string[]): string {
+  if (dir.startsWith("content://")) {
+    const suffix = parts.filter(Boolean).join("/");
+    if (!suffix) return dir;
+    const docMarker = "/document/";
+    const idx = dir.indexOf(docMarker);
+    if (idx >= 0) {
+      const prefix = dir.slice(0, idx + docMarker.length);
+      let docId = dir.slice(idx + docMarker.length);
+      try {
+        docId = decodeURIComponent(docId);
+      } catch {
+        /* keep raw */
+      }
+      const joinedDoc = docId.endsWith(":") || docId.endsWith("/") ? `${docId}${suffix}` : `${docId}/${suffix}`;
+      return prefix + encodeURIComponent(joinedDoc);
+    }
+    return `${dir.replace(/\/+$/, "")}/${encodeURIComponent(suffix)}`;
+  }
   return resolvePathApi(undefined, dir).join(dir, ...parts);
 }
 

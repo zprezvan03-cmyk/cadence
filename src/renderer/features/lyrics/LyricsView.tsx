@@ -6,7 +6,7 @@
  */
 
 import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Minimize2, Music4, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, ListMusic, Minimize2, Music4, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
 import { trackSourceKey } from "../../../shared/media";
 import type { AppSettings, MediaItem, NowPlayingProfile, Track } from "../../../shared/types";
 import { DEFAULT_PROVIDER_ORDER } from "../../../shared/upstream/better-lyrics/constants";
@@ -32,6 +32,9 @@ import { CustomizationStudio, type StudioSavePayload } from "./CustomizationStud
 import { useLyrics } from "./useLyrics";
 import { buildThemeCss } from "../../upstream/better-lyrics/themes";
 import { useLastNonNull, usePresence } from "../../app/usePresence";
+import { useMobileShell } from "../../app/useMobileShell";
+import { androidPlaybackClock, isAndroidNativeAudio } from "../../audio/androidAudio";
+import { usePlayer } from "../../state/playerStore";
 
 export interface LyricsViewProps {
   /** Non-null only for the current local media item; remote items never receive a fake Track. */
@@ -49,6 +52,10 @@ function clampFinite(value: number | undefined, fallback: number, min: number, m
 }
 
 export function LyricsView({ track, item, playing, fullscreen, onToggleFullscreen, onOpenSearch }: LyricsViewProps) {
+  const isMobile = useMobileShell();
+  const goBack = useUi(state => state.goBack);
+  const navigate = useUi(state => state.navigate);
+  const toggleQueue = useUi(state => state.toggleQueue);
   const settings = useSettings(state => state.settings);
   const patchSettings = useSettings(state => state.patch);
   const [toast, setToast] = useState<string | null>(null);
@@ -428,17 +435,52 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
       ) : null}
 
       <div className="lyrics-header">
+        {isMobile && !fullscreen ? (
+          <button
+            type="button"
+            className="icon-button np-mobile-back"
+            aria-label="Collapse Now Playing"
+            onClick={() => {
+              const prevHash = window.location.hash;
+              goBack();
+              window.setTimeout(() => {
+                if (window.location.hash === prevHash && useUi.getState().route.name === "lyrics") {
+                  navigate({ name: "home" });
+                }
+              }, 80);
+            }}
+          >
+            <ChevronDown size={22} />
+          </button>
+        ) : null}
+        {isMobile && !fullscreen && item ? (
+          <div className="np-mobile-art">
+            <Artwork src={item.artworkUrl} alt={item.albumLabel ?? item.title} size="sm" />
+          </div>
+        ) : null}
         {headingInHeader ? heading : null}
-        <button
-          type="button"
-          className="np-customize-button"
-          onClick={openStudio}
-          aria-label="Customize Now Playing"
-          title="Customize Now Playing"
-          data-testid="customize-now-playing"
-        >
-          <SlidersHorizontal size={16} /> Customize
-        </button>
+        <div className="lyrics-header-actions">
+          {isMobile && !fullscreen ? (
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Queue"
+              onClick={() => toggleQueue()}
+            >
+              <ListMusic size={19} />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="np-customize-button"
+            onClick={openStudio}
+            aria-label="Customize Now Playing"
+            title="Customize Now Playing"
+            data-testid="customize-now-playing"
+          >
+            <SlidersHorizontal size={16} /> Customize
+          </button>
+        </div>
         {/* One exit button, top-right, in both fullscreen layouts. */}
         {fullscreen ? (
           <button
@@ -500,6 +542,8 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
             language={lyrics.parsed?.language ?? null}
             noLyrics={lyrics.status === "empty"}
             loaderVisible={lyrics.status === "loading" && !lyrics.hasLyrics}
+            remoteClockSource={isAndroidNativeAudio() ? androidPlaybackClock : null}
+            onLineClick={timeS => usePlayer.getState().seek(timeS)}
             onError={handleError}
           />
         ) : (
@@ -576,12 +620,12 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
 
       {panelMode ? null : (
       <div ref={footerRef} className="lyrics-footer">
-        {fullscreen ? (
+        {fullscreen || isMobile ? (
           <FullscreenControls
             track={track}
             showLyrics={showLyrics}
             onToggleLyrics={toggleLyricsVisible}
-            concealed={!controlsVisible}
+            concealed={fullscreen ? !controlsVisible : false}
           />
         ) : null}
 

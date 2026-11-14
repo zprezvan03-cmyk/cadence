@@ -17,6 +17,7 @@ interface LibraryState {
   error: string | null;
   refresh: () => Promise<void>;
   addFolder: () => Promise<void>;
+  scanMediaStore: () => Promise<{ granted: boolean }>;
   removeFolder: (path: string) => Promise<void>;
   rescan: () => Promise<void>;
   setFavorite: (id: number, favorite: boolean) => Promise<void>;
@@ -67,6 +68,24 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
       await get().refresh();
     } catch (error) {
       set({ error: (error as Error).message });
+    } finally {
+      set({ scanning: false });
+    }
+  },
+  scanMediaStore: async () => {
+    if (!bridge.library.scanMediaStore) {
+      return { granted: false };
+    }
+    set({ scanning: true });
+    try {
+      const outcome = await bridge.library.scanMediaStore();
+      if (outcome.granted) {
+        await get().refresh();
+      }
+      return { granted: outcome.granted };
+    } catch (error) {
+      set({ error: (error as Error).message });
+      return { granted: false };
     } finally {
       set({ scanning: false });
     }

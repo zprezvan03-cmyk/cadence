@@ -10,6 +10,12 @@ import type {
   TrackSource,
 } from "../../shared/types";
 import { audioEngine } from "../audio/engine";
+import {
+  androidAudioAction,
+  androidPlaybackClock,
+  isAndroidNativeAudio,
+  syncQueueToAndroid,
+} from "../audio/androidAudio";
 import { computeReplayGain } from "../audio/replayGain";
 import {
   advancePosition,
@@ -81,6 +87,7 @@ interface PlayerState extends SessionState {
   /** Called by the local engine bridge on every tick. Ignored while a remote item is current. */
   syncTime: (position: number, duration: number, buffered: number) => void;
   syncState: (state: { playing: boolean; buffering: boolean; ended: boolean }) => void;
+  syncAndroidTransition: (androidIndex: number, trackId: number) => void;
   setError: (message: string | null) => void;
 }
 
@@ -183,6 +190,7 @@ export function pruneSessionQueue(
 let loadToken = 0;
 let lastPositionPersistAt = 0;
 let occurrenceCounter = 0;
+let androidIndexToOrderPos: number[] = [];
 const transitionGuard = new TransitionGuard();
 
 function nextOccurrenceId(): string {
@@ -249,6 +257,44 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     return track ? { entry, trackId, track } : null;
   };
 
+  const syncOrderToAndroid = async (
+    autoplay: boolean,
+    startPositionSec: number,
+    preserveCurrent = false
+  ): Promise<boolean> => {
+    const state = get();
+    const mapping: number[] = [];
+    const tracks: Track[] = [];
+    let startIndex = 0;
+    for (let pos = 0; pos < state.order.length; pos += 1) {
+      const entry = entryAtPosition(state, pos);
+      if (!entry || entry.item.source.kind !== "local") continue;
+      const track = getTrackById(entry.item.source.trackId);
+      if (!track) continue;
+      if (pos === state.orderPosition) startIndex = tracks.length;
+      mapping.push(pos);
+      tracks.push(track);
+    }
+    androidIndexToOrderPos = mapping;
+    if (tracks.length === 0) return false;
+
+    const synced = await syncQueueToAndroid({
+      tracks,
+      startIndex,
+      startPositionSec,
+      autoplay,
+      preserveCurrent,
+      playbackSettings: playbackAudioSettings(),
+    });
+    if (synced && !preserveCurrent) {
+      void androidAudioAction("setVolume", { volume: state.volume });
+      void androidAudioAction("setMuted", { muted: state.muted });
+      void androidAudioAction("setRate", { rate: state.rate });
+      void androidAudioAction("setRepeat", { repeat: state.repeat });
+    }
+    return synced;
+  };
+
   const loadCurrent = async (autoplay: boolean): Promise<void> => {
     const state = get();
     const entry = entryAtPosition(state, state.orderPosition);
@@ -258,7 +304,11 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       const item = resolvedItem(entry);
       loadToken += 1;
       transitionGuard.reset();
-      audioEngine.pause();
+      if (isAndroidNativeAudio()) {
+        void androidAudioAction("pause");
+      } else {
+        audioEngine.pause();
+      }
       const message = "Remote playback is not available in this build.";
       set({
         playbackMechanism: "unavailable",
@@ -285,6 +335,14 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       remoteStatus: "idle",
       remoteError: null,
     });
+
+    if (isAndroidNativeAudio()) {
+      const synced = await syncOrderToAndroid(autoplay, state.position, false);
+      if (!synced || token !== loadToken) return;
+      if (autoplay) recordStartedTrack(trackId, track);
+      return;
+    }
+
     const loaded = await audioEngine.load(track, { gain: replayGainForTrack(track) });
     if (!loaded || token !== loadToken) return;
     if (state.position > 0) audioEngine.seek(state.position);
@@ -308,6 +366,7 @@ export const usePlayer = create<PlayerState>()((set, get) => {
    * Skipped for repeat-one, where the next track is the one already playing.
    */
   const prewarmNext = (): void => {
+    if (isAndroidNativeAudio()) return;
     const state = get();
     if (state.order.length === 0) return;
     const result = advancePosition(state.orderPosition, state.order.length, state.repeat, 1);
@@ -445,6 +504,9 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       order,
       orderPosition: currentOrderPosition >= 0 ? currentOrderPosition : 0,
     });
+    if (isAndroidNativeAudio() && currentQueueIndex !== undefined) {
+      void syncOrderToAndroid(get().isPlaying, get().position, true);
+    }
     after();
   };
 
@@ -463,6 +525,9 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     }
     if (insertedIndices.length === 0 && queue === state.queue) return;
     set({ queue, order: state.order.concat(insertedIndices) });
+    if (isAndroidNativeAudio() && state.queue.length > 0) {
+      void syncOrderToAndroid(get().isPlaying, get().position, true);
+    }
     after();
   };
 
@@ -489,7 +554,12 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     });
     if (removingCurrent) {
       if (queue.length === 0) {
-        audioEngine.pause();
+        if (isAndroidNativeAudio()) {
+          void androidAudioAction("stop");
+          androidPlaybackClock.reset();
+        } else {
+          audioEngine.pause();
+        }
         set({
           isPlaying: false,
           buffering: false,
@@ -502,6 +572,8 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       } else {
         void loadCurrent(wasPlaying);
       }
+    } else if (isAndroidNativeAudio() && queue.length > 0) {
+      void syncOrderToAndroid(wasPlaying, get().position, true);
     }
     after();
   };
@@ -584,6 +656,13 @@ export const usePlayer = create<PlayerState>()((set, get) => {
         const position = state.order.indexOf(existing);
         if (position !== -1) {
           if (position === state.orderPosition) {
+            if (isAndroidNativeAudio()) {
+              get().seek(0);
+              await androidAudioAction("play");
+              const track = getTrackById(trackId);
+              if (track) void useHistory.getState().add(track).catch(() => undefined);
+              return;
+            }
             if (state.buffering && !audioEngine.element.src) return;
             get().seek(0);
             await audioEngine.play();
@@ -649,7 +728,13 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     },
 
     clearQueue: () => {
-      audioEngine.pause();
+      if (isAndroidNativeAudio()) {
+        void androidAudioAction("stop");
+        androidPlaybackClock.reset();
+        androidIndexToOrderPos = [];
+      } else {
+        audioEngine.pause();
+      }
       set({
         queue: [],
         order: [],
@@ -684,6 +769,14 @@ export const usePlayer = create<PlayerState>()((set, get) => {
         after();
         return;
       }
+      if (isAndroidNativeAudio()) {
+        if (androidIndexToOrderPos.length === 0) {
+          await loadCurrent(true);
+          return;
+        }
+        await androidAudioAction("toggle");
+        return;
+      }
       if (!audioEngine.element.src) {
         // A metadata-identified ALAC source may still be decoding to the disposable PCM cache.
         // Avoid starting a duplicate native decode while that load is in flight.
@@ -707,13 +800,22 @@ export const usePlayer = create<PlayerState>()((set, get) => {
           after();
           return;
         }
+        if (isAndroidNativeAudio()) {
+          get().seek(0);
+          await androidAudioAction("play");
+          return;
+        }
         audioEngine.seek(0);
         await audioEngine.play();
         return;
       }
       if (result.exhausted && auto) {
         set({ isPlaying: false, ended: true, position: state.duration });
-        audioEngine.pause();
+        if (isAndroidNativeAudio()) {
+          void androidAudioAction("pause");
+        } else {
+          audioEngine.pause();
+        }
         return;
       }
 
@@ -721,7 +823,7 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       const target = entryAtPosition(state, result.position);
       const crossesMechanism =
         !current || !target || (current.item.source.kind === "local") !== (target.item.source.kind === "local");
-      if (crossesMechanism) {
+      if (crossesMechanism || isAndroidNativeAudio()) {
         await goToPosition(result.position, true);
         return;
       }
@@ -756,11 +858,12 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       const target = entryAtPosition(state, result.position);
       const crossesMechanism =
         !current || !target || (current.item.source.kind === "local") !== (target.item.source.kind === "local");
-      const shouldAutoplay =
-        current?.item.source.kind === "local"
+      const shouldAutoplay = isAndroidNativeAudio()
+        ? state.isPlaying || state.buffering
+        : current?.item.source.kind === "local"
           ? !audioEngine.paused
           : state.isPlaying || state.buffering;
-      if (crossesMechanism) {
+      if (crossesMechanism || isAndroidNativeAudio()) {
         void goToPosition(result.position, shouldAutoplay);
         return;
       }
@@ -794,7 +897,11 @@ export const usePlayer = create<PlayerState>()((set, get) => {
         after();
         return;
       }
-      audioEngine.seek(target);
+      if (isAndroidNativeAudio()) {
+        void androidAudioAction("seek", { position: target });
+      } else {
+        audioEngine.seek(target);
+      }
       set({ position: target, ended: false });
       after();
     },
@@ -811,20 +918,33 @@ export const usePlayer = create<PlayerState>()((set, get) => {
 
     setVolume: volume => {
       const clamped = Math.max(0, Math.min(1, volume));
-      audioEngine.setVolume(clamped);
-      if (clamped > 0) audioEngine.setMuted(false);
+      if (isAndroidNativeAudio()) {
+        void androidAudioAction("setVolume", { volume: clamped });
+        if (clamped > 0) void androidAudioAction("setMuted", { muted: false });
+      } else {
+        audioEngine.setVolume(clamped);
+        if (clamped > 0) audioEngine.setMuted(false);
+      }
       set({ volume: clamped, muted: clamped > 0 ? false : get().muted });
       after();
     },
 
     setMuted: muted => {
-      audioEngine.setMuted(muted);
+      if (isAndroidNativeAudio()) {
+        void androidAudioAction("setMuted", { muted });
+      } else {
+        audioEngine.setMuted(muted);
+      }
       set({ muted });
       after();
     },
 
     setRate: rate => {
-      audioEngine.setRate(rate);
+      if (isAndroidNativeAudio()) {
+        void androidAudioAction("setRate", { rate });
+      } else {
+        audioEngine.setRate(rate);
+      }
       set({ rate });
       after();
     },
@@ -837,17 +957,26 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       // Shuffled orders put the current queue index first; an unshuffled identity order instead
       // addresses that same entry at its own index.
       set({ shuffle, order, orderPosition: shuffle ? 0 : current });
+      if (isAndroidNativeAudio() && state.queue.length > 0) {
+        void syncOrderToAndroid(state.isPlaying, state.position, true);
+      }
       after();
     },
 
     cycleRepeat: () => {
       const order: RepeatMode[] = ["off", "all", "one"];
       const nextMode = order[(order.indexOf(get().repeat) + 1) % order.length];
+      if (isAndroidNativeAudio()) {
+        void androidAudioAction("setRepeat", { repeat: nextMode });
+      }
       set({ repeat: nextMode });
       after();
     },
 
     setRepeat: repeat => {
+      if (isAndroidNativeAudio()) {
+        void androidAudioAction("setRepeat", { repeat });
+      }
       set({ repeat });
       after();
     },
@@ -882,6 +1011,14 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       const current = currentQueueEntry(get());
       if (current && current.item.source.kind !== "local") return;
       set({ position, duration, buffered });
+      if (isAndroidNativeAudio()) {
+        const now = Date.now();
+        if (now - lastPositionPersistAt >= 1000) {
+          lastPositionPersistAt = now;
+          after();
+        }
+        return;
+      }
       transitionGuard.observe(position);
 
       const state = get();
@@ -926,6 +1063,28 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       if (current && current.item.source.kind !== "local") return;
       set({ isPlaying: state.playing, buffering: state.buffering, ended: state.ended });
       if (!state.playing) after();
+    },
+
+    syncAndroidTransition: (androidIndex, trackId) => {
+      const state = get();
+      const mappedOrderPos = androidIndexToOrderPos[androidIndex] ?? androidIndex;
+      if (mappedOrderPos < 0 || mappedOrderPos >= state.order.length) return;
+      if (mappedOrderPos === state.orderPosition) return;
+      const target = trackAtPosition(state, mappedOrderPos);
+      const effectiveTrackId = target?.trackId ?? trackId;
+      const track = target?.track ?? getTrackById(effectiveTrackId);
+      set({
+        orderPosition: mappedOrderPos,
+        position: 0,
+        duration: track?.duration ?? state.duration,
+        ended: false,
+        error: null,
+        playbackMechanism: "local-file",
+      });
+      if (track) {
+        recordStartedTrack(track.id, track);
+      }
+      after();
     },
 
     setError: message => set({ error: message }),

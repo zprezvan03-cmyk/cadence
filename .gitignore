@@ -3,6 +3,7 @@ out/
 dist/
 release/
 src-tauri/target/
+src-tauri/gen/
 .vite/
 *.log
 .DS_Store

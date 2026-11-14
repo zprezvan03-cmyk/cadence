@@ -8,6 +8,25 @@ import type { GradientSettings } from "./upstream/shaders/gradientSettings";
 
 export type RepeatMode = "off" | "all" | "one";
 export type LyricsSyncType = "richsync" | "synced" | "none";
+export type ThemePreference = "dark" | "light" | "system";
+
+export interface AndroidPermissionsStatus {
+  audioGranted: boolean;
+  notificationsGranted: boolean;
+  sdkInt: number;
+  unsupported?: boolean;
+}
+
+export interface AndroidSystemInfo {
+  sdkInt?: number;
+  release?: string;
+  manufacturer?: string;
+  model?: string;
+  audioGranted?: boolean;
+  notificationsGranted?: boolean;
+  persistedTreeUris?: string[];
+  unsupported?: boolean;
+}
 
 export interface Track {
   id: number;
@@ -552,6 +571,7 @@ export interface PlaybackSettings {
 }
 
 export interface AppearanceSettings {
+  theme?: ThemePreference;
   accent: string;
   reduceMotion: boolean;
   compactSidebar: boolean;
@@ -847,6 +867,7 @@ export interface CadenceApi {
   library: {
     snapshot(): Promise<LibrarySnapshot>;
     addFolder(): Promise<{ canceled: boolean; folders: string[]; result?: LibraryScanResult }>;
+    scanMediaStore?(): Promise<{ granted: boolean; result?: LibraryScanResult }>;
     removeFolder(path: string): Promise<LibrarySnapshot>;
     rescan(): Promise<LibraryScanResult>;
     search(query: string): Promise<Track[]>;
@@ -971,6 +992,11 @@ export interface CadenceApi {
     initialWindowChrome: WindowChromeState;
     windowChrome(): Promise<WindowChromeState>;
     onWindowChromeChange(listener: (state: WindowChromeState) => void): () => void;
+  };
+  android?: {
+    requestPermissions(): Promise<AndroidPermissionsStatus>;
+    systemInfo(): Promise<AndroidSystemInfo>;
+    audioAction(action: string, payload?: Record<string, unknown>): Promise<Record<string, unknown>>;
   };
 }
 

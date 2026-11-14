@@ -4,8 +4,9 @@
  */
 
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronUp, FolderMinus, FolderPlus, Keyboard, RotateCcw, Stethoscope, Trash2 } from "lucide-react";
-import type { AppInfo, AppSettings, EqualizerSettings, ReplayGainMode, ShaderSettings } from "../../../shared/types";
+import { ChevronDown, ChevronUp, FolderMinus, FolderPlus, Keyboard, RotateCcw, Smartphone, Stethoscope, Trash2 } from "lucide-react";
+import type { AppInfo, AppSettings, EqualizerSettings, ReplayGainMode, ShaderSettings, ThemePreference } from "../../../shared/types";
+import { isAndroidNativeAudio } from "../../audio/androidAudio";
 import { FONT_KINDS, FONT_OPTIONS, resolveFontOption } from "../../../shared/fonts";
 import { detectUnavailableFonts } from "../../app/fonts";
 import { useLibrary } from "../../state/libraryStore";
@@ -122,8 +123,10 @@ export function SettingsView() {
   const settings = useSettings(state => state.settings);
   const patchSettings = useSettings(state => state.patch);
   const resetSettings = useSettings(state => state.reset);
+  const hasAndroid = isAndroidNativeAudio();
   const snapshot = useLibrary(state => state.snapshot);
   const addFolder = useLibrary(state => state.addFolder);
+  const scanMediaStore = useLibrary(state => state.scanMediaStore);
   const removeFolder = useLibrary(state => state.removeFolder);
   const rescan = useLibrary(state => state.rescan);
   const scanning = useLibrary(state => state.scanning);
@@ -232,6 +235,23 @@ export function SettingsView() {
           <h2>Appearance</h2>
           <div className="settings-subsection" data-testid="settings-general-appearance">
             <h3>General Appearance</h3>
+            <div className="setting-row">
+              <span>
+                <strong>Theme</strong>
+                <em>Applies across the library, player chrome and Android system bars; Now Playing keeps dark contrast behind shaders.</em>
+              </span>
+              <select
+                value={settings.appearance.theme ?? "dark"}
+                data-testid="theme-select"
+                onChange={event =>
+                  void patchSettings({ appearance: { theme: event.target.value as ThemePreference } })
+                }
+              >
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+                <option value="system">Follow system</option>
+              </select>
+            </div>
             <div className="setting-row">
               <span>
                 <strong>Accent colour</strong>
@@ -544,7 +564,17 @@ export function SettingsView() {
             )}
           </div>
           <div className="heading-actions">
-            <button type="button" className="primary" onClick={() => void addFolder()} disabled={scanning}>
+            {hasAndroid ? (
+              <button type="button" className="primary" onClick={() => void scanMediaStore()} disabled={scanning}>
+                <Smartphone size={16} /> Scan device music
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className={hasAndroid ? "" : "primary"}
+              onClick={() => void addFolder()}
+              disabled={scanning}
+            >
               <FolderPlus size={16} /> Add folder
             </button>
             <button type="button" onClick={() => void rescan()} disabled={scanning}>

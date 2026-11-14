@@ -13,6 +13,7 @@ import {
   Plus,
   Search,
   Shuffle,
+  Smartphone,
   Sparkles,
   Trash2,
 } from "lucide-react";
@@ -31,6 +32,8 @@ import { TrackList } from "../../components/TrackList";
 import { AlbumCard, ArtistCard, PlaylistCard } from "../../components/Cards";
 import { Artwork } from "../../components/Artwork";
 import { useSessionState } from "../../app/useSessionState";
+import { useMobileShell } from "../../app/useMobileShell";
+import { isAndroidNativeAudio } from "../../audio/androidAudio";
 import { formatTime } from "../../player/queue";
 import { findDuplicateGroups, formatFileSize } from "./duplicates";
 
@@ -45,8 +48,11 @@ const TITLES: Record<LibraryTab, string> = {
 };
 
 export function LibraryView({ tab }: { tab: LibraryTab }) {
+  const isMobile = useMobileShell();
+  const hasAndroid = isAndroidNativeAudio();
   const snapshot = useLibrary(state => state.snapshot);
   const addFolder = useLibrary(state => state.addFolder);
+  const scanMediaStore = useLibrary(state => state.scanMediaStore);
   const rescan = useLibrary(state => state.rescan);
   const scanning = useLibrary(state => state.scanning);
   const createPlaylist = useLibrary(state => state.createPlaylist);
@@ -169,6 +175,20 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
 
   return (
     <div className="view library-view" data-testid={`library-view-${tab}`}>
+      {isMobile ? (
+        <nav className="mobile-library-tabs" aria-label="Library sections" data-testid="mobile-library-tabs">
+          {(["songs", "albums", "artists", "playlists", "favorites"] as const).map(id => (
+            <button
+              type="button"
+              key={id}
+              className={`mobile-lib-tab ${tab === id ? "active" : ""}`}
+              onClick={() => navigate({ name: "library", tab: id })}
+            >
+              {TITLES[id]}
+            </button>
+          ))}
+        </nav>
+      ) : null}
       <header className="view-heading">
         <div>
           <p className="eyebrow">Your library</p>
@@ -187,6 +207,11 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
                 <Shuffle size={16} /> Shuffle
               </button>
             </>
+          ) : null}
+          {hasAndroid ? (
+            <button type="button" onClick={() => void scanMediaStore()} disabled={scanning}>
+              <Smartphone size={16} /> Scan device
+            </button>
           ) : null}
           <button type="button" onClick={() => void addFolder()} disabled={scanning}>
             <FolderPlus size={16} /> Add folder

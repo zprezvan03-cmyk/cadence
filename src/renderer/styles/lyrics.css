@@ -1919,3 +1919,92 @@ braccato-lyrics[data-upgrading="true"] {
   padding: 12px 2px 2px;
   background: linear-gradient(180deg, transparent, rgba(11, 11, 18, 0.97) 38%);
 }
+
+/* Keep Now Playing crisp dark contrast over shaders even when the app shell is in light mode. */
+.lyrics-view {
+  color: #f5f5f8;
+  --text: #f5f5f8;
+  --text-dim: #b4b4c4;
+  --text-faint: #87879d;
+  --primary-bg: #ffffff;
+  --primary-text: #09090d;
+  --slider-track: rgba(255, 255, 255, 0.22);
+  --slider-thumb: #ffffff;
+}
+
+.lyrics-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.np-mobile-back {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  color: #fff;
+}
+
+.np-mobile-art {
+  flex-shrink: 0;
+}
+
+.np-mobile-art .artwork {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+}
+
+html[data-mobile="true"] .lyrics-view {
+  height: 100vh;
+  height: 100dvh;
+  --np-gutter: 16px;
+  --np-lyrics-max-width: 100%;
+  --np-lyrics-fluid-base: clamp(22px, 5.5vw, 32px);
+  --np-title-size: 16px;
+  --np-meta-size: 12.5px;
+  --np-controls-width: calc(100% - 24px);
+}
+
+html[data-mobile="true"] .lyrics-header {
+  padding-top: calc(12px + env(safe-area-inset-top, 0px));
+  padding-inline: 14px;
+  gap: 10px;
+  align-items: center;
+}
+
+html[data-mobile="true"] .lyrics-header .np-customize-button {
+  padding: 7px 11px;
+  font-size: 12px;
+}
+
+html[data-mobile="true"] .lyrics-footer {
+  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  gap: 8px;
+}
+
+html[data-mobile="true"] .lyrics-dock {
+  max-width: calc(100vw - 24px);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+html[data-mobile="true"] .lyrics-dock::-webkit-scrollbar {
+  display: none;
+}
+
+html[data-mobile="true"] .fs-controls {
+  padding: 10px 14px;
+  border-radius: 18px;
+  gap: 8px;
+  --np-control-button-size: 36px;
+  --np-play-button-size: 46px;
+}
+
+html[data-mobile="true"] .fs-controls .volume-group {
+  display: none;
+}
+
+

@@ -1,0 +1,209 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Android ABI target"
+        required: true
+        type: choice
+        default: universal
+        options:
+          - universal
+          - aarch64
+      build_aab:
+        description: "Also build Android App Bundle (.aab)"
+        required: false
+        type: boolean
+        default: false
+  push:
+    branches:
+      - main
+      - "arena/**"
+    paths:
+      - "src/**"
+      - "src-tauri/**"
+      - "scripts/prepare-android-project.mjs"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/build-android.yml"
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: Build & Test Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Rust & Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Cache Cargo & Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform, build-tools, and NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMGR="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMGR" --licenses > /dev/null || true
+
+          if "$SDKMGR" --list | grep -q "platforms;android-37"; then
+            PLATFORM_PKG="platforms;android-37"
+          else
+            PLATFORM_PKG="platforms;android-36"
+            echo "ANDROID_COMPILE_SDK=36" >> "$GITHUB_ENV"
+          fi
+
+          NDK_VERSION="27.2.12479018"
+          "$SDKMGR" "$PLATFORM_PKG" "build-tools;36.0.0" "ndk;${NDK_VERSION}"
+
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$SDK_ROOT/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-android-${{ hashFiles('src-tauri/android-overlay/**', 'scripts/prepare-android-project.mjs', 'package-lock.json') }}
+          restore-keys: |
+            gradle-android-
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Frontend typecheck and unit checks
+        run: |
+          npm run typecheck
+          npx vitest run tests/unit/ipcContract.test.ts tests/unit/settings.test.ts tests/unit/playbackClock.test.ts tests/unit/nowPlayingProfiles.test.ts tests/unit/androidSupport.test.ts
+
+      - name: Generate Android Gradle project and apply Cadence overlay
+        run: |
+          rm -rf src-tauri/gen/android
+          npx tauri android init --ci --skip-targets-install
+          node scripts/prepare-android-project.mjs
+
+      - name: Build Android APK with Tauri
+        env:
+          GRADLE_OPTS: "-Xmx4g -XX:MaxMetaspaceSize=768m -Dorg.gradle.daemon=false"
+        run: |
+          set -euo pipefail
+          TARGET="${{ inputs.target || 'universal' }}"
+          EXTRA_FLAGS=""
+          if [ "${{ inputs.build_aab || 'false' }}" = "true" ]; then
+            EXTRA_FLAGS="--aab"
+          fi
+          if [ "$TARGET" = "aarch64" ]; then
+            npx tauri android build --apk --ci --target aarch64 $EXTRA_FLAGS
+          else
+            npx tauri android build --apk --ci $EXTRA_FLAGS
+          fi
+
+      - name: Run Kotlin JUnit4 unit tests
+        env:
+          GRADLE_OPTS: "-Xmx4g -XX:MaxMetaspaceSize=768m -Dorg.gradle.daemon=false"
+        run: |
+          cd src-tauri/gen/android
+          chmod +x gradlew
+          ./gradlew testUniversalReleaseUnitTest --no-daemon || ./gradlew testArm64ReleaseUnitTest --no-daemon
+
+      - name: Align, sign, and verify APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/android
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -maxdepth 1 -mindepth 1 | sort -V | tail -n1)"
+          RAW_APK="$(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' | head -n1)"
+          if [ -z "$RAW_APK" ]; then
+            echo "No built APK found under src-tauri/gen/android/app/build/outputs/apk" >&2
+            exit 1
+          fi
+
+          ALIGNED_APK="artifacts/android/cadence-aligned.apk"
+          SIGNED_APK="artifacts/android/Cadence-Android.apk"
+          "$BUILD_TOOLS/zipalign" -p -f 4 "$RAW_APK" "$ALIGNED_APK"
+
+          KEYSTORE_PATH="/tmp/cadence-signing.jks"
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+            KS_PASS="$ANDROID_KEYSTORE_PASS"
+            KEY_ALIAS="$ANDROID_KEY_ALIAS"
+            KEY_PASS="${ANDROID_KEY_PASS:-$ANDROID_KEYSTORE_PASS}"
+          else
+            KS_PASS="cadence-ci-keystore"
+            KEY_ALIAS="cadence-dev"
+            KEY_PASS="cadence-ci-keystore"
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE_PATH" \
+              -storepass "$KS_PASS" \
+              -alias "$KEY_ALIAS" \
+              -keypass "$KEY_PASS" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Cadence Player, OU=Android, O=Cadence, L=Local, ST=Local, C=US"
+          fi
+
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks "$KEYSTORE_PATH" \
+            --ks-pass "pass:$KS_PASS" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --key-pass "pass:$KEY_PASS" \
+            --out "$SIGNED_APK" \
+            "$ALIGNED_APK"
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$SIGNED_APK"
+          rm -f "$ALIGNED_APK" "$KEYSTORE_PATH"
+          (cd artifacts/android && sha256sum Cadence-Android.apk > Cadence-Android.apk.sha256)
+
+          AAB_FILE="$(find src-tauri/gen/android/app/build/outputs/bundle -type f -name '*.aab' | head -n1 || true)"
+          if [ -n "$AAB_FILE" ]; then
+            cp "$AAB_FILE" artifacts/android/Cadence-Android.aab
+          fi
+
+          ls -lh artifacts/android/
+
+      - name: Upload Android APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cadence-android-apk
+          path: artifacts/android/*
+          if-no-files-found: error

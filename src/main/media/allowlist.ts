@@ -251,6 +251,10 @@ export function resolvePathApi(platform?: PathPlatform, samplePath?: string): Si
   return posixPath;
 }
 
+export function isVirtualMediaUri(value: string): boolean {
+  return value.startsWith("content://") || value.startsWith("mediastore://");
+}
+
 function isInvalidPathInput(value: string): boolean {
   return !value || value.includes("\0");
 }
@@ -261,10 +265,25 @@ function isRelativeContained(rel: string, pathApi: SimplePlatformPath): boolean 
 
 /**
  * Returns true when `candidatePath` resolves to `rootDir` itself or a descendant inside `rootDir`,
- * using the appropriate `win32` or `posix` path semantics.
+ * using the appropriate `win32` or `posix` path semantics (or Android virtual MediaStore/SAF URIs).
  */
 export function isPathInside(rootDir: string, candidatePath: string, platform?: PathPlatform): boolean {
   if (isInvalidPathInput(rootDir) || isInvalidPathInput(candidatePath)) return false;
+
+  if (isVirtualMediaUri(rootDir) || isVirtualMediaUri(candidatePath)) {
+    if (rootDir === "mediastore://audio") {
+      return (
+        candidatePath.startsWith("content://media/") ||
+        candidatePath.startsWith("/storage/") ||
+        candidatePath.startsWith("/sdcard/")
+      );
+    }
+    if (rootDir.startsWith("content://") && candidatePath.startsWith("content://")) {
+      const normalizedRoot = rootDir.replace(/\/+$/, "");
+      return candidatePath === normalizedRoot || candidatePath.startsWith(`${normalizedRoot}/document/`);
+    }
+    return false;
+  }
 
   const pathApi = resolvePathApi(platform, rootDir);
   if (pathApi === win32Path) {
@@ -315,6 +334,9 @@ export class MediaAllowlist {
 
   private normalizeRoot(root: string): { key: string; resolved: string } | null {
     if (isInvalidPathInput(root)) return null;
+    if (isVirtualMediaUri(root)) {
+      return { key: `uri:${root}`, resolved: root };
+    }
     const pathApi = resolvePathApi(this.platform, root);
     if (pathApi === win32Path) {
       if (WINDOWS_DRIVE_RELATIVE_PATTERN.test(root)) return null;
@@ -350,6 +372,7 @@ export class MediaAllowlist {
       const pathApi = resolvePathApi(this.platform, root);
       const effectivePlatform: PathPlatform = pathApi === win32Path ? "win32" : "posix";
       if (!isPathInside(root, candidatePath, effectivePlatform)) continue;
+      if (isVirtualMediaUri(candidatePath)) return candidatePath;
       return pathApi === win32Path
         ? win32Path.resolve(stripWindowsDevicePrefix(candidatePath))
         : posixPath.resolve(candidatePath);

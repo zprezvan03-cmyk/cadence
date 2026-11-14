@@ -1,7 +1,8 @@
 //! Asynchronous `cadence-media` URI scheme handler with RFC 9110 HTTP Range streaming and CORS.
 //!
-//! Serves local audio (`file/<base64url>`), extracted cover art (`art/<base64url>`), and sidecar
-//! animated covers (`cover.mp4` / `cover.webm`) strictly within `MediaAllowlist` roots.
+//! Serves local audio (`file/<base64url>`), extracted cover art (`art/<base64url>`), Android
+//! `content://` URIs within granted SAF/MediaStore roots, and sidecar animated covers strictly
+//! within `MediaAllowlist` roots.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -9,9 +10,16 @@ use std::path::Path;
 use std::sync::Arc;
 
 use base64::engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD};
+#[cfg(target_os = "android")]
+use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use percent_encoding::percent_decode_str;
+#[cfg(target_os = "android")]
+use serde::Deserialize;
 use tauri::http::{Request, Response, StatusCode};
+use tauri::AppHandle;
+#[cfg(target_os = "android")]
+use tauri::Manager;
 
 use crate::allowlist::MediaAllowlist;
 
@@ -169,6 +177,139 @@ fn parse_range_header(header: &str, total: u64) -> Option<ByteRange> {
     Some(ByteRange { start, end })
 }
 
+#[cfg(target_os = "android")]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ContentStatReply {
+    size: u64,
+    mime_type: Option<String>,
+}
+
+#[cfg(target_os = "android")]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ContentChunkReply {
+    base64: String,
+    #[allow(dead_code)]
+    total_size: u64,
+    #[allow(dead_code)]
+    mime_type: Option<String>,
+}
+
+#[cfg(target_os = "android")]
+fn serve_android_content_uri(
+    app: &AppHandle,
+    uri: &str,
+    request: &Request<Vec<u8>>,
+) -> Response<Vec<u8>> {
+    let Some(android) = app.try_state::<crate::CadenceAndroidHandle>() else {
+        return plain_response(StatusCode::SERVICE_UNAVAILABLE, "Android plugin unavailable");
+    };
+
+    let stat: ContentStatReply = match android.0.run_mobile_plugin(
+        "statContentUri",
+        serde_json::json!({ "uri": uri }),
+    ) {
+        Ok(res) => res,
+        Err(_) => return plain_response(StatusCode::NOT_FOUND, "Not found"),
+    };
+
+    let total_size = stat.size;
+    let content_type = stat
+        .mime_type
+        .as_deref()
+        .filter(|m| !m.is_empty())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    let is_head = request.method() == "HEAD";
+    let range_header = request
+        .headers()
+        .get("range")
+        .or_else(|| request.headers().get("Range"))
+        .and_then(|v| v.to_str().ok());
+
+    if let Some(raw_range) = range_header {
+        let Some(range) = parse_range_header(raw_range, total_size) else {
+            return with_cors_headers(Response::builder().status(StatusCode::RANGE_NOT_SATISFIABLE))
+                .header("Content-Range", format!("bytes */{total_size}"))
+                .body(Vec::new())
+                .unwrap_or_else(|_| Response::new(Vec::new()));
+        };
+
+        let chunk_len = (range.end - range.start + 1).min(MAX_OPEN_RANGE_CHUNK) as usize;
+        let body = if is_head {
+            Vec::new()
+        } else {
+            let chunk: ContentChunkReply = match android.0.run_mobile_plugin(
+                "readContentChunk",
+                serde_json::json!({
+                    "uri": uri,
+                    "offset": range.start,
+                    "length": chunk_len
+                }),
+            ) {
+                Ok(c) => c,
+                Err(_) => return plain_response(StatusCode::INTERNAL_SERVER_ERROR, "Read error"),
+            };
+            match STANDARD.decode(chunk.base64) {
+                Ok(bytes) => bytes,
+                Err(_) => return plain_response(StatusCode::INTERNAL_SERVER_ERROR, "Decode error"),
+            }
+        };
+
+        let actual_len = if is_head { chunk_len } else { body.len() };
+        let actual_end = if actual_len > 0 {
+            range.start + actual_len as u64 - 1
+        } else {
+            range.start
+        };
+
+        return with_cors_headers(Response::builder().status(StatusCode::PARTIAL_CONTENT))
+            .header("Content-Type", content_type)
+            .header("Accept-Ranges", "bytes")
+            .header(
+                "Content-Range",
+                format!("bytes {}-{actual_end}/{total_size}", range.start),
+            )
+            .header("Content-Length", actual_len.to_string())
+            .body(body)
+            .unwrap_or_else(|_| Response::new(Vec::new()));
+    }
+
+    if is_head {
+        return with_cors_headers(Response::builder().status(StatusCode::OK))
+            .header("Content-Type", content_type)
+            .header("Accept-Ranges", "bytes")
+            .header("Content-Length", total_size.to_string())
+            .body(Vec::new())
+            .unwrap_or_else(|_| Response::new(Vec::new()));
+    }
+
+    let read_len = total_size.min(MAX_OPEN_RANGE_CHUNK * 4) as usize;
+    let chunk: ContentChunkReply = match android.0.run_mobile_plugin(
+        "readContentChunk",
+        serde_json::json!({
+            "uri": uri,
+            "offset": 0,
+            "length": read_len
+        }),
+    ) {
+        Ok(c) => c,
+        Err(_) => return plain_response(StatusCode::NOT_FOUND, "Not found"),
+    };
+    let body = match STANDARD.decode(chunk.base64) {
+        Ok(bytes) => bytes,
+        Err(_) => return plain_response(StatusCode::INTERNAL_SERVER_ERROR, "Decode error"),
+    };
+
+    with_cors_headers(Response::builder().status(StatusCode::OK))
+        .header("Content-Type", content_type)
+        .header("Accept-Ranges", "bytes")
+        .header("Content-Length", body.len().to_string())
+        .body(body)
+        .unwrap_or_else(|_| Response::new(Vec::new()))
+}
+
 pub fn serve_media_request_sync(
     request: Request<Vec<u8>>,
     allowlist: &MediaAllowlist,
@@ -292,11 +433,26 @@ pub fn serve_media_request_sync(
 }
 
 pub fn handle_async_media_protocol(
+    #[allow(unused_variables)] app: AppHandle,
     allowlist: Arc<MediaAllowlist>,
     request: Request<Vec<u8>>,
     responder: tauri::UriSchemeResponder,
 ) {
     tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(target_os = "android")]
+        if request.method() != "OPTIONS" {
+            if let Ok(MediaTarget::File(raw)) = parse_media_uri(request.uri()) {
+                if raw.starts_with("content://") {
+                    if !allowlist.is_allowed_content_uri(&raw) {
+                        responder.respond(plain_response(StatusCode::FORBIDDEN, "Forbidden"));
+                        return;
+                    }
+                    let response = serve_android_content_uri(&app, &raw, &request);
+                    responder.respond(response);
+                    return;
+                }
+            }
+        }
         let response = serve_media_request_sync(request, &allowlist);
         responder.respond(response);
     });

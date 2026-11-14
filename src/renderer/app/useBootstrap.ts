@@ -8,6 +8,13 @@ import { useEffect } from "react";
 import type { AppSettings, MediaCommand } from "../../shared/types";
 import { inferArtworkMimeType } from "../../main/media/protocolHandler";
 import { audioEngine } from "../audio/engine";
+import {
+  androidApplyEqualizer,
+  androidSetSystemBarsTheme,
+  androidSetTrackGain,
+  isAndroidNativeAudio,
+  subscribeAndroidAudioEvents,
+} from "../audio/androidAudio";
 import { computeReplayGain } from "../audio/replayGain";
 import { applyFontFamily } from "./fonts";
 import { useLibrary } from "../state/libraryStore";
@@ -137,11 +144,74 @@ export function useBootstrap(): void {
       }),
     ];
 
-    // Auto-advance when the element reaches the end of a track.
-    const ending = audioEngine.on("state", state => {
-      if (state.ended) void usePlayer.getState().handleEnded();
-    });
-    unsubscribers.push(ending);
+    if (isAndroidNativeAudio()) {
+      unsubscribers.push(
+        subscribeAndroidAudioEvents({
+          onPlayback: snap => {
+            usePlayer.getState().syncTime(snap.position, snap.duration, snap.buffered);
+            usePlayer.getState().syncState({
+              playing: snap.playing,
+              buffering: snap.buffering,
+              ended: snap.ended,
+            });
+          },
+          onTrackTransition: (index, trackId) => {
+            usePlayer.getState().syncAndroidTransition(index, trackId);
+          },
+          onError: message => {
+            usePlayer.getState().setError(message);
+            useUi.getState().showToast(message);
+          },
+          onOpenNowPlaying: () => {
+            useUi.getState().navigate({ name: "lyrics" });
+          },
+        })
+      );
+
+      (
+        window as unknown as { __cadenceHandleAndroidBack?: () => "handled" | "minimize" | "exit" }
+      ).__cadenceHandleAndroidBack = () => {
+        const ui = useUi.getState();
+        if (ui.shortcutsHelpOpen) {
+          ui.setShortcutsHelpOpen(false);
+          return "handled";
+        }
+        if (ui.playlistPicker) {
+          ui.closePlaylistPicker();
+          return "handled";
+        }
+        if (ui.trackEditorId !== null) {
+          ui.closeTrackEditor();
+          return "handled";
+        }
+        if (ui.queueOpen) {
+          ui.toggleQueue(false);
+          return "handled";
+        }
+        if (ui.fullscreenLyrics) {
+          ui.setFullscreenLyrics(false);
+          return "handled";
+        }
+        if (ui.route.name !== "home") {
+          const prevHash = window.location.hash;
+          ui.goBack();
+          window.setTimeout(() => {
+            if (window.location.hash === prevHash && useUi.getState().route.name !== "home") {
+              useUi.getState().navigate({ name: "home" });
+            }
+          }, 80);
+          return "handled";
+        }
+        return usePlayer.getState().isPlaying ? "minimize" : "exit";
+      };
+    } else {
+      // Auto-advance when the desktop HTMLAudioElement reaches the end of a track.
+      unsubscribers.push(
+        audioEngine.on("state", state => {
+          if (state.ended) void usePlayer.getState().handleEnded();
+        })
+      );
+    }
 
     const dispatchMediaCommand = (command: MediaCommand, fromGlobalShortcut = false) => {
       const now = performance.now();
@@ -245,7 +315,7 @@ export function useBootstrap(): void {
         });
       }
 
-      if (!("mediaSession" in navigator)) return;
+      if (isAndroidNativeAudio() || !("mediaSession" in navigator)) return;
 
       if (!item) {
         if (lastMetadataSignature !== "") {
@@ -318,7 +388,7 @@ export function useBootstrap(): void {
       ],
     ];
 
-    if ("mediaSession" in navigator) {
+    if (!isAndroidNativeAudio() && "mediaSession" in navigator) {
       for (const [action, handler] of handlers) {
         try {
           navigator.mediaSession.setActionHandler(action, handler);
@@ -547,10 +617,16 @@ export function useBootstrap(): void {
         if (player.rate !== settings.playback.playbackRate) player.setRate(settings.playback.playbackRate);
         if (player.repeat !== settings.playback.repeat) player.setRepeat(settings.playback.repeat);
         if (player.shuffle !== settings.playback.shuffle) player.toggleShuffle();
-        audioEngine.applyEqualizer(settings.playback.equalizer);
         const trackId = currentTrackId(player);
         const track = trackId === null ? null : getTrackById(trackId);
-        audioEngine.setTrackGain(computeReplayGain(track, settings.playback).linear);
+        const gain = computeReplayGain(track, settings.playback).linear;
+        if (isAndroidNativeAudio()) {
+          androidApplyEqualizer(settings.playback.equalizer);
+          androidSetTrackGain(gain);
+        } else {
+          audioEngine.applyEqualizer(settings.playback.equalizer);
+          audioEngine.setTrackGain(gain);
+        }
       } finally {
         applyingSettings = false;
       }
@@ -579,17 +655,29 @@ export function useBootstrap(): void {
     };
   }, []);
 
-  // Visual settings that live on the document root.
+  // Visual settings that live on the document root (theme, accent, motion, sidebar, font).
   useEffect(() => {
+    const mediaQuery =
+      typeof window !== "undefined" && typeof window.matchMedia === "function"
+        ? window.matchMedia("(prefers-color-scheme: light)")
+        : null;
+
     const apply = (settings: AppSettings | null) => {
       if (!settings) return;
       const root = document.documentElement;
+      const pref = settings.appearance.theme ?? "dark";
+      const resolvedTheme =
+        pref === "system" ? (mediaQuery?.matches ? "light" : "dark") : pref;
+      root.dataset.theme = resolvedTheme;
       root.style.setProperty("--accent", settings.appearance.accent);
       root.dataset.reduceMotion = settings.appearance.reduceMotion ? "true" : "false";
       root.dataset.compactSidebar = settings.appearance.compactSidebar ? "true" : "false";
       root.dataset.compactSidebarHoverExpand = settings.appearance.compactSidebarHoverExpand ? "true" : "false";
       root.dataset.blurArtwork = settings.appearance.blurArtwork ? "true" : "false";
       applyFontFamily(settings.appearance.fontFamily, root);
+      if (isAndroidNativeAudio()) {
+        androidSetSystemBarsTheme(resolvedTheme === "light");
+      }
       // Enable the sidebar-width transition only after the restored layout has painted, so a
       // saved compact sidebar starts compact instead of visibly shrinking on every launch.
       if (root.dataset.motionReady !== "true") {
@@ -598,9 +686,15 @@ export function useBootstrap(): void {
         });
       }
     };
+    const onSchemeChange = () => apply(useSettings.getState().settings);
+    mediaQuery?.addEventListener?.("change", onSchemeChange);
     // Settings that loaded before this effect ran (a remount, StrictMode) still reach the root.
     apply(useSettings.getState().settings);
-    return useSettings.subscribe(state => apply(state.settings));
+    const unsub = useSettings.subscribe(state => apply(state.settings));
+    return () => {
+      mediaQuery?.removeEventListener?.("change", onSchemeChange);
+      unsub();
+    };
   }, []);
 
   // Shader audio analysis settings + start/stop with playback.

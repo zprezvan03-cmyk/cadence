@@ -34,6 +34,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     },
   },
   appearance: {
+    theme: "dark",
     accent: "#ff3d71",
     reduceMotion: false,
     compactSidebar: false,
@@ -116,7 +117,7 @@ export function mergeSettings<T>(base: T, patch: unknown): T {
 }
 
 /** Clamps bounded settings fields; applied on load and on every patch. */
-function normalizeSettings(settings: AppSettings): AppSettings {
+export function normalizeSettings(settings: AppSettings): AppSettings {
   const clampNumber = (value: unknown, fallback: number, min: number, max: number): number => {
     const number = Number(value);
     return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
@@ -184,6 +185,12 @@ function normalizeSettings(settings: AppSettings): AppSettings {
     onboardingStep: Number.isFinite(step) ? Math.min(4, Math.max(0, Math.round(step))) : 0,
   };
   settings.nowPlayingProfiles = normalizeNowPlayingProfilesSettings(settings.nowPlayingProfiles);
+  if (!isPlainObject(settings.appearance)) {
+    settings.appearance = structuredClone(DEFAULT_SETTINGS.appearance);
+  }
+  const rawTheme = settings.appearance.theme;
+  settings.appearance.theme =
+    rawTheme === "light" || rawTheme === "dark" || rawTheme === "system" ? rawTheme : "dark";
   const scrobblingSource: AnyRecord = isPlainObject(settings.scrobbling) ? settings.scrobbling : {};
   const credential = (value: unknown): string =>
     typeof value === "string" ? value.trim().slice(0, 256) : "";

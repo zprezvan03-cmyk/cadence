@@ -10,6 +10,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, TauriEvent, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  AndroidPermissionsStatus,
+  AndroidSystemInfo,
   AppInfo,
   CadenceApi,
   DecodeDeleteOutcome,
@@ -26,7 +28,7 @@ import type {
   WindowChromeState,
 } from "../shared/types";
 import { isPathInside, type PathPlatform } from "../main/media/allowlist";
-import { toTauriMediaUrl } from "../main/media/protocolHandler";
+import { toTauriMediaUrl, type TauriMediaPlatform } from "../main/media/protocolHandler";
 import { SettingsCore } from "../main/settingsCore";
 import { LyricsCacheCore } from "../main/lyrics/cacheCore";
 import { createLocalLyricsReader } from "../main/lyrics/localLyricsCore";
@@ -269,7 +271,9 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
     fullscreen: false,
     focused: true,
   };
+  const isAndroid = bootstrap.platform === "android";
   const pathPlatform: PathPlatform = bootstrap.platform === "win32" ? "win32" : "posix";
+  const mediaPlatform: TauriMediaPlatform = isAndroid ? "android" : pathPlatform;
 
   setRuntimeFetch(createTauriRuntimeFetch());
 
@@ -342,7 +346,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
   };
 
   const mediaUrl = (targetPath: string, isArtwork = false): string =>
-    toTauriMediaUrl(targetPath, isArtwork ? "art" : "file", pathPlatform);
+    toTauriMediaUrl(targetPath, isArtwork ? "art" : "file", mediaPlatform);
 
   const store = new LibraryStoreCore(
     bootstrap.artworkDir,
@@ -701,6 +705,18 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         await flushDbQueue();
         const result = await runFolderScan([picked], false);
         return { canceled: false, folders: store.getFolders(), result };
+      },
+
+      async scanMediaStore() {
+        const perms = await invoke<AndroidPermissionsStatus>("cmd_android_request_permissions");
+        if (!perms?.audioGranted) {
+          return { granted: false };
+        }
+        store.addFolder("mediastore://audio");
+        await invoke("cmd_allowlist_sync", { roots: store.getFolders() });
+        await flushDbQueue();
+        const result = await runFolderScan(["mediastore://audio"], false);
+        return { granted: true, result };
       },
 
       async removeFolder(folderPath: string): Promise<LibrarySnapshot> {
@@ -1185,7 +1201,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
     player: {
       async prepareAlacSource(path: string): Promise<string> {
         const decodedPath = await invoke<string>("cmd_prepare_alac_playback", { sourcePath: path });
-        return toTauriMediaUrl(decodedPath, "file", pathPlatform);
+        return toTauriMediaUrl(decodedPath, "file", mediaPlatform);
       },
 
       async reportState(state: PlayerSnapshot): Promise<void> {
@@ -1285,6 +1301,28 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         };
       },
     },
+
+    ...(isAndroid
+      ? {
+          android: {
+            async requestPermissions(): Promise<AndroidPermissionsStatus> {
+              return invoke<AndroidPermissionsStatus>("cmd_android_request_permissions");
+            },
+            async systemInfo(): Promise<AndroidSystemInfo> {
+              return invoke<AndroidSystemInfo>("cmd_android_system_info");
+            },
+            async audioAction(
+              action: string,
+              payload: Record<string, unknown> = {}
+            ): Promise<Record<string, unknown>> {
+              return invoke<Record<string, unknown>>("cmd_android_audio_action", {
+                action,
+                payload,
+              });
+            },
+          },
+        }
+      : {}),
 
     onMenuAction(listener: (action: string) => void): () => void {
       menuListeners.add(listener);

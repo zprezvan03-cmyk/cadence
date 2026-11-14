@@ -3,9 +3,10 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { Clock3, FolderPlus, Heart, Mic2, Play, Shuffle } from "lucide-react";
+import { Clock3, FolderPlus, Heart, Mic2, Play, Shuffle, Smartphone } from "lucide-react";
 import { trackSourceKey } from "../../../shared/media";
 import type { HistoryPayload } from "../../../shared/types";
+import { isAndroidNativeAudio } from "../../audio/androidAudio";
 import { useLibrary } from "../../state/libraryStore";
 import { useHistory } from "../../state/historyStore";
 import { usePlayer } from "../../state/playerStore";
@@ -35,8 +36,10 @@ function formatLastPlayed(timestamp: number | null): string {
 }
 
 export function HomeView() {
+  const hasAndroid = isAndroidNativeAudio();
   const snapshot = useLibrary(state => state.snapshot);
   const addFolder = useLibrary(state => state.addFolder);
+  const scanMediaStore = useLibrary(state => state.scanMediaStore);
   const scanning = useLibrary(state => state.scanning);
   const navigate = useUi(state => state.navigate);
   const showToast = useUi(state => state.showToast);
@@ -121,7 +124,17 @@ export function HomeView() {
           them with the Better Lyrics engine and its shader backgrounds. Nothing is uploaded anywhere.
         </p>
         <div className="empty-actions">
-          <button type="button" className="primary" onClick={() => void addFolder()} disabled={scanning}>
+          {hasAndroid ? (
+            <button type="button" className="primary" onClick={() => void scanMediaStore()} disabled={scanning}>
+              <Smartphone size={18} /> {scanning ? "Scanning…" : "Scan device music"}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className={hasAndroid ? "" : "primary"}
+            onClick={() => void addFolder()}
+            disabled={scanning}
+          >
             <FolderPlus size={18} /> {scanning ? "Scanning…" : "Add music folder"}
           </button>
         </div>

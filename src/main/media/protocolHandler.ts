@@ -25,6 +25,7 @@ export const MEDIA_CORS_HEADERS: Record<string, string> = {
 
 export { MediaAllowlist };
 export type { PathPlatform };
+export type TauriMediaPlatform = PathPlatform | "android";
 
 const utf8Encoder = new TextEncoder();
 const utf8Decoder = new TextDecoder("utf-8", { fatal: false });
@@ -61,19 +62,30 @@ export function toMediaUrl(path: string, kind: "file" | "art" = "file", platform
 
 /**
  * Formats a `cadence-media` URL for Tauri's URI scheme router:
- * - Windows WebView2 maps custom protocols to `http://<scheme>.localhost/<path>`
+ * - Windows WebView2 and Android WebView map custom protocols to `http(s)://<scheme>.localhost/<path>`
  * - macOS / Linux map custom protocols to `<scheme>://localhost/<path>`
  */
 export function toTauriMediaUrl(
   path: string,
   kind: "file" | "art" = "file",
-  platform: PathPlatform = detectRuntimePlatform()
+  platform: TauriMediaPlatform = detectRuntimePlatform()
 ): string {
-  const pathApi = resolvePathApi(platform, path);
-  const normalized = pathApi === win32Path ? pathApi.resolve(stripWindowsDevicePrefix(path)) : pathApi.resolve(path);
+  let normalized: string;
+  if (path.startsWith("content://")) {
+    normalized = path;
+  } else {
+    const posixOrWin: PathPlatform = platform === "android" ? "posix" : platform;
+    const pathApi = resolvePathApi(posixOrWin, path);
+    normalized = pathApi === win32Path ? pathApi.resolve(stripWindowsDevicePrefix(path)) : pathApi.resolve(path);
+  }
   const encoded = encodePath(normalized);
   if (platform === "win32") {
     return `http://${MEDIA_SCHEME}.localhost/${kind}/${encoded}`;
+  }
+  if (platform === "android") {
+    const scheme =
+      typeof window !== "undefined" && window.location?.protocol === "https:" ? "https" : "http";
+    return `${scheme}://${MEDIA_SCHEME}.localhost/${kind}/${encoded}`;
   }
   return `${MEDIA_SCHEME}://localhost/${kind}/${encoded}`;
 }
@@ -86,9 +98,10 @@ export function artworkUrl(artworkDirectory: string, fileName: string, platform?
 export function tauriArtworkUrl(
   artworkDirectory: string,
   fileName: string,
-  platform: PathPlatform = detectRuntimePlatform()
+  platform: TauriMediaPlatform = detectRuntimePlatform()
 ): string {
-  const pathApi = resolvePathApi(platform, artworkDirectory);
+  const posixOrWin: PathPlatform = platform === "android" ? "posix" : platform;
+  const pathApi = resolvePathApi(posixOrWin, artworkDirectory);
   return toTauriMediaUrl(pathApi.join(artworkDirectory, fileName), "art", platform);
 }
 

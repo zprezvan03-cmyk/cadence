@@ -82,7 +82,7 @@
   gap: 14px;
   padding: 12px;
   border-radius: var(--radius);
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.025));
+  background: linear-gradient(90deg, var(--card-tint-strong), var(--card-tint));
   border: 1px solid var(--border);
   text-align: left;
   transition: background var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out);
@@ -137,7 +137,7 @@
   gap: 11px;
   padding: 7px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.035);
+  background: var(--card-tint);
   border: 1px solid transparent;
   text-align: left;
   min-width: 0;
@@ -964,7 +964,8 @@
   width: 18px;
   height: 18px;
   border-radius: 999px;
-  background: #fff;
+  background: var(--switch-knob);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
   transition: transform var(--dur-2) var(--ease-spring);
 }
 
@@ -1070,7 +1071,7 @@
 .range-row input[type="range"]::-webkit-slider-runnable-track {
   height: 3px;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--slider-track);
 }
 
 .range-row input[type="range"]::-webkit-slider-thumb {
@@ -1078,7 +1079,7 @@
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--slider-thumb);
   margin-top: -4.5px;
   border: 0;
   cursor: pointer;
@@ -2099,9 +2100,9 @@
   width: min(320px, 86vw);
   padding: 14px;
   border-radius: 14px;
-  background: var(--surface-1, #17171c);
+  background: var(--surface);
   border: 1px solid var(--border);
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -2583,7 +2584,7 @@
   place-items: center;
   padding: 20px;
   overflow-y: auto;
-  background: rgba(8, 8, 10, 0.72);
+  background: var(--modal-overlay);
   backdrop-filter: blur(10px);
 }
 
@@ -2591,8 +2592,8 @@
   width: min(640px, 100%);
   border-radius: 20px;
   border: 1px solid var(--border);
-  background: var(--surface-1, #141418);
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
   padding: 22px 24px 18px;
   display: flex;
   flex-direction: column;
@@ -2792,3 +2793,138 @@
     width: auto;
   }
 }
+
+/* ----------------------------------------------------------- mobile views */
+
+.mobile-library-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 12px;
+  margin-bottom: 6px;
+  scrollbar-width: none;
+}
+
+.mobile-library-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.mobile-lib-tab {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mobile-lib-tab.active {
+  background: var(--primary-bg);
+  color: var(--primary-text);
+  border-color: transparent;
+}
+
+html[data-mobile="true"] .view-heading {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+html[data-mobile="true"] .view-heading h1 {
+  font-size: 26px;
+}
+
+html[data-mobile="true"] .heading-actions {
+  flex-wrap: wrap;
+}
+
+html[data-mobile="true"] .detail-hero {
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 18px;
+}
+
+html[data-mobile="true"] .detail-hero h1 {
+  font-size: 24px;
+}
+
+html[data-mobile="true"] .detail-actions {
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+html[data-mobile="true"] .media-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+html[data-mobile="true"] .cards-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+html[data-mobile="true"] .quick-grid {
+  grid-template-columns: 1fr;
+}
+
+html[data-mobile="true"] .track-table-head,
+html[data-mobile="true"] .track-row {
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+html[data-mobile="true"] .track-row .track-album,
+html[data-mobile="true"] .track-row .track-duration,
+html[data-mobile="true"] .track-table-head > span:nth-child(3),
+html[data-mobile="true"] .track-table-head > span:nth-child(4) {
+  display: none;
+}
+
+html[data-mobile="true"] .list-toolbar {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+html[data-mobile="true"] .settings-tabs {
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  scrollbar-width: none;
+}
+
+html[data-mobile="true"] .settings-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+html[data-mobile="true"] .setting-row {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+html[data-mobile="true"] .setting-row > select,
+html[data-mobile="true"] .range-row .range-control {
+  width: 100%;
+  min-width: 0;
+}
+
+html[data-mobile="true"] .eq-bands {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+html[data-mobile="true"] .onboarding-card {
+  padding: 16px;
+}
+
+html[data-mobile="true"] .onboarding-steps {
+  display: none;
+}
+
+html[data-mobile="true"] .onboarding-nav {
+  flex-wrap: wrap;
+}
+

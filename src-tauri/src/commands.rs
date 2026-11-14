@@ -10,10 +10,15 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, UNIX_EPOCH};
 
+#[cfg(target_os = "android")]
+use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::ipc::{InvokeBody, Response as IpcResponse};
-use tauri::{State, WebviewWindow};
+#[cfg(target_os = "android")]
+use tauri::Manager;
+use tauri::{AppHandle, State, WebviewWindow};
+use tauri_plugin_opener::OpenerExt;
 use tokio::sync::oneshot;
 
 use crate::allowlist::MediaAllowlist;
@@ -79,15 +84,28 @@ pub struct WindowChromeState {
 }
 
 fn read_window_chrome(window: &WebviewWindow) -> WindowChromeState {
-    WindowChromeState {
-        undecorated: !window.is_decorated().unwrap_or(true),
-        maximized: window.is_maximized().unwrap_or(false),
-        fullscreen: window.is_fullscreen().unwrap_or(false),
-        focused: window.is_focused().unwrap_or(true),
+    #[cfg(desktop)]
+    {
+        WindowChromeState {
+            undecorated: !window.is_decorated().unwrap_or(true),
+            maximized: window.is_maximized().unwrap_or(false),
+            fullscreen: window.is_fullscreen().unwrap_or(false),
+            focused: window.is_focused().unwrap_or(true),
+        }
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = window;
+        WindowChromeState {
+            undecorated: false,
+            maximized: false,
+            fullscreen: false,
+            focused: true,
+        }
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WalkedAudioFile {
     pub path: String,
@@ -97,28 +115,28 @@ pub struct WalkedAudioFile {
     pub animated_art_path: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanErrorEntry {
     pub path: String,
     pub reason: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WalkResultPayload {
     pub files: Vec<WalkedAudioFile>,
     pub errors: Vec<ScanErrorEntry>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PickedLyricsFile {
     pub path: String,
     pub text: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DecodeDeleteOutcome {
     pub path: String,
@@ -147,6 +165,55 @@ pub struct HttpFetchArgs {
     /// Optional request body for POST-style calls (e.g. last.fm scrobbling).
     #[serde(default)]
     pub body: Option<String>,
+}
+
+#[cfg(target_os = "android")]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AndroidPickReply {
+    path: Option<String>,
+}
+
+#[cfg(target_os = "android")]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AndroidChunkReply {
+    base64: String,
+}
+
+#[cfg(target_os = "android")]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AndroidTextReply {
+    text: Option<String>,
+}
+
+#[cfg(target_os = "android")]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AndroidListDirReply {
+    names: Vec<String>,
+}
+
+#[cfg(target_os = "android")]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AndroidPathReply {
+    path: String,
+}
+
+#[cfg(target_os = "android")]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AndroidExportReply {
+    path: Option<String>,
+}
+
+#[cfg(target_os = "android")]
+fn android_plugin(app: &AppHandle) -> Result<&crate::CadenceAndroidHandle, String> {
+    app.try_state::<crate::CadenceAndroidHandle>()
+        .map(|s| s.inner())
+        .ok_or_else(|| "Android plugin is not initialized".to_string())
 }
 
 fn atomic_write_utf8(target: &Path, content: &str) -> Result<(), String> {
@@ -335,6 +402,19 @@ pub fn cmd_bootstrap(
     let db_snapshot = state.db.load_snapshot()?;
 
     state.allowlist.set_roots(db_snapshot.folders.iter().cloned());
+    // Also authorize already-scanned tracks (critical on Android when MediaStore scanned `/storage/...`
+    // paths under `mediastore://audio`).
+    for track in &db_snapshot.tracks {
+        if let Some(raw_path) = track.get("path").and_then(|v| v.as_str()) {
+            let track_path = Path::new(raw_path);
+            state.allowlist.add_file(track_path);
+            if !crate::allowlist::is_content_or_mediastore_uri(raw_path) {
+                if let Some(parent) = track_path.parent() {
+                    state.allowlist.add_root(parent);
+                }
+            }
+        }
+    }
 
     let startup_files = state
         .pending_open_files
@@ -349,6 +429,10 @@ pub fn cmd_bootstrap(
         "win32"
     } else if cfg!(target_os = "macos") {
         "darwin"
+    } else if cfg!(target_os = "android") {
+        "android"
+    } else if cfg!(target_os = "ios") {
+        "ios"
     } else {
         "linux"
     };
@@ -399,16 +483,6 @@ pub struct HistoryEntry {
     pub payload: Value,
 }
 
-/// Records one completed listening session: the track that genuinely started playing, when it
-/// started, and a snapshot of its metadata at that moment. Fires once per play start, never on
-/// pause/resume or position ticks.
-///
-/// Parameters are flat (like every other command here) on purpose: Tauri resolves each
-/// parameter by name from the invoke payload, so a single struct parameter would require the
-/// bridge to nest the fields under that parameter's name. This command previously took a
-/// `HistoryAddArgs` struct while the bridge sent the fields flat, which made every invoke
-/// reject before reaching SQLite — history rendered from in-memory optimistic rows during a
-/// session and vanished on restart. The contract is pinned by tests/unit/ipcContract.test.ts.
 #[tauri::command]
 pub async fn cmd_history_add(
     source_kind: String,
@@ -420,9 +494,6 @@ pub async fn cmd_history_add(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let db = Arc::clone(&state.db);
-    // The write runs on the blocking pool so playback never waits on disk I/O, but its
-    // result is propagated: a failed insert must reach the bridge caller (which logs it)
-    // instead of being silently dropped.
     tauri::async_runtime::spawn_blocking(move || {
         db.add_history_entry(
             &source_kind,
@@ -438,7 +509,6 @@ pub async fn cmd_history_add(
     Ok(())
 }
 
-/// Returns the most recent listening history entries, newest first. Bounded by `HISTORY_CAP`.
 #[tauri::command]
 pub async fn cmd_history_list(state: State<'_, AppState>) -> Result<Vec<HistoryEntry>, String> {
     let db = Arc::clone(&state.db);
@@ -459,7 +529,6 @@ pub async fn cmd_history_list(state: State<'_, AppState>) -> Result<Vec<HistoryE
         .collect())
 }
 
-/// Clears every listening history entry. Cannot be undone.
 #[tauri::command]
 pub async fn cmd_history_clear(state: State<'_, AppState>) -> Result<(), String> {
     let db = Arc::clone(&state.db);
@@ -500,89 +569,205 @@ pub async fn cmd_write_user_json(
 
 #[tauri::command]
 pub async fn cmd_pick_folder(
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
-    let picked = tauri::async_runtime::spawn_blocking(|| {
-        rfd::FileDialog::new()
-            .set_title("Choose a music folder")
-            .pick_folder()
-    })
-    .await
-    .map_err(|e| e.to_string())?;
+    #[cfg(desktop)]
+    {
+        let _ = app;
+        let picked = tauri::async_runtime::spawn_blocking(|| {
+            rfd::FileDialog::new()
+                .set_title("Choose a music folder")
+                .pick_folder()
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
-    let Some(raw_path) = picked else {
-        return Ok(None);
-    };
-    let path = crate::allowlist::strip_verbatim_prefix(raw_path);
-    state.allowlist.add_root(&path);
-    Ok(Some(path.to_string_lossy().into_owned()))
-}
-
-#[tauri::command]
-pub async fn cmd_pick_lyrics_file() -> Result<Option<PickedLyricsFile>, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let picked = rfd::FileDialog::new()
-            .set_title("Choose a lyrics file")
-            .add_filter("Lyrics", &["ttml", "qrc", "lrc", "srt", "txt"])
-            .pick_file();
         let Some(raw_path) = picked else {
             return Ok(None);
         };
         let path = crate::allowlist::strip_verbatim_prefix(raw_path);
-        let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        Ok(Some(PickedLyricsFile {
-            path: path.to_string_lossy().into_owned(),
-            text,
-        }))
-    })
-    .await
-    .map_err(|e| e.to_string())?
+        state.allowlist.add_root(&path);
+        Ok(Some(path.to_string_lossy().into_owned()))
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        let plugin = android_plugin(&app)?;
+        let reply: AndroidPickReply = plugin
+            .0
+            .run_mobile_plugin_async("pickMusicFolder", serde_json::json!({}))
+            .await
+            .map_err(|e| e.to_string())?;
+        if let Some(uri) = reply.path {
+            state.allowlist.add_content_root(&uri);
+            Ok(Some(uri))
+        } else {
+            Ok(None)
+        }
+    }
+
+    #[cfg(not(any(desktop, target_os = "android")))]
+    {
+        let _ = (app, state);
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+pub async fn cmd_pick_lyrics_file(app: AppHandle) -> Result<Option<PickedLyricsFile>, String> {
+    #[cfg(desktop)]
+    {
+        let _ = app;
+        tauri::async_runtime::spawn_blocking(|| {
+            let picked = rfd::FileDialog::new()
+                .set_title("Choose a lyrics file")
+                .add_filter("Lyrics", &["ttml", "qrc", "lrc", "srt", "txt"])
+                .pick_file();
+            let Some(raw_path) = picked else {
+                return Ok(None);
+            };
+            let path = crate::allowlist::strip_verbatim_prefix(raw_path);
+            let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            Ok(Some(PickedLyricsFile {
+                path: path.to_string_lossy().into_owned(),
+                text,
+            }))
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        let plugin = android_plugin(&app)?;
+        let reply: Option<PickedLyricsFile> = plugin
+            .0
+            .run_mobile_plugin_async("pickLyricsFile", serde_json::json!({}))
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(reply)
+    }
+
+    #[cfg(not(any(desktop, target_os = "android")))]
+    {
+        let _ = app;
+        Ok(None)
+    }
 }
 
 #[tauri::command]
 pub async fn cmd_walk_folders(
     folders: Vec<String>,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<WalkResultPayload, String> {
     let allowlist = Arc::clone(&state.allowlist);
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut files = Vec::new();
-        let mut errors = Vec::new();
-        let mut seen = HashSet::new();
 
-        for folder in folders {
-            let Some(allowed_dir) = allowlist.resolve_allowed_media(&folder) else {
-                errors.push(ScanErrorEntry {
-                    path: folder,
-                    reason: "Folder is not in library allowlist".to_string(),
-                });
-                continue;
-            };
-            match std::fs::metadata(&allowed_dir) {
-                Ok(meta) if meta.is_dir() => {
-                    let mut folder_files = Vec::new();
-                    walk_directory_recursive(&allowed_dir, 0, &mut folder_files);
-                    for entry in folder_files {
-                        if seen.insert(entry.path.clone()) {
-                            files.push(entry);
-                        }
+    #[cfg(not(target_os = "android"))]
+    let _ = app;
+
+    let mut files = Vec::new();
+    let mut errors = Vec::new();
+    let mut seen = HashSet::new();
+
+    let mut posix_folders = Vec::new();
+    let mut virtual_folders = Vec::new();
+
+    for folder in folders {
+        if crate::allowlist::is_content_or_mediastore_uri(&folder) {
+            allowlist.add_content_root(&folder);
+            virtual_folders.push(folder);
+        } else {
+            posix_folders.push(folder);
+        }
+    }
+
+    if !posix_folders.is_empty() {
+        let allowlist_clone = Arc::clone(&allowlist);
+        let posix_res = tauri::async_runtime::spawn_blocking(move || -> WalkResultPayload {
+            let mut local_files = Vec::new();
+            let mut local_errors = Vec::new();
+
+            for folder in posix_folders {
+                let Some(allowed_dir) = allowlist_clone.resolve_allowed_media(&folder) else {
+                    local_errors.push(ScanErrorEntry {
+                        path: folder,
+                        reason: "Folder is not in library allowlist".to_string(),
+                    });
+                    continue;
+                };
+                match std::fs::metadata(&allowed_dir) {
+                    Ok(meta) if meta.is_dir() => {
+                        let mut folder_files = Vec::new();
+                        walk_directory_recursive(&allowed_dir, 0, &mut folder_files);
+                        local_files.extend(folder_files);
                     }
+                    Ok(_) => local_errors.push(ScanErrorEntry {
+                        path: folder,
+                        reason: "Not a directory".to_string(),
+                    }),
+                    Err(err) => local_errors.push(ScanErrorEntry {
+                        path: folder,
+                        reason: err.to_string(),
+                    }),
                 }
-                Ok(_) => errors.push(ScanErrorEntry {
-                    path: folder,
-                    reason: "Not a directory".to_string(),
-                }),
-                Err(err) => errors.push(ScanErrorEntry {
-                    path: folder,
-                    reason: err.to_string(),
-                }),
+            }
+            WalkResultPayload {
+                files: local_files,
+                errors: local_errors,
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+        for entry in posix_res.files {
+            if seen.insert(entry.path.clone()) {
+                files.push(entry);
             }
         }
+        errors.extend(posix_res.errors);
+    }
 
-        Ok(WalkResultPayload { files, errors })
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    #[cfg(target_os = "android")]
+    if !virtual_folders.is_empty() {
+        let plugin = android_plugin(&app)?;
+        let android_res: WalkResultPayload = plugin
+            .0
+            .run_mobile_plugin_async(
+                "walkFolders",
+                serde_json::json!({ "folders": virtual_folders }),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+
+        for entry in android_res.files {
+            let entry_path = Path::new(&entry.path);
+            allowlist.add_file(entry_path);
+            if !crate::allowlist::is_content_or_mediastore_uri(&entry.path) {
+                if let Some(parent) = entry_path.parent() {
+                    allowlist.add_root(parent);
+                }
+            }
+            if let Some(ref art_path) = entry.animated_art_path {
+                allowlist.add_file(Path::new(art_path));
+            }
+            if seen.insert(entry.path.clone()) {
+                files.push(entry);
+            }
+        }
+        errors.extend(android_res.errors);
+    }
+
+    #[cfg(not(target_os = "android"))]
+    for folder in virtual_folders {
+        errors.push(ScanErrorEntry {
+            path: folder,
+            reason: "Virtual Android URI is not supported on this platform".to_string(),
+        });
+    }
+
+    Ok(WalkResultPayload { files, errors })
 }
 
 #[tauri::command]
@@ -616,15 +801,42 @@ pub async fn cmd_read_file_chunk(
     path: String,
     offset: u64,
     length: usize,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<IpcResponse, String> {
-    let Some(allowed_path) = state.allowlist.resolve_allowed_media(&path) else {
-        return Err("Forbidden".to_string());
-    };
+    #[cfg(not(target_os = "android"))]
+    let _ = app;
+
     let clamped = length.min(MAX_CHUNK_READ_BYTES);
     if clamped == 0 {
         return Ok(IpcResponse::new(Vec::new()));
     }
+
+    #[cfg(target_os = "android")]
+    if path.starts_with("content://") {
+        if !state.allowlist.is_allowed_content_uri(&path) {
+            return Err("Forbidden".to_string());
+        }
+        let plugin = android_plugin(&app)?;
+        let reply: AndroidChunkReply = plugin
+            .0
+            .run_mobile_plugin_async(
+                "readContentChunk",
+                serde_json::json!({
+                    "uri": path,
+                    "offset": offset,
+                    "length": clamped
+                }),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        let bytes = STANDARD.decode(reply.base64).map_err(|e| e.to_string())?;
+        return Ok(IpcResponse::new(bytes));
+    }
+
+    let Some(allowed_path) = state.allowlist.resolve_allowed_media(&path) else {
+        return Err("Forbidden".to_string());
+    };
     let bytes = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<u8>, String> {
         let mut file = File::open(&allowed_path).map_err(|e| e.to_string())?;
         file.seek(SeekFrom::Start(offset)).map_err(|e| e.to_string())?;
@@ -681,13 +893,50 @@ pub async fn cmd_save_artwork(
 #[tauri::command]
 pub async fn cmd_prepare_alac_playback(
     source_path: String,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    #[cfg(not(target_os = "android"))]
+    let _ = app;
+
+    let cache_dir = state.alac_cache_dir.clone();
+    let allowlist = Arc::clone(&state.allowlist);
+
+    #[cfg(target_os = "android")]
+    if source_path.starts_with("content://") {
+        if !allowlist.is_allowed_content_uri(&source_path) {
+            return Err("Audio path is outside library allowlist".to_string());
+        }
+        let temp_input = cache_dir.join(format!("alac-src-{}.m4a", std::process::id()));
+        let plugin = android_plugin(&app)?;
+        let _: Value = plugin
+            .0
+            .run_mobile_plugin_async(
+                "copyContentToFile",
+                serde_json::json!({
+                    "uri": source_path,
+                    "destPath": temp_input.to_string_lossy().into_owned()
+                }),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let decoded_res = tauri::async_runtime::spawn_blocking(move || {
+            let res = crate::alac::decode_alac_to_wav_cached(&temp_input, &cache_dir);
+            let _ = std::fs::remove_file(&temp_input);
+            let decoded = res?;
+            allowlist.add_file(&decoded);
+            Ok::<String, String>(decoded.to_string_lossy().into_owned())
+        })
+        .await
+        .map_err(|error| error.to_string())??;
+
+        return Ok(decoded_res);
+    }
+
     let Some(source) = state.allowlist.resolve_allowed_media(&source_path) else {
         return Err("Audio path is outside library allowlist".to_string());
     };
-    let cache_dir = state.alac_cache_dir.clone();
-    let allowlist = Arc::clone(&state.allowlist);
     tauri::async_runtime::spawn_blocking(move || {
         let decoded = crate::alac::decode_alac_to_wav_cached(&source, &cache_dir)?;
         allowlist.add_file(&decoded);
@@ -700,8 +949,26 @@ pub async fn cmd_prepare_alac_playback(
 #[tauri::command]
 pub async fn cmd_read_sidecar_text(
     path: String,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
+    #[cfg(not(target_os = "android"))]
+    let _ = app;
+
+    #[cfg(target_os = "android")]
+    if path.starts_with("content://") {
+        if !state.allowlist.is_allowed_content_uri(&path) {
+            return Ok(None);
+        }
+        let plugin = android_plugin(&app)?;
+        let reply: AndroidTextReply = plugin
+            .0
+            .run_mobile_plugin_async("readSidecarText", serde_json::json!({ "uri": path }))
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(reply.text);
+    }
+
     let Some(allowed) = state.allowlist.resolve_allowed_media(&path) else {
         return Ok(None);
     };
@@ -726,8 +993,26 @@ pub async fn cmd_read_sidecar_text(
 #[tauri::command]
 pub async fn cmd_list_directory(
     directory: String,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
+    #[cfg(not(target_os = "android"))]
+    let _ = app;
+
+    #[cfg(target_os = "android")]
+    if directory.starts_with("content://") {
+        if !state.allowlist.is_allowed_content_uri(&directory) {
+            return Ok(Vec::new());
+        }
+        let plugin = android_plugin(&app)?;
+        let reply: AndroidListDirReply = plugin
+            .0
+            .run_mobile_plugin_async("listDirectory", serde_json::json!({ "uri": directory }))
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(reply.names);
+    }
+
     let Some(allowed) = state.allowlist.resolve_allowed_media(&directory) else {
         return Ok(Vec::new());
     };
@@ -749,8 +1034,30 @@ pub async fn cmd_list_directory(
 pub async fn cmd_write_sidecar_lrc(
     audio_path: String,
     text: String,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    #[cfg(not(target_os = "android"))]
+    let _ = app;
+
+    #[cfg(target_os = "android")]
+    if audio_path.starts_with("content://") {
+        if !state.allowlist.is_allowed_content_uri(&audio_path) {
+            return Err("Audio path is outside library allowlist".to_string());
+        }
+        let plugin = android_plugin(&app)?;
+        let reply: AndroidPathReply = plugin
+            .0
+            .run_mobile_plugin_async(
+                "writeSidecar",
+                serde_json::json!({ "audioUri": audio_path, "text": text, "ext": "lrc" }),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        state.allowlist.add_content_file(&reply.path);
+        return Ok(reply.path);
+    }
+
     let Some(allowed_audio) = state.allowlist.resolve_allowed_media(&audio_path) else {
         return Err("Audio path is outside library allowlist".to_string());
     };
@@ -772,8 +1079,30 @@ pub async fn cmd_write_sidecar_lrc(
 pub async fn cmd_write_sidecar_ttml(
     audio_path: String,
     text: String,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    #[cfg(not(target_os = "android"))]
+    let _ = app;
+
+    #[cfg(target_os = "android")]
+    if audio_path.starts_with("content://") {
+        if !state.allowlist.is_allowed_content_uri(&audio_path) {
+            return Err("Audio path is outside library allowlist".to_string());
+        }
+        let plugin = android_plugin(&app)?;
+        let reply: AndroidPathReply = plugin
+            .0
+            .run_mobile_plugin_async(
+                "writeSidecar",
+                serde_json::json!({ "audioUri": audio_path, "text": text, "ext": "ttml" }),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        state.allowlist.add_content_file(&reply.path);
+        return Ok(reply.path);
+    }
+
     let Some(allowed_audio) = state.allowlist.resolve_allowed_media(&audio_path) else {
         return Err("Audio path is outside library allowlist".to_string());
     };
@@ -791,99 +1120,181 @@ pub async fn cmd_write_sidecar_ttml(
     Ok(returned)
 }
 
-/// Decode Tester: deletes explicitly confirmed library audio files.
-///
-/// Every path must resolve inside the media allowlist and carry an audio extension; anything else
-/// is reported per file instead of failing the batch. Only regular files are removed, never
-/// directories, and scanning itself never calls this command — the renderer invokes it solely from
-/// the Decode Tester's confirmation dialog.
 #[tauri::command]
 pub async fn cmd_decode_delete_files(
     paths: Vec<String>,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<DecodeDeleteOutcome>, String> {
+    #[cfg(not(target_os = "android"))]
+    let _ = app;
+
     let allowlist = Arc::clone(&state.allowlist);
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut seen = HashSet::new();
-        let mut outcomes = Vec::new();
-        for raw in paths {
-            if !seen.insert(raw.clone()) {
-                continue;
-            }
-            let result = (|| -> Result<(), String> {
-                let resolved = allowlist
-                    .resolve_allowed_media(&raw)
-                    .ok_or_else(|| "Path is outside library allowlist".to_string())?;
-                if !is_audio_extension(&resolved) {
-                    return Err("Target is not an audio file".to_string());
-                }
-                let metadata = std::fs::metadata(&resolved).map_err(|e| e.to_string())?;
-                if !metadata.is_file() {
-                    return Err("Target is not a file".to_string());
-                }
-                std::fs::remove_file(&resolved).map_err(|e| e.to_string())
-            })();
-            outcomes.push(match result {
-                Ok(()) => DecodeDeleteOutcome {
-                    path: raw,
-                    deleted: true,
-                    error: None,
-                },
-                Err(error) => DecodeDeleteOutcome {
-                    path: raw,
-                    deleted: false,
-                    error: Some(error),
-                },
-            });
+    let mut seen = HashSet::new();
+    let mut posix_paths = Vec::new();
+    let mut content_paths = Vec::new();
+
+    for raw in paths {
+        if !seen.insert(raw.clone()) {
+            continue;
         }
-        Ok(outcomes)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+        if raw.starts_with("content://") {
+            content_paths.push(raw);
+        } else {
+            posix_paths.push(raw);
+        }
+    }
+
+    let mut outcomes = Vec::new();
+
+    if !posix_paths.is_empty() {
+        let allowlist_clone = Arc::clone(&allowlist);
+        let local_outcomes = tauri::async_runtime::spawn_blocking(move || {
+            let mut list = Vec::new();
+            for raw in posix_paths {
+                let result = (|| -> Result<(), String> {
+                    let resolved = allowlist_clone
+                        .resolve_allowed_media(&raw)
+                        .ok_or_else(|| "Path is outside library allowlist".to_string())?;
+                    if !is_audio_extension(&resolved) {
+                        return Err("Target is not an audio file".to_string());
+                    }
+                    let metadata = std::fs::metadata(&resolved).map_err(|e| e.to_string())?;
+                    if !metadata.is_file() {
+                        return Err("Target is not a file".to_string());
+                    }
+                    std::fs::remove_file(&resolved).map_err(|e| e.to_string())
+                })();
+                list.push(match result {
+                    Ok(()) => DecodeDeleteOutcome {
+                        path: raw,
+                        deleted: true,
+                        error: None,
+                    },
+                    Err(error) => DecodeDeleteOutcome {
+                        path: raw,
+                        deleted: false,
+                        error: Some(error),
+                    },
+                });
+            }
+            list
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        outcomes.extend(local_outcomes);
+    }
+
+    #[cfg(target_os = "android")]
+    if !content_paths.is_empty() {
+        let mut allowed_uris = Vec::new();
+        for uri in content_paths {
+            if allowlist.is_allowed_content_uri(&uri) {
+                allowed_uris.push(uri);
+            } else {
+                outcomes.push(DecodeDeleteOutcome {
+                    path: uri,
+                    deleted: false,
+                    error: Some("Path is outside library allowlist".to_string()),
+                });
+            }
+        }
+        if !allowed_uris.is_empty() {
+            let plugin = android_plugin(&app)?;
+            let remote_outcomes: Vec<DecodeDeleteOutcome> = plugin
+                .0
+                .run_mobile_plugin_async(
+                    "deleteContentUris",
+                    serde_json::json!({ "uris": allowed_uris }),
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+            outcomes.extend(remote_outcomes);
+        }
+    }
+
+    #[cfg(not(target_os = "android"))]
+    for uri in content_paths {
+        outcomes.push(DecodeDeleteOutcome {
+            path: uri,
+            deleted: false,
+            error: Some("Android content URI deletion not supported on desktop".to_string()),
+        });
+    }
+
+    Ok(outcomes)
 }
 
-/// Decode Tester: exports problematic file paths to a UTF-8 `.txt` file, one path per line.
-///
-/// The destination comes from the native save dialog (which asks before overwriting an existing
-/// file). Only paths that resolve inside the media allowlist are written, de-duplicated in input
-/// order, so a successful scan result can never smuggle arbitrary text to disk.
 #[tauri::command]
 pub async fn cmd_decode_export_list(
     paths: Vec<String>,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
     let allowlist = Arc::clone(&state.allowlist);
-    tauri::async_runtime::spawn_blocking(move || -> Result<Option<String>, String> {
-        let mut seen = HashSet::new();
-        let mut lines: Vec<String> = Vec::new();
-        for raw in &paths {
-            if !seen.insert(raw.clone()) {
-                continue;
-            }
-            if allowlist.resolve_allowed_media(raw).is_some() {
-                lines.push(raw.clone());
-            }
+    let mut seen = HashSet::new();
+    let mut lines: Vec<String> = Vec::new();
+    for raw in &paths {
+        if !seen.insert(raw.clone()) {
+            continue;
         }
-        if lines.is_empty() {
-            return Err("No library files to export".to_string());
-        }
-
-        let picked = rfd::FileDialog::new()
-            .set_title("Export problematic file list")
-            .add_filter("Text files", &["txt"])
-            .set_file_name("cadence-decode-problems.txt")
-            .save_file();
-        let Some(raw_path) = picked else {
-            return Ok(None);
+        let allowed = if raw.starts_with("content://") {
+            allowlist.is_allowed_content_uri(raw)
+        } else {
+            allowlist.resolve_allowed_media(raw).is_some()
         };
-        let path = crate::allowlist::strip_verbatim_prefix(raw_path);
-        let mut content = lines.join("\n");
-        content.push('\n');
-        std::fs::write(&path, content.as_bytes()).map_err(|e| e.to_string())?;
-        Ok(Some(path.to_string_lossy().into_owned()))
-    })
-    .await
-    .map_err(|e| e.to_string())?
+        if allowed {
+            lines.push(raw.clone());
+        }
+    }
+    if lines.is_empty() {
+        return Err("No library files to export".to_string());
+    }
+    let mut content = lines.join("\n");
+    content.push('\n');
+
+    #[cfg(desktop)]
+    {
+        let _ = app;
+        tauri::async_runtime::spawn_blocking(move || -> Result<Option<String>, String> {
+            let picked = rfd::FileDialog::new()
+                .set_title("Export problematic file list")
+                .add_filter("Text files", &["txt"])
+                .set_file_name("cadence-decode-problems.txt")
+                .save_file();
+            let Some(raw_path) = picked else {
+                return Ok(None);
+            };
+            let path = crate::allowlist::strip_verbatim_prefix(raw_path);
+            std::fs::write(&path, content.as_bytes()).map_err(|e| e.to_string())?;
+            Ok(Some(path.to_string_lossy().into_owned()))
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        let plugin = android_plugin(&app)?;
+        let reply: AndroidExportReply = plugin
+            .0
+            .run_mobile_plugin_async(
+                "exportTextFile",
+                serde_json::json!({
+                    "fileName": "cadence-decode-problems.txt",
+                    "content": content
+                }),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(reply.path)
+    }
+
+    #[cfg(not(any(desktop, target_os = "android")))]
+    {
+        let _ = app;
+        Ok(None)
+    }
 }
 
 #[tauri::command]
@@ -959,111 +1370,216 @@ pub fn cmd_http_abort(request_id: String, state: State<'_, AppState>) -> Result<
 
 #[tauri::command]
 pub fn cmd_shell_show_in_folder(path: String, state: State<'_, AppState>) -> Result<(), String> {
-    let resolved = state
-        .allowlist
-        .resolve_allowed_media(&path)
-        .or_else(|| state.allowlist.resolve_contained_artwork(&path))
-        .ok_or_else(|| "Path is outside library allowlist".to_string())?;
-    tauri_plugin_opener::reveal_item_in_dir(resolved).map_err(|e| e.to_string())
+    #[cfg(desktop)]
+    {
+        let resolved = state
+            .allowlist
+            .resolve_allowed_media(&path)
+            .or_else(|| state.allowlist.resolve_contained_artwork(&path))
+            .ok_or_else(|| "Path is outside library allowlist".to_string())?;
+        tauri_plugin_opener::reveal_item_in_dir(resolved).map_err(|e| e.to_string())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (path, state);
+        Err("Revealing files in folder is not supported on mobile".to_string())
+    }
 }
 
 #[tauri::command]
-pub fn cmd_shell_open_external(url: String) -> Result<(), String> {
+pub fn cmd_shell_open_external(url: String, app: AppHandle) -> Result<(), String> {
     let parsed = url::Url::parse(&url).map_err(|_| "Invalid URL".to_string())?;
     if parsed.scheme() != "https" && parsed.scheme() != "http" {
         return Err("Only http(s) URLs may be opened externally".to_string());
     }
-    tauri_plugin_opener::open_url(parsed.as_str(), None::<&str>).map_err(|e| e.to_string())
+    app.opener()
+        .open_url(parsed.as_str(), None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn cmd_window_action(action: String, window: WebviewWindow) -> Result<(), String> {
-    match action.as_str() {
-        "minimize" => window.minimize().map_err(|e| e.to_string()),
-        "maximize" => {
-            if window.is_maximized().unwrap_or(false) {
-                window.unmaximize().map_err(|e| e.to_string())
-            } else {
-                window.maximize().map_err(|e| e.to_string())
+    #[cfg(desktop)]
+    {
+        match action.as_str() {
+            "minimize" => window.minimize().map_err(|e| e.to_string()),
+            "maximize" => {
+                if window.is_maximized().unwrap_or(false) {
+                    window.unmaximize().map_err(|e| e.to_string())
+                } else {
+                    window.maximize().map_err(|e| e.to_string())
+                }
             }
+            "restore" => window.unmaximize().map_err(|e| e.to_string()),
+            "close" => window.close().map_err(|e| e.to_string()),
+            "fullscreen" => window.set_fullscreen(true).map_err(|e| e.to_string()),
+            "exitFullscreen" => window.set_fullscreen(false).map_err(|e| e.to_string()),
+            "toggleFullScreen" => {
+                let next = !window.is_fullscreen().unwrap_or(false);
+                window.set_fullscreen(next).map_err(|e| e.to_string())
+            }
+            _ => Err("Unknown window action".to_string()),
         }
-        "restore" => window.unmaximize().map_err(|e| e.to_string()),
-        "close" => window.close().map_err(|e| e.to_string()),
-        "fullscreen" => window.set_fullscreen(true).map_err(|e| e.to_string()),
-        "exitFullscreen" => window.set_fullscreen(false).map_err(|e| e.to_string()),
-        "toggleFullScreen" => {
-            let next = !window.is_fullscreen().unwrap_or(false);
-            window.set_fullscreen(next).map_err(|e| e.to_string())
-        }
-        _ => Err("Unknown window action".to_string()),
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (action, window);
+        Ok(())
     }
 }
 
+#[cfg(desktop)]
 struct MiniPlayerState {
     enabled: bool,
     previous_size: Option<(f64, f64)>,
 }
 
+#[cfg(desktop)]
 static MINI_PLAYER: Mutex<MiniPlayerState> = Mutex::new(MiniPlayerState {
     enabled: false,
     previous_size: None,
 });
 
-/// Switch the main window between its normal layout size and the compact,
-/// always-on-top mini-player size. The renderer owns the mini UI; this
-/// command only owns the OS window geometry so entering/leaving mini mode
-/// restores the exact size the user had before.
 #[tauri::command]
 pub fn cmd_set_mini_player(enabled: bool, window: WebviewWindow) -> Result<(), String> {
-    let mut state = MINI_PLAYER
-        .lock()
-        .map_err(|_| "Mini-player state unavailable".to_string())?;
-    if enabled {
-        if !state.enabled {
-            if window.is_fullscreen().unwrap_or(false) {
-                window.set_fullscreen(false).map_err(|e| e.to_string())?;
+    #[cfg(desktop)]
+    {
+        let mut state = MINI_PLAYER
+            .lock()
+            .map_err(|_| "Mini-player state unavailable".to_string())?;
+        if enabled {
+            if !state.enabled {
+                if window.is_fullscreen().unwrap_or(false) {
+                    window.set_fullscreen(false).map_err(|e| e.to_string())?;
+                }
+                if window.is_maximized().unwrap_or(false) {
+                    window.unmaximize().map_err(|e| e.to_string())?;
+                }
+                let scale = window.scale_factor().unwrap_or(1.0).max(0.1);
+                if let Ok(size) = window.inner_size() {
+                    state.previous_size =
+                        Some((size.width as f64 / scale, size.height as f64 / scale));
+                }
             }
-            if window.is_maximized().unwrap_or(false) {
-                window.unmaximize().map_err(|e| e.to_string())?;
-            }
-            let scale = window.scale_factor().unwrap_or(1.0).max(0.1);
-            if let Ok(size) = window.inner_size() {
-                state.previous_size = Some((size.width as f64 / scale, size.height as f64 / scale));
-            }
+            window
+                .set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(
+                    360.0, 132.0,
+                ))))
+                .map_err(|e| e.to_string())?;
+            window
+                .set_size(tauri::Size::Logical(tauri::LogicalSize::new(460.0, 160.0)))
+                .map_err(|e| e.to_string())?;
+            window.set_resizable(false).map_err(|e| e.to_string())?;
+            window.set_always_on_top(true).map_err(|e| e.to_string())?;
+            state.enabled = true;
+        } else {
+            let (width, height) = state.previous_size.unwrap_or((1440.0, 920.0));
+            window.set_always_on_top(false).map_err(|e| e.to_string())?;
+            window.set_resizable(true).map_err(|e| e.to_string())?;
+            window
+                .set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(
+                    1040.0, 680.0,
+                ))))
+                .map_err(|e| e.to_string())?;
+            window
+                .set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+                    width.max(1040.0),
+                    height.max(680.0),
+                )))
+                .map_err(|e| e.to_string())?;
+            state.enabled = false;
         }
-        window
-            .set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(360.0, 132.0))))
-            .map_err(|e| e.to_string())?;
-        window
-            .set_size(tauri::Size::Logical(tauri::LogicalSize::new(460.0, 160.0)))
-            .map_err(|e| e.to_string())?;
-        window.set_resizable(false).map_err(|e| e.to_string())?;
-        window.set_always_on_top(true).map_err(|e| e.to_string())?;
-        state.enabled = true;
-    } else {
-        let (width, height) = state.previous_size.unwrap_or((1440.0, 920.0));
-        window.set_always_on_top(false).map_err(|e| e.to_string())?;
-        window.set_resizable(true).map_err(|e| e.to_string())?;
-        window
-            .set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(1040.0, 680.0))))
-            .map_err(|e| e.to_string())?;
-        window
-            .set_size(tauri::Size::Logical(tauri::LogicalSize::new(
-                width.max(1040.0),
-                height.max(680.0),
-            )))
-            .map_err(|e| e.to_string())?;
-        state.enabled = false;
+        Ok(())
     }
-    Ok(())
+    #[cfg(not(desktop))]
+    {
+        let _ = (enabled, window);
+        Ok(())
+    }
 }
 
 #[tauri::command]
 pub fn cmd_window_is_fullscreen(window: WebviewWindow) -> Result<bool, String> {
-    window.is_fullscreen().map_err(|e| e.to_string())
+    #[cfg(desktop)]
+    {
+        window.is_fullscreen().map_err(|e| e.to_string())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = window;
+        Ok(false)
+    }
 }
 
 #[tauri::command]
 pub fn cmd_window_chrome_state(window: WebviewWindow) -> Result<WindowChromeState, String> {
     Ok(read_window_chrome(&window))
+}
+
+#[tauri::command]
+pub async fn cmd_android_request_permissions(app: AppHandle) -> Result<Value, String> {
+    #[cfg(target_os = "android")]
+    {
+        let plugin = android_plugin(&app)?;
+        plugin
+            .0
+            .run_mobile_plugin_async("requestAudioPermissions", serde_json::json!({}))
+            .await
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(serde_json::json!({
+            "audioGranted": true,
+            "notificationsGranted": true,
+            "unsupported": true
+        }))
+    }
+}
+
+#[tauri::command]
+pub async fn cmd_android_audio_action(
+    action: String,
+    payload: Value,
+    app: AppHandle,
+) -> Result<Value, String> {
+    #[cfg(target_os = "android")]
+    {
+        let plugin = android_plugin(&app)?;
+        plugin
+            .0
+            .run_mobile_plugin_async(
+                "audioAction",
+                serde_json::json!({
+                    "action": action,
+                    "payload": payload
+                }),
+            )
+            .await
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (action, payload, app);
+        Ok(serde_json::json!({ "unsupported": true }))
+    }
+}
+
+#[tauri::command]
+pub async fn cmd_android_system_info(app: AppHandle) -> Result<Value, String> {
+    #[cfg(target_os = "android")]
+    {
+        let plugin = android_plugin(&app)?;
+        plugin
+            .0
+            .run_mobile_plugin_async("getSystemInfo", serde_json::json!({}))
+            .await
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(serde_json::json!({ "unsupported": true }))
+    }
 }

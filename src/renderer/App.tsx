@@ -15,6 +15,8 @@ import { ShortcutsHelp } from "./app/ShortcutsHelp";
 import { TrackEditor } from "./features/library/TrackEditor";
 import { Sidebar } from "./app/Sidebar";
 import { TopBar } from "./app/TopBar";
+import { MobileBottomNav, MobileHeader } from "./app/MobileChrome";
+import { useMobileShell } from "./app/useMobileShell";
 import { useWindowChrome, WindowTitleBar } from "./app/WindowTitleBar";
 import { useBootstrap } from "./app/useBootstrap";
 import { useLastNonNull, usePresence } from "./app/usePresence";
@@ -125,6 +127,7 @@ export function App() {
   const route = useUi(state => state.route);
   const error = usePlayer(state => state.error);
   const chrome = useWindowChrome();
+  const isMobile = useMobileShell();
 
   // One key per view instance. The search query is deliberately not part of it: typing in the
   // global search is not a page change, and remounting the results on every keystroke made them
@@ -162,9 +165,10 @@ export function App() {
   }, [viewKey]);
 
   const immersive = fullscreenLyrics && route.name === "lyrics";
+  const mobileNowPlaying = isMobile && route.name === "lyrics";
   // The title bar is only drawn when the OS frame is off (Windows); immersive and native fullscreen
   // hand the whole window to the content.
-  const titleBar = chrome.undecorated && !chrome.fullscreen && !immersive;
+  const titleBar = !isMobile && chrome.undecorated && !chrome.fullscreen && !immersive;
 
   if (miniPlayer) {
     return (
@@ -176,11 +180,14 @@ export function App() {
   }
 
   return (
-    <div className={`app-shell ${immersive ? "is-immersive" : ""} ${titleBar ? "has-title-bar" : ""}`}>
+    <div
+      className={`app-shell ${isMobile ? "is-mobile" : ""} ${immersive || mobileNowPlaying ? "is-immersive" : ""} ${titleBar ? "has-title-bar" : ""}`}
+    >
       {titleBar ? <WindowTitleBar chrome={chrome} /> : null}
-      {!immersive ? <Sidebar /> : null}
+      {!isMobile && !immersive ? <Sidebar /> : null}
       <main className="app-main">
-        {!immersive ? <TopBar /> : null}
+        {isMobile && !mobileNowPlaying && !immersive ? <MobileHeader /> : null}
+        {!isMobile && !immersive ? <TopBar /> : null}
         {error && !immersive ? (
           <div className="error-banner" role="alert">
             {error}
@@ -197,7 +204,8 @@ export function App() {
         >
           <RouteContent />
         </div>
-        {!immersive ? <PlayerBar /> : null}
+        {!immersive && !mobileNowPlaying ? <PlayerBar /> : null}
+        {isMobile && !mobileNowPlaying && !immersive ? <MobileBottomNav /> : null}
       </main>
       <QueuePanel />
       <PlaylistPicker />

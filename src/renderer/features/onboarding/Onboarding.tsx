@@ -5,8 +5,9 @@
  */
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, FolderPlus, Music2, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, FolderPlus, Music2, Smartphone, Sparkles } from "lucide-react";
 import type { LyricsFetchConcurrency } from "../../../shared/types";
+import { isAndroidNativeAudio } from "../../audio/androidAudio";
 import { useLibrary } from "../../state/libraryStore";
 import { ONBOARDING_STEPS, useOnboarding } from "../../state/onboardingStore";
 import { useFetchAll } from "../../state/fetchAllStore";
@@ -23,9 +24,11 @@ export function Onboarding() {
 
   const settings = useSettings(state => state.settings);
   const patchSettings = useSettings(state => state.patch);
+  const hasAndroid = isAndroidNativeAudio();
   const snapshot = useLibrary(state => state.snapshot);
   const scanning = useLibrary(state => state.scanning);
   const addFolder = useLibrary(state => state.addFolder);
+  const scanMediaStore = useLibrary(state => state.scanMediaStore);
 
   const stats = useFetchAll(state => state.stats);
   const jobState = useFetchAll(state => state.snapshot.state);
@@ -92,15 +95,31 @@ export function Onboarding() {
         {stepName === "library" ? (
           <section className="onboarding-page" data-testid="onboarding-library">
             <h2>Music Library Setup</h2>
-            <p>Add the folder (or folders) where your music lives. Cadence scans tags, artwork and any lyrics files sitting next to your songs.</p>
+            <p>
+              {hasAndroid
+                ? "Scan the music already stored on your device or pick custom folders with Android's folder picker. Cadence scans tags, artwork and lyrics files next to your songs."
+                : "Add the folder (or folders) where your music lives. Cadence scans tags, artwork and any lyrics files sitting next to your songs."}
+            </p>
             <p className="onboarding-stat" data-testid="onboarding-library-stats">
               {folderCount} {folderCount === 1 ? "folder" : "folders"} · {trackCount}{" "}
               {trackCount === 1 ? "track" : "tracks"}
               {scanning ? " · Scanning…" : ""}
             </p>
-            <button type="button" className="primary" onClick={() => void addFolder()} disabled={scanning}>
-              <FolderPlus size={16} /> Add music folder
-            </button>
+            <div className="empty-actions">
+              {hasAndroid ? (
+                <button type="button" className="primary" onClick={() => void scanMediaStore()} disabled={scanning}>
+                  <Smartphone size={16} /> Scan device music
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className={hasAndroid ? "" : "primary"}
+                onClick={() => void addFolder()}
+                disabled={scanning}
+              >
+                <FolderPlus size={16} /> Add music folder
+              </button>
+            </div>
           </section>
         ) : null}
 

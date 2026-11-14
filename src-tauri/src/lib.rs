@@ -1,8 +1,8 @@
 //! Cadence Tauri v2 application bootstrap.
 //!
-//! Wires single-instance CLI audio-file handoff, the `cadence-media` HTTP Range streaming scheme,
-//! SQLite library persistence (`library.db`), global hardware media keys (`MediaPlayPause`,
-//! `MediaTrackNext`, `MediaTrackPrevious`, `MediaStop`), and least-privilege IPC commands.
+//! Wires desktop single-instance CLI handoff, global hardware media keys, system tray,
+//! the Android native Media3 audio & SAF/MediaStore plugin, the `cadence-media` HTTP Range
+//! streaming scheme, SQLite library persistence (`library.db`), and least-privilege IPC commands.
 
 pub mod allowlist;
 pub mod alac;
@@ -14,7 +14,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Manager};
+#[cfg(desktop)]
+use tauri::{Emitter, Runtime};
+#[cfg(desktop)]
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Shortcut, ShortcutState};
 
 use crate::allowlist::MediaAllowlist;
@@ -24,6 +27,10 @@ use crate::db::LibraryDb;
 const CLIENT_USER_AGENT: &str =
     "Cadence Player v1.0.0 (https://github.com/zprezvan03-cmyk/betterlyrics-standalone)";
 
+#[cfg(target_os = "android")]
+pub struct CadenceAndroidHandle(pub tauri::plugin::PluginHandle<tauri::Wry>);
+
+#[cfg(desktop)]
 fn extract_cli_audio_files(argv: &[String]) -> Vec<String> {
     argv.iter()
         .skip(1)
@@ -39,6 +46,13 @@ fn extract_cli_audio_files(argv: &[String]) -> Vec<String> {
         .collect()
 }
 
+#[cfg(not(desktop))]
+fn extract_cli_audio_files(_argv: &[String]) -> Vec<String> {
+    let _ = is_audio_extension(std::path::Path::new(""));
+    Vec::new()
+}
+
+#[cfg(desktop)]
 fn focus_main_window<R: Runtime>(app: &AppHandle<R>) {
     if let Some(window) = app.get_webview_window("main") {
         if window.is_minimized().unwrap_or(false) {
@@ -49,6 +63,7 @@ fn focus_main_window<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
+#[cfg(desktop)]
 fn register_media_shortcuts<R: Runtime>(app: &AppHandle<R>) {
     let bindings = [
         (Code::MediaPlayPause, "toggle"),
@@ -127,6 +142,7 @@ fn setup_macos_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     Ok(())
 }
 
+#[cfg(desktop)]
 fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     use tauri::menu::{MenuBuilder, MenuItemBuilder};
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -182,25 +198,60 @@ fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     Ok(())
 }
 
+#[cfg(not(desktop))]
+fn setup_desktop_integrations(_app: &AppHandle) {}
+
+#[cfg(desktop)]
+fn setup_desktop_integrations(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    let _ = setup_macos_menu(app);
+
+    register_media_shortcuts(app);
+    // Tray is a convenience surface; a tray failure (e.g. a desktop
+    // without a system tray) must never block app launch.
+    let _ = setup_tray(app);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let initial_argv: Vec<String> = std::env::args().collect();
     let initial_files = extract_cli_audio_files(&initial_argv);
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            focus_main_window(app);
-            let opened = extract_cli_audio_files(&argv);
-            if !opened.is_empty() {
-                if let Some(state) = app.try_state::<AppState>() {
-                    for file in &opened {
-                        state.allowlist.add_file(std::path::Path::new(file));
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(desktop)]
+    {
+        builder = builder
+            .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+                focus_main_window(app);
+                let opened = extract_cli_audio_files(&argv);
+                if !opened.is_empty() {
+                    if let Some(state) = app.try_state::<AppState>() {
+                        for file in &opened {
+                            state.allowlist.add_file(std::path::Path::new(file));
+                        }
                     }
+                    let _ = app.emit("cadence://open-files", opened);
                 }
-                let _ = app.emit("cadence://open-files", opened);
-            }
-        }))
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+            }))
+            .plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        builder = builder.plugin(
+            tauri::plugin::Builder::new("cadence-android")
+                .setup(|app, api| {
+                    let handle =
+                        api.register_android_plugin("app.cadence.player", "CadenceAndroidPlugin")?;
+                    app.manage(CadenceAndroidHandle(handle));
+                    Ok(())
+                })
+                .build(),
+        );
+    }
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .register_asynchronous_uri_scheme_protocol("cadence-media", |ctx, request, responder| {
             let Some(state) = ctx.app_handle().try_state::<AppState>() else {
@@ -213,6 +264,7 @@ pub fn run() {
                 return;
             };
             protocol::handle_async_media_protocol(
+                ctx.app_handle().clone(),
                 Arc::clone(&state.allowlist),
                 request,
                 responder,
@@ -268,13 +320,7 @@ pub fn run() {
                 pending_open_files: Mutex::new(initial_files),
             });
 
-            #[cfg(target_os = "macos")]
-            let _ = setup_macos_menu(app.handle());
-
-            register_media_shortcuts(app.handle());
-            // Tray is a convenience surface; a tray failure (e.g. a desktop
-            // without a system tray) must never block app launch.
-            let _ = setup_tray(app.handle());
+            setup_desktop_integrations(app.handle());
 
             Ok(())
         })
@@ -308,6 +354,9 @@ pub fn run() {
             commands::cmd_set_mini_player,
             commands::cmd_window_is_fullscreen,
             commands::cmd_window_chrome_state,
+            commands::cmd_android_request_permissions,
+            commands::cmd_android_audio_action,
+            commands::cmd_android_system_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Cadence Tauri application");
