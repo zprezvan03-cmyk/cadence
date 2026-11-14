@@ -163,7 +163,7 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts/android
           BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -maxdepth 1 -mindepth 1 | sort -V | tail -n1)"
-          RAW_APK="$(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' | head -n1)"
+          RAW_APK="$(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*-release*.apk' | sort | head -n1)"
           if [ -z "$RAW_APK" ]; then
             echo "No built APK found under src-tauri/gen/android/app/build/outputs/apk" >&2
             exit 1
