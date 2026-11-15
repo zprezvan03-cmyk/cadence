@@ -484,7 +484,7 @@ object CadenceStorageHelper {
                     val colSize = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
                     val colMod = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
 
-                    if (colId < 0) return@use
+                    if (colId < 0) return@use false
                     while (cursor.moveToNext()) {
                         val docId = cursor.getString(colId) ?: continue
                         val name = (if (colName >= 0) cursor.getString(colName) else null) ?: docId.substringAfterLast('/')
@@ -641,7 +641,7 @@ object CadenceStorageHelper {
             return JSObject().apply {
                 put("base64", "")
                 put("totalSize", 0)
-                put("mimeType", mime)
+                put("mimeType", mime ?: JSONObject.NULL)
             }
         }
 
@@ -696,7 +696,7 @@ object CadenceStorageHelper {
         return JSObject().apply {
             put("base64", encoded)
             put("totalSize", totalSize)
-            put("mimeType", mime)
+            put("mimeType", mime ?: JSONObject.NULL)
         }
     }
 
@@ -825,7 +825,7 @@ object CadenceStorageHelper {
         put("size", size)
         put("mtimeMs", mtimeMs)
         put("hasSidecarLyrics", hasSidecarLyrics)
-        put("animatedArtPath", animatedArtPath)
+        put("animatedArtPath", animatedArtPath ?: JSONObject.NULL)
         if (displayName != null) put("displayName", displayName)
         if (mimeType != null) put("mimeType", mimeType)
         if (tags != null) {

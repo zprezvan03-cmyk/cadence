@@ -106,7 +106,7 @@ fn read_window_chrome(window: &WebviewWindow) -> WindowChromeState {
 }
 
 #[derive(Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct WalkedMediaStoreTags {
     pub title: Option<String>,
     pub artist: Option<String>,
@@ -125,6 +125,7 @@ pub struct WalkedAudioFile {
     pub size: u64,
     pub mtime_ms: f64,
     pub has_sidecar_lyrics: bool,
+    #[serde(default)]
     pub animated_art_path: Option<String>,
     #[serde(default)]
     pub display_name: Option<String>,
