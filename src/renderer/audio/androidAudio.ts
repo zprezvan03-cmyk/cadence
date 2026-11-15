@@ -39,6 +39,7 @@ export interface AndroidAudioEventHandlers {
   onTrackTransition?: (index: number, trackId: number) => void;
   onError?: (message: string) => void;
   onOpenNowPlaying?: () => void;
+  onScanWalkProgress?: (filesSeen: number) => void;
 }
 
 declare global {
@@ -100,6 +101,16 @@ function ensureDispatcher(): void {
       for (const listener of eventListeners) {
         listener.onOpenNowPlaying?.();
       }
+      return;
+    }
+
+    if (msg.event === "scanWalkProgress") {
+      const filesSeen = Number(payload.filesSeen);
+      if (Number.isFinite(filesSeen) && filesSeen >= 0) {
+        for (const listener of eventListeners) {
+          listener.onScanWalkProgress?.(filesSeen);
+        }
+      }
     }
   };
 }
@@ -110,6 +121,10 @@ export function subscribeAndroidAudioEvents(handlers: AndroidAudioEventHandlers)
   return () => {
     eventListeners.delete(handlers);
   };
+}
+
+export function subscribeAndroidScanWalkProgress(listener: (filesSeen: number) => void): () => void {
+  return subscribeAndroidAudioEvents({ onScanWalkProgress: listener });
 }
 
 async function resolveExoUriForTrack(track: Track, shouldDecodeAlac: boolean): Promise<string> {

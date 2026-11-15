@@ -41,6 +41,7 @@ object CadencePlaybackBus {
         fun onPlayerError(message: String)
         fun onTrackTransition(index: Int, trackId: Long)
         fun onOpenNowPlaying()
+        fun onScanWalkProgress(filesSeen: Int) {}
     }
 
     private val listeners = CopyOnWriteArraySet<Listener>()
@@ -72,6 +73,10 @@ object CadencePlaybackBus {
 
     fun publishOpenNowPlaying() {
         for (l in listeners) l.onOpenNowPlaying()
+    }
+
+    fun publishScanWalkProgress(filesSeen: Int) {
+        for (l in listeners) l.onScanWalkProgress(filesSeen)
     }
 }
 

@@ -5,6 +5,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -18,6 +19,31 @@ class AndroidContractsTest {
         assertFalse(AndroidContracts.isAudioFileName("notes.lrc"))
         assertTrue(AndroidContracts.isLyricsFileName("Track.TTML"))
         assertTrue(AndroidContracts.isLyricsFileName("Track.lrc"))
+        assertTrue(AndroidContracts.isAudioEntry("42", "audio/flac"))
+        assertFalse(AndroidContracts.isAudioEntry("Music", "vnd.android.document/directory"))
+        assertEquals("m4a", AndroidContracts.extensionFromMime("audio/mp4; codecs=mp4a.40.2"))
+    }
+
+    @Test
+    fun filtersAndroidJunkDirectoriesAndNonMusicVoiceNotes() {
+        assertTrue(AndroidContracts.shouldSkipDirectoryName("WhatsApp"))
+        assertTrue(AndroidContracts.shouldSkipDirectoryName("DCIM"))
+        assertTrue(AndroidContracts.shouldSkipDirectoryName(".thumbnails"))
+        assertFalse(AndroidContracts.shouldSkipDirectoryName("Music"))
+
+        assertTrue(AndroidContracts.shouldFilterMediaStorePath("/storage/emulated/0/WhatsApp/Media/WhatsApp Voice Notes/PTT.opus", isMusic = false))
+        assertTrue(AndroidContracts.shouldFilterMediaStorePath("Recordings/Voice Recorder/", isMusic = false))
+        assertFalse(AndroidContracts.shouldFilterMediaStorePath("/storage/emulated/0/WhatsApp/WhatsApp Audio/Song.mp3", isMusic = true))
+        assertFalse(AndroidContracts.shouldFilterMediaStorePath("/storage/emulated/0/Music/Album/01.flac", isMusic = false))
+    }
+
+    @Test
+    fun decodesMediaStorePackedTrackAndDiscAndFiltersUnknownSentinel() {
+        assertEquals(Pair(7, 2), AndroidContracts.decodeMediaStoreTrackAndDisc(2007))
+        assertEquals(Pair(4, null), AndroidContracts.decodeMediaStoreTrackAndDisc(4))
+        assertEquals(Pair(null, null), AndroidContracts.decodeMediaStoreTrackAndDisc(0))
+        assertNull(AndroidContracts.cleanMediaStoreText("<unknown>"))
+        assertEquals("Artist", AndroidContracts.cleanMediaStoreText("  Artist  "))
     }
 
     @Test

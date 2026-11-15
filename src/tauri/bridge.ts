@@ -29,6 +29,7 @@ import type {
 } from "../shared/types";
 import { isPathInside, type PathPlatform } from "../main/media/allowlist";
 import { toTauriMediaUrl, type TauriMediaPlatform } from "../main/media/protocolHandler";
+import { subscribeAndroidScanWalkProgress } from "../renderer/audio/androidAudio";
 import { SettingsCore } from "../main/settingsCore";
 import { LyricsCacheCore } from "../main/lyrics/cacheCore";
 import { createLocalLyricsReader } from "../main/lyrics/localLyricsCore";
@@ -473,16 +474,34 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
     }
   );
 
+  const knownArtworkFiles = new Set<string>();
+  for (const track of bootstrap.dbSnapshot.tracks) {
+    if (track.artworkFile) knownArtworkFiles.add(track.artworkFile);
+  }
+  const inFlightArtworkWrites = new Map<string, Promise<string>>();
+
   /** Saves cover bytes into the artwork cache under their content hash; returns the file name. */
   const saveArtworkBytes = async (data: Uint8Array, format: string): Promise<string> => {
     const hash = await sha1Hex(data);
     const ext = artworkExtensionForMime(format);
     const fileName = `${hash}${ext}`;
+    if (knownArtworkFiles.has(fileName)) return fileName;
+    const inFlight = inFlightArtworkWrites.get(fileName);
+    if (inFlight) return inFlight;
+
     // Raw IPC avoids a second JS number array and JSON string for every cover image.
-    await invoke<string>("cmd_save_artwork", data, {
+    const writePromise = invoke<string>("cmd_save_artwork", data, {
       headers: { "x-file-name": fileName },
-    });
-    return fileName;
+    })
+      .then(() => {
+        knownArtworkFiles.add(fileName);
+        return fileName;
+      })
+      .finally(() => {
+        inFlightArtworkWrites.delete(fileName);
+      });
+    inFlightArtworkWrites.set(fileName, writePromise);
+    return writePromise;
   };
 
   // Scanner host I/O backed by binary `cmd_read_file_chunk` + `RangeTokenizer`
@@ -490,6 +509,13 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
     readTrackMetadataCore(file.path, {
       fileSize: file.size,
       mtimeMs: file.mtimeMs,
+      displayName: file.displayName,
+      mimeType: file.mimeType,
+      fallbackTags: file.tags,
+      skipEofDurationScan: isAndroid,
+      probeDuration: isAndroid
+        ? () => invoke<number>("cmd_probe_audio_duration", { path: file.path }).catch(() => 0)
+        : undefined,
       readChunk: async (offset, length) => {
         const res = await invoke<ArrayBuffer | Uint8Array | number[]>("cmd_read_file_chunk", {
           path: file.path,
@@ -556,10 +582,22 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         folders,
         force,
         onProgress: emitScanProgress,
+        onBatchUpdated: () => {
+          void flushDbQueue();
+          emitLibraryChanged();
+        },
       },
       {
-        walkFolders: async targetFolders =>
-          invoke<WalkResult>("cmd_walk_folders", { folders: targetFolders }),
+        walkFolders: async (targetFolders, onFileSeen) => {
+          const unsubscribeWalk = isAndroid
+            ? subscribeAndroidScanWalkProgress(seen => onFileSeen?.(seen))
+            : null;
+          try {
+            return await invoke<WalkResult>("cmd_walk_folders", { folders: targetFolders });
+          } finally {
+            unsubscribeWalk?.();
+          }
+        },
         parseTrack: file => parseWalkedAudioFile(file),
       }
     )

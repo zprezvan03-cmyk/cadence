@@ -41,6 +41,7 @@ export function HomeView() {
   const addFolder = useLibrary(state => state.addFolder);
   const scanMediaStore = useLibrary(state => state.scanMediaStore);
   const scanning = useLibrary(state => state.scanning);
+  const libraryError = useLibrary(state => state.error);
   const navigate = useUi(state => state.navigate);
   const showToast = useUi(state => state.showToast);
   const playQueue = usePlayer(state => state.playQueue);
@@ -112,6 +113,17 @@ export function HomeView() {
   }
 
   if (snapshot.tracks.length === 0) {
+    const scan = snapshot.scan;
+    const scanLabel =
+      scanning || scan.running
+        ? scan.phase === "walking"
+          ? scan.filesSeen > 0
+            ? `Found ${scan.filesSeen} files…`
+            : "Looking for music…"
+          : scan.filesSeen > 0
+            ? `Scanning ${scan.filesProcessed}/${scan.filesSeen}…`
+            : "Scanning…"
+        : null;
     return (
       <div className="home-empty" data-testid="home-empty">
         <div className="home-empty-art">
@@ -126,7 +138,7 @@ export function HomeView() {
         <div className="empty-actions">
           {hasAndroid ? (
             <button type="button" className="primary" onClick={() => void scanMediaStore()} disabled={scanning}>
-              <Smartphone size={18} /> {scanning ? "Scanning…" : "Scan device music"}
+              <Smartphone size={18} /> {scanLabel ?? "Scan device music"}
             </button>
           ) : null}
           <button
@@ -135,9 +147,10 @@ export function HomeView() {
             onClick={() => void addFolder()}
             disabled={scanning}
           >
-            <FolderPlus size={18} /> {scanning ? "Scanning…" : "Add music folder"}
+            <FolderPlus size={18} /> {scanLabel ?? "Add music folder"}
           </button>
         </div>
+        {libraryError ? <p className="error-text">{libraryError}</p> : null}
         {snapshot.scan.errors.length > 0 ? (
           <p className="error-text">{snapshot.scan.errors.length} files could not be read during the last scan.</p>
         ) : null}

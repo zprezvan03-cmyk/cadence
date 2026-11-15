@@ -355,6 +355,7 @@ pub fn run() {
             commands::cmd_set_mini_player,
             commands::cmd_window_is_fullscreen,
             commands::cmd_window_chrome_state,
+            commands::cmd_probe_audio_duration,
             commands::cmd_android_request_permissions,
             commands::cmd_android_audio_action,
             commands::cmd_android_system_info,

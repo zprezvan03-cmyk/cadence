@@ -141,7 +141,16 @@ export function MobileHeader() {
         <FetchAllIndicator />
         {scanning || scan?.running ? (
           <span className="mobile-scan-badge" title={scan?.message ?? "Scanning"}>
-            <Loader2 size={16} className="spin" />
+            <Loader2 size={14} className="spin" />
+            <span className="mobile-scan-count">
+              {scan?.phase === "walking"
+                ? scan.filesSeen > 0
+                  ? `${scan.filesSeen}`
+                  : "…"
+                : scan?.filesSeen
+                  ? `${scan.filesProcessed}/${scan.filesSeen}`
+                  : "…"}
+            </span>
           </span>
         ) : null}
         {route.name !== "history" ? (

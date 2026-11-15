@@ -1,20 +1,27 @@
 /**
  * Random-access `strtok3` tokenizer backed by byte-range reads (either `cadence-media` HTTP Range
- * fetches or Tauri binary IPC chunks), with a 64 KiB read-ahead cache so `music-metadata` parses
- * ID3v2 / FLAC / MP4 / Ogg / Opus / WAV tags and cover art in 1-2 reads without loading full audio
- * frames into memory. Written for Cadence.
+ * fetches or Tauri binary IPC chunks), with a 256 KiB read-ahead multi-window cache (pinning
+ * offset 0 + up to 3 recent seek windows) so `music-metadata` parses ID3v2 / FLAC / MP4 / Ogg /
+ * Opus / WAV tags and cover art in 1-2 reads without re-fetching head chunks or loading full
+ * audio frames into memory. Written for Cadence.
  */
 
 import { AbstractTokenizer, EndOfStreamError, type IFileInfo, type IReadChunkOptions } from "strtok3/core";
 
 export type ReadChunkFn = (offset: number, length: number) => Promise<Uint8Array>;
 
-const CACHE_WINDOW_BYTES = 64 * 1024;
+const CACHE_WINDOW_BYTES = 256 * 1024;
+const SMALL_FILE_SINGLE_READ_BYTES = 512 * 1024;
+const MAX_CACHED_WINDOWS = 4;
+
+interface CachedWindow {
+  offset: number;
+  data: Uint8Array;
+}
 
 export class RangeTokenizer extends AbstractTokenizer {
   readonly fileInfo: IFileInfo;
-  private cachedOffset = -1;
-  private cachedData: Uint8Array = new Uint8Array(0);
+  private readonly windows: CachedWindow[] = [];
 
   constructor(
     filePath: string,
@@ -22,7 +29,10 @@ export class RangeTokenizer extends AbstractTokenizer {
     private readonly readChunk: ReadChunkFn
   ) {
     super();
-    this.fileInfo = { path: filePath, size: fileSize };
+    this.fileInfo = {
+      path: filePath,
+      size: fileSize > 0 ? fileSize : undefined,
+    };
   }
 
   supportsRandomAccess(): boolean {
@@ -33,33 +43,64 @@ export class RangeTokenizer extends AbstractTokenizer {
     this.position = position;
   }
 
+  private findCachedWindow(position: number, length: number): CachedWindow | null {
+    for (let i = 0; i < this.windows.length; i++) {
+      const win = this.windows[i];
+      if (position >= win.offset && position + length <= win.offset + win.data.byteLength) {
+        return win;
+      }
+    }
+    return null;
+  }
+
+  private storeWindow(offset: number, data: Uint8Array): void {
+    if (data.byteLength === 0) return;
+    const existingIdx = this.windows.findIndex(w => w.offset === offset);
+    if (existingIdx >= 0) {
+      this.windows[existingIdx] = { offset, data };
+      return;
+    }
+    if (this.windows.length >= MAX_CACHED_WINDOWS) {
+      // Keep the head window (`offset === 0`) pinned so tail seeks (e.g. MP4 `moov`) never evict it.
+      const evictIdx = this.windows.findIndex(w => w.offset !== 0);
+      this.windows.splice(evictIdx >= 0 ? evictIdx : 0, 1);
+    }
+    this.windows.push({ offset, data });
+  }
+
   private async readRangeInto(
     target: Uint8Array,
     position: number,
     length: number
   ): Promise<number> {
-    if (length === 0 || position >= this.fileSize) return 0;
-    const clampedLength = Math.min(length, this.fileSize - position);
+    if (length === 0) return 0;
+    if (this.fileSize > 0 && position >= this.fileSize) return 0;
 
-    // Serve directly from the read-ahead window when fully covered.
-    if (
-      this.cachedOffset >= 0 &&
-      position >= this.cachedOffset &&
-      position + clampedLength <= this.cachedOffset + this.cachedData.byteLength
-    ) {
-      const start = position - this.cachedOffset;
-      target.set(this.cachedData.subarray(start, start + clampedLength), 0);
+    const clampedLength =
+      this.fileSize > 0 ? Math.min(length, this.fileSize - position) : length;
+
+    // Serve directly from any cached read-ahead window when fully covered.
+    const cached = this.findCachedWindow(position, clampedLength);
+    if (cached) {
+      const start = position - cached.offset;
+      target.set(cached.data.subarray(start, start + clampedLength), 0);
       return clampedLength;
     }
 
-    const fetchLength = Math.min(
-      Math.max(clampedLength, CACHE_WINDOW_BYTES),
-      this.fileSize - position
-    );
+    let fetchLength: number;
+    if (this.fileSize > 0) {
+      const targetWindow =
+        position === 0 && this.fileSize <= SMALL_FILE_SINGLE_READ_BYTES
+          ? this.fileSize
+          : CACHE_WINDOW_BYTES;
+      fetchLength = Math.min(Math.max(clampedLength, targetWindow), this.fileSize - position);
+    } else {
+      fetchLength = Math.max(clampedLength, CACHE_WINDOW_BYTES);
+    }
+
     const chunk = await this.readChunk(position, fetchLength);
-    if (fetchLength <= CACHE_WINDOW_BYTES * 2) {
-      this.cachedOffset = position;
-      this.cachedData = chunk;
+    if (fetchLength <= SMALL_FILE_SINGLE_READ_BYTES) {
+      this.storeWindow(position, chunk);
     }
 
     const copyLength = Math.min(clampedLength, chunk.byteLength);
@@ -82,6 +123,7 @@ export class RangeTokenizer extends AbstractTokenizer {
 
   async peekBuffer(uint8Array: Uint8Array, options?: IReadChunkOptions): Promise<number> {
     const normOptions = this.normalizeOptions(uint8Array, options);
+    this.position = normOptions.position;
     if (normOptions.length === 0) return 0;
 
     const bytesRead = await this.readRangeInto(uint8Array, normOptions.position, normOptions.length);

@@ -275,7 +275,8 @@ export function isPathInside(rootDir: string, candidatePath: string, platform?: 
       return (
         candidatePath.startsWith("content://media/") ||
         candidatePath.startsWith("/storage/") ||
-        candidatePath.startsWith("/sdcard/")
+        candidatePath.startsWith("/sdcard/") ||
+        candidatePath.startsWith("/mnt/")
       );
     }
     if (rootDir.startsWith("content://") && candidatePath.startsWith("content://")) {

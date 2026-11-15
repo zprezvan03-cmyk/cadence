@@ -105,6 +105,19 @@ fn read_window_chrome(window: &WebviewWindow) -> WindowChromeState {
     }
 }
 
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WalkedMediaStoreTags {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub album_artist: Option<String>,
+    pub duration: Option<f64>,
+    pub track_no: Option<i64>,
+    pub disc_no: Option<i64>,
+    pub year: Option<i64>,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WalkedAudioFile {
@@ -113,6 +126,12 @@ pub struct WalkedAudioFile {
     pub mtime_ms: f64,
     pub has_sidecar_lyrics: bool,
     pub animated_art_path: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub tags: Option<WalkedMediaStoreTags>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -207,6 +226,13 @@ struct AndroidPathReply {
 #[serde(rename_all = "camelCase")]
 struct AndroidExportReply {
     path: Option<String>,
+}
+
+#[cfg(target_os = "android")]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AndroidDurationReply {
+    duration: f64,
 }
 
 #[cfg(target_os = "android")]
@@ -309,6 +335,9 @@ fn build_audio_entry(
         mtime_ms: mtime_milliseconds(meta),
         has_sidecar_lyrics,
         animated_art_path,
+        display_name: None,
+        mime_type: None,
+        tags: None,
     }
 }
 
@@ -1514,6 +1543,41 @@ pub fn cmd_window_is_fullscreen(window: WebviewWindow) -> Result<bool, String> {
 #[tauri::command]
 pub fn cmd_window_chrome_state(window: WebviewWindow) -> Result<WindowChromeState, String> {
     Ok(read_window_chrome(&window))
+}
+
+#[tauri::command]
+pub async fn cmd_probe_audio_duration(
+    path: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<f64, String> {
+    #[cfg(target_os = "android")]
+    {
+        let allowed = if path.starts_with("content://") {
+            state.allowlist.is_allowed_content_uri(&path)
+        } else {
+            state.allowlist.resolve_allowed_media(&path).is_some()
+        };
+        if !allowed {
+            return Err("Forbidden".to_string());
+        }
+        let plugin = android_plugin(&app)?;
+        let reply: AndroidDurationReply = plugin
+            .0
+            .run_mobile_plugin_async("probeAudioDuration", serde_json::json!({ "path": path }))
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(if reply.duration.is_finite() && reply.duration > 0.0 {
+            reply.duration
+        } else {
+            0.0
+        })
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (path, app, state);
+        Ok(0.0)
+    }
 }
 
 #[tauri::command]

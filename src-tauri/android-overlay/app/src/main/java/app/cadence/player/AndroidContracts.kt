@@ -18,7 +18,55 @@ object AndroidContracts {
     val LYRICS_EXTENSIONS = setOf("lrc", "ttml", "qrc", "srt", "txt")
 
     val SKIP_DIRECTORIES = setOf(
-        "node_modules", ".git", ".svn", ".Trash", ".Trashes", "@eaDir", "Android"
+        "node_modules", ".git", ".svn", ".Trash", ".Trashes", "@eaDir", "Android",
+        "DCIM", "Pictures", "Movies", ".thumbnails", "thumbnails", "WhatsApp", "Telegram",
+        "Recordings", "CallRecordings", "Call Recordings", "Voice Recorder",
+        "Sound_recorder", "Notifications", "Ringtones", "Alarms", "LOST.DIR", "MIUI",
+    )
+
+    private val SKIP_DIRECTORIES_LOWER = SKIP_DIRECTORIES.map { it.lowercase() }.toSet()
+
+    val MIME_TO_EXTENSION = mapOf(
+        "audio/flac" to "flac",
+        "audio/x-flac" to "flac",
+        "audio/mpeg" to "mp3",
+        "audio/mp3" to "mp3",
+        "audio/mpeg3" to "mp3",
+        "audio/x-mpeg-3" to "mp3",
+        "audio/mp4" to "m4a",
+        "audio/x-m4a" to "m4a",
+        "audio/m4a" to "m4a",
+        "audio/mp4a-latm" to "m4a",
+        "audio/aac" to "aac",
+        "audio/x-aac" to "aac",
+        "audio/aac-adts" to "aac",
+        "audio/wav" to "wav",
+        "audio/x-wav" to "wav",
+        "audio/wave" to "wav",
+        "audio/vnd.wave" to "wav",
+        "audio/ogg" to "ogg",
+        "application/ogg" to "ogg",
+        "audio/vorbis" to "ogg",
+        "audio/opus" to "opus",
+        "audio/aiff" to "aiff",
+        "audio/x-aiff" to "aiff",
+        "audio/webm" to "webm",
+    )
+
+    private val NON_MUSIC_PATH_MARKERS = listOf(
+        "/notifications/",
+        "/ringtones/",
+        "/alarms/",
+        "/whatsapp/",
+        "/telegram/",
+        "/recordings/",
+        "/voice recorder/",
+        "/callrecordings/",
+        "/call recordings/",
+        "/sound_recorder/",
+        "/miui/sound_recorder/",
+        "/android/data/",
+        "/android/media/",
     )
 
     /** Standard Cadence 10-band graphic EQ center frequencies in Hz. */
@@ -43,13 +91,32 @@ object AndroidContracts {
         val replayGainLinear: Double,
     )
 
+    data class WalkedMediaStoreTags(
+        val title: String? = null,
+        val artist: String? = null,
+        val album: String? = null,
+        val albumArtist: String? = null,
+        val duration: Double? = null,
+        val trackNo: Int? = null,
+        val discNo: Int? = null,
+        val year: Int? = null,
+    )
+
     data class WalkedAudioEntry(
         val path: String,
         val size: Long,
         val mtimeMs: Double,
         val hasSidecarLyrics: Boolean,
         val animatedArtPath: String?,
+        val displayName: String? = null,
+        val mimeType: String? = null,
+        val tags: WalkedMediaStoreTags? = null,
     )
+
+    fun shouldSkipDirectoryName(name: String): Boolean {
+        if (name.isBlank() || name.startsWith(".")) return true
+        return SKIP_DIRECTORIES_LOWER.contains(name.lowercase())
+    }
 
     fun extensionOf(nameOrPath: String): String {
         val clean = nameOrPath.substringAfterLast('/').substringAfterLast('\\')
@@ -64,7 +131,40 @@ object AndroidContracts {
         return if (dot > 0) clean.substring(0, dot) else clean
     }
 
+    fun extensionFromMime(mimeType: String?): String {
+        val normalized = mimeType?.lowercase()?.substringBefore(';')?.trim().orEmpty()
+        return MIME_TO_EXTENSION[normalized] ?: ""
+    }
+
+    fun isAudioMimeType(mimeType: String?): Boolean = extensionFromMime(mimeType).isNotEmpty()
+
     fun isAudioFileName(name: String): Boolean = AUDIO_EXTENSIONS.contains(extensionOf(name))
+
+    fun isAudioEntry(name: String, mimeType: String? = null): Boolean {
+        val normalizedMime = mimeType?.lowercase()?.substringBefore(';')?.trim()
+        if (normalizedMime == "vnd.android.document/directory") return false
+        if (isAudioFileName(name)) return true
+        return isAudioMimeType(normalizedMime)
+    }
+
+    fun shouldFilterMediaStorePath(pathOrRelative: String?, isMusic: Boolean): Boolean {
+        if (isMusic || pathOrRelative.isNullOrBlank()) return false
+        val normalized = "/" + pathOrRelative.replace('\\', '/').trim('/').lowercase() + "/"
+        return NON_MUSIC_PATH_MARKERS.any { marker -> normalized.contains(marker) }
+    }
+
+    fun cleanMediaStoreText(raw: String?): String? {
+        val trimmed = raw?.trim().orEmpty()
+        if (trimmed.isEmpty() || trimmed.equals("<unknown>", ignoreCase = true)) return null
+        return trimmed
+    }
+
+    fun decodeMediaStoreTrackAndDisc(rawTrack: Int): Pair<Int?, Int?> {
+        if (rawTrack <= 0) return null to null
+        val disc = if (rawTrack >= 1000) (rawTrack / 1000).takeIf { it > 0 } else null
+        val track = (rawTrack % 1000).takeIf { it > 0 }
+        return track to disc
+    }
 
     fun isLyricsFileName(name: String): Boolean = LYRICS_EXTENSIONS.contains(extensionOf(name))
 

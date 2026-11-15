@@ -590,8 +590,18 @@ export function SettingsView() {
             export or delete them.
           </p>
           <p className="muted">
-            Last scan: {snapshot?.scan.finishedAt ? new Date(snapshot.scan.finishedAt).toLocaleString() : "never"} ·{" "}
-            {snapshot?.scan.filesSeen ?? 0} files seen · {snapshot?.scan.errors.length ?? 0} unreadable
+            {scanning || snapshot?.scan.running ? (
+              <>
+                Scanning now: {snapshot?.scan.message || "Looking for music…"} (
+                {snapshot?.scan.filesProcessed ?? 0}/{snapshot?.scan.filesSeen ?? 0})
+              </>
+            ) : (
+              <>
+                Last scan:{" "}
+                {snapshot?.scan.finishedAt ? new Date(snapshot.scan.finishedAt).toLocaleString() : "never"} ·{" "}
+                {snapshot?.scan.filesSeen ?? 0} files seen · {snapshot?.scan.errors.length ?? 0} unreadable
+              </>
+            )}
           </p>
           {snapshot?.scan.errors.length ? (
             <details className="scan-errors">

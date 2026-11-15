@@ -27,6 +27,7 @@ export function Onboarding() {
   const hasAndroid = isAndroidNativeAudio();
   const snapshot = useLibrary(state => state.snapshot);
   const scanning = useLibrary(state => state.scanning);
+  const libraryError = useLibrary(state => state.error);
   const addFolder = useLibrary(state => state.addFolder);
   const scanMediaStore = useLibrary(state => state.scanMediaStore);
 
@@ -58,6 +59,17 @@ export function Onboarding() {
   const stepName = ONBOARDING_STEPS[step];
   const trackCount = snapshot?.counts.tracks ?? 0;
   const folderCount = snapshot?.folders.length ?? 0;
+  const scan = snapshot?.scan;
+  const scanLabel =
+    scanning || scan?.running
+      ? scan?.phase === "walking"
+        ? scan.filesSeen > 0
+          ? ` · Found ${scan.filesSeen} files…`
+          : " · Looking for music…"
+        : scan?.filesSeen
+          ? ` · Scanning ${scan.filesProcessed}/${scan.filesSeen}…`
+          : " · Scanning…"
+      : "";
   const lyrics = settings?.lyrics;
 
   const startFetchAndContinue = () => {
@@ -103,8 +115,13 @@ export function Onboarding() {
             <p className="onboarding-stat" data-testid="onboarding-library-stats">
               {folderCount} {folderCount === 1 ? "folder" : "folders"} · {trackCount}{" "}
               {trackCount === 1 ? "track" : "tracks"}
-              {scanning ? " · Scanning…" : ""}
+              {scanLabel}
             </p>
+            {libraryError ? (
+              <p className="error-text" data-testid="onboarding-library-error">
+                {libraryError}
+              </p>
+            ) : null}
             <div className="empty-actions">
               {hasAndroid ? (
                 <button type="button" className="primary" onClick={() => void scanMediaStore()} disabled={scanning}>

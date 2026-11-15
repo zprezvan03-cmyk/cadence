@@ -5,7 +5,7 @@
 
 import type { LibraryScanResult, ScanProgress } from "../../shared/types";
 import { isPathInside } from "../media/allowlist";
-import type { ParsedTrack } from "./metadataCore";
+import type { FallbackTrackTags, ParsedTrack } from "./metadataCore";
 import type { LibraryStoreCore } from "./storeCore";
 
 export const SKIP_DIRECTORIES = new Set([
@@ -27,6 +27,9 @@ export interface WalkedAudioFile {
   mtimeMs: number;
   hasSidecarLyrics: boolean;
   animatedArtPath: string | null;
+  displayName?: string | null;
+  mimeType?: string | null;
+  tags?: FallbackTrackTags | null;
 }
 
 export interface WalkResult {
@@ -35,14 +38,17 @@ export interface WalkResult {
 }
 
 export interface ScannerHostIo {
-  walkFolders(folders: string[], onFileSeen?: () => void): Promise<WalkResult>;
+  walkFolders(folders: string[], onFileSeen?: (seenCount?: number) => void): Promise<WalkResult>;
   parseTrack(file: WalkedAudioFile, artworkDirectory: string): Promise<ParsedTrack>;
 }
 
 export interface ScanCoreOptions {
   folders: string[];
   onProgress?: (progress: ScanProgress) => void;
+  /** Invoked periodically as newly scanned tracks land in the store so UIs can update live. */
+  onBatchUpdated?: () => void;
   force?: boolean;
+  concurrency?: number;
 }
 
 export async function scanLibraryCore(
@@ -67,23 +73,27 @@ export async function scanLibraryCore(
   const emit = () => options.onProgress?.({ ...progress, errors: [...errors] });
   emit();
 
-  const walked = await io.walkFolders(options.folders, () => {
-    progress.filesSeen += 1;
-    if (progress.filesSeen % 50 === 0) emit();
+  const walked = await io.walkFolders(options.folders, seenCount => {
+    progress.filesSeen =
+      typeof seenCount === "number" && Number.isFinite(seenCount) ? seenCount : progress.filesSeen + 1;
+    progress.message = `Found ${progress.filesSeen} audio files…`;
+    if (progress.filesSeen <= 25 || progress.filesSeen % 25 === 0) emit();
   });
   progress.filesSeen = walked.files.length;
   errors.push(...walked.errors);
 
   const files = walked.files;
   progress.phase = "reading";
-  progress.message = `Reading ${files.length} files…`;
+  progress.message = files.length > 0 ? `Reading 0/${files.length}…` : "No audio files found";
   emit();
 
   let added = 0;
   let updated = 0;
+  let lastBatchEmitAt = Date.now();
+  let pendingBatchChanges = 0;
   const seenPaths = new Set<string>();
 
-  const CONCURRENCY = 4;
+  const CONCURRENCY = Math.max(1, Math.min(12, options.concurrency ?? 6));
   let cursor = 0;
 
   const worker = async () => {
@@ -104,7 +114,10 @@ export async function scanLibraryCore(
           if (existing.hasSidecarLyrics !== file.hasSidecarLyrics) {
             store.setSidecarLyricsFlag(existing.id, file.hasSidecarLyrics);
           }
-          if (progress.filesProcessed % 25 === 0) emit();
+          if (progress.filesProcessed === 1 || progress.filesProcessed % 25 === 0) {
+            progress.message = `Reading ${progress.filesProcessed}/${files.length}…`;
+            emit();
+          }
           continue;
         }
 
@@ -121,13 +134,20 @@ export async function scanLibraryCore(
         });
         if (result.inserted) added += 1;
         else updated += 1;
+        pendingBatchChanges += 1;
       } catch (error) {
         errors.push({ path: file.path, reason: (error as Error).message });
       } finally {
         progress.filesProcessed += 1;
-        if (progress.filesProcessed % 10 === 0) {
+        if (progress.filesProcessed === 1 || progress.filesProcessed % 5 === 0) {
           progress.message = `Reading ${progress.filesProcessed}/${files.length}…`;
           emit();
+        }
+        const now = Date.now();
+        if (pendingBatchChanges >= 25 || (pendingBatchChanges > 0 && now - lastBatchEmitAt >= 1200)) {
+          pendingBatchChanges = 0;
+          lastBatchEmitAt = now;
+          options.onBatchUpdated?.();
         }
       }
     }

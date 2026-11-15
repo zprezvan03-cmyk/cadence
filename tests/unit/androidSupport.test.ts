@@ -4,6 +4,14 @@ import { resolve } from "node:path";
 
 import { MediaAllowlist, isPathInside, resolveContainedPath } from "../../src/main/media/allowlist";
 import { parseMediaUrl, tauriArtworkUrl, toTauriMediaUrl } from "../../src/main/media/protocolHandler";
+import { RangeTokenizer } from "../../src/main/library/rangeTokenizer";
+import {
+  isPlayableExtension,
+  readTrackMetadataCore,
+  resolveEffectiveExtension,
+} from "../../src/main/library/metadataCore";
+import { scanLibraryCore } from "../../src/main/library/scannerCore";
+import { LibraryStoreCore, emptyDatabase } from "../../src/main/library/storeCore";
 import {
   DEFAULT_SETTINGS,
   mergeSettings,
@@ -16,6 +24,7 @@ import {
   androidSetSystemBarsTheme,
   isAndroidNativeAudio,
   subscribeAndroidAudioEvents,
+  subscribeAndroidScanWalkProgress,
   syncQueueToAndroid,
 } from "../../src/renderer/audio/androidAudio";
 import type { CadenceApi, Track } from "../../src/shared/types";
@@ -65,6 +74,7 @@ describe("Android storage allowlist & media URL routing", () => {
   it("supports Android MediaStore roots and SAF content:// URIs safely", () => {
     expect(isPathInside("mediastore://audio", "content://media/external/audio/media/42", "posix")).toBe(true);
     expect(isPathInside("mediastore://audio", "/storage/emulated/0/Music/song.flac", "posix")).toBe(true);
+    expect(isPathInside("mediastore://audio", "/mnt/media_rw/sdcard/Music/song.flac", "posix")).toBe(true);
     expect(isPathInside("mediastore://audio", "/data/data/app.cadence.player/files/secret.db", "posix")).toBe(false);
 
     expect(
@@ -315,5 +325,156 @@ describe("Android build configuration and overlay contracts", () => {
     expect(mediaService).toContain("MediaSessionService");
     expect(mediaService).toContain("ExoPlayer");
     expect(mediaService).toContain("preserveCurrent");
+  });
+});
+
+describe("Android scanning performance, RangeTokenizer caching, and MediaStore metadata fallback", () => {
+  it("keeps the head window pinned in RangeTokenizer across tail seeks", async () => {
+    const fileSize = 2 * 1024 * 1024;
+    const reads: Array<{ offset: number; length: number }> = [];
+    const tokenizer = new RangeTokenizer("content://media/external/audio/media/9", fileSize, async (offset, length) => {
+      reads.push({ offset, length });
+      const buf = new Uint8Array(length);
+      buf[0] = (offset >> 16) & 0xff;
+      return buf;
+    });
+
+    const headBuf = new Uint8Array(16);
+    await tokenizer.readBuffer(headBuf, { position: 0 });
+    expect(reads).toHaveLength(1);
+    expect(reads[0].length).toBe(256 * 1024);
+
+    // Seek to 4 separate tail offsets to saturate non-zero cache slots
+    for (const pos of [600_000, 900_000, 1_200_000, 1_500_000]) {
+      await tokenizer.readBuffer(new Uint8Array(16), { position: pos });
+    }
+    expect(reads).toHaveLength(5);
+
+    // Offset 0 must still be pinned and served with zero additional readChunk IPC calls
+    await tokenizer.readBuffer(new Uint8Array(16), { position: 128 });
+    expect(reads).toHaveLength(5);
+  });
+
+  it("marks extensionless MediaStore content:// URIs playable and uses fallback tags + duration probe", async () => {
+    const uri = "content://media/external/audio/media/42";
+    expect(resolveEffectiveExtension(uri, "01 - Track.FLAC", "audio/flac")).toBe(".flac");
+    expect(resolveEffectiveExtension(uri, undefined, "audio/mp4; codecs=mp4a.40.2")).toBe(".m4a");
+    expect(isPlayableExtension(uri, "01 - Track.FLAC", "audio/flac")).toBe(true);
+    expect(isPlayableExtension(uri, undefined, "audio/opus")).toBe(true);
+    expect(isPlayableExtension(uri, "cover.jpg", "image/jpeg")).toBe(false);
+
+    const probed = vi.fn().mockResolvedValue(212.5);
+    const parsed = await readTrackMetadataCore(uri, {
+      fileSize: 64,
+      mtimeMs: 1000,
+      displayName: "01 - Midnight.opus",
+      mimeType: "audio/opus",
+      fallbackTags: {
+        title: "Midnight",
+        artist: "Aurora",
+        album: "Nocturne",
+        albumArtist: "Aurora",
+        duration: null,
+        trackNo: 1,
+        discNo: 2,
+        year: 2025,
+      },
+      skipEofDurationScan: true,
+      probeDuration: probed,
+      readChunk: async (_offset, length) => new Uint8Array(length),
+      saveArtwork: async () => "art.jpg",
+      fileExists: () => false,
+    });
+
+    expect(parsed.playable).toBe(true);
+    expect(parsed.title).toBe("Midnight");
+    expect(parsed.artist).toBe("Aurora");
+    expect(parsed.album).toBe("Nocturne");
+    expect(parsed.trackNo).toBe(1);
+    expect(parsed.discNo).toBe(2);
+    expect(parsed.year).toBe(2025);
+    expect(parsed.duration).toBe(212.5);
+    expect(probed).toHaveBeenCalledTimes(1);
+  });
+
+  it("streams live scanWalkProgress events and periodic batch refreshes during scanLibraryCore", async () => {
+    const originalWindow = globalThis.window;
+    (globalThis as { window?: unknown }).window = {};
+    try {
+      const seenUpdates: number[] = [];
+      const unsub = subscribeAndroidScanWalkProgress(seen => seenUpdates.push(seen));
+      const dispatch = (
+        window as unknown as {
+          __cadenceAndroidDispatch?: (msg: { event: string; payload: Record<string, unknown> }) => void;
+        }
+      ).__cadenceAndroidDispatch;
+      dispatch?.({ event: "scanWalkProgress", payload: { filesSeen: 75 } });
+      expect(seenUpdates).toEqual([75]);
+      unsub();
+    } finally {
+      (globalThis as { window?: unknown }).window = originalWindow;
+    }
+
+    const store = new LibraryStoreCore(
+      "/tmp/art",
+      p => p,
+      { engine: "json", writeThrough: false },
+      emptyDatabase()
+    );
+    const files = Array.from({ length: 30 }, (_, idx) => ({
+      path: `/storage/emulated/0/Music/track-${idx}.mp3`,
+      size: 1000 + idx,
+      mtimeMs: 1000,
+      hasSidecarLyrics: false,
+      animatedArtPath: null,
+    }));
+
+    const batchUpdates: number[] = [];
+    const result = await scanLibraryCore(
+      store,
+      {
+        folders: ["mediastore://audio"],
+        onBatchUpdated: () => batchUpdates.push(store.getTracks().length),
+      },
+      {
+        walkFolders: async (_folders, onFileSeen) => {
+          onFileSeen?.(15);
+          onFileSeen?.(30);
+          return { files, errors: [] };
+        },
+        parseTrack: async file => ({
+          path: file.path,
+          title: file.path,
+          artist: "Artist",
+          albumArtist: "Artist",
+          album: "Album",
+          genre: "",
+          year: 2026,
+          trackNo: 1,
+          discNo: 1,
+          duration: 180,
+          bitrate: 320,
+          sampleRate: 44100,
+          channels: 2,
+          codec: "MP3",
+          container: "mp3",
+          fileSize: file.size,
+          mtimeMs: file.mtimeMs,
+          artworkFile: null,
+          animatedArtPath: null,
+          embeddedLyrics: null,
+          hasSidecarLyrics: false,
+          playable: true,
+          replayGainTrackDb: null,
+          replayGainAlbumDb: null,
+          replayGainTrackPeak: null,
+          replayGainAlbumPeak: null,
+        }),
+      }
+    );
+
+    expect(result.added).toBe(30);
+    expect(batchUpdates.length).toBeGreaterThanOrEqual(1);
+    expect(store.getTracks().length).toBe(30);
   });
 });

@@ -8,6 +8,7 @@ import type {
 } from "../../shared/types";
 import { bridge } from "./bridge";
 import { setTrackRegistry } from "./trackRegistry";
+import { useUi } from "./uiStore";
 
 interface LibraryState {
   snapshot: LibrarySnapshot | null;
@@ -62,12 +63,23 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
     }
   },
   addFolder: async () => {
-    set({ scanning: true });
+    set({ scanning: true, error: null });
     try {
-      await bridge.library.addFolder();
+      const outcome = await bridge.library.addFolder();
       await get().refresh();
+      if (!outcome.canceled && outcome.result) {
+        if (outcome.result.errors.length > 0 && get().tracksById.size === 0) {
+          const msg = outcome.result.errors[0].reason || "Could not scan the selected folder.";
+          set({ error: msg });
+          useUi.getState().showToast(msg);
+        } else if (outcome.result.added === 0 && outcome.result.updated === 0 && get().tracksById.size === 0) {
+          useUi.getState().showToast("No audio files were found in that folder.");
+        }
+      }
     } catch (error) {
-      set({ error: (error as Error).message });
+      const msg = (error as Error).message || "Folder scan failed.";
+      set({ error: msg });
+      useUi.getState().showToast(msg);
     } finally {
       set({ scanning: false });
     }
@@ -76,15 +88,32 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
     if (!bridge.library.scanMediaStore) {
       return { granted: false };
     }
-    set({ scanning: true });
+    set({ scanning: true, error: null });
     try {
       const outcome = await bridge.library.scanMediaStore();
-      if (outcome.granted) {
-        await get().refresh();
+      if (!outcome.granted) {
+        const msg =
+          "Audio permission was denied. Allow Music & Audio access in Android Settings, or tap Add music folder.";
+        set({ error: msg });
+        useUi.getState().showToast(msg);
+        return { granted: false };
       }
-      return { granted: outcome.granted };
+      await get().refresh();
+      const result = outcome.result;
+      if (result && result.errors.length > 0 && get().tracksById.size === 0) {
+        const msg = result.errors[0].reason || "Device audio scan failed.";
+        set({ error: msg });
+        useUi.getState().showToast(msg);
+      } else if (result && result.added === 0 && result.updated === 0 && get().tracksById.size === 0) {
+        useUi.getState().showToast(
+          "No music found in Android MediaStore — try Add music folder to pick a folder directly."
+        );
+      }
+      return { granted: true };
     } catch (error) {
-      set({ error: (error as Error).message });
+      const msg = (error as Error).message || "Device audio scan failed.";
+      set({ error: msg });
+      useUi.getState().showToast(msg);
       return { granted: false };
     } finally {
       set({ scanning: false });
@@ -95,12 +124,14 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
     set({ snapshot, tracksById: indexTracks(snapshot) });
   },
   rescan: async () => {
-    set({ scanning: true });
+    set({ scanning: true, error: null });
     try {
       await bridge.library.rescan();
       await get().refresh();
     } catch (error) {
-      set({ error: (error as Error).message });
+      const msg = (error as Error).message || "Rescan failed.";
+      set({ error: msg });
+      useUi.getState().showToast(msg);
     } finally {
       set({ scanning: false });
     }

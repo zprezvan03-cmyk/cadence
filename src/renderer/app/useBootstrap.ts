@@ -265,7 +265,7 @@ export function useBootstrap(): void {
       useLibrary.setState({ scanning: progress.running });
       const snapshot = useLibrary.getState().snapshot;
       if (snapshot) useLibrary.setState({ snapshot: { ...snapshot, scan: progress } });
-      if (!progress.running && progress.phase === "done") {
+      if (!progress.running && (progress.phase === "done" || progress.phase === "error")) {
         void useLibrary.getState().refresh();
       }
     });

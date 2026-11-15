@@ -2,6 +2,7 @@ package app.cadence.player
 
 import android.app.Activity
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -63,6 +64,13 @@ class CadenceAndroidPlugin(private val activity: Activity) : Plugin(activity) {
 
         override fun onOpenNowPlaying() {
             dispatchToWebView("openNowPlaying", JSONObject())
+        }
+
+        override fun onScanWalkProgress(filesSeen: Int) {
+            dispatchToWebView(
+                "scanWalkProgress",
+                JSONObject().apply { put("filesSeen", filesSeen) }
+            )
         }
     }
 
@@ -131,27 +139,41 @@ class CadenceAndroidPlugin(private val activity: Activity) : Plugin(activity) {
 
     @Command
     fun requestAudioPermissions(invoke: Invoke) {
-        val status = CadenceStorageHelper.checkPermissions(activity)
-        if (status.missingPermissions.isEmpty()) {
-            invoke.resolve(JSObject(status.toJson().toString()))
+        val prefs = activity.getSharedPreferences("cadence_prefs", Context.MODE_PRIVATE)
+        val askedNotif = prefs.getBoolean("asked_notifications", false)
+        val status = CadenceStorageHelper.checkPermissions(activity, includeNotifications = !askedNotif)
+        if (status.audioGranted && (status.notificationsGranted || askedNotif)) {
+            invoke.resolve(status.toJsObject())
+            return
+        }
+        val toRequest = if (status.missingPermissions.isNotEmpty()) {
+            status.missingPermissions
+        } else {
+            CadenceStorageHelper.checkPermissions(activity, includeNotifications = false).missingPermissions
+        }
+        if (toRequest.isEmpty()) {
+            invoke.resolve(status.toJsObject())
             return
         }
         val pluginHandle = handle
         if (pluginHandle == null) {
-            invoke.resolve(JSObject(status.toJson().toString()))
+            invoke.resolve(status.toJsObject())
             return
         }
-        pluginHandle.requestPermissions(
-            invoke,
-            status.missingPermissions,
-            "onAudioPermissionsCallback"
-        )
+        prefs.edit().putBoolean("asked_notifications", true).apply()
+        activity.runOnUiThread {
+            pluginHandle.requestPermissions(
+                invoke,
+                toRequest,
+                "onAudioPermissionsCallback"
+            )
+        }
     }
 
     @PermissionCallback
     fun onAudioPermissionsCallback(invoke: Invoke) {
-        val updated = CadenceStorageHelper.checkPermissions(activity)
-        invoke.resolve(JSObject(updated.toJson().toString()))
+        val updated = CadenceStorageHelper.checkPermissions(activity, includeNotifications = false)
+        invoke.resolve(updated.toJsObject())
     }
 
     @Command
@@ -164,7 +186,9 @@ class CadenceAndroidPlugin(private val activity: Activity) : Plugin(activity) {
                     Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
             )
         }
-        startActivityForResult(invoke, intent, "onMusicFolderPicked")
+        activity.runOnUiThread {
+            startActivityForResult(invoke, intent, "onMusicFolderPicked")
+        }
     }
 
     @ActivityCallback
@@ -189,7 +213,9 @@ class CadenceAndroidPlugin(private val activity: Activity) : Plugin(activity) {
             type = "*/*"
             putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("text/*", "application/ttml+xml", "application/xml", "application/x-subrip"))
         }
-        startActivityForResult(invoke, intent, "onLyricsFilePicked")
+        activity.runOnUiThread {
+            startActivityForResult(invoke, intent, "onLyricsFilePicked")
+        }
     }
 
     @ActivityCallback
@@ -229,7 +255,9 @@ class CadenceAndroidPlugin(private val activity: Activity) : Plugin(activity) {
             type = "text/plain"
             putExtra(Intent.EXTRA_TITLE, fileName)
         }
-        startActivityForResult(invoke, intent, "onExportFilePicked")
+        activity.runOnUiThread {
+            startActivityForResult(invoke, intent, "onExportFilePicked")
+        }
     }
 
     @ActivityCallback
@@ -265,8 +293,10 @@ class CadenceAndroidPlugin(private val activity: Activity) : Plugin(activity) {
         }
         ioExecutor.execute {
             try {
-                val res = CadenceStorageHelper.walkFolders(activity, folders)
-                invoke.resolve(JSObject(res.toString()))
+                val res = CadenceStorageHelper.walkFolders(activity, folders) { filesSeen ->
+                    CadencePlaybackBus.publishScanWalkProgress(filesSeen)
+                }
+                invoke.resolve(res)
             } catch (err: Exception) {
                 invoke.reject(err.message ?: "Folder walk failed")
             }
@@ -295,10 +325,19 @@ class CadenceAndroidPlugin(private val activity: Activity) : Plugin(activity) {
         ioExecutor.execute {
             try {
                 val chunk = CadenceStorageHelper.readContentChunk(activity, uri, offset, length)
-                invoke.resolve(JSObject(chunk.toString()))
+                invoke.resolve(chunk)
             } catch (err: Exception) {
                 invoke.reject(err.message ?: "Failed to read chunk")
             }
+        }
+    }
+
+    @Command
+    fun probeAudioDuration(invoke: Invoke) {
+        val path = invoke.getArgs().getString("path")
+        ioExecutor.execute {
+            val duration = CadenceStorageHelper.probeAudioDuration(activity, path)
+            invoke.resolve(JSObject().apply { put("duration", duration) })
         }
     }
 

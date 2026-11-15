@@ -55,6 +55,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
   const scanMediaStore = useLibrary(state => state.scanMediaStore);
   const rescan = useLibrary(state => state.rescan);
   const scanning = useLibrary(state => state.scanning);
+  const libraryError = useLibrary(state => state.error);
   const createPlaylist = useLibrary(state => state.createPlaylist);
   const createSmartPlaylist = useLibrary(state => state.createSmartPlaylist);
   const deletePlaylist = useLibrary(state => state.deletePlaylist);
@@ -195,7 +196,11 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
           <h1>{TITLES[tab]}</h1>
           <p className="muted">
             {snapshot.counts.tracks} songs · {snapshot.counts.albums} albums · {snapshot.counts.artists} artists
+            {scanning || snapshot.scan.running
+              ? ` · ${snapshot.scan.message || "Scanning…"}`
+              : ""}
           </p>
+          {libraryError ? <p className="error-text">{libraryError}</p> : null}
         </div>
         <div className="heading-actions">
           {tracks.length > 0 ? (

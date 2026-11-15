@@ -28,6 +28,44 @@ export const LYRICS_SIDECAR_EXTENSIONS = [".lrc", ".ttml", ".qrc", ".srt", ".txt
 
 const PLAYABLE_EXTENSIONS = new Set([".flac", ".mp3", ".m4a", ".aac", ".wav", ".ogg", ".oga", ".opus", ".webm"]);
 
+const MIME_TO_EXTENSION: Record<string, string> = {
+  "audio/flac": ".flac",
+  "audio/x-flac": ".flac",
+  "audio/mpeg": ".mp3",
+  "audio/mp3": ".mp3",
+  "audio/mpeg3": ".mp3",
+  "audio/x-mpeg-3": ".mp3",
+  "audio/mp4": ".m4a",
+  "audio/x-m4a": ".m4a",
+  "audio/m4a": ".m4a",
+  "audio/mp4a-latm": ".m4a",
+  "audio/aac": ".aac",
+  "audio/x-aac": ".aac",
+  "audio/aac-adts": ".aac",
+  "audio/wav": ".wav",
+  "audio/x-wav": ".wav",
+  "audio/wave": ".wav",
+  "audio/vnd.wave": ".wav",
+  "audio/ogg": ".ogg",
+  "application/ogg": ".ogg",
+  "audio/vorbis": ".ogg",
+  "audio/opus": ".opus",
+  "audio/aiff": ".aiff",
+  "audio/x-aiff": ".aiff",
+  "audio/webm": ".webm",
+};
+
+export interface FallbackTrackTags {
+  title?: string | null;
+  artist?: string | null;
+  album?: string | null;
+  albumArtist?: string | null;
+  duration?: number | null;
+  trackNo?: number | null;
+  discNo?: number | null;
+  year?: number | null;
+}
+
 export interface ParsedTrack {
   path: string;
   title: string;
@@ -139,12 +177,36 @@ export function pathJoin(dir: string, ...parts: string[]): string {
   return resolvePathApi(undefined, dir).join(dir, ...parts);
 }
 
+export function extensionFromMime(mimeType?: string | null): string {
+  if (!mimeType) return "";
+  const normalized = mimeType.toLowerCase().split(";")[0].trim();
+  return MIME_TO_EXTENSION[normalized] ?? "";
+}
+
+export function resolveEffectiveExtension(
+  path: string,
+  displayName?: string | null,
+  mimeType?: string | null
+): string {
+  const fromPath = pathExtname(path).toLowerCase();
+  if (fromPath) return fromPath;
+  if (displayName) {
+    const fromName = pathExtname(displayName).toLowerCase();
+    if (fromName) return fromName;
+  }
+  return extensionFromMime(mimeType);
+}
+
 export function isAudioFile(path: string): boolean {
   return (AUDIO_EXTENSIONS as readonly string[]).includes(pathExtname(path).toLowerCase());
 }
 
-export function isPlayableExtension(path: string): boolean {
-  return PLAYABLE_EXTENSIONS.has(pathExtname(path).toLowerCase());
+export function isPlayableExtension(
+  path: string,
+  displayName?: string | null,
+  mimeType?: string | null
+): boolean {
+  return PLAYABLE_EXTENSIONS.has(resolveEffectiveExtension(path, displayName, mimeType));
 }
 
 export function animatedArtCandidates(audioPath: string): string[] {
@@ -238,6 +300,13 @@ export interface MetadataHostIo {
   readChunk: ReadChunkFn;
   saveArtwork: (data: Uint8Array, format: string) => Promise<string>;
   fileExists: (path: string) => boolean | Promise<boolean>;
+  displayName?: string | null;
+  mimeType?: string | null;
+  fallbackTags?: FallbackTrackTags | null;
+  /** Skip full-file EOF frame walks for Ogg/Opus/AAC/headerless VBR MP3 (e.g. Android IPC). */
+  skipEofDurationScan?: boolean;
+  /** Optional native duration probe used only if header parsing yields no duration. */
+  probeDuration?: () => Promise<number>;
 }
 
 export interface ReplayGainTags {
@@ -302,8 +371,17 @@ export function replayGainFromNativeTags(native: unknown): ReplayGainTags {
 }
 
 export async function readTrackMetadataCore(path: string, io: MetadataHostIo): Promise<ParsedTrack> {
-  const extension = pathExtname(path).toLowerCase();
-  const fallbackTitle = pathBasename(path, extension);
+  const extension = resolveEffectiveExtension(path, io.displayName, io.mimeType);
+  const fallbackTitle =
+    io.displayName && io.displayName.trim()
+      ? pathBasename(io.displayName.trim(), extension)
+      : pathBasename(path, extension);
+  const fallbackTags = io.fallbackTags ?? null;
+  const fallbackDuration =
+    typeof fallbackTags?.duration === "number" && Number.isFinite(fallbackTags.duration) && fallbackTags.duration > 0
+      ? fallbackTags.duration
+      : 0;
+  const playable = isPlayableExtension(path, io.displayName, io.mimeType);
 
   let animatedArtPath: string | null = null;
   for (const candidate of animatedArtCandidates(path)) {
@@ -325,7 +403,11 @@ export async function readTrackMetadataCore(path: string, io: MetadataHostIo): P
   let parseError: unknown = null;
   const tokenizer = new RangeTokenizer(path, io.fileSize, io.readChunk);
   try {
-    metadata = await parseFromTokenizer(tokenizer, { duration: true, skipCovers: false });
+    const computeSlowEofDuration = !(io.skipEofDurationScan || fallbackDuration > 0);
+    metadata = await parseFromTokenizer(tokenizer, {
+      duration: computeSlowEofDuration,
+      skipCovers: false,
+    });
   } catch (error) {
     parseError = error;
   } finally {
@@ -336,17 +418,22 @@ export async function readTrackMetadataCore(path: string, io: MetadataHostIo): P
     if (parseError) {
       console.warn(`[Cadence] Metadata unreadable for ${path}:`, (parseError as Error).message);
     }
+    let resolvedDuration = fallbackDuration;
+    if (resolvedDuration <= 0 && io.probeDuration) {
+      resolvedDuration = await io.probeDuration().catch(() => 0);
+    }
     return {
       path,
-      title: fallbackTitle,
-      artist: "Unknown artist",
-      albumArtist: "Unknown artist",
-      album: "Unknown album",
+      title: fallbackTags?.title?.trim() || fallbackTitle,
+      artist: fallbackTags?.artist?.trim() || "Unknown artist",
+      albumArtist:
+        fallbackTags?.albumArtist?.trim() || fallbackTags?.artist?.trim() || "Unknown artist",
+      album: fallbackTags?.album?.trim() || "Unknown album",
       genre: "",
-      year: null,
-      trackNo: null,
-      discNo: null,
-      duration: 0,
+      year: toNumber(fallbackTags?.year),
+      trackNo: toNumber(fallbackTags?.trackNo),
+      discNo: toNumber(fallbackTags?.discNo),
+      duration: resolvedDuration,
       bitrate: null,
       sampleRate: null,
       channels: null,
@@ -358,7 +445,7 @@ export async function readTrackMetadataCore(path: string, io: MetadataHostIo): P
       animatedArtPath,
       embeddedLyrics: null,
       hasSidecarLyrics,
-      playable: isPlayableExtension(path),
+      playable,
       replayGainTrackDb: null,
       replayGainAlbumDb: null,
       replayGainTrackPeak: null,
@@ -377,20 +464,33 @@ export async function readTrackMetadataCore(path: string, io: MetadataHostIo): P
     artworkFile = await io.saveArtwork(bytes, picture.format ?? "image/jpeg");
   }
 
+  let resolvedDuration =
+    typeof format.duration === "number" && Number.isFinite(format.duration) && format.duration > 0
+      ? format.duration
+      : fallbackDuration;
+  if (resolvedDuration <= 0 && io.probeDuration) {
+    resolvedDuration = await io.probeDuration().catch(() => 0);
+  }
+
+  const resolvedArtist =
+    Array.isArray(common.artists) && common.artists.length > 0
+      ? common.artists.join(", ")
+      : common.artist || fallbackTags?.artist?.trim() || "Unknown artist";
+
   return {
     path,
-    title: typeof common.title === "string" && common.title.trim() ? common.title.trim() : fallbackTitle,
-    artist:
-      Array.isArray(common.artists) && common.artists.length > 0
-        ? common.artists.join(", ")
-        : common.artist || "Unknown artist",
-    albumArtist: common.albumartist || common.artist || "Unknown artist",
-    album: common.album || "Unknown album",
+    title:
+      typeof common.title === "string" && common.title.trim()
+        ? common.title.trim()
+        : fallbackTags?.title?.trim() || fallbackTitle,
+    artist: resolvedArtist,
+    albumArtist: common.albumartist || fallbackTags?.albumArtist?.trim() || resolvedArtist,
+    album: common.album || fallbackTags?.album?.trim() || "Unknown album",
     genre: Array.isArray(common.genre) && common.genre.length > 0 ? common.genre.join(", ") : "",
-    year: toNumber(common.year),
-    trackNo: toNumber(common.track?.no),
-    discNo: toNumber(common.disk?.no),
-    duration: typeof format.duration === "number" ? format.duration : 0,
+    year: toNumber(common.year) ?? toNumber(fallbackTags?.year),
+    trackNo: toNumber(common.track?.no) ?? toNumber(fallbackTags?.trackNo),
+    discNo: toNumber(common.disk?.no) ?? toNumber(fallbackTags?.discNo),
+    duration: resolvedDuration,
     bitrate: toNumber(format.bitrate),
     sampleRate: toNumber(format.sampleRate),
     channels: toNumber(format.numberOfChannels),
@@ -402,7 +502,7 @@ export async function readTrackMetadataCore(path: string, io: MetadataHostIo): P
     animatedArtPath,
     embeddedLyrics: lyricsFromTags(common),
     hasSidecarLyrics,
-    playable: isPlayableExtension(path),
+    playable,
     replayGainTrackDb: replayGain.trackDb,
     replayGainAlbumDb: replayGain.albumDb,
     replayGainTrackPeak: replayGain.trackPeak,
