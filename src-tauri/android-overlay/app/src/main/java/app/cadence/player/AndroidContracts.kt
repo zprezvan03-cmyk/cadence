@@ -53,20 +53,40 @@ object AndroidContracts {
         "audio/webm" to "webm",
     )
 
-    private val NON_MUSIC_PATH_MARKERS = listOf(
+    private val ALWAYS_EXCLUDED_PATH_MARKERS = listOf(
+        "/android/data/",
+        "/android/obb/",
+        "/android/media/",
+        "/.thumbnails/",
+        "/thumbnails/",
         "/notifications/",
         "/ringtones/",
         "/alarms/",
-        "/whatsapp/",
-        "/telegram/",
         "/recordings/",
-        "/voice recorder/",
         "/callrecordings/",
         "/call recordings/",
+        "/voice recorder/",
         "/sound_recorder/",
         "/miui/sound_recorder/",
-        "/android/data/",
-        "/android/media/",
+        "/whatsapp voice notes/",
+        "/whatsapp audio notes/",
+        "/whatsapp animated gifs/",
+        "/telegram voice/",
+        "/capcut/",
+        "/tiktok/",
+        "/snapchat/",
+        "/wechat/",
+        "/lost.dir/",
+    )
+
+    private val NON_MUSIC_PATH_MARKERS = listOf(
+        "/whatsapp/",
+        "/telegram/",
+        "/dcim/",
+        "/pictures/",
+        "/movies/",
+        "/podcasts/",
+        "/audiobooks/",
     )
 
     /** Standard Cadence 10-band graphic EQ center frequencies in Hz. */
@@ -148,8 +168,10 @@ object AndroidContracts {
     }
 
     fun shouldFilterMediaStorePath(pathOrRelative: String?, isMusic: Boolean): Boolean {
-        if (isMusic || pathOrRelative.isNullOrBlank()) return false
+        if (pathOrRelative.isNullOrBlank()) return false
         val normalized = "/" + pathOrRelative.replace('\\', '/').trim('/').lowercase() + "/"
+        if (ALWAYS_EXCLUDED_PATH_MARKERS.any { marker -> normalized.contains(marker) }) return true
+        if (isMusic) return false
         return NON_MUSIC_PATH_MARKERS.any { marker -> normalized.contains(marker) }
     }
 

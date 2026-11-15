@@ -114,16 +114,18 @@ export function HomeView() {
 
   if (snapshot.tracks.length === 0) {
     const scan = snapshot.scan;
-    const scanLabel =
-      scanning || scan.running
-        ? scan.phase === "walking"
-          ? scan.filesSeen > 0
-            ? `Found ${scan.filesSeen} files…`
-            : "Looking for music…"
-          : scan.filesSeen > 0
-            ? `Scanning ${scan.filesProcessed}/${scan.filesSeen}…`
-            : "Scanning…"
-        : null;
+    const isScanning = scanning || scan.running;
+    const scanLabel = isScanning
+      ? scan.phase === "walking"
+        ? scan.filesSeen > 0
+          ? `Found ${scan.filesSeen} files…`
+          : "Looking for music…"
+        : scan.filesSeen > 0
+          ? `Scanning ${scan.filesProcessed}/${scan.filesSeen}…`
+          : "Scanning…"
+      : null;
+    const firstScanError = scan.errors[0]?.reason;
+    const scanErrorHint = firstScanError ? ` (${firstScanError.slice(0, 140)})` : "";
     return (
       <div className="home-empty" data-testid="home-empty">
         <div className="home-empty-art">
@@ -137,7 +139,7 @@ export function HomeView() {
         </p>
         <div className="empty-actions">
           {hasAndroid ? (
-            <button type="button" className="primary" onClick={() => void scanMediaStore()} disabled={scanning}>
+            <button type="button" className="primary" onClick={() => void scanMediaStore()} disabled={isScanning}>
               <Smartphone size={18} /> {scanLabel ?? "Scan device music"}
             </button>
           ) : null}
@@ -145,14 +147,18 @@ export function HomeView() {
             type="button"
             className={hasAndroid ? "" : "primary"}
             onClick={() => void addFolder()}
-            disabled={scanning}
+            disabled={isScanning}
           >
-            <FolderPlus size={18} /> {scanLabel ?? "Add music folder"}
+            <FolderPlus size={18} /> {hasAndroid ? "Add music folder" : (scanLabel ?? "Add music folder")}
           </button>
         </div>
         {libraryError ? <p className="error-text">{libraryError}</p> : null}
-        {snapshot.scan.errors.length > 0 ? (
-          <p className="error-text">{snapshot.scan.errors.length} files could not be read during the last scan.</p>
+        {scan.errors.length > 0 ? (
+          <p className="error-text">
+            {isScanning
+              ? `${scan.errors.length} files unreadable so far${scanErrorHint}`
+              : `${scan.errors.length} files could not be read during the last scan${scanErrorHint}`}
+          </p>
         ) : null}
       </div>
     );

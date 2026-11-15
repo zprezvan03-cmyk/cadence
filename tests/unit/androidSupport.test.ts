@@ -9,6 +9,8 @@ import {
   isPlayableExtension,
   readTrackMetadataCore,
   resolveEffectiveExtension,
+  sha1FallbackHex,
+  sha1Hex,
 } from "../../src/main/library/metadataCore";
 import { scanLibraryCore } from "../../src/main/library/scannerCore";
 import { LibraryStoreCore, emptyDatabase } from "../../src/main/library/storeCore";
@@ -342,7 +344,7 @@ describe("Android scanning performance, RangeTokenizer caching, and MediaStore m
     const headBuf = new Uint8Array(16);
     await tokenizer.readBuffer(headBuf, { position: 0 });
     expect(reads).toHaveLength(1);
-    expect(reads[0].length).toBe(256 * 1024);
+    expect(reads[0].length).toBe(128 * 1024);
 
     // Seek to 4 separate tail offsets to saturate non-zero cache slots
     for (const pos of [600_000, 900_000, 1_200_000, 1_500_000]) {
@@ -362,6 +364,12 @@ describe("Android scanning performance, RangeTokenizer caching, and MediaStore m
     expect(isPlayableExtension(uri, "01 - Track.FLAC", "audio/flac")).toBe(true);
     expect(isPlayableExtension(uri, undefined, "audio/opus")).toBe(true);
     expect(isPlayableExtension(uri, "cover.jpg", "image/jpeg")).toBe(false);
+
+    const bytes = new TextEncoder().encode("cadence-android-cover-art-sha1-check");
+    const fallbackDigest = sha1FallbackHex(bytes);
+    const webCryptoDigest = await sha1Hex(bytes);
+    expect(fallbackDigest).toMatch(/^[0-9a-f]{40}$/);
+    expect(fallbackDigest).toBe(webCryptoDigest);
 
     const probed = vi.fn().mockResolvedValue(212.5);
     const parsed = await readTrackMetadataCore(uri, {

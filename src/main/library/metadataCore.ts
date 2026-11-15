@@ -277,16 +277,96 @@ export const ARTWORK_FORMAT_TO_EXTENSION: Record<string, string> = {
   "image/bmp": ".bmp",
 };
 
-export async function sha1Hex(data: Uint8Array): Promise<string> {
-  const copy = new Uint8Array(data.byteLength);
-  copy.set(data);
-  const digest = await globalThis.crypto.subtle.digest("SHA-1", copy);
-  const bytes = new Uint8Array(digest);
-  let hex = "";
-  for (let i = 0; i < bytes.length; i++) {
-    hex += bytes[i].toString(16).padStart(2, "0");
+/**
+ * Pure-JS RFC 3174 SHA-1 fallback used when `globalThis.crypto.subtle` is unavailable (for example,
+ * in non-secure WebView origins such as `http://tauri.localhost` on certain Android devices).
+ */
+export function sha1FallbackHex(data: Uint8Array): string {
+  const len = data.byteLength;
+  const totalWords = (((len + 8) >> 6) + 1) << 4;
+  const words = new Uint32Array(totalWords);
+  for (let i = 0; i < len; i++) {
+    words[i >> 2] |= data[i] << (24 - (i & 3) * 8);
   }
-  return hex;
+  words[len >> 2] |= 0x80 << (24 - (len & 3) * 8);
+  const bitLenHi = Math.floor((len * 8) / 0x100000000);
+  const bitLenLo = (len * 8) >>> 0;
+  words[totalWords - 2] = bitLenHi >>> 0;
+  words[totalWords - 1] = bitLenLo;
+
+  let h0 = 0x67452301;
+  let h1 = 0xefcdab89;
+  let h2 = 0x98badcfe;
+  let h3 = 0x10325476;
+  let h4 = 0xc3d2e1f0;
+  const w = new Int32Array(80);
+
+  for (let offset = 0; offset < totalWords; offset += 16) {
+    for (let i = 0; i < 16; i++) w[i] = words[offset + i];
+    for (let i = 16; i < 80; i++) {
+      const t = w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16];
+      w[i] = (t << 1) | (t >>> 31);
+    }
+
+    let a = h0;
+    let b = h1;
+    let c = h2;
+    let d = h3;
+    let e = h4;
+
+    for (let i = 0; i < 80; i++) {
+      let f: number;
+      let k: number;
+      if (i < 20) {
+        f = (b & c) | (~b & d);
+        k = 0x5a827999;
+      } else if (i < 40) {
+        f = b ^ c ^ d;
+        k = 0x6ed9eba1;
+      } else if (i < 60) {
+        f = (b & c) | (b & d) | (c & d);
+        k = 0x8f1bbcdc;
+      } else {
+        f = b ^ c ^ d;
+        k = 0xca62c1d6;
+      }
+      const temp = (((a << 5) | (a >>> 27)) + f + e + k + w[i]) | 0;
+      e = d;
+      d = c;
+      c = (b << 30) | (b >>> 2);
+      b = a;
+      a = temp;
+    }
+
+    h0 = (h0 + a) | 0;
+    h1 = (h1 + b) | 0;
+    h2 = (h2 + c) | 0;
+    h3 = (h3 + d) | 0;
+    h4 = (h4 + e) | 0;
+  }
+
+  return [h0, h1, h2, h3, h4]
+    .map(n => (n >>> 0).toString(16).padStart(8, "0"))
+    .join("");
+}
+
+export async function sha1Hex(data: Uint8Array): Promise<string> {
+  if (globalThis.crypto?.subtle?.digest) {
+    try {
+      const copy = new Uint8Array(data.byteLength);
+      copy.set(data);
+      const digest = await globalThis.crypto.subtle.digest("SHA-1", copy);
+      const bytes = new Uint8Array(digest);
+      let hex = "";
+      for (let i = 0; i < bytes.length; i++) {
+        hex += bytes[i].toString(16).padStart(2, "0");
+      }
+      return hex;
+    } catch {
+      // Fall back to pure-JS SHA-1 on restricted WebView contexts.
+    }
+  }
+  return sha1FallbackHex(data);
 }
 
 export function artworkExtensionForMime(format: string): string {
@@ -460,8 +540,12 @@ export async function readTrackMetadataCore(path: string, io: MetadataHostIo): P
   let artworkFile: string | null = null;
   const picture = Array.isArray(common.picture) ? common.picture[0] : null;
   if (picture?.data) {
-    const bytes = picture.data instanceof Uint8Array ? picture.data : new Uint8Array(picture.data);
-    artworkFile = await io.saveArtwork(bytes, picture.format ?? "image/jpeg");
+    try {
+      const bytes = picture.data instanceof Uint8Array ? picture.data : new Uint8Array(picture.data);
+      artworkFile = await io.saveArtwork(bytes, picture.format ?? "image/jpeg");
+    } catch (error) {
+      console.warn(`[Cadence] Could not save artwork for ${path}:`, (error as Error).message);
+    }
   }
 
   let resolvedDuration =

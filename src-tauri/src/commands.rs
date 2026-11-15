@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, UNIX_EPOCH};
 
-#[cfg(target_os = "android")]
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -882,23 +881,131 @@ pub async fn cmd_read_file_chunk(
 }
 
 #[tauri::command]
+pub async fn cmd_read_file_chunk_b64(
+    path: String,
+    offset: u64,
+    length: usize,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    #[cfg(not(target_os = "android"))]
+    let _ = app;
+
+    let clamped = length.min(MAX_CHUNK_READ_BYTES);
+    if clamped == 0 {
+        return Ok(String::new());
+    }
+
+    #[cfg(target_os = "android")]
+    if path.starts_with("content://") {
+        if !state.allowlist.is_allowed_content_uri(&path) {
+            return Err("Forbidden".to_string());
+        }
+        let plugin = android_plugin(&app)?;
+        let reply: AndroidChunkReply = plugin
+            .0
+            .run_mobile_plugin_async(
+                "readContentChunk",
+                serde_json::json!({
+                    "uri": path,
+                    "offset": offset,
+                    "length": clamped
+                }),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(reply.base64);
+    }
+
+    let Some(allowed_path) = state.allowlist.resolve_allowed_media(&path) else {
+        return Err("Forbidden".to_string());
+    };
+    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let mut file = File::open(&allowed_path).map_err(|e| e.to_string())?;
+        file.seek(SeekFrom::Start(offset)).map_err(|e| e.to_string())?;
+        let mut buf = vec![0u8; clamped];
+        let n = file.read(&mut buf).map_err(|e| e.to_string())?;
+        buf.truncate(n);
+        Ok(STANDARD.encode(&buf))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn cmd_save_artwork_b64(
+    file_name: String,
+    data_base64: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    if !is_valid_artwork_filename(&file_name) {
+        return Err("Invalid artwork file name".to_string());
+    }
+    let data = STANDARD.decode(&data_base64).map_err(|e| e.to_string())?;
+    let target = state.artwork_dir.join(&file_name);
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        if !target.exists() {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(&target, &data).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    Ok(file_name)
+}
+
+#[tauri::command]
 pub async fn cmd_save_artwork(
     request: tauri::ipc::Request<'_>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let file_name = request
+    let header_file_name = request
         .headers()
         .get("x-file-name")
         .and_then(|value| value.to_str().ok())
-        .ok_or_else(|| "Missing artwork file name".to_string())?
-        .to_string();
+        .map(str::to_string);
+
+    let (file_name, data): (String, Vec<u8>) = match request.body() {
+        InvokeBody::Raw(bytes) => {
+            let name = header_file_name.ok_or_else(|| "Missing artwork file name".to_string())?;
+            (name, bytes.to_vec())
+        }
+        InvokeBody::Json(Value::Object(map)) => {
+            let name = map
+                .get("fileName")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .or(header_file_name)
+                .ok_or_else(|| "Missing artwork file name".to_string())?;
+            let b64 = map
+                .get("dataBase64")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing artwork dataBase64".to_string())?;
+            let decoded = STANDARD.decode(b64).map_err(|e| e.to_string())?;
+            (name, decoded)
+        }
+        InvokeBody::Json(Value::Array(arr)) => {
+            let name = header_file_name.ok_or_else(|| "Missing artwork file name".to_string())?;
+            let mut decoded = Vec::with_capacity(arr.len());
+            for item in arr {
+                let byte = item
+                    .as_u64()
+                    .and_then(|n| u8::try_from(n).ok())
+                    .ok_or_else(|| "Invalid artwork byte array".to_string())?;
+                decoded.push(byte);
+            }
+            (name, decoded)
+        }
+        _ => return Err("Artwork payload must be raw bytes or base64 JSON".to_string()),
+    };
+
     if !is_valid_artwork_filename(&file_name) {
         return Err("Invalid artwork file name".to_string());
     }
-    let InvokeBody::Raw(bytes) = request.body() else {
-        return Err("Artwork must be sent as raw bytes".to_string());
-    };
-    let data = bytes.to_vec();
     drop(request); // Do not carry the IPC borrow across the blocking-file-write await.
     let target = state.artwork_dir.join(&file_name);
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {

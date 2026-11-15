@@ -480,6 +480,25 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
   }
   const inFlightArtworkWrites = new Map<string, Promise<string>>();
 
+  const uint8ToBase64 = (bytes: Uint8Array): string => {
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  };
+
+  const base64ToUint8 = (b64: string): Uint8Array => {
+    if (!b64) return new Uint8Array(0);
+    const binary = atob(b64);
+    const out = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      out[i] = binary.charCodeAt(i);
+    }
+    return out;
+  };
+
   /** Saves cover bytes into the artwork cache under their content hash; returns the file name. */
   const saveArtworkBytes = async (data: Uint8Array, format: string): Promise<string> => {
     const hash = await sha1Hex(data);
@@ -489,10 +508,18 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
     const inFlight = inFlightArtworkWrites.get(fileName);
     if (inFlight) return inFlight;
 
-    // Raw IPC avoids a second JS number array and JSON string for every cover image.
-    const writePromise = invoke<string>("cmd_save_artwork", data, {
-      headers: { "x-file-name": fileName },
-    })
+    // Android's WebView postMessage bridge does not support `InvokeBody::Raw`, so send compact
+    // base64 JSON there while keeping zero-copy raw IPC on desktop WebView2.
+    const writePromise = (
+      isAndroid
+        ? invoke<string>("cmd_save_artwork_b64", {
+            fileName,
+            dataBase64: uint8ToBase64(data),
+          })
+        : invoke<string>("cmd_save_artwork", data, {
+            headers: { "x-file-name": fileName },
+          })
+    )
       .then(() => {
         knownArtworkFiles.add(fileName);
         return fileName;
@@ -504,7 +531,8 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
     return writePromise;
   };
 
-  // Scanner host I/O backed by binary `cmd_read_file_chunk` + `RangeTokenizer`
+  // Scanner host I/O backed by `cmd_read_file_chunk_b64` on Android (avoiding Channel eval +
+  // fetch preflights per chunk) and binary `cmd_read_file_chunk` on desktop + `RangeTokenizer`.
   const parseWalkedAudioFile = (file: WalkedAudioFile) =>
     readTrackMetadataCore(file.path, {
       fileSize: file.size,
@@ -517,6 +545,14 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         ? () => invoke<number>("cmd_probe_audio_duration", { path: file.path }).catch(() => 0)
         : undefined,
       readChunk: async (offset, length) => {
+        if (isAndroid) {
+          const b64 = await invoke<string>("cmd_read_file_chunk_b64", {
+            path: file.path,
+            offset,
+            length,
+          });
+          return base64ToUint8(b64);
+        }
         const res = await invoke<ArrayBuffer | Uint8Array | number[]>("cmd_read_file_chunk", {
           path: file.path,
           offset,
@@ -581,6 +617,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
       {
         folders,
         force,
+        concurrency: isAndroid ? 4 : 6,
         onProgress: emitScanProgress,
         onBatchUpdated: () => {
           void flushDbQueue();

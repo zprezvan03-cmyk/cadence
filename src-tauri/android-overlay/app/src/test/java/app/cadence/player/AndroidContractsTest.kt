@@ -32,7 +32,9 @@ class AndroidContractsTest {
         assertFalse(AndroidContracts.shouldSkipDirectoryName("Music"))
 
         assertTrue(AndroidContracts.shouldFilterMediaStorePath("/storage/emulated/0/WhatsApp/Media/WhatsApp Voice Notes/PTT.opus", isMusic = false))
-        assertTrue(AndroidContracts.shouldFilterMediaStorePath("Recordings/Voice Recorder/", isMusic = false))
+        assertTrue(AndroidContracts.shouldFilterMediaStorePath("/storage/emulated/0/Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Voice Notes/PTT.opus", isMusic = true))
+        assertTrue(AndroidContracts.shouldFilterMediaStorePath("/storage/emulated/0/Android/obb/com.game/sfx.ogg", isMusic = true))
+        assertTrue(AndroidContracts.shouldFilterMediaStorePath("Recordings/Voice Recorder/", isMusic = true))
         assertFalse(AndroidContracts.shouldFilterMediaStorePath("/storage/emulated/0/WhatsApp/WhatsApp Audio/Song.mp3", isMusic = true))
         assertFalse(AndroidContracts.shouldFilterMediaStorePath("/storage/emulated/0/Music/Album/01.flac", isMusic = false))
     }

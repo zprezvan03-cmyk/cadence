@@ -10,8 +10,8 @@ import { AbstractTokenizer, EndOfStreamError, type IFileInfo, type IReadChunkOpt
 
 export type ReadChunkFn = (offset: number, length: number) => Promise<Uint8Array>;
 
-const CACHE_WINDOW_BYTES = 256 * 1024;
-const SMALL_FILE_SINGLE_READ_BYTES = 512 * 1024;
+const CACHE_WINDOW_BYTES = 128 * 1024;
+const SMALL_FILE_SINGLE_READ_BYTES = 256 * 1024;
 const MAX_CACHED_WINDOWS = 4;
 
 interface CachedWindow {

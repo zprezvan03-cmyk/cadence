@@ -291,9 +291,11 @@ object CadenceStorageHelper {
                 val fileName = if (name.isNotBlank()) name else dataPath.orEmpty()
                 if (!AndroidContracts.isAudioEntry(fileName, mimeType)) continue
 
-                // Skip tiny notification/UI sound clips and voice-note/system directories unless explicitly music.
+                // Skip tiny notification/UI sound clips and voice-note/system/app directories.
+                val rawPath = dataPath ?: relativePath
                 if (!isMusic && durationMs in 1..4999) continue
-                if (AndroidContracts.shouldFilterMediaStorePath(dataPath ?: relativePath, isMusic)) continue
+                if (durationMs in 1..2999 && !(rawPath ?: "").contains("/music/", ignoreCase = true)) continue
+                if (AndroidContracts.shouldFilterMediaStorePath(rawPath, isMusic)) continue
 
                 val contentUri = ContentUris.withAppendedId(uri, id).toString()
                 val directFile = dataPath?.let { File(it) }?.takeIf { it.isFile && it.canRead() }
