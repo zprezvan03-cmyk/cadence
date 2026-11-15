@@ -15,6 +15,8 @@ export interface FullscreenControlsProps {
   track: Track | null;
   showLyrics: boolean;
   onToggleLyrics: () => void;
+  /** Only show the fullscreen lyrics on/off toggle where it takes effect (fullscreen mode). */
+  showLyricsToggle?: boolean;
   /** Hover visibility: faded out and non-interactive while true. */
   concealed?: boolean;
   /** "bar" along the bottom with the lyrics toggle (default); "panel" beside the artwork, toggle in the transport row. */
@@ -25,6 +27,7 @@ export function FullscreenControls({
   track,
   showLyrics,
   onToggleLyrics,
+  showLyricsToggle = true,
   concealed = false,
   variant = "bar",
 }: FullscreenControlsProps) {
@@ -94,18 +97,20 @@ export function FullscreenControls({
         <TransportButtons />
 
         <div className="fs-group fs-group-end">
-          <button
-            type="button"
-            className={`fs-lyrics-toggle ${showLyrics ? "active" : ""}`}
-            aria-label="Lyrics"
-            aria-pressed={showLyrics}
-            title={showLyrics ? "Hide lyrics" : "Show lyrics"}
-            data-testid="fullscreen-lyrics-toggle"
-            onClick={onToggleLyrics}
-          >
-            <Mic2 size={16} />
-            <span>{showLyrics ? "On" : "Off"}</span>
-          </button>
+          {showLyricsToggle ? (
+            <button
+              type="button"
+              className={`fs-lyrics-toggle ${showLyrics ? "active" : ""}`}
+              aria-label="Lyrics"
+              aria-pressed={showLyrics}
+              title={showLyrics ? "Hide lyrics" : "Show lyrics"}
+              data-testid="fullscreen-lyrics-toggle"
+              onClick={onToggleLyrics}
+            >
+              <Mic2 size={15} />
+              <span>{showLyrics ? "On" : "Off"}</span>
+            </button>
+          ) : null}
           <VolumeControl />
           {queue}
         </div>

@@ -38,6 +38,7 @@ import {
   normalizeEqBandsDb,
 } from "../../audio/equalizer";
 import type { LyricsFetchConcurrency } from "../../../shared/types";
+import { useMobileShell } from "../../app/useMobileShell";
 import { useSessionState } from "../../app/useSessionState";
 import { LyricsAiSettings } from "./LyricsAiSettings";
 
@@ -123,6 +124,7 @@ export function SettingsView() {
   const settings = useSettings(state => state.settings);
   const patchSettings = useSettings(state => state.patch);
   const resetSettings = useSettings(state => state.reset);
+  const isMobile = useMobileShell();
   const hasAndroid = isAndroidNativeAudio();
   const snapshot = useLibrary(state => state.snapshot);
   const addFolder = useLibrary(state => state.addFolder);
@@ -196,9 +198,11 @@ export function SettingsView() {
           <h1>Make it yours</h1>
         </div>
         <div className="heading-actions">
-          <button type="button" data-testid="open-shortcuts-help" onClick={() => setShortcutsHelpOpen(true)}>
-            <Keyboard size={16} /> Keyboard shortcuts
-          </button>
+          {!isMobile ? (
+            <button type="button" data-testid="open-shortcuts-help" onClick={() => setShortcutsHelpOpen(true)}>
+              <Keyboard size={15} /> Keyboard shortcuts
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={async () => {
@@ -206,7 +210,7 @@ export function SettingsView() {
               showToast("Settings restored to defaults");
             }}
           >
-            <RotateCcw size={16} /> Reset all
+            <RotateCcw size={15} /> Reset all
           </button>
         </div>
       </header>
@@ -291,8 +295,12 @@ export function SettingsView() {
               The quick brown fox jumps over the lazy dog · 1, 2, 3
             </p>
             <Toggle label="Reduce motion" checked={settings.appearance.reduceMotion} onChange={value => void patchSettings({ appearance: { reduceMotion: value } })} />
-            <Toggle label="Compact sidebar" checked={settings.appearance.compactSidebar} onChange={value => void patchSettings({ appearance: { compactSidebar: value } })} />
-            <Toggle label="Expand compact sidebar on hover" checked={settings.appearance.compactSidebarHoverExpand} onChange={value => void patchSettings({ appearance: { compactSidebarHoverExpand: value } })} />
+            {!isMobile ? (
+              <>
+                <Toggle label="Compact sidebar" checked={settings.appearance.compactSidebar} onChange={value => void patchSettings({ appearance: { compactSidebar: value } })} />
+                <Toggle label="Expand compact sidebar on hover" checked={settings.appearance.compactSidebarHoverExpand} onChange={value => void patchSettings({ appearance: { compactSidebarHoverExpand: value } })} />
+              </>
+            ) : null}
             <Toggle label="Blur artwork behind the player" checked={settings.appearance.blurArtwork} onChange={value => void patchSettings({ appearance: { blurArtwork: value } })} />
             <Toggle label="Verbose shader logs" checked={settings.advanced.showLogs} onChange={value => void patchSettings({ advanced: { showLogs: value } })} />
             <div className="setting-row">

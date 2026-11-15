@@ -451,6 +451,8 @@
 
 .lyrics-heading {
   /* Keyed by track in LyricsView, so the title and artist settle in when the song changes. */
+  flex: 1;
+  min-width: 0;
   animation: meta-in var(--dur-2) var(--ease-out);
 }
 
@@ -689,18 +691,27 @@ braccato-lyrics[data-upgrading="true"] {
 .lyrics-empty-panel button {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 9px 15px;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 12px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  font-size: 12.5px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  font-size: 12px;
   font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.lyrics-empty-panel button:hover {
+  background: rgba(255, 255, 255, 0.14);
 }
 
 .lyrics-empty-panel button.primary {
   background: #fff;
   color: #09090d;
+  border-color: transparent;
 }
 
 /* ------------------------------------------------------------- lyrics dock */
@@ -710,18 +721,32 @@ braccato-lyrics[data-upgrading="true"] {
   z-index: 3;
   display: flex;
   align-items: center;
-  gap: clamp(8px, 1cqi, 14px);
-  flex-wrap: wrap;
-  padding: clamp(8px, 1.4cqh, 14px) clamp(16px, 2cqi, 30px);
-  margin: 0 auto clamp(12px, 2.4cqh, 24px);
+  padding: 6px 12px;
+  margin: 0 auto clamp(10px, 2.2cqh, 22px);
   width: fit-content;
   max-width: calc(100% - (2 * var(--np-gutter)));
+  overflow: visible;
   border-radius: 999px;
   /* Shader-backed: the dock shows the live Kawarp background through its blur, not a black fill. */
-  background: rgba(14, 14, 22, 0.26);
+  background: rgba(14, 14, 22, 0.28);
   border: 1px solid rgba(255, 255, 255, 0.14);
   backdrop-filter: blur(22px) saturate(1.35);
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.lyrics-dock-scroll {
+  display: flex;
+  align-items: center;
+  gap: clamp(5px, 0.8cqi, 10px);
+  flex-wrap: nowrap;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.lyrics-dock-scroll::-webkit-scrollbar {
+  display: none;
 }
 
 /* Fullscreen audio controls, stacked above the lyrics dock. Same shader-backed glass as the dock. */
@@ -818,14 +843,18 @@ braccato-lyrics[data-upgrading="true"] {
 .fs-lyrics-toggle {
   display: inline-flex;
   align-items: center;
-  gap: clamp(5px, 0.7cqi, 9px);
-  min-height: calc(var(--np-control-button-size) * 0.78);
-  padding: clamp(5px, 0.9cqh, 9px) clamp(10px, 1.2cqi, 16px);
+  justify-content: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 5px 10px;
   border-radius: 999px;
-  font-size: clamp(12px, calc(0.45cqi + 0.6cqh), 16px);
-  font-weight: 550;
-  color: rgba(255, 255, 255, 0.75);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.14);
 }
 
 .fs-lyrics-toggle:hover {
@@ -847,11 +876,12 @@ braccato-lyrics[data-upgrading="true"] {
 .dock-group {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .dock-group + .dock-group {
-  padding-left: 10px;
+  padding-left: 8px;
   border-left: 1px solid rgba(255, 255, 255, 0.09);
 }
 
@@ -859,18 +889,24 @@ braccato-lyrics[data-upgrading="true"] {
   background: none;
   border: 0;
   padding: 0 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .dock-button {
   display: inline-flex;
   align-items: center;
-  gap: clamp(5px, 0.7cqi, 9px);
-  min-height: var(--np-control-button-size);
-  padding: clamp(6px, 1cqh, 10px) clamp(10px, 1.2cqi, 16px);
+  justify-content: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 5px 10px;
   border-radius: 999px;
-  font-size: clamp(12px, calc(0.45cqi + 0.65cqh), 16px);
-  font-weight: 550;
-  color: rgba(255, 255, 255, 0.82);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.84);
 }
 
 .dock-button:hover {
@@ -884,12 +920,13 @@ braccato-lyrics[data-upgrading="true"] {
 }
 
 .dock-icon {
-  width: calc(var(--np-control-button-size) * 0.82);
-  height: calc(var(--np-control-button-size) * 0.82);
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
   display: grid;
   place-items: center;
   border-radius: 999px;
-  color: rgba(255, 255, 255, 0.75);
+  color: rgba(255, 255, 255, 0.78);
 }
 
 .dock-icon:hover {
@@ -899,10 +936,12 @@ braccato-lyrics[data-upgrading="true"] {
 
 .offset-value {
   font-size: 11.5px;
-  width: 44px;
+  width: 40px;
   text-align: center;
   font-variant-numeric: tabular-nums;
-  color: rgba(255, 255, 255, 0.75);
+  white-space: nowrap;
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.78);
 }
 
 .dock-popover {
@@ -935,6 +974,20 @@ braccato-lyrics[data-upgrading="true"] {
   left: 0;
   right: auto;
   width: 280px;
+}
+
+.dock-save-popover {
+  right: 0;
+  left: auto;
+  width: 220px;
+}
+
+.dock-regenerate-popover {
+  --popover-w: 240px;
+  left: 50%;
+  right: auto;
+  margin-left: calc(var(--popover-w) / -2);
+  width: var(--popover-w);
 }
 
 .dock-search {
@@ -1096,9 +1149,13 @@ braccato-lyrics[data-upgrading="true"] {
   text-transform: uppercase;
 }
 
-@container app-content (max-width: 560px) {
-  .dock-search {
-    width: min(320px, calc(100cqi - 24px));
+@container app-content (max-width: 640px) {
+  .dock-popover {
+    --popover-w: min(320px, calc(100cqi - 24px));
+    left: 50%;
+    right: auto;
+    margin-left: calc(var(--popover-w) / -2);
+    width: var(--popover-w);
   }
 }
 
@@ -1417,17 +1474,21 @@ braccato-lyrics[data-upgrading="true"] {
 
 @container app-content (max-width: 900px) {
   .lyrics-header {
-    padding: 18px 20px 4px;
+    padding: 16px 16px 4px;
   }
   .lyrics-body {
-    padding: 0 20px 30px;
+    padding: 0 18px 28px;
   }
   .lyrics-dock {
-    margin-bottom: 12px;
-    gap: 6px;
+    margin-bottom: 10px;
+    padding: 5px 10px;
   }
-  .dock-button span {
+  .dock-button .dock-label {
     display: none;
+  }
+  .dock-button {
+    padding: 4px 8px;
+    gap: 3px;
   }
   .fs-controls {
     padding: 8px 14px 6px;
@@ -1488,17 +1549,21 @@ braccato-lyrics[data-upgrading="true"] {
 .np-customize-button {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  justify-content: center;
+  gap: 6px;
   flex: 0 0 auto;
+  min-height: 34px;
   margin-left: auto;
-  padding: 8px 13px;
+  padding: 6px 11px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 999px;
-  background: rgba(14, 14, 22, 0.26);
+  background: rgba(14, 14, 22, 0.28);
   backdrop-filter: blur(18px) saturate(1.3);
-  color: rgba(255, 255, 255, 0.82);
-  font-size: 12.5px;
-  font-weight: 550;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -1510,9 +1575,16 @@ braccato-lyrics[data-upgrading="true"] {
 .lyrics-view.is-fullscreen .np-customize-button {
   position: fixed;
   top: clamp(18px, 3cqh, 36px);
-  right: calc(var(--np-gutter) + 54px);
+  right: calc(var(--np-gutter) + 46px);
   z-index: 3;
   pointer-events: auto;
+}
+
+@container app-content (max-width: 900px) {
+  .lyrics-view.is-fullscreen .np-customize-button {
+    top: 18px;
+    right: 62px;
+  }
 }
 
 /* ---------------------------------------------------- Customization Studio */
@@ -1622,15 +1694,19 @@ braccato-lyrics[data-upgrading="true"] {
 .studio-button {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 11px;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 10px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.05);
   color: inherit;
   font: inherit;
   font-size: 12px;
-  font-weight: 550;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  flex-shrink: 0;
   cursor: pointer;
 }
 
@@ -1969,38 +2045,114 @@ html[data-mobile="true"] .lyrics-view {
 }
 
 html[data-mobile="true"] .lyrics-header {
-  padding-top: calc(12px + env(safe-area-inset-top, 0px));
-  padding-inline: 14px;
-  gap: 10px;
+  padding-top: calc(10px + env(safe-area-inset-top, 0px));
+  padding-inline: 12px;
+  gap: 8px;
   align-items: center;
 }
 
+html[data-mobile="true"] .lyrics-header .lyrics-heading h1,
+html[data-mobile="true"] .lyrics-header .lyrics-heading p {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+html[data-mobile="true"] .lyrics-header .lyrics-heading p {
+  margin-top: 2px;
+}
+
+html[data-mobile="true"] .lyrics-header .lyrics-heading-source {
+  margin-top: 4px;
+}
+
 html[data-mobile="true"] .lyrics-header .np-customize-button {
-  padding: 7px 11px;
-  font-size: 12px;
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  justify-content: center;
+}
+
+html[data-mobile="true"] .lyrics-header .np-customize-button .btn-label {
+  display: none;
 }
 
 html[data-mobile="true"] .lyrics-footer {
   padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
-  gap: 8px;
+  gap: 6px;
 }
 
 html[data-mobile="true"] .lyrics-dock {
   max-width: calc(100vw - 24px);
-  overflow-x: auto;
-  scrollbar-width: none;
+  padding: 5px 8px;
+  overflow: visible;
 }
 
-html[data-mobile="true"] .lyrics-dock::-webkit-scrollbar {
+html[data-mobile="true"] .lyrics-dock-scroll {
+  gap: 4px;
+}
+
+html[data-mobile="true"] .dock-group {
+  gap: 2px;
+}
+
+html[data-mobile="true"] .dock-group + .dock-group {
+  padding-left: 6px;
+}
+
+html[data-mobile="true"] .dock-button {
+  min-height: 28px;
+  padding: 4px 7px;
+  gap: 3px;
+}
+
+html[data-mobile="true"] .dock-button .dock-label {
   display: none;
 }
 
+html[data-mobile="true"] .dock-icon {
+  width: 26px;
+  height: 26px;
+}
+
+html[data-mobile="true"] .offset-value {
+  width: 34px;
+  font-size: 11px;
+}
+
+html[data-mobile="true"] .dock-popover {
+  --popover-w: min(320px, calc(100vw - 24px));
+  left: 50%;
+  right: auto;
+  margin-left: calc(var(--popover-w) / -2);
+  width: var(--popover-w);
+  max-height: 44vh;
+  background: rgba(14, 14, 22, 0.72);
+  z-index: 20;
+}
+
 html[data-mobile="true"] .fs-controls {
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-radius: 18px;
-  gap: 8px;
-  --np-control-button-size: 36px;
-  --np-play-button-size: 46px;
+  gap: 6px;
+  --np-control-button-size: 34px;
+  --np-play-button-size: 42px;
+}
+
+html[data-mobile="true"] .fs-controls .fs-controls-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  justify-items: stretch;
+  gap: 6px;
+}
+
+html[data-mobile="true"] .fs-controls .fs-group {
+  justify-content: flex-start;
+  gap: 4px;
+}
+
+html[data-mobile="true"] .fs-controls .fs-group-end {
+  justify-content: flex-end;
 }
 
 html[data-mobile="true"] .fs-controls .volume-group {

@@ -171,8 +171,15 @@ export const TrackList = memo(function TrackList({
   );
   const openMenu = useCallback((track: Track, anchor: HTMLElement) => {
     const rect = anchor.getBoundingClientRect();
-    setMenu({ track, x: rect.right, y: rect.bottom + 6 });
-  }, []);
+    const menuWidth = 220;
+    const estimatedMenuHeight = onRemove ? 260 : 220;
+    const x = Math.max(12, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12));
+    const fitsBelow = rect.bottom + 6 + estimatedMenuHeight <= window.innerHeight - 12;
+    const y = fitsBelow
+      ? rect.bottom + 6
+      : Math.max(12, rect.top - estimatedMenuHeight - 6);
+    setMenu({ track, x, y });
+  }, [onRemove]);
 
   useEffect(() => {
     if (!menu) return;
@@ -273,7 +280,7 @@ export const TrackList = memo(function TrackList({
         <div
           className={`context-menu ${menuPresence.phaseClass}`}
           data-presence={menuPresence.phase}
-          style={{ left: Math.max(12, renderedMenu.x - 220), top: renderedMenu.y }}
+          style={{ left: renderedMenu.x, top: renderedMenu.y }}
           ref={menuRef}
         >
           <button type="button" onClick={() => { playNext([renderedMenu.track.id]); setMenu(null); }}>

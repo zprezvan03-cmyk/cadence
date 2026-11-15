@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import type { DecodeProblem, Track } from "../../../shared/types";
 import { DECODE_PROBLEM_KIND_LABELS } from "../../audio/decodeProbe";
+import { isAndroidNativeAudio } from "../../audio/androidAudio";
 import { bridge } from "../../state/bridge";
 import { useDecodeTester, visibleDecodeProblems } from "../../state/decodeTesterStore";
 import { useLibrary } from "../../state/libraryStore";
@@ -87,15 +88,17 @@ function ProblemRow({
         >
           {kept ? "Kept" : "Keep"}
         </button>
-        <button
-          type="button"
-          className="icon-button"
-          onClick={onShowInFolder}
-          aria-label={`Show ${problem.fileName} in folder`}
-          title="Show in folder"
-        >
-          <FolderOpen size={16} />
-        </button>
+        {!isAndroidNativeAudio() ? (
+          <button
+            type="button"
+            className="icon-button"
+            onClick={onShowInFolder}
+            aria-label={`Show ${problem.fileName} in folder`}
+            title="Show in folder"
+          >
+            <FolderOpen size={16} />
+          </button>
+        ) : null}
         <button
           type="button"
           className="icon-button danger"

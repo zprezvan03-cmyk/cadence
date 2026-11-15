@@ -354,8 +354,19 @@ a {
 }
 
 .error-banner button {
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.09);
   color: #fff;
-  text-decoration: underline;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.error-banner button:hover {
+  background: rgba(255, 255, 255, 0.16);
 }
 
 /* --------------------------------------------------------------- sidebar */
@@ -910,12 +921,17 @@ a {
 .ghost-button {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 14px;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
   border-radius: 999px;
   background: var(--surface-2);
   border: 1px solid var(--border);
+  font-size: 12.5px;
   font-weight: 550;
+  line-height: 1.2;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .ghost-button:hover {
@@ -1013,15 +1029,35 @@ a {
 .primary,
 .heading-actions button,
 .empty-actions button,
-.inline-create button {
+.inline-create button,
+.list-toolbar > button,
+.decode-toolbar button,
+.decode-confirm-footer button,
+.smart-rule-banner > button,
+.duplicate-track-actions button,
+.track-editor-artwork button,
+.track-editor-actions > button,
+.about-links button,
+.about > button.danger,
+.settings-section .setting-row > button,
+.ai-model-control button,
+.lastfm-buttons button,
+.onboarding-actions-inline button,
+.onboarding-nav-main button,
+.fetch-panel-actions button {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 18px;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 12px;
   border-radius: 999px;
   background: var(--surface-2);
   border: 1px solid var(--border);
+  font-size: 12.5px;
   font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  flex-shrink: 0;
   transition:
     background var(--dur-1) var(--ease-out),
     transform var(--dur-1) var(--ease-out),
@@ -1031,30 +1067,82 @@ a {
 .primary,
 .heading-actions button.primary,
 .empty-actions button.primary,
-.inline-create button.primary {
+.inline-create button.primary,
+.onboarding-actions-inline button.primary,
+.onboarding-nav-main button.primary,
+.lastfm-buttons button.primary {
   background: var(--primary-bg);
   color: var(--primary-text);
   border-color: transparent;
 }
 
-.primary:hover,
-.heading-actions button.primary:hover {
+.heading-actions button.danger,
+.decode-toolbar button.danger,
+.decode-confirm-footer button.danger,
+.track-editor-actions > button.danger,
+.about > button.danger,
+.fetch-panel-actions button.danger {
+  border-color: rgba(255, 93, 93, 0.35);
+  background: rgba(255, 93, 93, 0.1);
+}
+
+.primary:hover:not(:disabled),
+.heading-actions button.primary:hover:not(:disabled),
+.empty-actions button.primary:hover:not(:disabled),
+.onboarding-actions-inline button.primary:hover:not(:disabled),
+.onboarding-nav-main button.primary:hover:not(:disabled),
+.lastfm-buttons button.primary:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 10px 24px var(--primary-shadow);
   background: var(--primary-bg);
 }
 
-.heading-actions button:hover,
-.empty-actions button:hover,
-.inline-create button:hover {
+.heading-actions button:hover:not(:disabled),
+.empty-actions button:hover:not(:disabled),
+.inline-create button:hover:not(:disabled),
+.list-toolbar > button:hover:not(:disabled),
+.decode-toolbar button:hover:not(:disabled),
+.decode-confirm-footer button:hover:not(:disabled),
+.smart-rule-banner > button:hover:not(:disabled),
+.duplicate-track-actions button:hover:not(:disabled),
+.track-editor-artwork button:hover:not(:disabled),
+.track-editor-actions > button:hover:not(:disabled),
+.about-links button:hover:not(:disabled),
+.about > button.danger:hover:not(:disabled),
+.settings-section .setting-row > button:hover:not(:disabled),
+.ai-model-control button:hover:not(:disabled),
+.lastfm-buttons button:hover:not(:disabled),
+.onboarding-actions-inline button:hover:not(:disabled),
+.onboarding-nav-main button:hover:not(:disabled),
+.fetch-panel-actions button:hover:not(:disabled) {
   background: var(--surface-3);
   border-color: var(--border-strong);
+}
+
+.primary:disabled,
+.heading-actions button:disabled,
+.empty-actions button:disabled,
+.inline-create button:disabled,
+.list-toolbar > button:disabled,
+.decode-toolbar button:disabled,
+.decode-confirm-footer button:disabled,
+.track-editor-artwork button:disabled,
+.track-editor-actions > button:disabled,
+.about > button.danger:disabled,
+.settings-section .setting-row > button:disabled,
+.ai-model-control button:disabled,
+.lastfm-buttons button:disabled,
+.fetch-panel-actions button:disabled {
+  opacity: 0.48;
+  cursor: default;
 }
 
 .link {
   color: var(--text-dim);
   font-weight: 600;
   font-size: 12.5px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .link:hover {
@@ -1070,6 +1158,8 @@ a {
   background: var(--badge-bg);
   color: var(--text-dim);
   font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .badge.warn {

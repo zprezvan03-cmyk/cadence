@@ -47,7 +47,7 @@ export function FetchAllSettings() {
           disabled={running}
           onClick={() => void start()}
         >
-          <Sparkles size={15} /> {paused ? "Resume fetch" : "✨ FETCH ALL LYRICS ✨"}
+          <Sparkles size={15} /> {paused ? "Resume fetch" : "Fetch All Lyrics"}
         </button>
       </div>
 

@@ -316,15 +316,11 @@ export function PlaylistView({ playlistId }: { playlistId: number }) {
         onPlay={() => void playQueue(tracks.map(track => track.id), 0)}
         onShuffle={() => void playShuffled(tracks.map(track => track.id), Math.floor(Math.random() * Math.max(1, tracks.length)))}
       >
-        {isSmart ? (
-          <button type="button" data-testid="edit-smart-rule" onClick={openRuleEditor}>
-            <Sparkles size={16} /> Edit rule
-          </button>
-        ) : (
+        {!isSmart ? (
           <button type="button" onClick={() => setAdding(true)}>
-            <Plus size={16} /> Add songs
+            <Plus size={15} /> Add songs
           </button>
-        )}
+        ) : null}
         <button type="button" onClick={() => setEditing(true)}>
           Rename
         </button>
@@ -357,7 +353,7 @@ export function PlaylistView({ playlistId }: { playlistId: number }) {
             <strong>{describeSmartPlaylistRule(smartRule)}</strong>
             <p>This playlist updates itself from your library, so songs can’t be added or removed by hand.</p>
           </div>
-          <button type="button" onClick={openRuleEditor}>
+          <button type="button" data-testid="edit-smart-rule" onClick={openRuleEditor}>
             <Sparkles size={15} /> Edit rule
           </button>
         </div>

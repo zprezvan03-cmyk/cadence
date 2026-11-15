@@ -2,7 +2,7 @@
  * "Add to playlist" modal. Written for Cadence.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { EMPTY_PLAYLISTS, useLibrary } from "../state/libraryStore";
 import { useUi } from "../state/uiStore";
@@ -20,6 +20,15 @@ export function PlaylistPicker() {
   // its fast exit, rendering the last picker selection so the final frame is not blank.
   const presence = usePresence(Boolean(picker));
   const renderedPicker = useLastNonNull(picker);
+
+  useEffect(() => {
+    if (!picker) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [picker, close]);
 
   if (!presence.mounted || !renderedPicker) return null;
 

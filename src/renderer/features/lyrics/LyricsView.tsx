@@ -6,7 +6,7 @@
  */
 
 import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ListMusic, Minimize2, Music4, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, Minimize2, Music4, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
 import { trackSourceKey } from "../../../shared/media";
 import type { AppSettings, MediaItem, NowPlayingProfile, Track } from "../../../shared/types";
 import { DEFAULT_PROVIDER_ORDER } from "../../../shared/upstream/better-lyrics/constants";
@@ -55,7 +55,6 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
   const isMobile = useMobileShell();
   const goBack = useUi(state => state.goBack);
   const navigate = useUi(state => state.navigate);
-  const toggleQueue = useUi(state => state.toggleQueue);
   const settings = useSettings(state => state.settings);
   const patchSettings = useSettings(state => state.patch);
   const [toast, setToast] = useState<string | null>(null);
@@ -460,16 +459,6 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
         ) : null}
         {headingInHeader ? heading : null}
         <div className="lyrics-header-actions">
-          {isMobile && !fullscreen ? (
-            <button
-              type="button"
-              className="icon-button"
-              aria-label="Queue"
-              onClick={() => toggleQueue()}
-            >
-              <ListMusic size={19} />
-            </button>
-          ) : null}
           <button
             type="button"
             className="np-customize-button"
@@ -478,7 +467,7 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
             title="Customize Now Playing"
             data-testid="customize-now-playing"
           >
-            <SlidersHorizontal size={16} /> Customize
+            <SlidersHorizontal size={15} /> <span className="btn-label">Customize</span>
           </button>
         </div>
         {/* One exit button, top-right, in both fullscreen layouts. */}
@@ -625,6 +614,7 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
             track={track}
             showLyrics={showLyrics}
             onToggleLyrics={toggleLyricsVisible}
+            showLyricsToggle={fullscreen}
             concealed={fullscreen ? !controlsVisible : false}
           />
         ) : null}

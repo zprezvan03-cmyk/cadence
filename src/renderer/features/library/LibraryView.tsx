@@ -331,9 +331,11 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
                           <button type="button" onClick={() => void playTrack(track.id)}>
                             <Play size={14} /> Play
                           </button>
-                          <button type="button" onClick={() => void showTrackInFolder(track)}>
-                            <FolderOpen size={14} /> Show in folder
-                          </button>
+                          {!hasAndroid ? (
+                            <button type="button" onClick={() => void showTrackInFolder(track)}>
+                              <FolderOpen size={14} /> Show in folder
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                     ))}

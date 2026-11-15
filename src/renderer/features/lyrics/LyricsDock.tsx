@@ -4,7 +4,7 @@
  * React components. Written for Cadence.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Album,
   AlertCircle,
@@ -111,29 +111,55 @@ export function LyricsDock({
   concealed = false,
   onPopoverChange,
 }: LyricsDockProps) {
-  const [panel, setPanel] = useState<"none" | "sources" | "profiles" | "search">("none");
-  const [languageOpen, setLanguageOpen] = useState(false);
-  const [saveOpen, setSaveOpen] = useState(false);
-  const [regenerateOpen, setRegenerateOpen] = useState(false);
+  const [openPopover, setOpenPopover] = useState<
+    "none" | "sources" | "profiles" | "search" | "translate" | "save" | "regenerate"
+  >("none");
+  const dockRef = useRef<HTMLDivElement | null>(null);
   // Popovers close the instant their state flips; presence only keeps each mounted for
   // its fast pop-out. Switching panels crossfades for one 120ms beat instead of cutting.
-  const sourcesPresence = usePresence(panel === "sources");
-  const searchPresence = usePresence(panel === "search");
-  const profilesPresence = usePresence(panel === "profiles");
-  const languagesPresence = usePresence(languageOpen);
+  const sourcesPresence = usePresence(openPopover === "sources");
+  const searchPresence = usePresence(openPopover === "search");
+  const profilesPresence = usePresence(openPopover === "profiles");
+  const languagesPresence = usePresence(openPopover === "translate");
+  const savePresence = usePresence(openPopover === "save");
+  const regeneratePresence = usePresence(openPopover === "regenerate");
+  const togglePopover = (
+    target: "sources" | "profiles" | "search" | "translate" | "save" | "regenerate"
+  ) => setOpenPopover(current => (current === target ? "none" : target));
   const activeNowPlayingProfile =
     nowPlayingProfiles.find(profile => profile.id === activeNowPlayingProfileId) ??
     nowPlayingProfiles[0];
   const { title: searchTitle, artist: searchArtist, album: searchAlbum, youtubeUrl } = searchDraft;
 
   useEffect(() => {
-    onPopoverChange?.(panel !== "none" || languageOpen || saveOpen || regenerateOpen);
-  }, [panel, languageOpen, saveOpen, regenerateOpen, onPopoverChange]);
+    onPopoverChange?.(openPopover !== "none");
+  }, [openPopover, onPopoverChange]);
+
+  useEffect(() => {
+    if (openPopover === "none") return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (dockRef.current && event.target instanceof Node && !dockRef.current.contains(event.target)) {
+        setOpenPopover("none");
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        setOpenPopover("none");
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [openPopover]);
 
   // Debounce link pastes so typing a URL does not fire a lookup per keystroke. The lookup itself
   // is main-process and keyless; an empty field resets the resolved card immediately.
   useEffect(() => {
-    if (panel !== "search") return;
+    if (openPopover !== "search") return;
     const trimmed = youtubeUrl.trim();
     if (!trimmed) {
       onResolveYouTube("");
@@ -141,7 +167,7 @@ export function LyricsDock({
     }
     const timer = window.setTimeout(() => onResolveYouTube(trimmed), 550);
     return () => window.clearTimeout(timer);
-  }, [youtubeUrl, panel, onResolveYouTube]);
+  }, [youtubeUrl, openPopover, onResolveYouTube]);
 
   // Effective metadata after merging typed values, YouTube supplements and the track's duration.
   // This is exactly what gets sent to the providers, and the card below renders the same values.
@@ -170,139 +196,170 @@ export function LyricsDock({
   };
 
   return (
-    <div className={`lyrics-dock ${concealed ? "is-concealed" : ""}`} data-testid="lyrics-dock">
-      <div className="dock-group dock-status" title={syncLabel} data-testid="sync-label">
-        <span className={`sync-dot sync-${syncLabel.toLowerCase().replace(/\s+/g, "-")}`} />
-        {syncLabel}
-      </div>
+    <div ref={dockRef} className={`lyrics-dock ${concealed ? "is-concealed" : ""}`} data-testid="lyrics-dock">
+      <div className="lyrics-dock-scroll">
+        <div className="dock-group dock-status" title={syncLabel} data-testid="sync-label">
+          <span className={`sync-dot sync-${syncLabel.toLowerCase().replace(/\s+/g, "-")}`} />
+          <span className="sync-text">{syncLabel}</span>
+        </div>
 
-      <div className="dock-group">
-        <button
-          type="button"
-          className="dock-button"
-          onClick={() => setPanel(panel === "sources" ? "none" : "sources")}
-          title="Lyrics source"
-          aria-expanded={panel === "sources"}
-        >
-          <Sparkles size={16} /> Source <ChevronDown size={14} />
-        </button>
-        <button
-          type="button"
-          className="dock-button"
-          onClick={() => setPanel(panel === "profiles" ? "none" : "profiles")}
-          title={`Now Playing profile: ${activeNowPlayingProfile?.name ?? "Balanced"}`}
-          aria-expanded={panel === "profiles"}
-          aria-haspopup="true"
-          data-testid="now-playing-profile-button"
-        >
-          <LayoutGrid size={16} /> Profile
-        </button>
-        <button
-          type="button"
-          className="dock-button"
-          onClick={() => setLanguageOpen(open => !open)}
-          title="Translate lyrics"
-          aria-expanded={languageOpen}
-        >
-          <Languages size={16} /> {translateTarget ? languageLabel(translateTarget) : "Translate"}
-        </button>
-        <button
-          type="button"
-          className={`dock-button ${settings.romanization ? "active" : ""}`}
-          onClick={() => onPatch({ romanization: !settings.romanization })}
-          title="Romanize lyrics"
-        >
-          <Wand2 size={16} /> Romanize
-        </button>
-        {(settings.aiTranslation?.enabled || settings.translationLanguage || settings.romanization) ? (
-          <div className="dock-regenerate-wrap" style={{ position: "relative" }}>
+        <div className="dock-group">
+          <button
+            type="button"
+            className={`dock-button ${openPopover === "sources" || openPopover === "search" ? "active" : ""}`}
+            onClick={() => togglePopover("sources")}
+            title="Lyrics source"
+            aria-label="Lyrics source"
+            aria-expanded={openPopover === "sources" || openPopover === "search"}
+          >
+            <Sparkles size={15} /> <span className="dock-label">Source</span> <ChevronDown size={13} />
+          </button>
+          <button
+            type="button"
+            className={`dock-button ${openPopover === "profiles" ? "active" : ""}`}
+            onClick={() => togglePopover("profiles")}
+            title={`Now Playing profile: ${activeNowPlayingProfile?.name ?? "Balanced"}`}
+            aria-label="Now Playing profile"
+            aria-expanded={openPopover === "profiles"}
+            aria-haspopup="true"
+            data-testid="now-playing-profile-button"
+          >
+            <LayoutGrid size={15} /> <span className="dock-label">Profile</span>
+          </button>
+          <button
+            type="button"
+            className={`dock-button ${openPopover === "translate" || Boolean(translateTarget) ? "active" : ""}`}
+            onClick={() => togglePopover("translate")}
+            title="Translate lyrics"
+            aria-label="Translate lyrics"
+            aria-expanded={openPopover === "translate"}
+          >
+            <Languages size={15} />{" "}
+            <span className="dock-label">{translateTarget ? languageLabel(translateTarget) : "Translate"}</span>
+          </button>
+          <button
+            type="button"
+            className={`dock-button ${settings.romanization ? "active" : ""}`}
+            onClick={() => onPatch({ romanization: !settings.romanization })}
+            title="Romanize lyrics"
+            aria-label="Romanize lyrics"
+          >
+            <Wand2 size={15} /> <span className="dock-label">Romanize</span>
+          </button>
+          {(settings.aiTranslation?.enabled || settings.translationLanguage || settings.romanization) ? (
             <button
               type="button"
-              className="dock-button"
-              onClick={() => setRegenerateOpen(open => !open)}
+              className={`dock-button ${openPopover === "regenerate" ? "active" : ""}`}
+              onClick={() => togglePopover("regenerate")}
               disabled={busy}
               title="Regenerate lyrics"
-              aria-expanded={regenerateOpen}
+              aria-label="Regenerate lyrics"
+              aria-expanded={openPopover === "regenerate"}
             >
-              <RefreshCw size={15} /> Regenerate <ChevronDown size={14} />
+              <RefreshCw size={14} /> <span className="dock-label">Regenerate</span> <ChevronDown size={13} />
             </button>
-            {regenerateOpen ? (
-              <div className="dock-popover dock-regenerate-popover">
-                {(settings.aiTranslation?.enabled || settings.translationLanguage) ? (
-                  <button
-                    type="button"
-                    className="source-row"
-                    onClick={() => { setRegenerateOpen(false); onRegenerateTranslation(); }}
-                  >
-                    <span><strong>Translation</strong><em>Force-regenerate translated lines</em></span>
-                  </button>
-                ) : null}
-                {settings.romanization ? (
-                  <button
-                    type="button"
-                    className="source-row"
-                    onClick={() => { setRegenerateOpen(false); onRegenerateRomanization(); }}
-                  >
-                    <span><strong>Romanization</strong><em>Force-regenerate romanized lines</em></span>
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
+          ) : null}
+        </div>
 
-      <div className="dock-group dock-offset" title="Lyrics timing offset">
-        <button type="button" className="dock-icon" onClick={() => onPatch({ offsetMs: settings.offsetMs - 100 })}>
-          <Minus size={14} />
-        </button>
-        <span className="offset-value">{settings.offsetMs > 0 ? "+" : ""}{(settings.offsetMs / 1000).toFixed(1)}s</span>
-        <button type="button" className="dock-icon" onClick={() => onPatch({ offsetMs: settings.offsetMs + 100 })}>
-          <Plus size={14} />
-        </button>
-      </div>
+        <div className="dock-group dock-offset" title="Lyrics timing offset">
+          <button
+            type="button"
+            className="dock-icon"
+            onClick={() => onPatch({ offsetMs: settings.offsetMs - 100 })}
+            aria-label="Decrease timing offset"
+          >
+            <Minus size={14} />
+          </button>
+          <span className="offset-value">{settings.offsetMs > 0 ? "+" : ""}{(settings.offsetMs / 1000).toFixed(1)}s</span>
+          <button
+            type="button"
+            className="dock-icon"
+            onClick={() => onPatch({ offsetMs: settings.offsetMs + 100 })}
+            aria-label="Increase timing offset"
+          >
+            <Plus size={14} />
+          </button>
+        </div>
 
-      <div className="dock-group dock-actions">
-        <button type="button" className="dock-icon" onClick={onReload} title="Reload lyrics" disabled={busy}>
-          <RefreshCw size={16} className={busy ? "spin" : undefined} />
-        </button>
-        {localFileActions ? (
-          <>
-            <button type="button" className="dock-icon" onClick={onChooseFile} title="Open a lyrics file">
-              <FolderOpen size={16} />
-            </button>
-            <div className="dock-save-wrap" style={{ position: "relative", display: "inline-flex" }}>
+        <div className="dock-group dock-actions">
+          <button type="button" className="dock-icon" onClick={onReload} title="Reload lyrics" aria-label="Reload lyrics" disabled={busy}>
+            <RefreshCw size={15} className={busy ? "spin" : undefined} />
+          </button>
+          {localFileActions ? (
+            <>
+              <button type="button" className="dock-icon" onClick={onChooseFile} title="Open a lyrics file" aria-label="Open a lyrics file">
+                <FolderOpen size={15} />
+              </button>
               <button
                 type="button"
-                className="dock-button"
-                onClick={() => setSaveOpen(open => !open)}
+                className={`dock-button ${openPopover === "save" ? "active" : ""}`}
+                onClick={() => togglePopover("save")}
                 title="Save lyrics next to the track"
-                aria-expanded={saveOpen}
+                aria-label="Save lyrics"
+                aria-expanded={openPopover === "save"}
               >
-                <Download size={16} /> Save <ChevronDown size={14} />
+                <Download size={15} /> <span className="dock-label">Save</span> <ChevronDown size={13} />
               </button>
-              {saveOpen ? (
-                <div className="dock-popover dock-save-popover">
-                  <button
-                    type="button"
-                    className="source-row"
-                    onClick={() => { setSaveOpen(false); onSaveSidecar("ttml"); }}
-                  >
-                    <span><strong>TTML</strong><em>Timed text markup</em></span>
-                  </button>
-                  <button
-                    type="button"
-                    className="source-row"
-                    onClick={() => { setSaveOpen(false); onSaveSidecar("lrc"); }}
-                  >
-                    <span><strong>LRC</strong><em>Lyric text</em></span>
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          </>
-        ) : null}
+            </>
+          ) : null}
+        </div>
       </div>
+
+      {regeneratePresence.mounted ? (
+        <div className={`dock-popover dock-regenerate-popover ${regeneratePresence.phaseClass}`} data-presence={regeneratePresence.phase}>
+          <div className="popover-title">Regenerate</div>
+          {(settings.aiTranslation?.enabled || settings.translationLanguage) ? (
+            <button
+              type="button"
+              className="source-row"
+              onClick={() => {
+                setOpenPopover("none");
+                onRegenerateTranslation();
+              }}
+            >
+              <span><strong>Translation</strong><em>Force-regenerate translated lines</em></span>
+            </button>
+          ) : null}
+          {settings.romanization ? (
+            <button
+              type="button"
+              className="source-row"
+              onClick={() => {
+                setOpenPopover("none");
+                onRegenerateRomanization();
+              }}
+            >
+              <span><strong>Romanization</strong><em>Force-regenerate romanized lines</em></span>
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {savePresence.mounted ? (
+        <div className={`dock-popover dock-save-popover ${savePresence.phaseClass}`} data-presence={savePresence.phase}>
+          <div className="popover-title">Save next to track</div>
+          <button
+            type="button"
+            className="source-row"
+            onClick={() => {
+              setOpenPopover("none");
+              onSaveSidecar("ttml");
+            }}
+          >
+            <span><strong>TTML</strong><em>Timed text markup</em></span>
+          </button>
+          <button
+            type="button"
+            className="source-row"
+            onClick={() => {
+              setOpenPopover("none");
+              onSaveSidecar("lrc");
+            }}
+          >
+            <span><strong>LRC</strong><em>Lyric text</em></span>
+          </button>
+        </div>
+      ) : null}
 
       {sourcesPresence.mounted ? (
         <div className={`dock-popover dock-sources ${sourcesPresence.phaseClass}`} data-presence={sourcesPresence.phase}>
@@ -315,7 +372,7 @@ export function LyricsDock({
               className={`source-row ${activeSource === candidate.source ? "active" : ""}`}
               onClick={() => {
                 onSelectSource(candidate.source);
-                setPanel("none");
+                setOpenPopover("none");
               }}
             >
               <span>
@@ -334,7 +391,7 @@ export function LyricsDock({
             </div>
           ))}
           <div className="popover-divider" />
-          <button type="button" className="source-row manual-search-entry" onClick={() => setPanel("search")}>
+          <button type="button" className="source-row manual-search-entry" onClick={() => setOpenPopover("search")}>
             <span>
               <strong>
                 <Search size={13} /> Search Manually
@@ -364,7 +421,7 @@ export function LyricsDock({
                 className={`profile-row ${active ? "active" : ""}`}
                 onClick={() => {
                   onSelectNowPlayingProfile(profile.id);
-                  setPanel("none");
+                  setOpenPopover("none");
                 }}
                 aria-pressed={active}
                 data-profile-id={profile.id}
@@ -394,7 +451,7 @@ export function LyricsDock({
       {searchPresence.mounted ? (
         <div className={`dock-popover dock-search ${searchPresence.phaseClass}`} data-presence={searchPresence.phase} data-testid="manual-search">
           <div className="search-panel-head">
-            <button type="button" className="dock-icon" title="Back to sources" onClick={() => setPanel("sources")}>
+            <button type="button" className="dock-icon" title="Back to sources" onClick={() => setOpenPopover("sources")}>
               <ArrowLeft size={15} />
             </button>
             <div className="popover-title">Search lyrics</div>
@@ -574,7 +631,7 @@ export function LyricsDock({
                   }
                   onClick={() => {
                     onSelectSearchResult(candidate);
-                    setPanel("none");
+                    setOpenPopover("none");
                   }}
                 >
                   <span>
@@ -607,7 +664,7 @@ export function LyricsDock({
             className={`source-row ${translateTarget === "" ? "active" : ""}`}
             onClick={() => {
               patchTranslateTarget("");
-              setLanguageOpen(false);
+              setOpenPopover("none");
             }}
           >
             <span>
@@ -622,7 +679,7 @@ export function LyricsDock({
                 className={`source-row ${translateTarget === language.code ? "active" : ""}`}
                 onClick={() => {
                   patchTranslateTarget(language.code);
-                  setLanguageOpen(false);
+                  setOpenPopover("none");
                 }}
               >
                 <span>

@@ -13,7 +13,7 @@ import { ONBOARDING_STEPS, useOnboarding } from "../../state/onboardingStore";
 import { useFetchAll } from "../../state/fetchAllStore";
 import { useSettings } from "../../state/settingsStore";
 
-const STEP_TITLES = ["Welcome", "Music Library Setup", "✨ Fetch All Lyrics ✨", "Preferences", "Ready"] as const;
+const STEP_TITLES = ["Welcome", "Music Library Setup", "Fetch All Lyrics", "Preferences", "Ready"] as const;
 
 export function Onboarding() {
   const visible = useOnboarding(state => state.visible);
@@ -143,7 +143,7 @@ export function Onboarding() {
         {stepName === "fetch-all" ? (
           <section className="onboarding-page" data-testid="onboarding-fetch-all">
             <Sparkles size={40} className="onboarding-icon" />
-            <h2>✨ FETCH ALL LYRICS ✨</h2>
+            <h2>Fetch All Lyrics</h2>
             <p>
               Cadence can search for lyrics across your entire music library now, in the
               background — recently played songs first. Everything found is cached per provider,
