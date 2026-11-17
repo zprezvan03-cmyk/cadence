@@ -55,7 +55,10 @@ Let $\mathbf{s} \in [0, 1]^M$ be the session's active genre context vector (anch
   $$\tilde{A}(c_1, c_2) = A(c_1, c_2) \times \begin{cases} \max(0.68,\; 1.0 - 0.06 \cdot \max(0, e_{c_2} - 2.5)) & \text{if } c_1 = c_2 \\ 1.0 & \text{if } c_1 \ne c_2 \end{cases}$$
 - Compatibility is evaluated via the bilinear form:
   $$G_{\text{compat}}(i, \mathcal{S}) = \sum_{c_1=0}^{M-1} \sum_{c_2=0}^{M-1} s_{c_1} \cdot \tilde{A}(c_1, c_2) \cdot g_{i, c_2}$$
-- **Disjoint Dominant-Cluster Damping**: When the session is focused ($\max_c s_c \ge 0.45$) and a candidate has near-zero overlap ($< 0.08$) with every dominant session cluster ($s_c \ge 0.25$), raw bilinear compatibility is multiplied by $0.72$ so minor secondary cluster weights (e.g., generic `pop` inside J-Pop or `electronic` inside Drift Phonk) cannot leak across unrelated genres.
+- **Dominant-Cluster Agreement Damping**: When the session is focused ($\max_c s_c \ge 0.45$), the raw bilinear sum is scaled by how much of the candidate's mass actually sits in the session's dominant clusters ($s_c \ge 0.25$):
+  $$d = \sum_{c:\,s_c \ge 0.25} g_{i,c} \qquad
+    G_{\text{compat}} = G_{\text{bilinear}} \cdot \Big(0.45 + 0.55 \cdot \min\big(1, \tfrac{d}{0.10}\big)\Big)$$
+  A candidate that shares nothing with the session's dominant clusters keeps only $0.45\times$ its affinity-matrix score; one that carries at least $10\%$ of its mass in them is undamped. The floor used to be an all-or-nothing $0.72$ for "no overlap at all", which was too generous: the `pop` $\leftrightarrow$ `electronic` affinity is $0.78$, so a pure-Electronic candidate scored $0.78 \cdot 0.72 = 0.5616$ against a pure-Pop session and cleared the $0.52$ primary gate, and Phonk (`hip-hop` $0.7$ + `electronic` $0.3$) reached $0.4306$ — a hair under the relaxed gate — on its electronic share alone. At $0.45$ those become $0.351$ and $0.269$ (both rejected), while a J-Pop track keeps a real $0.12$ `pop` share and therefore stays a legitimate relaxed neighbour.
 - **Bridge Track Bonus**: When a dominant cluster $c_1$ is saturated ($e_{c_1} > 2.5$), candidates that blend $c_1$ with a fresh cluster $c_2$ ($g_{i,c_1} \ge 0.25 \land g_{i,c_2} \ge 0.20$) receive a $+0.14$ bridge bonus to encourage smooth genre pivots.
 
 ### 1.5 Genre Relevance Gating & Gradual Fallback (`src/shared/smartShuffle.ts`)
@@ -151,6 +154,7 @@ Every queue order maintains strict priority ordering after `orderPosition`:
 2. **`addToQueue(trackIds)`**: Inserts `origin: "manual"` entries after existing `"manual"` / `"context"` entries, **strictly before any `"autoplay"` entries**.
 3. **`toggleShuffle()`**: Preserves all upcoming `"manual"` entries in their exact positions right after `orderPosition`; smart-shuffles `"context"` entries; keeps `"autoplay"` entries at the tail.
 4. **AutoPlay Low-Water Mark (`remaining < 2`)**: When `repeat === "off"` and `settings.playback.autoPlay === true`, appends up to 5 contextually scored library tracks with `origin: "autoplay"` at the tail so `prewarmNext()` and crossfade/gapless transitions work without interruption.
+5. **Seed anchor is the playing track, never the queue tail**: `selectAutoPlayTracks` defines `seedTrackIds` as "most recent last" and anchors the genre session on the last known-genre seed, so `replenishAutoPlay` passes only the **current** entry; the listening history still contributes through `recentPlayedTrackIds`, but only when it is compatible with the playing track. Earlier versions seeded the whole upcoming list, which included AutoPlay's own output and therefore re-anchored every batch on the *previous* batch's last recommendation — a feedback loop that let an Electronic/Phonk pick become the context for the next pick.
 
 ---
 
