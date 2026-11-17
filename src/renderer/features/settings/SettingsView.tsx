@@ -28,6 +28,7 @@ import { TRANSLATION_LANGUAGES } from "../lyrics/translationLanguages";
 import { invalidateLyricsResolution } from "../lyrics/useLyrics";
 import { LastFmSettings } from "./LastFmSettings";
 import { LyricsCachePanel } from "./LyricsCachePanel";
+import { ArtistImagesSettings } from "./ArtistImagesSettings";
 import { FetchAllSettings } from "../lyrics-fetch/FetchAllSettings";
 import { useOnboarding } from "../../state/onboardingStore";
 import {
@@ -777,7 +778,12 @@ export function SettingsView() {
         </section>
       ) : null}
 
-      {section === "cache" ? <LyricsCachePanel /> : null}
+      {section === "cache" ? (
+        <>
+          <LyricsCachePanel />
+          <ArtistImagesSettings />
+        </>
+      ) : null}
 
       {section === "about" ? (
         <section className="settings-section about" data-testid="settings-about">

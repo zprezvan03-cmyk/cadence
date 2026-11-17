@@ -248,6 +248,56 @@
   overflow: hidden;
 }
 
+/* --------------------------------------------------- artist profile pictures */
+
+/* Artist portraits come from remote catalogues and may be square, portrait or landscape. The
+   frame stays a fixed circle (the artwork sizes already set width + aspect-ratio) so a picture
+   arriving late never moves anything, and `object-fit` keeps every card visually identical. */
+.artist-avatar {
+  background-color: var(--surface-2, rgba(255, 255, 255, 0.06));
+}
+
+.artist-avatar img {
+  object-fit: cover;
+  /* Portraits are usually framed head-high; centring crops foreheads on tall photos. */
+  object-position: center 22%;
+}
+
+.detail-hero .artist-avatar.artwork-xl {
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.55);
+}
+
+/* The credit line a licensed source requires (Wikimedia Commons CC BY / CC BY-SA). */
+.artist-image-credit {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+.artist-image-credit button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 255, 255, 0.25);
+  cursor: pointer;
+}
+
+.artist-image-credit button:hover {
+  color: var(--text);
+}
+
+/* The player bar shows the current artist at a glance; the avatar shrinks to an inline dot. */
+.artist-avatar-inline.artwork-xs {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+}
+
 /* ------------------------------------------------------------- history */
 
 .history-list {
@@ -900,6 +950,47 @@
   max-width: 70ch;
 }
 
+/* --- Settings → Cache → Artist pictures ------------------------------------------------ */
+
+.artist-provider-order {
+  margin-bottom: 10px;
+}
+
+.artist-provider-capabilities {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.artist-provider-capabilities li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 4px;
+  border-bottom: 1px dashed var(--border);
+  font-size: 12px;
+}
+
+.artist-provider-capabilities li strong {
+  flex-shrink: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.artist-provider-capabilities li[data-feasible="false"] {
+  opacity: 0.72;
+}
+
+.artist-image-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .setting-row {
   display: flex;
   align-items: center;
@@ -919,6 +1010,17 @@
 .setting-row strong {
   font-size: 13.5px;
   font-weight: 600;
+}
+
+.setting-row select {
+  flex-shrink: 0;
+  min-width: 190px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12.5px;
 }
 
 .setting-row em {

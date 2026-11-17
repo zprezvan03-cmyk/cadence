@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChartColumn, Clock3, Flame, History, Music2, Play } from "lucide-react";
 import { Artwork } from "../../components/Artwork";
+import { ArtistAvatar } from "../../components/ArtistAvatar";
 import { SourceBadge } from "../../components/SourceBadge";
 import { useHistory } from "../../state/historyStore";
 import { useLibrary } from "../../state/libraryStore";
@@ -333,7 +334,7 @@ export function StatsView() {
                 onClick={() => openArtist(ranked)}
               >
                 <span className="stats-rank-number">{index + 1}</span>
-                <Artwork src={ranked.artworkUrl} alt={ranked.artist} size="xs" />
+                <ArtistAvatar name={ranked.artist} size="xs" />
                 <span className="stats-rank-copy">
                   <strong>{ranked.artist}</strong>
                   <em>

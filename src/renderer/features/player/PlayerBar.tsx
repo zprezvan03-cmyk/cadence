@@ -10,6 +10,7 @@ import { useLibrary } from "../../state/libraryStore";
 import { usePlayer } from "../../state/playerStore";
 import { useUi } from "../../state/uiStore";
 import { Artwork } from "../../components/Artwork";
+import { ArtistAvatar } from "../../components/ArtistAvatar";
 import { SourceBadge } from "../../components/SourceBadge";
 import { SeekRow, TransportButtons, VolumeControl } from "./PlaybackControls";
 
@@ -72,7 +73,10 @@ export function PlayerBar() {
             {item?.title ?? "Nothing playing"}
           </div>
           <div className="player-artist" title={item?.artistLabel}>
-            {item?.artistLabel ?? "Choose a song to begin"}
+            {item?.artistLabel ? (
+              <ArtistAvatar name={item.artistLabel} size="xs" className="artist-avatar-inline" />
+            ) : null}
+            <span className="player-artist-name">{item?.artistLabel ?? "Choose a song to begin"}</span>
           </div>
           {item ? (
             <div className="player-source-line">

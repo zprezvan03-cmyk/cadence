@@ -3,7 +3,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Clock3, Mic2, Play, Plus, Search, Shuffle, Sparkles, Trash2, X } from "lucide-react";
+import { ArrowLeft, Clock3, Mic2, Play, Plus, RefreshCw, Search, Shuffle, Sparkles, Trash2, X } from "lucide-react";
 import type { Playlist, SmartPlaylistPreset, SmartPlaylistRule, Track } from "../../../shared/types";
 import {
   SMART_PLAYLIST_PRESETS,
@@ -19,6 +19,8 @@ import { TrackList } from "../../components/TrackList";
 import { usePresence } from "../../app/usePresence";
 import { AlbumCard, ArtistCard } from "../../components/Cards";
 import { Artwork } from "../../components/Artwork";
+import { ArtistAvatar, ArtistImageCredit } from "../../components/ArtistAvatar";
+import { useArtistImages } from "../../state/artistImageStore";
 
 function Hero({
   artworkUrl,
@@ -27,6 +29,7 @@ function Hero({
   meta,
   onPlay,
   onShuffle,
+  artistName,
   children,
 }: {
   artworkUrl: string | null;
@@ -35,6 +38,8 @@ function Hero({
   meta: string;
   onPlay?: () => void;
   onShuffle?: () => void;
+  /** When set, the hero shows that artist's circular portrait instead of album artwork. */
+  artistName?: string;
   children?: React.ReactNode;
 }) {
   const goBack = useUi(state => state.goBack);
@@ -44,11 +49,16 @@ function Hero({
       <button type="button" className="icon-button back-button" onClick={goBack} aria-label="Back">
         <ArrowLeft size={18} />
       </button>
-      <Artwork src={artworkUrl} alt={title} size="xl" />
+      {artistName ? (
+        <ArtistAvatar name={artistName} size="xl" />
+      ) : (
+        <Artwork src={artworkUrl} alt={title} size="xl" />
+      )}
       <div className="detail-meta">
         <p className="eyebrow">{eyebrow}</p>
         <h1>{title}</h1>
         <p className="muted">{meta}</p>
+        {artistName ? <ArtistImageCredit name={artistName} /> : null}
         <div className="heading-actions">
           {onPlay ? (
             <button type="button" className="primary" onClick={onPlay}>
@@ -104,6 +114,7 @@ export function ArtistView({ artistId }: { artistId: string }) {
   const snapshot = useLibrary(state => state.snapshot);
   const playQueue = usePlayer(state => state.playQueue);
   const playShuffled = usePlayer(state => state.playShuffled);
+  const refreshArtistImage = useArtistImages(state => state.refresh);
   const artist = snapshot?.artists.find(candidate => candidate.id === artistId);
   const tracks = useMemo(
     () =>
@@ -125,10 +136,20 @@ export function ArtistView({ artistId }: { artistId: string }) {
         artworkUrl={artist.artworkUrl}
         eyebrow="Artist"
         title={artist.name}
+        artistName={artist.name}
         meta={`${artist.trackCount} songs · ${artist.albumCount} albums`}
         onPlay={() => void playQueue(tracks.map(track => track.id), 0)}
         onShuffle={() => void playShuffled(tracks.map(track => track.id), Math.floor(Math.random() * tracks.length))}
-      />
+      >
+        <button
+          type="button"
+          onClick={() => void refreshArtistImage(artist.name)}
+          data-testid="refresh-artist-photo"
+          title="Look up this artist's picture again"
+        >
+          <RefreshCw size={16} /> Refresh photo
+        </button>
+      </Hero>
       <div className="shelf">
         <h2>Albums</h2>
         <div className="card-grid artist-grid">

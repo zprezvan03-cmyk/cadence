@@ -8,6 +8,7 @@ import { useLibrary } from "../state/libraryStore";
 import { usePlayer } from "../state/playerStore";
 import { useUi } from "../state/uiStore";
 import { Artwork } from "./Artwork";
+import { ArtistAvatar } from "./ArtistAvatar";
 
 export function AlbumCard({ album }: { album: Album }) {
   const navigate = useUi(state => state.navigate);
@@ -70,7 +71,7 @@ export function ArtistCard({ artist }: { artist: Artist }) {
         navigate({ name: "artist", artistId: artist.id });
       }}
     >
-      <Artwork src={artist.artworkUrl} alt={artist.name} size="md" rounded="full" />
+      <ArtistAvatar name={artist.name} size="md" />
       <div className="card-title">{artist.name}</div>
       <div className="card-subtitle">
         {artist.albumCount} album{artist.albumCount === 1 ? "" : "s"} · {artist.trackCount} songs

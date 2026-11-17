@@ -1175,9 +1175,19 @@ a {
 }
 
 .player-artist {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   font-size: 12px;
   color: var(--text-dim);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-artist-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
