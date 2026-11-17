@@ -1012,6 +1012,12 @@
   font-weight: 600;
 }
 
+/* A control that depends on a switch above it: readable, but clearly inactive. */
+.setting-row.is-disabled strong,
+.setting-row.is-disabled em {
+  opacity: 0.55;
+}
+
 .setting-row select {
   flex-shrink: 0;
   min-width: 190px;
@@ -1261,6 +1267,16 @@
 
 .provider-order li.is-unavailable {
   opacity: 0.72;
+}
+
+/* A switched-off artist-image provider keeps its priority slot but reads as inactive. */
+.provider-order li.is-disabled {
+  opacity: 0.55;
+}
+
+.provider-order li.is-disabled .provider-name strong {
+  text-decoration: line-through;
+  text-decoration-color: rgba(255, 255, 255, 0.3);
 }
 
 .provider-index {

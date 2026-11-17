@@ -106,14 +106,33 @@ Placeholder filtering is provider-specific and explicit:
 | Artist page hero | circular portrait instead of album art, plus the licence credit line and a "Refresh photo" action |
 | Stats → Top artists | circular avatar per row |
 | Player bar | 18 px inline avatar next to the artist name |
-| Settings → Cache → Artist pictures | switch, refresh window, provider priority, per-source capability, cache size and clear |
+| Settings → Cache → Artist images | master switch, automatic fetching, refresh window, provider switches + priority, per-source capability, cached count, refresh-all and confirmed clear |
 
 `ArtistAvatar` is a thin wrapper over the existing `Artwork` component: same sizes, same fade-in,
 same gradient fallback (now a person glyph), circular frame. Every size already reserves square
 space (`aspect-ratio: 1`), so a picture arriving late causes no layout shift. Nothing else in the
 design language changed.
 
-## 6. Fetching strategy and performance
+## 6. Settings (Settings → Cache → Artist images)
+
+Everything lives in the existing settings schema (`settings.artistImages`) and the existing settings
+store/UI conventions — no second settings system, no new page:
+
+| Control | Setting | Behaviour |
+| --- | --- | --- |
+| Show artist pictures | `enabled` | Master switch: pictures are hidden and no lookups happen. Cached files are untouched. |
+| Fetch missing pictures automatically | `autoFetch` | Off = "cached pictures only". The resolver answers from the index and never contacts a provider; nothing cached is deleted and no negative answer is recorded, so switching it back on takes effect on the next request. Manual refresh still works. |
+| Refresh cached pictures | `refreshAfterDays` | Background staleness refresh window (0 = never). |
+| Provider switches | `providerOrder` with `d_` slots | A disabled provider keeps its priority slot (the same convention as the lyrics provider order) and is never instantiated, so it cannot be queried. Restoring it returns it to the same position. |
+| Provider priority | `providerOrder` | ↑/↓ move active providers; disabled slots stay in place. |
+| Refresh | action | Re-queries every artist in the index, sequentially, with progress and a Stop button. Disabled providers are skipped automatically. |
+| Clear cache | action | Confirmation required; empties the index so pictures are fetched again on demand. |
+
+Changes apply immediately: the bridge rebuilds its `ArtistImageService` whenever `enabled`,
+`autoFetch`, the provider order, the refresh window or the Last.fm key changes, and the renderer
+drops its in-memory entries so mounted avatars resolve against the new settings.
+
+## 7. Fetching strategy and performance
 
 1. Renderer store: terminal state per artist, one queued request per artist, at most **3** lookups
    in flight, queue capped at 48 — a fast scroll cannot swamp the network.
@@ -125,7 +144,7 @@ design language changed.
 5. Cache hits (memory + persisted index) are answered without any network access; `cached()` exists
    for instant first paint if a view wants it.
 
-## 7. Diagnostics
+## 8. Diagnostics
 
 With **Settings → Appearance → … → Advanced logging** enabled, the main process logs one line per
 resolution: artist, status, provider, confidence, elapsed time, every provider attempt and its
@@ -135,7 +154,7 @@ result was correctly rejected. Settings → Cache → Artist pictures also lists
 status (`needs setup` for Last.fm without a key, `excluded` reasons for the sources that publish
 no artist imagery).
 
-## 8. Files
+## 9. Files
 
 | File | Purpose |
 | --- | --- |
@@ -156,12 +175,15 @@ no artist imagery).
 Migration: none. The settings section is added with defaults on load, the index file is created on
 first use, and every existing artwork/listening path is untouched.
 
-## 9. Known limitations
+## 10. Known limitations
 
 * **Last.fm requires the user's own API key.** Without one the provider reports `not-configured`
   and is skipped; Wikidata and Deezer still work.
 * **Coverage is uneven for small/regional artists**: Wikidata needs a P18 image, Last.fm needs a
   community upload, Deezer needs a catalogue entry. The default avatar is a first-class outcome.
+* **Refresh-all is sequential by design**: it walks the whole picture index one artist at a time so
+  a large library does not burst every API at once; on a large index it takes a while and can be
+  stopped at any point (already-refreshed artists keep their new pictures).
 * **Clearing the cache leaves content-addressed files behind.** There is no artwork-delete command
   today; the index is cleared and files are reused (not duplicated) if the same image is fetched
   again. A future `cmd_delete_artwork` can reclaim them.

@@ -1,15 +1,27 @@
 /**
- * Settings → Cache → Artist pictures.
+ * Settings → Cache → Artist images.
  *
- * Deliberately compact: one switch, one refresh window, the provider priority list and each
- * source's verified capability, plus a cache size/clear control. Adding a provider later only adds
- * a row here — the panel derives everything from the reports the main process returns.
+ * One dedicated section covering the whole feature: the master switch, automatic fetching, the
+ * per-provider switches and priority order, and the cache itself. All four controls read and write
+ * `settings.artistImages`, so they persist through the existing settings store — no second settings
+ * system, and every change applies immediately because the bridge rebuilds its resolver when the
+ * relevant values change.
+ *
+ * Adding a provider later only adds a row here: the list, the badges and the capability lines are
+ * all derived from what the main process reports.
  */
 
-import { useCallback, useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, RefreshCw, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowDown, ArrowUp, Power, RefreshCw, Trash2 } from "lucide-react";
 import type { ArtistImageProviderReport, ArtistImageStats } from "../../../shared/types";
-import { normalizeArtistImageProviderOrder } from "../../../shared/artistImageProviders";
+import {
+  DEFAULT_ARTIST_IMAGE_PROVIDER_ORDER,
+  activeArtistImageProviders,
+  artistImageProviderIdOf,
+  isDisabledArtistImageProviderEntry,
+  normalizeArtistImageProviderOrder,
+} from "../../../shared/artistImageProviders";
+import { addProviderToOrder, moveProviderInOrder, removeProviderFromOrder } from "../../../shared/providerOrder";
 import { useArtistImages } from "../../state/artistImageStore";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
@@ -24,15 +36,6 @@ function describeError(error: unknown): string {
   if (error instanceof Error) return error.message;
   const text = typeof error === "string" ? error : JSON.stringify(error);
   return text && text !== "{}" ? text : "unknown error";
-}
-
-function moveProvider(order: readonly string[], provider: string, direction: -1 | 1): string[] {
-  const next = [...order];
-  const index = next.indexOf(provider);
-  const target = index + direction;
-  if (index === -1 || target < 0 || target >= next.length) return next;
-  [next[index], next[target]] = [next[target], next[index]];
-  return next;
 }
 
 const REFRESH_OPTIONS = [
@@ -53,10 +56,13 @@ export function ArtistImagesSettings() {
   const showToast = useUi(state => state.showToast);
   const resetArtistImages = useArtistImages(state => state.resetAll);
   const clearArtistImages = useArtistImages(state => state.clearCache);
+  const refreshArtistImage = useArtistImages(state => state.refresh);
   const [providers, setProviders] = useState<ArtistImageProviderReport[] | null>(null);
   const [stats, setStats] = useState<ArtistImageStats | null>(null);
-  const [busy, setBusy] = useState<"clear" | null>(null);
+  const [clearing, setClearing] = useState(false);
+  const [refreshJob, setRefreshJob] = useState<{ total: number; done: number; running: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const cancelRefresh = useRef(false);
 
   const load = useCallback(async () => {
     const api = artistImageApi();
@@ -78,16 +84,40 @@ export function ArtistImagesSettings() {
     void load();
   }, [load]);
 
+  // Leaving Settings must not leave a long refresh running in the background of another page.
+  useEffect(
+    () => () => {
+      cancelRefresh.current = true;
+    },
+    []
+  );
+
   if (!settings) return null;
   const config = settings.artistImages;
   const order = normalizeArtistImageProviderOrder(config.providerOrder);
-  const available = new Map((providers ?? []).map(report => [report.provider, report]));
+  const activeCount = activeArtistImageProviders(order).length;
+  const reportByProvider = new Map((providers ?? []).map(report => [report.provider, report]));
 
-  const patchArtistImages = (patchValue: Partial<typeof config>) =>
+  /**
+   * Every artist-image change goes through the same patch helper. Clearing the renderer's resolved
+   * entries afterwards makes mounted avatars pick the new behaviour up immediately instead of
+   * waiting for a remount or an app restart.
+   */
+  const patchArtistImages = (patchValue: Partial<typeof config>) => {
     void patch({ artistImages: { ...config, ...patchValue } });
+    resetArtistImages();
+  };
 
   const clearCache = async () => {
-    setBusy("clear");
+    if (
+      !confirm(
+        "Clear every cached artist picture? Pictures will be looked up again the next time an artist is shown. " +
+          "Your music files, library, cache of lyrics and settings are not touched."
+      )
+    ) {
+      return;
+    }
+    setClearing(true);
     try {
       const result = await clearArtistImages();
       showToast(
@@ -99,152 +129,279 @@ export function ArtistImagesSettings() {
     } catch (cause) {
       setError(describeError(cause));
     } finally {
-      setBusy(null);
+      setClearing(false);
+    }
+  };
+
+  const refreshAll = async () => {
+    const api = artistImageApi();
+    if (!api) return;
+    try {
+      const index = await api.indexed();
+      const names = [...index.withImage, ...index.withoutImage];
+      if (names.length === 0) {
+        showToast("No artists in the picture cache yet");
+        return;
+      }
+      cancelRefresh.current = false;
+      setRefreshJob({ total: names.length, done: 0, running: true });
+      // Sequential on purpose: refresh goes straight to the providers, and the main process already
+      // rate-limits each source. One at a time keeps a big library from bursting every API at once.
+      for (const name of names) {
+        if (cancelRefresh.current) break;
+        await refreshArtistImage(name);
+        setRefreshJob(job => (job ? { ...job, done: job.done + 1 } : job));
+      }
+      setRefreshJob(job => (job ? { ...job, running: false } : job));
+      await load();
+      if (!cancelRefresh.current) {
+        showToast(`Refreshed ${names.length} artist picture${names.length === 1 ? "" : "s"}`);
+      }
+    } catch (cause) {
+      setError(describeError(cause));
+      setRefreshJob(job => (job ? { ...job, running: false } : job));
     }
   };
 
   return (
     <section className="settings-section artist-images-section" data-testid="settings-artist-images">
-      <h2>Artist pictures</h2>
+      <h2>Artist images</h2>
       <p className="muted">
-        Cadence looks up artist photos from public music catalogues, stores each one once per artist, and always
-        keeps the credit its licence requires. Pictures are only fetched for artists you actually see.
+        Cadence looks up artist photos from public music catalogues, stores one picture per artist on this device,
+        and always keeps the credit its licence requires. Pictures are only fetched for artists you actually see.
       </p>
 
-      <label className="setting-row">
-        <span>
-          <strong>Fetch artist pictures</strong>
-          <em>Turn off to use only pictures already cached on this device</em>
-        </span>
-        <input
-          type="checkbox"
-          data-testid="artist-images-enabled"
-          checked={config.enabled}
-          onChange={event => {
-            patchArtistImages({ enabled: event.target.checked });
-            // Entries resolved as "disabled" must be allowed to resolve again.
-            resetArtistImages();
-          }}
-        />
-      </label>
+      <div className="settings-subsection">
+        <h3>Display</h3>
+        <label className="setting-row">
+          <span>
+            <strong>Show artist pictures</strong>
+            <em>Turn off to hide every artist picture and stop all lookups</em>
+          </span>
+          <input
+            type="checkbox"
+            data-testid="artist-images-enabled"
+            checked={config.enabled}
+            onChange={event => patchArtistImages({ enabled: event.target.checked })}
+          />
+        </label>
 
-      <label className="setting-row">
-        <span>
-          <strong>Refresh cached pictures</strong>
-          <em>Re-check sources quietly in the background once a picture ages past this window</em>
-        </span>
-        <select
-          value={String(config.refreshAfterDays)}
-          onChange={event => patchArtistImages({ refreshAfterDays: Number(event.target.value) })}
-          data-testid="artist-images-refresh-days"
-        >
-          {REFRESH_OPTIONS.map(option => (
-            <option key={option.days} value={option.days}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </label>
+        <label className={`setting-row${config.enabled ? "" : " is-disabled"}`}>
+          <span>
+            <strong>Fetch missing pictures automatically</strong>
+            <em>
+              When off, only pictures already cached on this device are shown. Nothing already cached is
+              deleted, and lookups resume as soon as this is switched back on.
+            </em>
+          </span>
+          <input
+            type="checkbox"
+            data-testid="artist-images-auto-fetch"
+            checked={config.autoFetch}
+            disabled={!config.enabled}
+            onChange={event => patchArtistImages({ autoFetch: event.target.checked })}
+          />
+        </label>
 
-      <div className="provider-order-head">
-        <span className="muted">Source priority</span>
-        <button
-          type="button"
-          className="provider-restore"
-          onClick={() => patchArtistImages({ providerOrder: normalizeArtistImageProviderOrder(undefined) })}
-        >
-          Restore defaults
-        </button>
+        <label className={`setting-row${config.enabled ? "" : " is-disabled"}`}>
+          <span>
+            <strong>Refresh cached pictures</strong>
+            <em>Quietly re-check sources once a picture ages past this window</em>
+          </span>
+          <select
+            value={String(config.refreshAfterDays)}
+            disabled={!config.enabled}
+            onChange={event => patchArtistImages({ refreshAfterDays: Number(event.target.value) })}
+            data-testid="artist-images-refresh-days"
+          >
+            {REFRESH_OPTIONS.map(option => (
+              <option key={option.days} value={option.days}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
-      <ol className="provider-order artist-provider-order" data-testid="artist-provider-order">
-        {order.map((provider, index) => {
-          const report = available.get(provider);
-          return (
-            <li key={provider}>
-              <span className="provider-index">{index + 1}</span>
-              <span className="provider-name">
-                <strong>{report?.name ?? provider}</strong>
-                <span className="provider-badges">
-                  {report && !report.available ? (
-                    <span className="provider-badge unavailable" title={report.statusReason}>
-                      needs setup
-                    </span>
-                  ) : null}
-                  {report?.attributionRequired ? <span className="provider-badge">credit shown</span> : null}
-                  {report?.license ? <span className="provider-badge offline">{report.license}</span> : null}
-                </span>
-              </span>
-              <span className="provider-buttons">
-                <button
-                  type="button"
-                  className="icon-button"
-                  onClick={() => patchArtistImages({ providerOrder: moveProvider(order, provider, -1) })}
-                  aria-label={`Move ${report?.name ?? provider} up`}
-                  disabled={index === 0}
-                >
-                  <ArrowUp size={13} />
-                </button>
-                <button
-                  type="button"
-                  className="icon-button"
-                  onClick={() => patchArtistImages({ providerOrder: moveProvider(order, provider, 1) })}
-                  aria-label={`Move ${report?.name ?? provider} down`}
-                  disabled={index === order.length - 1}
-                >
-                  <ArrowDown size={13} />
-                </button>
-              </span>
-            </li>
-          );
-        })}
-      </ol>
 
-      {providers && providers.length > 0 ? (
-        <ul className="artist-provider-capabilities" data-testid="artist-provider-capabilities">
-          {providers.map(report => (
-            <li key={report.provider} data-feasible={report.feasible}>
-              <strong>{report.name}</strong>
-              <span className="muted">
-                {report.implemented && report.feasible
-                  ? report.available
-                    ? "Supported"
-                    : "Supported · not configured"
-                  : report.statusReason}
-              </span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="muted">Provider diagnostics are available in the desktop app.</p>
-      )}
-
-      {error ? <p className="error-text">{error}</p> : null}
-
-      <div className="setting-row">
-        <span>
-          <strong>Picture cache</strong>
-          <em>
-            {stats
-              ? `${stats.artists} picture${stats.artists === 1 ? "" : "s"} · ${formatBytes(stats.bytes)}${
-                  stats.misses > 0 ? ` · ${stats.misses} artist${stats.misses === 1 ? "" : "s"} without a picture` : ""
-                }`
-              : "Loading…"}
-          </em>
-        </span>
-        <span className="artist-image-actions">
-          <button type="button" onClick={() => void load()} aria-label="Refresh cache statistics">
-            <RefreshCw size={15} />
-          </button>
+      <div className="settings-subsection">
+        <h3>Image providers</h3>
+        <p className="muted">
+          Sources are tried in this order until one returns a valid picture. Missing MusicBrainz IDs, API keys or
+          catalogue entries are reported next to each source.
+        </p>
+        <div className="provider-order-head">
+          <span className="muted">
+            {activeCount} of {order.length} active
+          </span>
           <button
             type="button"
-            onClick={() => void clearCache()}
-            disabled={busy === "clear"}
-            data-testid="clear-artist-images"
+            className="provider-restore"
+            onClick={() => patchArtistImages({ providerOrder: [...DEFAULT_ARTIST_IMAGE_PROVIDER_ORDER] })}
           >
-            <Trash2 size={15} /> {busy === "clear" ? "Clearing…" : "Clear"}
+            Restore defaults
           </button>
-        </span>
+        </div>
+        <ol className="provider-order artist-provider-order" data-testid="artist-provider-order">
+          {order.map((entry, index) => {
+            const providerId = artistImageProviderIdOf(entry);
+            const disabled = isDisabledArtistImageProviderEntry(entry);
+            const report = reportByProvider.get(providerId);
+            const name = report?.name ?? providerId;
+            return (
+              <li key={providerId} className={disabled ? "is-disabled" : undefined} data-provider={providerId}>
+                <span className="provider-index">{index + 1}</span>
+                <span className="provider-name">
+                  <strong>{name}</strong>
+                  <span className="provider-badges">
+                    {disabled ? <span className="provider-badge">off</span> : null}
+                    {!disabled && report && !report.available ? (
+                      <span className="provider-badge unavailable" title={report.statusReason}>
+                        needs setup
+                      </span>
+                    ) : null}
+                    {!disabled && report?.attributionRequired ? (
+                      <span className="provider-badge">credit shown</span>
+                    ) : null}
+                    {!disabled && report?.license ? (
+                      <span className="provider-badge offline">{report.license}</span>
+                    ) : null}
+                  </span>
+                </span>
+                <span className="provider-buttons">
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={() => patchArtistImages({ providerOrder: moveProviderInOrder(order, entry, -1) })}
+                    aria-label={`Move ${name} up`}
+                    disabled={disabled || index === 0}
+                  >
+                    <ArrowUp size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={() => patchArtistImages({ providerOrder: moveProviderInOrder(order, entry, 1) })}
+                    aria-label={`Move ${name} down`}
+                    disabled={disabled || index === order.length - 1}
+                  >
+                    <ArrowDown size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={() =>
+                      patchArtistImages({
+                        providerOrder: disabled
+                          ? addProviderToOrder(order, providerId)
+                          : removeProviderFromOrder(order, providerId),
+                      })
+                    }
+                    aria-label={disabled ? `Enable ${name}` : `Disable ${name}`}
+                    aria-pressed={!disabled}
+                    data-testid={`artist-provider-toggle-${providerId}`}
+                  >
+                    <Power size={13} />
+                  </button>
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+
+        {providers && providers.length > 0 ? (
+          <ul className="artist-provider-capabilities" data-testid="artist-provider-capabilities">
+            {providers.map(report => (
+              <li key={report.provider} data-feasible={report.feasible}>
+                <strong>{report.name}</strong>
+                <span className="muted">
+                  {report.implemented && report.feasible
+                    ? report.available
+                      ? "Supported"
+                      : "Supported · not configured"
+                    : report.statusReason}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="muted">Provider diagnostics are available in the desktop app.</p>
+        )}
       </div>
+
+      <div className="settings-subsection">
+        <h3>Cache</h3>
+        <div className="setting-row">
+          <span>
+            <strong>Cached artist pictures</strong>
+            <em>
+              {stats
+                ? `${stats.artists} picture${stats.artists === 1 ? "" : "s"} · ${formatBytes(stats.bytes)}${
+                    stats.misses > 0
+                      ? ` · ${stats.misses} artist${stats.misses === 1 ? "" : "s"} without a picture`
+                      : ""
+                  }`
+                : "Loading…"}
+            </em>
+          </span>
+          <span className="artist-image-actions">
+            <button type="button" onClick={() => void load()} aria-label="Refresh cache statistics">
+              <RefreshCw size={15} />
+            </button>
+          </span>
+        </div>
+
+        <div className="setting-row">
+          <span>
+            <strong>Refresh artist pictures</strong>
+            <em>
+              {refreshJob?.running
+                ? `Refreshing ${refreshJob.done} of ${refreshJob.total}…`
+                : "Re-query the sources for every artist in the cache, including those with no picture yet"}
+            </em>
+          </span>
+          <span className="artist-image-actions">
+            {refreshJob?.running ? (
+              <button
+                type="button"
+                onClick={() => {
+                  cancelRefresh.current = true;
+                }}
+                data-testid="cancel-refresh-artist-images"
+              >
+                Stop
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void refreshAll()}
+                disabled={!config.enabled || clearing}
+                data-testid="refresh-artist-images"
+              >
+                <RefreshCw size={15} /> Refresh
+              </button>
+            )}
+          </span>
+        </div>
+
+        <div className="setting-row">
+          <span>
+            <strong>Clear artist picture cache</strong>
+            <em>The index is emptied and pictures are fetched again on demand. Cached files are not deleted.</em>
+          </span>
+          <span className="artist-image-actions">
+            <button
+              type="button"
+              onClick={() => void clearCache()}
+              disabled={clearing || refreshJob?.running === true}
+              data-testid="clear-artist-images"
+            >
+              <Trash2 size={15} /> {clearing ? "Clearing…" : "Clear"}
+            </button>
+          </span>
+        </div>
+      </div>
+
+      {error ? <p className="error-text">{error}</p> : null}
     </section>
   );
 }
