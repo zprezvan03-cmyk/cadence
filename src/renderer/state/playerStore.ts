@@ -338,14 +338,20 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     const availableTracks = getAvailableLibraryTracks();
     if (availableTracks.length === 0) return 0;
 
-    // Collect seed tracks from recent & current queue entries
+    // Anchor the context on what is actually playing.
+    //
+    // `selectAutoPlayTracks` documents `seedTrackIds` as "most recent last" and anchors the genre
+    // session on the last known-genre seed. Feeding it the whole upcoming queue (as this used to)
+    // therefore anchored every batch on the *furthest future* entry — which, because AutoPlay
+    // appends its own output to that tail, meant each batch re-anchored on the previous batch's
+    // last recommendation instead of on the track the listener is hearing. That feedback loop is
+    // what let an Electronic/Phonk recommendation become the seed for the next round; the listening
+    // history still informs the session through `recentPlayedTrackIds` below, but only where it is
+    // compatible with the playing track.
     const seedTrackIds: number[] = [];
-    const startSeedPos = Math.max(0, state.orderPosition - 4);
-    for (let pos = startSeedPos; pos < state.order.length; pos++) {
-      const entry = entryAtPosition(state, pos);
-      if (entry?.item.source.kind === "local") {
-        seedTrackIds.push(entry.item.source.trackId);
-      }
+    const currentEntry = entryAtPosition(state, state.orderPosition);
+    if (currentEntry?.item.source.kind === "local") {
+      seedTrackIds.push(currentEntry.item.source.trackId);
     }
 
     // Exclude all tracks already in the queue so AutoPlay doesn't duplicate queued songs

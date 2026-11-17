@@ -259,6 +259,52 @@ describe("playerStore — AutoPlay replenishment, manual queue priority, and tel
     expect(shuffledIds.slice(0, 3)).toEqual([1, 6, 5]);
   });
 
+  it("anchors AutoPlay on the playing track, never on an upcoming queue entry", async () => {
+    // Regression: the seed list used to be "4 previous entries + current + every upcoming entry",
+    // and the genre session anchors on the *last* seed. Because AutoPlay appends its own output to
+    // that tail, every batch re-anchored on the previous batch's last recommendation — which is how
+    // an Electronic/Phonk track that had just been recommended became the seed for the next one.
+    const popSeed = makeTrack({ id: 11, title: "ILYSB", artist: "LANY", genre: "Pop" });
+    const popA = makeTrack({ id: 12, title: "Peaches", artist: "Justin Bieber", genre: "Pop" });
+    const popB = makeTrack({ id: 13, title: "Slow Down", artist: "Fly By Midnight", genre: "Pop, Indie Pop" });
+    const popC = makeTrack({ id: 14, title: "Rapsodi", artist: "JKT48", genre: "Pop, J-Pop" });
+    const phonk = makeTrack({ id: 15, title: "Murder in My Mind", artist: "Scythermane", genre: "Phonk" });
+    const electronic = makeTrack({ id: 16, title: "Song", artist: "Nakama", genre: "Electronic" });
+    const tracks = [popSeed, popA, popB, popC, phonk, electronic];
+
+    setTrackRegistry(new Map(tracks.map(t => [t.id, t])));
+    useLibrary.setState({
+      snapshot: {
+        tracks,
+        folders: ["/music"],
+        playlists: [],
+        scan: { running: false, phase: "done", filesSeen: 6, filesIndexed: 6, currentFile: null, startedAt: 0, finishedAt: 0, errors: [] },
+      },
+      tracksById: new Map(tracks.map(t => [t.id, t])),
+      recordPlay: vi.fn().mockResolvedValue(undefined),
+    } as never);
+
+    // The Electronic track is *upcoming* in the context queue: under the old seed collection it
+    // became the anchor for the batch appended right after start.
+    await usePlayer.getState().playQueue([popSeed.id, electronic.id], 0);
+
+    const diagnostics = useIntelligence.getState().lastDiagnostics;
+    expect(diagnostics).not.toBeNull();
+    expect(diagnostics?.currentTrack.id).toBe(popSeed.id);
+    expect(diagnostics?.currentTrack.clusters[0]?.cluster).toBe("pop");
+
+    const state = usePlayer.getState();
+    const autoPlayIds = state.order
+      .map(index => state.queue[index])
+      .filter(entry => entry.origin === "autoplay")
+      .map(entry => (entry.item.source.kind === "local" ? entry.item.source.trackId : -1));
+
+    expect(autoPlayIds.length).toBeGreaterThan(0);
+    expect(autoPlayIds).not.toContain(phonk.id);
+    expect(autoPlayIds).not.toContain(electronic.id);
+    expect(autoPlayIds.every(trackId => [popA.id, popB.id, popC.id].includes(trackId))).toBe(true);
+  });
+
   it("records session-safe skip and completion telemetry into useIntelligence during playback", async () => {
     await usePlayer.getState().playQueue([1, 2], 0);
     usePlayer.setState({ isPlaying: true, duration: 200 });
