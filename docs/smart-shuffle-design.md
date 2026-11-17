@@ -48,7 +48,7 @@ When `track.genre` is empty or unparsable:
 5. **Neutral unknown vector**: Flagged as `isUnknown = true`, receiving a neutral compatibility score ($0.46$)—positioned below the primary relevance gate ($0.52$) and above the relaxed relevance gate ($0.44$) so incomplete-metadata tracks are preferred over confidently incompatible tracks ($< 0.44$).
 
 ### 1.4 Bilinear Compatibility, Shared-Mass Relevance & Bounded Exposure Damping
-Let $\mathbf{s} \in [0, 1]^M$ be the session's active genre context vector (anchored to the current seed track so a manual genre switch immediately pivots the context) and $\mathbf{e} \in \mathbb{R}_{\ge 0}^M$ be the continuous cluster exposure streak vector:
+Let $\mathbf{s} \in [0, 1]^M$ be the session's active genre context vector. For AutoPlay it is the **collective profile of the user's queue** (§5.5); for Smart Shuffle ordering it is the running session vector seeded from the current track and $\mathbf{e} \in \mathbb{R}_{\ge 0}^M$ be the continuous cluster exposure streak vector:
 - After playing a track with distribution $\mathbf{g}$, for each cluster $c$:
   $$e_c \leftarrow \begin{cases} e_c + g_c & \text{if } g_c \ge 0.20 \\ \max(0, e_c - 0.50) & \text{if } g_c < 0.20 \end{cases}$$
 - The damped affinity between session cluster $c_1$ and candidate cluster $c_2$ is bounded at $\ge 0.68$ so consecutive tracks in the same genre never invert below off-diagonal affinities for unrelated genres:
@@ -155,7 +155,16 @@ Every queue order maintains strict priority ordering after `orderPosition`:
 2. **`addToQueue(trackIds)`**: Inserts `origin: "manual"` entries after existing `"manual"` / `"context"` entries, **strictly before any `"autoplay"` entries**.
 3. **`toggleShuffle()`**: Preserves all upcoming `"manual"` entries in their exact positions right after `orderPosition`; smart-shuffles `"context"` entries; keeps `"autoplay"` entries at the tail.
 4. **AutoPlay Low-Water Mark (`remaining < 2`)**: When `repeat === "off"` and `settings.playback.autoPlay === true`, appends up to 5 contextually scored library tracks with `origin: "autoplay"` at the tail so `prewarmNext()` and crossfade/gapless transitions work without interruption.
-5. **Seed anchor is the playing track, never the queue tail**: `selectAutoPlayTracks` defines `seedTrackIds` as "most recent last" and anchors the genre session on the last known-genre seed, so `replenishAutoPlay` passes only the **current** entry; the listening history still contributes through `recentPlayedTrackIds`, but only when it is compatible with the playing track. Earlier versions seeded the whole upcoming list, which included AutoPlay's own output and therefore re-anchored every batch on the *previous* batch's last recommendation — a feedback loop that let an Electronic/Phonk pick become the context for the next pick.
+5. **The genre anchor is the user's queue as a whole** (`anchorTrackIds`): `replenishAutoPlay` passes every `"manual"` and `"context"` entry currently in the queue — never an `"autoplay"` one — and `buildQueueAnchorGenreVector` folds them into one profile,
+   $$\mathbf{s} = \frac{1}{|Q|}\sum_{i \in Q} \mathbf{g}_i ,\qquad Q = \{\text{user-authored queue entries}\}.$$
+   Uniform per-track weights: a genre vector is already a probability distribution, so the mean answers "what share of the queue sounds like X", while duration weighting would let an arbitrarily long track outvote the rest and recency weighting would reintroduce the drift this removes.
+   * **Mutations**: the list is rebuilt from the live queue on every replenishment, so adding or removing an entry immediately moves the profile, a pure reorder cannot (a mean is order-free), and AutoPlay additions are filtered out by `origin`.
+   * **No drift**: the profile is computed once per batch and re-applied after every pick, so candidate N is scored against exactly the same profile as candidate 1. The per-pick EMA only advances the exposure streaks, which damp repetition inside the batch; it can never carry a recommendation's cluster into the next batch because the next batch recomputes the anchor from the queue.
+   * **Empty queue**: `anchorTrackIds: []` (or a queue with no genre-tagged user entries) is reported as `anchorSource: "none"` and produces a *neutral* session — no genre gating at all — rather than silently anchoring on the playing track or on AutoPlay's tail.
+   * **History stays separate**: `recentPlayedTrackIds` still drives artist/album spacing, duplicate-recording guards and cooldowns, but contributes nothing to the genre profile.
+   * Diagnostics report `anchorSource`, `anchorTrackCount` and `anchorClusters` for every batch.
+
+   Earlier versions seeded the whole upcoming list, which included AutoPlay's own output and therefore re-anchored each batch on the *previous* batch's last recommendation — the feedback loop that let an Electronic/Phonk pick become the context for the next one.
 
 ---
 

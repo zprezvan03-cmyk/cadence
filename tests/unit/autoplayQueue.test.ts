@@ -36,10 +36,13 @@ import { audioEngine } from "../../src/renderer/audio/engine";
 import { DEFAULT_SETTINGS } from "../../src/main/settingsCore";
 import type { QueueEntry, Track } from "../../src/shared/types";
 
-function makeTrack(overrides: Partial<Track> & { id: number; title: string; artist: string }): Track {
+function makeTrack(
+  overrides: Partial<Track> & { id: number; title: string; artist: string },
+): Track {
   return {
     id: overrides.id,
-    path: overrides.path ?? `/music/${overrides.artist}/${overrides.title}.flac`,
+    path:
+      overrides.path ?? `/music/${overrides.artist}/${overrides.title}.flac`,
     streamUrl: `cadence-media:///music/${overrides.id}.flac`,
     title: overrides.title,
     artist: overrides.artist,
@@ -82,7 +85,11 @@ describe("queue.ts — strict manual priority over AutoPlay and partition helper
     const a2 = makeTrack({ id: 21, title: "AutoPlay 2", artist: "Artist D" });
     const m1 = makeTrack({ id: 30, title: "Manual Add 1", artist: "Artist E" });
     const m2 = makeTrack({ id: 31, title: "Manual Add 2", artist: "Artist F" });
-    const mNext = makeTrack({ id: 32, title: "Manual Play Next", artist: "Artist G" });
+    const mNext = makeTrack({
+      id: 32,
+      title: "Manual Play Next",
+      artist: "Artist G",
+    });
 
     let queue: QueueEntry[] = [
       localQueueEntry(t0.id, "occ-0", t0, "context"),
@@ -94,16 +101,23 @@ describe("queue.ts — strict manual priority over AutoPlay and partition helper
     let orderPosition = 0;
 
     // 1. Add m1 and m2 to queue -> must go right after Current, ahead of Context and AutoPlay
-    const afterAdd1 = appendManualEntriesBeforeAutoPlay(queue, order, orderPosition, [
-      localQueueEntry(m1.id, "occ-m1", m1),
-      localQueueEntry(m2.id, "occ-m2", m2),
-    ]);
+    const afterAdd1 = appendManualEntriesBeforeAutoPlay(
+      queue,
+      order,
+      orderPosition,
+      [
+        localQueueEntry(m1.id, "occ-m1", m1),
+        localQueueEntry(m2.id, "occ-m2", m2),
+      ],
+    );
     queue = afterAdd1.queue;
     order = afterAdd1.order;
     orderPosition = afterAdd1.orderPosition;
 
-    const orderedIds1 = order.map(idx =>
-      queue[idx].item.source.kind === "local" ? queue[idx].item.source.trackId : -1
+    const orderedIds1 = order.map((idx) =>
+      queue[idx].item.source.kind === "local"
+        ? queue[idx].item.source.trackId
+        : -1,
     );
     expect(orderedIds1).toEqual([10, 30, 31, 11, 20, 21]);
 
@@ -114,30 +128,60 @@ describe("queue.ts — strict manual priority over AutoPlay and partition helper
     queue = afterPlayNext.queue;
     order = afterPlayNext.order;
 
-    const orderedIds2 = order.map(idx =>
-      queue[idx].item.source.kind === "local" ? queue[idx].item.source.trackId : -1
+    const orderedIds2 = order.map((idx) =>
+      queue[idx].item.source.kind === "local"
+        ? queue[idx].item.source.trackId
+        : -1,
     );
     expect(orderedIds2).toEqual([10, 32, 30, 31, 11, 20, 21]);
 
     // 3. If user manually queues a track that was already in AutoPlay (id=21), it is promoted out of AutoPlay into Manual
-    const afterPromote = appendManualEntriesBeforeAutoPlay(queue, order, orderPosition, [
-      localQueueEntry(a2.id, "occ-a2-manual", a2),
-    ]);
-    const orderedIds3 = afterPromote.order.map(idx =>
+    const afterPromote = appendManualEntriesBeforeAutoPlay(
+      queue,
+      order,
+      orderPosition,
+      [localQueueEntry(a2.id, "occ-a2-manual", a2)],
+    );
+    const orderedIds3 = afterPromote.order.map((idx) =>
       afterPromote.queue[idx].item.source.kind === "local"
         ? afterPromote.queue[idx].item.source.trackId
-        : -1
+        : -1,
     );
     expect(orderedIds3).toEqual([10, 32, 30, 31, 21, 11, 20]);
   });
 
   it("preserves manual priority ahead of context and AutoPlay at the tail when unshuffling", () => {
     const queue: QueueEntry[] = [
-      localQueueEntry(1, "c-0", makeTrack({ id: 1, title: "C0", artist: "A" }), "context"),
-      localQueueEntry(2, "c-1", makeTrack({ id: 2, title: "C1", artist: "A" }), "context"),
-      localQueueEntry(3, "c-2", makeTrack({ id: 3, title: "C2", artist: "A" }), "context"),
-      localQueueEntry(4, "m-1", makeTrack({ id: 4, title: "M1", artist: "B" }), "manual"),
-      localQueueEntry(5, "a-1", makeTrack({ id: 5, title: "A1", artist: "C" }), "autoplay"),
+      localQueueEntry(
+        1,
+        "c-0",
+        makeTrack({ id: 1, title: "C0", artist: "A" }),
+        "context",
+      ),
+      localQueueEntry(
+        2,
+        "c-1",
+        makeTrack({ id: 2, title: "C1", artist: "A" }),
+        "context",
+      ),
+      localQueueEntry(
+        3,
+        "c-2",
+        makeTrack({ id: 3, title: "C2", artist: "A" }),
+        "context",
+      ),
+      localQueueEntry(
+        4,
+        "m-1",
+        makeTrack({ id: 4, title: "M1", artist: "B" }),
+        "manual",
+      ),
+      localQueueEntry(
+        5,
+        "a-1",
+        makeTrack({ id: 5, title: "A1", artist: "C" }),
+        "autoplay",
+      ),
     ];
     // Currently at queue[1] (orderPosition = 0), followed by manual [3], shuffled context [2, 0], autoplay [4]
     const shuffledOrder = [1, 3, 2, 0, 4];
@@ -173,24 +217,69 @@ describe("queue.ts — strict manual priority over AutoPlay and partition helper
 
 describe("playerStore — AutoPlay replenishment, manual queue priority, and telemetry integration", () => {
   const libraryTracks = [
-    makeTrack({ id: 1, title: "Seed Indie 1", artist: "Alvvays", genre: "Indie Rock; Shoegaze", duration: 200 }),
-    makeTrack({ id: 2, title: "Indie Match 2", artist: "Slowdive", genre: "Shoegaze; Dream Pop", duration: 220 }),
-    makeTrack({ id: 3, title: "Indie Match 3", artist: "Beach House", genre: "Dream Pop; Indie", duration: 240 }),
-    makeTrack({ id: 4, title: "Indie Match 4", artist: "Lush", genre: "Shoegaze; Indie Rock", duration: 210 }),
-    makeTrack({ id: 5, title: "Manual Choice", artist: "Daft Punk", genre: "Electronic", duration: 250 }),
-    makeTrack({ id: 6, title: "Play Next Choice", artist: "Justice", genre: "Electronic", duration: 230 }),
+    makeTrack({
+      id: 1,
+      title: "Seed Indie 1",
+      artist: "Alvvays",
+      genre: "Indie Rock; Shoegaze",
+      duration: 200,
+    }),
+    makeTrack({
+      id: 2,
+      title: "Indie Match 2",
+      artist: "Slowdive",
+      genre: "Shoegaze; Dream Pop",
+      duration: 220,
+    }),
+    makeTrack({
+      id: 3,
+      title: "Indie Match 3",
+      artist: "Beach House",
+      genre: "Dream Pop; Indie",
+      duration: 240,
+    }),
+    makeTrack({
+      id: 4,
+      title: "Indie Match 4",
+      artist: "Lush",
+      genre: "Shoegaze; Indie Rock",
+      duration: 210,
+    }),
+    makeTrack({
+      id: 5,
+      title: "Manual Choice",
+      artist: "Daft Punk",
+      genre: "Electronic",
+      duration: 250,
+    }),
+    makeTrack({
+      id: 6,
+      title: "Play Next Choice",
+      artist: "Justice",
+      genre: "Electronic",
+      duration: 230,
+    }),
   ];
 
   beforeEach(() => {
-    setTrackRegistry(new Map(libraryTracks.map(t => [t.id, t])));
+    setTrackRegistry(new Map(libraryTracks.map((t) => [t.id, t])));
     useLibrary.setState({
       snapshot: {
         tracks: libraryTracks,
         folders: ["/music"],
         playlists: [],
-        scan: { running: false, phase: "done", filesSeen: 6, filesIndexed: 6, currentFile: null, startedAt: 0, finishedAt: 0, errors: [] },
+        scan: {
+          running: false,
+          phase: "done",
+          filesSeen: 6,
+          filesIndexed: 6,
+          currentFile: null,
+          startedAt: 0,
+          finishedAt: 0,
+          errors: [],
+        },
       },
-      tracksById: new Map(libraryTracks.map(t => [t.id, t])),
+      tracksById: new Map(libraryTracks.map((t) => [t.id, t])),
       recordPlay: vi.fn().mockResolvedValue(undefined),
     } as never);
     useHistory.setState({
@@ -226,17 +315,19 @@ describe("playerStore — AutoPlay replenishment, manual queue priority, and tel
     expect(stateAfterStart.order.length).toBeGreaterThan(1);
     const initialUpcoming = stateAfterStart.order
       .slice(1)
-      .map(idx => stateAfterStart.queue[idx]);
-    expect(initialUpcoming.every(e => e.origin === "autoplay")).toBe(true);
+      .map((idx) => stateAfterStart.queue[idx]);
+    expect(initialUpcoming.every((e) => e.origin === "autoplay")).toBe(true);
 
     // Now user calls addToQueue([5]) and playNext([6])
     usePlayer.getState().addToQueue([5]);
     usePlayer.getState().playNext([6]);
 
     const stateAfterManual = usePlayer.getState();
-    const orderedEntries = stateAfterManual.order.map(idx => stateAfterManual.queue[idx]);
-    const orderedIds = orderedEntries.map(e =>
-      e.item.source.kind === "local" ? e.item.source.trackId : -1
+    const orderedEntries = stateAfterManual.order.map(
+      (idx) => stateAfterManual.queue[idx],
+    );
+    const orderedIds = orderedEntries.map((e) =>
+      e.item.source.kind === "local" ? e.item.source.trackId : -1,
     );
 
     // Current is 1, followed immediately by Play Next (6) and Add to Queue (5), and all AutoPlay entries come AFTER 6 and 5!
@@ -252,7 +343,7 @@ describe("playerStore — AutoPlay replenishment, manual queue priority, and tel
     // Toggling shuffle ON and OFF keeps manual entries 6 and 5 strictly ahead of AutoPlay entries
     usePlayer.getState().toggleShuffle();
     const shuffledState = usePlayer.getState();
-    const shuffledIds = shuffledState.order.map(idx => {
+    const shuffledIds = shuffledState.order.map((idx) => {
       const s = shuffledState.queue[idx].item.source;
       return s.kind === "local" ? s.trackId : -1;
     });
@@ -264,23 +355,62 @@ describe("playerStore — AutoPlay replenishment, manual queue priority, and tel
     // and the genre session anchors on the *last* seed. Because AutoPlay appends its own output to
     // that tail, every batch re-anchored on the previous batch's last recommendation — which is how
     // an Electronic/Phonk track that had just been recommended became the seed for the next one.
-    const popSeed = makeTrack({ id: 11, title: "ILYSB", artist: "LANY", genre: "Pop" });
-    const popA = makeTrack({ id: 12, title: "Peaches", artist: "Justin Bieber", genre: "Pop" });
-    const popB = makeTrack({ id: 13, title: "Slow Down", artist: "Fly By Midnight", genre: "Pop, Indie Pop" });
-    const popC = makeTrack({ id: 14, title: "Rapsodi", artist: "JKT48", genre: "Pop, J-Pop" });
-    const phonk = makeTrack({ id: 15, title: "Murder in My Mind", artist: "Scythermane", genre: "Phonk" });
-    const electronic = makeTrack({ id: 16, title: "Song", artist: "Nakama", genre: "Electronic" });
+    const popSeed = makeTrack({
+      id: 11,
+      title: "ILYSB",
+      artist: "LANY",
+      genre: "Pop",
+    });
+    const popA = makeTrack({
+      id: 12,
+      title: "Peaches",
+      artist: "Justin Bieber",
+      genre: "Pop",
+    });
+    const popB = makeTrack({
+      id: 13,
+      title: "Slow Down",
+      artist: "Fly By Midnight",
+      genre: "Pop, Indie Pop",
+    });
+    const popC = makeTrack({
+      id: 14,
+      title: "Rapsodi",
+      artist: "JKT48",
+      genre: "Pop, J-Pop",
+    });
+    const phonk = makeTrack({
+      id: 15,
+      title: "Murder in My Mind",
+      artist: "Scythermane",
+      genre: "Phonk",
+    });
+    const electronic = makeTrack({
+      id: 16,
+      title: "Song",
+      artist: "Nakama",
+      genre: "Electronic",
+    });
     const tracks = [popSeed, popA, popB, popC, phonk, electronic];
 
-    setTrackRegistry(new Map(tracks.map(t => [t.id, t])));
+    setTrackRegistry(new Map(tracks.map((t) => [t.id, t])));
     useLibrary.setState({
       snapshot: {
         tracks,
         folders: ["/music"],
         playlists: [],
-        scan: { running: false, phase: "done", filesSeen: 6, filesIndexed: 6, currentFile: null, startedAt: 0, finishedAt: 0, errors: [] },
+        scan: {
+          running: false,
+          phase: "done",
+          filesSeen: 6,
+          filesIndexed: 6,
+          currentFile: null,
+          startedAt: 0,
+          finishedAt: 0,
+          errors: [],
+        },
       },
-      tracksById: new Map(tracks.map(t => [t.id, t])),
+      tracksById: new Map(tracks.map((t) => [t.id, t])),
       recordPlay: vi.fn().mockResolvedValue(undefined),
     } as never);
 
@@ -295,14 +425,114 @@ describe("playerStore — AutoPlay replenishment, manual queue priority, and tel
 
     const state = usePlayer.getState();
     const autoPlayIds = state.order
-      .map(index => state.queue[index])
-      .filter(entry => entry.origin === "autoplay")
-      .map(entry => (entry.item.source.kind === "local" ? entry.item.source.trackId : -1));
+      .map((index) => state.queue[index])
+      .filter((entry) => entry.origin === "autoplay")
+      .map((entry) =>
+        entry.item.source.kind === "local" ? entry.item.source.trackId : -1,
+      );
 
     expect(autoPlayIds.length).toBeGreaterThan(0);
     expect(autoPlayIds).not.toContain(phonk.id);
     expect(autoPlayIds).not.toContain(electronic.id);
-    expect(autoPlayIds.every(trackId => [popA.id, popB.id, popC.id].includes(trackId))).toBe(true);
+    expect(
+      autoPlayIds.every((trackId) =>
+        [popA.id, popB.id, popC.id].includes(trackId),
+      ),
+    ).toBe(true);
+  });
+
+  it("anchors AutoPlay on every user-authored queue entry and never on its own output", async () => {
+    await usePlayer.getState().playQueue([1, 2], 0);
+
+    const first = useIntelligence.getState().lastDiagnostics;
+    expect(first?.anchorSource).toBe("manual-queue");
+    expect(first?.anchorTrackCount).toBe(2);
+    expect(first?.anchorClusters?.length).toBeGreaterThan(0);
+    const profile = JSON.stringify(first?.anchorClusters);
+
+    // Walk the queue. Each batch appends its own output, so the queue keeps growing with
+    // `origin: "autoplay"` entries; none of them may enter the anchor.
+    const batchSeeds = new Set<number>();
+    for (let step = 0; step < 4; step += 1) {
+      await usePlayer.getState().next(false);
+      const diagnostics = useIntelligence.getState().lastDiagnostics;
+      if (!diagnostics) continue;
+      batchSeeds.add(diagnostics.timestampMs);
+      expect(diagnostics.anchorSource).toBe("manual-queue");
+      expect(diagnostics.anchorTrackCount).toBe(2);
+      expect(JSON.stringify(diagnostics.anchorClusters)).toBe(profile);
+    }
+    // More than one batch was actually generated while walking the queue.
+    expect(batchSeeds.size).toBeGreaterThan(0);
+
+    // The Electronic tracks (ids 5 and 6) never enter the queue through AutoPlay: the anchor is the
+    // coherent Indie/Shoegaze pair the listener queued, not the drifting tail.
+    const state = usePlayer.getState();
+    const autoPlayIds = state.order
+      .map((index) => state.queue[index])
+      .filter((entry) => entry.origin === "autoplay")
+      .map((entry) =>
+        entry.item.source.kind === "local" ? entry.item.source.trackId : -1,
+      );
+    expect(autoPlayIds.length).toBeGreaterThan(0);
+    expect(autoPlayIds).not.toContain(5);
+    expect(autoPlayIds).not.toContain(6);
+
+    // No duplicates ever reach the queue, autoplay or manual.
+    const allIds = state.order.map((index) =>
+      state.queue[index].item.source.kind === "local"
+        ? state.queue[index].item.source.trackId
+        : -1,
+    );
+    expect(new Set(allIds).size).toBe(allIds.length);
+  });
+
+  it("updates the anchor when the user adds a queue entry, so a manual Electronic pick changes the mix", async () => {
+    await usePlayer.getState().playQueue([1, 2], 0);
+    const before = useIntelligence.getState().lastDiagnostics;
+    expect(before?.anchorTrackCount).toBe(2);
+
+    usePlayer.getState().addToQueue([5]);
+
+    let updated = useIntelligence.getState().lastDiagnostics;
+    for (
+      let step = 0;
+      step < 8 && (updated?.anchorTrackCount ?? 0) === 2;
+      step += 1
+    ) {
+      await usePlayer.getState().next(false);
+      updated = useIntelligence.getState().lastDiagnostics;
+    }
+
+    expect(updated?.anchorSource).toBe("manual-queue");
+    expect(updated?.anchorTrackCount).toBe(3);
+    expect(JSON.stringify(updated?.anchorClusters)).not.toBe(
+      JSON.stringify(before?.anchorClusters),
+    );
+  });
+
+  it("treats an AutoPlay-only queue as an explicit neutral fallback, never as a manual queue", async () => {
+    const [first, second] = libraryTracks;
+    usePlayer.setState({
+      queue: [
+        localQueueEntry(first.id, "ap-1", first, "autoplay"),
+        localQueueEntry(second.id, "ap-2", second, "autoplay"),
+      ],
+      order: [0, 1],
+      orderPosition: 0,
+      currentTrackId: first.id,
+      isPlaying: false,
+    } as never);
+
+    await usePlayer.getState().next(false);
+
+    const diagnostics = useIntelligence.getState().lastDiagnostics;
+    expect(diagnostics?.anchorSource).toBe("none");
+    expect(diagnostics?.anchorTrackCount).toBe(0);
+    expect(diagnostics?.anchorClusters).toEqual([]);
+    // Neutral session: nothing is rejected for genre relevance because there is no genre context.
+    expect(diagnostics?.rejectedIncompatibleCount).toBe(0);
+    expect(diagnostics?.relaxationStage).toBe("seed-unknown");
   });
 
   it("records session-safe skip and completion telemetry into useIntelligence during playback", async () => {
@@ -316,7 +546,7 @@ describe("playerStore — AutoPlay replenishment, manual queue priority, and tel
     await usePlayer.getState().next(false);
 
     const intelMap = useIntelligence.getState().byRecordingKey;
-    const track1Record = [...intelMap.values()].find(r => r.trackId === 1);
+    const track1Record = [...intelMap.values()].find((r) => r.trackId === 1);
     expect(track1Record).toBeDefined();
     expect(track1Record?.skipCount).toBe(1);
     expect(track1Record?.completeCount).toBe(0);

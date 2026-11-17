@@ -170,6 +170,12 @@ export interface RecommendationDiagnosticsReport {
   compatibleCandidateCount: number;
   rejectedIncompatibleCount: number;
   selectedTrackIds: number[];
+  /** Where the genre profile for this batch came from (`none` = no usable user-authored queue). */
+  anchorSource?: "manual-queue" | "seed-track" | "none";
+  /** Number of known-genre user-authored queue tracks folded into the anchor. */
+  anchorTrackCount?: number;
+  /** The anchor's cluster distribution (empty when the anchor is `none`). */
+  anchorClusters?: ClusterWeightSummary[];
   noCompatibleCandidatesReason: string | null;
   /** Structured diagnostics for selected candidates. */
   selectedDiagnostics: CandidateDiagnosticEntry[];
@@ -960,6 +966,47 @@ function initializeAnchoredSessionGenreState(
 }
 
 /**
+ * Builds the **collective** genre profile of a queue: the mean cluster distribution of the given
+ * tracks, one unit of weight per track.
+ *
+ * Uniform weights are deliberate. A genre vector is already a probability distribution over
+ * clusters, so the mean is a mixture that answers "what share of the queue sounds like X" - the
+ * natural aggregation for a queue, and the only one that does not let an arbitrarily long track
+ * (or an arbitrary queue position) outvote the rest. Duration weighting would bias the profile by
+ * track length; recency weighting would reintroduce the drift this exists to remove.
+ *
+ * Tracks with unknown genre are skipped (they carry no evidence). The result is written to `out`,
+ * which is zeroed first; the return value is the number of tracks that contributed, so callers can
+ * distinguish "no queue" from "queue with no genre metadata".
+ */
+export function buildQueueAnchorGenreVector(
+  index: LibraryShuffleIndex,
+  trackIds: readonly number[],
+  out: Float32Array,
+): number {
+  out.fill(0);
+  let contributing = 0;
+  for (const trackId of trackIds) {
+    const libIdx = index.idToIndex.get(trackId);
+    if (libIdx === undefined) continue;
+    if (index.unknownGenreFlags[libIdx] === 1) continue;
+    const offset = libIdx * NUM_GENRE_CLUSTERS;
+    let hasMass = false;
+    for (let c = 0; c < NUM_GENRE_CLUSTERS; c++) {
+      const weight = index.genreVectors[offset + c];
+      if (weight <= 0) continue;
+      out[c] += weight;
+      hasMass = true;
+    }
+    if (hasMass) contributing += 1;
+  }
+  if (contributing > 0) {
+    for (let c = 0; c < NUM_GENRE_CLUSTERS; c++) out[c] /= contributing;
+  }
+  return contributing;
+}
+
+/**
  * Orders a queue using Cadence's Smart Shuffle algorithm while strictly enforcing:
  * 1. Queue Partition Invariant:
  *    [ Current Track ] -> [ Manual Entries ] -> [ Smart-Shuffled Context Entries ] -> [ AutoPlay Entries ]
@@ -1494,6 +1541,17 @@ export interface SelectAutoPlayOptions extends BuildSmartShuffleOptions {
   excludeTrackIds?: ReadonlySet<number>;
   /** Ordered seed track IDs representing the current listening context (most recent last). */
   seedTrackIds?: readonly number[];
+  /**
+   * Collective genre anchor: every user-authored track currently in the queue (manual and
+   * context entries), in queue order. When this property is present the genre profile is the mean
+   * cluster distribution of those tracks and nothing else contributes to it - not the playing
+   * track, not the playback history and never AutoPlay's own output. Passing an empty array is a
+   * deliberate "no anchor" request and yields a neutral session (no genre gating) rather than
+   * silently falling back to whichever track happens to be playing.
+   *
+   * Omit the property to keep the legacy single-seed behaviour (`seedTrackIds` last known genre).
+   */
+  anchorTrackIds?: readonly number[];
 }
 
 export interface SelectAutoPlayResult {
@@ -1717,6 +1775,9 @@ function runAutoPlaySelection(
       compatibleCandidateCount: 0,
       rejectedIncompatibleCount: 0,
       selectedTrackIds: [],
+      anchorSource:
+        options.anchorTrackIds !== undefined ? "none" : "seed-track",
+      anchorTrackCount: 0,
       noCompatibleCandidatesReason: "Library has no playable tracks.",
       selectedDiagnostics: [],
       rejectedDiagnostics: [],
@@ -1787,14 +1848,47 @@ function runAutoPlaySelection(
     }
   }
 
-  let sessionHasGenre = initializeAnchoredSessionGenreState(
-    index,
-    seedLibIndices,
-    recentLibIndices,
-    sessionGenreVector,
-    exposureStreaks,
-    relaxedGenreCompatibility,
-  );
+  // Genre anchor: either the collective profile of the user's queue (`anchorTrackIds`) or, for
+  // callers that do not provide one, the legacy single-seed anchor.
+  const explicitAnchor = options.anchorTrackIds !== undefined;
+  const anchorVector = new Float32Array(NUM_GENRE_CLUSTERS);
+  const anchorTrackCount = explicitAnchor
+    ? buildQueueAnchorGenreVector(
+        index,
+        options.anchorTrackIds ?? [],
+        anchorVector,
+      )
+    : 0;
+
+  const anchorReportFields = {
+    anchorSource: explicitAnchor
+      ? anchorTrackCount > 0
+        ? ("manual-queue" as const)
+        : ("none" as const)
+      : ("seed-track" as const),
+    anchorTrackCount,
+    anchorClusters:
+      anchorTrackCount > 0 ? summarizeGenreVector(anchorVector, 0) : [],
+  };
+
+  let sessionHasGenre: boolean;
+  if (explicitAnchor) {
+    // No history, no playing-track heuristics: the queue *is* the context. `anchorTrackCount === 0`
+    // means the caller has no user-authored, genre-tagged queue at all, which is reported as a
+    // neutral session instead of being filled in from AutoPlay's own output.
+    sessionGenreVector.set(anchorVector);
+    exposureStreaks.fill(0);
+    sessionHasGenre = anchorTrackCount > 0;
+  } else {
+    sessionHasGenre = initializeAnchoredSessionGenreState(
+      index,
+      seedLibIndices,
+      recentLibIndices,
+      sessionGenreVector,
+      exposureStreaks,
+      relaxedGenreCompatibility,
+    );
+  }
 
   const lastSeedId =
     options.seedTrackIds && options.seedTrackIds.length > 0
@@ -2099,7 +2193,16 @@ function runAutoPlaySelection(
   const compatibleCandidateCount = remaining;
 
   if (remaining === 0) {
-    const noMatchReason = `No compatible candidates met the minimum genre relevance threshold (${relaxedGenreCompatibility.toFixed(2)}) for '${currentTrackMeta.title || "current track"}' (${formatClusterSummary(currentTrackMeta.clusters)}); rejected ${rejectedIncompatibleCount} incompatible track(s) rather than injecting unrelated music.`;
+    // Name the actual context: with an explicit anchor the gate compared every candidate against the
+    // user's queue, not against whatever happens to be playing.
+    const contextLabel = explicitAnchor
+      ? `manual queue (${anchorTrackCount} track${anchorTrackCount === 1 ? "" : "s"})`
+      : currentTrackMeta.title || "current track";
+    const contextClusters =
+      explicitAnchor && anchorTrackCount > 0
+        ? summarizeGenreVector(anchorVector, 0)
+        : currentTrackMeta.clusters;
+    const noMatchReason = `No compatible candidates met the minimum genre relevance threshold (${relaxedGenreCompatibility.toFixed(2)}) for '${contextLabel}' (${formatClusterSummary(contextClusters)}); rejected ${rejectedIncompatibleCount} incompatible track(s) rather than injecting unrelated music.`;
     const report: RecommendationDiagnosticsReport = {
       mode: "autoplay",
       timestampMs: now,
@@ -2112,6 +2215,7 @@ function runAutoPlaySelection(
       compatibleCandidateCount: 0,
       rejectedIncompatibleCount,
       selectedTrackIds: [],
+      ...anchorReportFields,
       noCompatibleCandidatesReason: noMatchReason,
       selectedDiagnostics: [],
       rejectedDiagnostics,
@@ -2225,6 +2329,15 @@ function runAutoPlaySelection(
       chosenLibIdx * NUM_GENRE_CLUSTERS,
       chosenIsUnknown,
     );
+    if (explicitAnchor) {
+      // The EMA above keeps a *listening session* coherent, but inside a batch it lets the batch
+      // drift: pick 1 would score pick 2, so a single odd recommendation could pull the rest of the
+      // batch (and, before F1, the next batch's seed) towards its cluster. With an explicit anchor
+      // the exposure streaks are still updated - they only drive repetition damping - while the
+      // relevance profile is restored to the queue after every pick. Candidate N is therefore
+      // scored against exactly the same profile as candidate 1.
+      sessionGenreVector.set(anchorVector);
+    }
     lastArtistStep.set(index.artistIds[chosenLibIdx], step);
     lastAlbumStep.set(index.albumIds[chosenLibIdx], step);
     lastRecordingStep.set(index.recordingIds[chosenLibIdx], step);
@@ -2243,6 +2356,7 @@ function runAutoPlaySelection(
     compatibleCandidateCount,
     rejectedIncompatibleCount,
     selectedTrackIds: selectedIds,
+    ...anchorReportFields,
     noCompatibleCandidatesReason: null,
     selectedDiagnostics,
     rejectedDiagnostics,
