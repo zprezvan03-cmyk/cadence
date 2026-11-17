@@ -383,6 +383,18 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       intelligenceByKey: intelState.byRecordingKey,
       historyEntries,
       recentPlayedTrackIds,
+      onDiagnostics: report => {
+        intelState.recordDiagnostics(report);
+        if (useSettings.getState().settings?.advanced?.showLogs) {
+          if (report.noCompatibleCandidatesReason) {
+            console.info(`[Cadence AutoPlay] ${report.noCompatibleCandidatesReason}`);
+          } else {
+            console.info(
+              `[Cadence AutoPlay] Selected ${report.selectedTrackIds.length} track(s) at stage='${report.relaxationStage}' (threshold=${report.activeThresholdUsed.toFixed(2)}, compatible=${report.compatibleCandidateCount}, rejectedIncompatible=${report.rejectedIncompatibleCount})`
+            );
+          }
+        }
+      },
     });
 
     if (selectedTrackIds.length === 0) return 0;

@@ -45,17 +45,26 @@ When `track.genre` is empty or unparsable:
 2. **Album consensus distribution**: Average genre vector of other tracks on the same `(albumArtist, album)`.
 3. **Artist consensus distribution**: Average genre vector of all library tracks by the same `artist` or `albumArtist`.
 4. **Folder/path keyword inference**: Inspects parent directory names for known genre tokens.
-5. **Neutral unknown vector**: Flagged as `isUnknown = true`, receiving a neutral compatibility score ($0.55$) so untagged tracks are never isolated or starved.
+5. **Neutral unknown vector**: Flagged as `isUnknown = true`, receiving a neutral compatibility score ($0.46$)—positioned below the primary relevance gate ($0.52$) and above the relaxed relevance gate ($0.44$) so incomplete-metadata tracks are preferred over confidently incompatible tracks ($< 0.44$).
 
-### 1.4 Bilinear Compatibility & Continuous Exposure Damping
-Let $\mathbf{s} \in [0, 1]^M$ be the session's active genre context vector (exponentially weighted moving average of recent tracks: $\mathbf{s}_t = 0.55 \mathbf{g}_{\text{curr}} + 0.45 \mathbf{s}_{t-1}$) and $\mathbf{e} \in \mathbb{R}_{\ge 0}^M$ be the continuous cluster exposure streak vector:
+### 1.4 Bilinear Compatibility, Disjoint Cluster Damping & Bounded Exposure Damping
+Let $\mathbf{s} \in [0, 1]^M$ be the session's active genre context vector (anchored to the current seed track so a manual genre switch immediately pivots the context) and $\mathbf{e} \in \mathbb{R}_{\ge 0}^M$ be the continuous cluster exposure streak vector:
 - After playing a track with distribution $\mathbf{g}$, for each cluster $c$:
   $$e_c \leftarrow \begin{cases} e_c + g_c & \text{if } g_c \ge 0.20 \\ \max(0, e_c - 0.50) & \text{if } g_c < 0.20 \end{cases}$$
-- The damped affinity between session cluster $c_1$ and candidate cluster $c_2$ is:
-  $$\tilde{A}(c_1, c_2) = A(c_1, c_2) \times \begin{cases} \max(0.35,\; 1.0 - 0.12 \cdot \max(0, e_{c_2} - 2.0)) & \text{if } c_1 = c_2 \\ 1.0 & \text{if } c_1 \ne c_2 \end{cases}$$
+- The damped affinity between session cluster $c_1$ and candidate cluster $c_2$ is bounded at $\ge 0.68$ so consecutive tracks in the same genre never invert below off-diagonal affinities for unrelated genres:
+  $$\tilde{A}(c_1, c_2) = A(c_1, c_2) \times \begin{cases} \max(0.68,\; 1.0 - 0.06 \cdot \max(0, e_{c_2} - 2.5)) & \text{if } c_1 = c_2 \\ 1.0 & \text{if } c_1 \ne c_2 \end{cases}$$
 - Compatibility is evaluated via the bilinear form:
   $$G_{\text{compat}}(i, \mathcal{S}) = \sum_{c_1=0}^{M-1} \sum_{c_2=0}^{M-1} s_{c_1} \cdot \tilde{A}(c_1, c_2) \cdot g_{i, c_2}$$
-- **Bridge Track Bonus**: When a dominant cluster $c_1$ is saturated ($e_{c_1} > 2.5$), candidates that blend $c_1$ with a fresh cluster $c_2$ ($g_{i,c_1} \ge 0.20 \land g_{i,c_2} \ge 0.25$) receive a $+0.08$ bridge bonus to encourage smooth genre pivots.
+- **Disjoint Dominant-Cluster Damping**: When the session is focused ($\max_c s_c \ge 0.45$) and a candidate has near-zero overlap ($< 0.08$) with every dominant session cluster ($s_c \ge 0.25$), raw bilinear compatibility is multiplied by $0.72$ so minor secondary cluster weights (e.g., generic `pop` inside J-Pop or `electronic` inside Drift Phonk) cannot leak across unrelated genres.
+- **Bridge Track Bonus**: When a dominant cluster $c_1$ is saturated ($e_{c_1} > 2.5$), candidates that blend $c_1$ with a fresh cluster $c_2$ ($g_{i,c_1} \ge 0.25 \land g_{i,c_2} \ge 0.20$) receive a $+0.14$ bridge bonus to encourage smooth genre pivots.
+
+### 1.5 Genre Relevance Gating & Gradual Fallback (`src/shared/smartShuffle.ts`)
+Candidates are gated on multi-cluster genre compatibility **before** weighted random selection:
+1. **Stage 1 — Primary Gate (`minGenreCompatibility = 0.52`)**: Admits same-genre and compatible neighboring genres (e.g., J-Pop idol $\to$ J-Pop idol, Anime/Anisong, J-Rock, City Pop, Vocaloid).
+2. **Stage 2 — Relaxed Gate (`relaxedGenreCompatibility = 0.44`)**: Used when the primary pool is too small; admits broader compatible neighbors while still rejecting unrelated genres (e.g., J-Pop $\to$ Western Pop & R&B at $0.31$, J-Pop $\to$ Phonk at $0.19$).
+3. **Stage 3 — Incomplete-Metadata Fallback (`0.46`)**: Used only when no tagged compatible tracks remain; prefers tracks with missing/unknown genre metadata over confidently incompatible tracks.
+4. **No Unrestricted Random Fallback**: If zero candidates pass Stages 1–3, `selectAutoPlayTracks` returns `[]` and `selectAutoPlayTracksWithDiagnostics` reports `relaxationStage = "no-compatible-candidates"` with an explicit `noCompatibleCandidatesReason` rather than injecting an unrelated track.
+5. **Popularity as a Secondary Signal Only**: Popularity weight ($0.07$–$0.08$) and non-genre terms are modulated by genre compatibility and gated by `passedRelevanceGate`, ensuring an extremely popular incompatible track can never outscore a less-popular compatible track.
 
 ---
 

@@ -1,30 +1,40 @@
 /**
  * Cadence Smart Shuffle & AutoPlay Core Engine.
  *
- * Combines multi-cluster genre compatibility, user listening preference (favorites, play
- * frequency, Bayesian skip/completion ratio, artist affinity, rediscovery), confidence-weighted
- * global popularity, recency cooldowns, and artist/album spacing into a temperature-scaled
- * weighted random sampler.
- *
- * Designed for both small queues and 20,000+ track local libraries using flat typed-array
- * indexing and a two-tier horizon architecture.
+ * Prioritizes musical relevance before popularity:
+ * 1. Multi-cluster genre distributions (never collapsing a track to a single macro genre).
+ * 2. Hard genre relevance gating BEFORE weighted random selection, with gradual safe
+ *    threshold relaxation (Primary -> Relaxed neighbor -> Incomplete metadata fallback)
+ *    that never silently falls back to confidently incompatible tracks.
+ * 3. Popularity strictly as a secondary ranking signal among compatible candidates.
+ * 4. Structured explainability & diagnostics for selected and rejected candidates.
+ * 5. Flat typed-array indexing and two-tier horizon architecture for 20,000+ track libraries.
  */
 
 import {
   buildLibraryGenreVectors,
   computeGenreCompatibilityFast,
+  GENRE_CLUSTERS,
+  NEUTRAL_UNKNOWN_GENRE_COMPATIBILITY,
   NUM_GENRE_CLUSTERS,
   normalizeGenreVectorInPlace,
   parseGenreProfile,
   precomputeStepGenreProjection,
   scoreProjectedGenreCompatibility,
   updateGenreSessionState,
+  type GenreCluster,
 } from "./genreCluster";
 import type { HistoryEntry } from "./types";
 
 export type ShuffleRng = () => number;
 
 export type QueueOriginKind = "context" | "manual" | "autoplay";
+
+/** Default primary minimum genre compatibility threshold for candidate admission. */
+export const DEFAULT_MIN_GENRE_COMPATIBILITY = 0.52;
+
+/** Safe lower limit when gradually relaxing the genre threshold for small/sparse pools. */
+export const DEFAULT_RELAXED_GENRE_COMPATIBILITY = 0.44;
 
 export interface SmartShuffleTrack {
   id: number;
@@ -71,11 +81,11 @@ export interface SmartShuffleWeights {
 }
 
 export const DEFAULT_SMART_SHUFFLE_WEIGHTS: Readonly<SmartShuffleWeights> = {
-  userPreference: 0.35,
-  genreCompatibility: 0.28,
-  diversity: 0.20,
-  popularity: 0.12,
-  timeOfDay: 0.05,
+  genreCompatibility: 0.38,
+  userPreference: 0.32,
+  diversity: 0.18,
+  popularity: 0.08,
+  timeOfDay: 0.04,
 };
 
 export interface CandidateScoreBreakdown {
@@ -86,6 +96,85 @@ export interface CandidateScoreBreakdown {
   effectivePopularity: number;
   diversity: number;
   timeOfDay: number;
+  relevanceThreshold: number;
+  passedRelevanceGate: boolean;
+}
+
+export interface ClusterWeightSummary {
+  cluster: GenreCluster;
+  weight: number;
+}
+
+export type CandidateDecisionReason =
+  | "selected-primary-gate"
+  | "selected-relaxed-gate"
+  | "selected-incomplete-metadata-fallback"
+  | "selected-seed-genre-unknown"
+  | "eligible-not-sampled"
+  | "rejected-below-genre-threshold"
+  | "rejected-duplicate-recording"
+  | "rejected-excluded-track";
+
+export interface CandidateDiagnosticEntry {
+  currentTrack: {
+    id: number | null;
+    title: string;
+    artist: string;
+    genre: string;
+    clusters: ClusterWeightSummary[];
+  };
+  candidateTrack: {
+    id: number;
+    title: string;
+    artist: string;
+    genre: string;
+    clusters: ClusterWeightSummary[];
+    isUnknownGenre: boolean;
+  };
+  genreCompatibility: number;
+  relevanceThreshold: number;
+  passedRelevanceGate: boolean;
+  popularity: number | null;
+  popularityConfidence: number | null;
+  effectivePopularity: number;
+  userPreference: number;
+  diversity: number;
+  finalScore: number;
+  decision: "selected" | "eligible" | "rejected";
+  reason: CandidateDecisionReason;
+  explanation: string;
+}
+
+export type RelevanceRelaxationStage =
+  | "primary"
+  | "relaxed"
+  | "incomplete-metadata"
+  | "seed-unknown"
+  | "no-compatible-candidates";
+
+export interface RecommendationDiagnosticsReport {
+  mode: "autoplay" | "smart-shuffle";
+  timestampMs: number;
+  currentTrack: {
+    id: number | null;
+    title: string;
+    artist: string;
+    genre: string;
+    clusters: ClusterWeightSummary[];
+  };
+  primaryThreshold: number;
+  relaxedThreshold: number;
+  activeThresholdUsed: number;
+  relaxationStage: RelevanceRelaxationStage;
+  totalCandidatesEvaluated: number;
+  compatibleCandidateCount: number;
+  rejectedIncompatibleCount: number;
+  selectedTrackIds: number[];
+  noCompatibleCandidatesReason: string | null;
+  /** Structured diagnostics for selected candidates. */
+  selectedDiagnostics: CandidateDiagnosticEntry[];
+  /** Bounded sample of rejected candidates (ordered by highest popularity/preference first). */
+  rejectedDiagnostics: CandidateDiagnosticEntry[];
 }
 
 export interface LibraryShuffleIndex {
@@ -99,6 +188,8 @@ export interface LibraryShuffleIndex {
   readonly recordingIds: Int32Array;
   readonly basePreference: Float32Array;
   readonly effectivePopularity: Float32Array;
+  readonly rawPopularity: Float32Array;
+  readonly popularityConfidence: Float32Array;
   readonly playCooldown: Float32Array;
   readonly daypartVectors: Float32Array;
   readonly daypartHasSignal: Uint8Array;
@@ -131,6 +222,14 @@ export interface BuildSmartShuffleOptions {
   recentPlayedTrackIds?: readonly number[];
   /** Optional current playback order so manual/autoplay segments preserve their exact relative order. */
   existingOrder?: readonly number[];
+  /** Primary minimum genre compatibility threshold (default: 0.52). */
+  minGenreCompatibility?: number;
+  /** Safe lower bound when gradually relaxing the genre threshold (default: 0.44). */
+  relaxedGenreCompatibility?: number;
+  /** Optional callback receiving structured diagnostics without logging the entire library. */
+  onDiagnostics?: (report: RecommendationDiagnosticsReport) => void;
+  /** Maximum number of rejected candidate entries retained in diagnostics (default: 20). */
+  maxDiagnosticEntries?: number;
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -138,6 +237,30 @@ const DAY_MS = 24 * HOUR_MS;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+export function summarizeGenreVector(
+  vectors: Float32Array,
+  offset = 0,
+  minWeight = 0.05
+): ClusterWeightSummary[] {
+  const out: ClusterWeightSummary[] = [];
+  for (let c = 0; c < NUM_GENRE_CLUSTERS; c++) {
+    const w = vectors[offset + c];
+    if (w >= minWeight) {
+      out.push({
+        cluster: GENRE_CLUSTERS[c],
+        weight: Number(w.toFixed(3)),
+      });
+    }
+  }
+  out.sort((a, b) => b.weight - a.weight);
+  return out;
+}
+
+function formatClusterSummary(clusters: readonly ClusterWeightSummary[]): string {
+  if (clusters.length === 0) return "unknown";
+  return clusters.map(c => `${c.cluster}:${c.weight.toFixed(2)}`).join(", ");
 }
 
 /**
@@ -249,7 +372,11 @@ export function buildLibraryShuffleIndex(
   const recordingIds = new Int32Array(n);
   const basePreference = new Float32Array(n);
   const effectivePopularity = new Float32Array(n);
+  const rawPopularity = new Float32Array(n);
+  const popularityConfidence = new Float32Array(n);
   const playCooldown = new Float32Array(n);
+  rawPopularity.fill(-1);
+  popularityConfidence.fill(-1);
 
   const artistIntern = new Map<string, number>();
   const albumIntern = new Map<string, number>();
@@ -411,6 +538,16 @@ export function buildLibraryShuffleIndex(
     );
     basePreference[i] = pref;
 
+    if (typeof intel?.popularity === "number" && Number.isFinite(intel.popularity)) {
+      rawPopularity[i] = clamp(intel.popularity, 0, 1);
+    }
+    if (
+      typeof intel?.popularityConfidence === "number" &&
+      Number.isFinite(intel.popularityConfidence)
+    ) {
+      popularityConfidence[i] = clamp(intel.popularityConfidence, 0, 1);
+    }
+
     effectivePopularity[i] = computeEffectivePopularity(
       intel?.popularity,
       intel?.popularityConfidence,
@@ -473,6 +610,8 @@ export function buildLibraryShuffleIndex(
     recordingIds,
     basePreference,
     effectivePopularity,
+    rawPopularity,
+    popularityConfidence,
     playCooldown,
     daypartVectors,
     daypartHasSignal,
@@ -484,7 +623,12 @@ export function buildLibraryShuffleIndex(
 
 /**
  * Evaluates the full multi-factor score breakdown for a candidate track index `candIdx`
- * given the current session state. Exported for unit testing and diagnostics.
+ * given the current session state.
+ *
+ * Enforces the Relevance Gate:
+ * - Secondary ranking signals (`userPreference`, `effectivePopularity`, `diversity`, `timeOfDay`)
+ *   are scaled by `genreCompatibility`, so popularity can rank among compatible candidates
+ *   but can NEVER override a failed genre relevance gate.
  */
 export function evaluateCandidateBreakdown(
   index: LibraryShuffleIndex,
@@ -502,9 +646,12 @@ export function evaluateCandidateBreakdown(
     poolRecordingCount: number;
     currentDaypart: 0 | 1 | 2 | 3;
     weights: SmartShuffleWeights;
+    relevanceThreshold?: number;
     stepProjection?: Float32Array;
     saturatedMask?: Uint8Array;
     freshMask?: Uint8Array;
+    dominantMask?: Uint8Array;
+    sessionIsFocused?: boolean;
   }
 ): CandidateScoreBreakdown {
   const {
@@ -523,7 +670,12 @@ export function evaluateCandidateBreakdown(
     stepProjection,
     saturatedMask,
     freshMask,
+    dominantMask,
+    sessionIsFocused,
   } = session;
+
+  const relevanceThreshold =
+    session.relevanceThreshold ?? DEFAULT_RELAXED_GENRE_COMPATIBILITY;
 
   const recId = index.recordingIds[candIdx];
   const prevRecStep = lastRecordingStep.get(recId);
@@ -539,6 +691,7 @@ export function evaluateCandidateBreakdown(
     }
   }
 
+  const candidateIsUnknown = index.unknownGenreFlags[candIdx] === 1;
   const genreCompatibility =
     stepProjection && saturatedMask && freshMask
       ? scoreProjectedGenreCompatibility(
@@ -548,7 +701,9 @@ export function evaluateCandidateBreakdown(
           sessionHasGenre,
           index.genreVectors,
           candIdx * NUM_GENRE_CLUSTERS,
-          index.unknownGenreFlags[candIdx] === 1
+          candidateIsUnknown,
+          dominantMask,
+          sessionIsFocused ?? true
         )
       : computeGenreCompatibilityFast(
           sessionGenreVector,
@@ -556,8 +711,11 @@ export function evaluateCandidateBreakdown(
           sessionHasGenre,
           index.genreVectors,
           candIdx * NUM_GENRE_CLUSTERS,
-          index.unknownGenreFlags[candIdx] === 1
+          candidateIsUnknown
         );
+
+  const passedRelevanceGate =
+    !sessionHasGenre || genreCompatibility >= relevanceThreshold;
 
   // Artist & Album spacing diversity
   let artistSpacing = 1.0;
@@ -565,9 +723,9 @@ export function evaluateCandidateBreakdown(
     const prevArtistStep = lastArtistStep.get(index.artistIds[candIdx]);
     if (prevArtistStep !== undefined) {
       const dArtist = step - prevArtistStep;
-      const relaxFactor = poolArtistCount <= 3 ? 0.55 : 0.0;
-      if (dArtist <= 1) artistSpacing = Math.max(relaxFactor, 0.10);
-      else if (dArtist === 2) artistSpacing = Math.max(relaxFactor, 0.45);
+      const relaxFactor = poolArtistCount <= 2 ? 0.35 : 0.0;
+      if (dArtist <= 1) artistSpacing = Math.max(relaxFactor, 0.08);
+      else if (dArtist === 2) artistSpacing = Math.max(relaxFactor, 0.42);
       else if (dArtist === 3) artistSpacing = Math.max(relaxFactor, 0.80);
     }
   }
@@ -589,7 +747,7 @@ export function evaluateCandidateBreakdown(
   let timeOfDay = 0.5;
   if (
     index.daypartHasSignal[currentDaypart] === 1 &&
-    index.unknownGenreFlags[candIdx] === 0
+    !candidateIsUnknown
   ) {
     let dot = 0;
     const dpOffset = currentDaypart * NUM_GENRE_CLUSTERS;
@@ -603,17 +761,35 @@ export function evaluateCandidateBreakdown(
   const userPreference = index.basePreference[candIdx];
   const effectivePopularity = index.effectivePopularity[candIdx];
 
-  const rawWeighted =
+  // Secondary terms are modulated by genreRelevanceMultiplier so popularity/preference/diversity
+  // only differentiate compatible candidates and can never rescue an incompatible candidate.
+  const genreRelevanceMultiplier = sessionHasGenre
+    ? clamp(0.25 + 0.75 * genreCompatibility, 0.25, 1.0)
+    : 1.0;
+
+  const secondarySum =
     weights.userPreference * userPreference +
-    weights.genreCompatibility * genreCompatibility +
     weights.diversity * diversity +
     weights.popularity * effectivePopularity +
     weights.timeOfDay * timeOfDay;
 
+  const rawWeighted =
+    weights.genreCompatibility * genreCompatibility +
+    genreRelevanceMultiplier * secondarySum;
+
+  // Apply strong multiplicative penalty when the candidate fails the relevance gate
+  const relevanceGateMultiplier = passedRelevanceGate
+    ? 1.0
+    : Math.pow(clamp(genreCompatibility / Math.max(0.1, relevanceThreshold), 0.05, 0.9), 3) * 0.12;
+
   // Apply strong multiplicative penalty when the same artist or album just played so even
   // a favorite song does not play back-to-back with the same artist when alternatives exist.
   const spacingGate = artistSpacing < 0.5 ? 0.35 + 0.65 * artistSpacing : 1.0;
-  const total = clamp(recencyGate * spacingGate * rawWeighted, 0.005, 1.0);
+  const total = clamp(
+    recencyGate * spacingGate * relevanceGateMultiplier * rawWeighted,
+    0.001,
+    1.0
+  );
 
   return {
     total,
@@ -623,6 +799,8 @@ export function evaluateCandidateBreakdown(
     effectivePopularity,
     diversity,
     timeOfDay,
+    relevanceThreshold,
+    passedRelevanceGate,
   };
 }
 
@@ -651,15 +829,91 @@ export function sampleWeightedShortlist(
 }
 
 /**
- * Orders a queue using Cadence's Smart Shuffle algorithm while strictly enforcing the
- * Queue Partition Invariant:
- *   [ Current Track ] -> [ Manual Entries ] -> [ Smart-Shuffled Context Entries ] -> [ AutoPlay Entries ]
- *
- * Uses a Two-Tier Horizon architecture:
- * - Tier 1 (first `activeHorizon` context tracks): Full dynamic context scoring over a
- *   shortlist of `shortlistSize` candidates per step with O(1) swap-and-pop removal.
- * - Tier 2 (remaining tail tracks on large 20,000+ track libraries): Efraimidis-Spirakis
- *   weighted reservoir keys with artist de-clumping in O(N log N) time.
+ * Initializes the session genre vector from the current/seed track(s), anchoring strongly to the
+ * active seed track and ignoring historical tracks that belong to a completely different genre
+ * (so a manual genre switch by the listener immediately pivots the recommendation context).
+ */
+function initializeAnchoredSessionGenreState(
+  index: LibraryShuffleIndex,
+  seedLibIndices: readonly number[],
+  recentLibIndices: readonly number[],
+  sessionGenreVector: Float32Array,
+  exposureStreaks: Float32Array,
+  relaxedThreshold: number
+): boolean {
+  sessionGenreVector.fill(0);
+  exposureStreaks.fill(0);
+
+  // Find the most recent known-genre seed track as the anchor
+  let anchorLibIdx = -1;
+  for (let i = seedLibIndices.length - 1; i >= 0; i--) {
+    const idx = seedLibIndices[i];
+    if (idx >= 0 && index.unknownGenreFlags[idx] === 0) {
+      anchorLibIdx = idx;
+      break;
+    }
+  }
+  if (anchorLibIdx < 0) {
+    for (let i = recentLibIndices.length - 1; i >= 0; i--) {
+      const idx = recentLibIndices[i];
+      if (idx >= 0 && index.unknownGenreFlags[idx] === 0) {
+        anchorLibIdx = idx;
+        break;
+      }
+    }
+  }
+
+  if (anchorLibIdx < 0) {
+    return false;
+  }
+
+  const anchorVec = index.genreVectors.subarray(
+    anchorLibIdx * NUM_GENRE_CLUSTERS,
+    (anchorLibIdx + 1) * NUM_GENRE_CLUSTERS
+  );
+  const zeroStreaks = new Float32Array(NUM_GENRE_CLUSTERS);
+  let sessionHasGenre = false;
+
+  // Only include up to 3 recent/seed tracks before the anchor if they are genre-compatible with the anchor
+  const combinedHistory = [...recentLibIndices.slice(-3), ...seedLibIndices];
+  for (const idx of combinedHistory) {
+    if (idx < 0 || index.unknownGenreFlags[idx] === 1) continue;
+    if (idx !== anchorLibIdx) {
+      const compatWithAnchor = computeGenreCompatibilityFast(
+        anchorVec,
+        zeroStreaks,
+        true,
+        index.genreVectors,
+        idx * NUM_GENRE_CLUSTERS,
+        false
+      );
+      if (compatWithAnchor < relaxedThreshold) {
+        // User switched away from this older genre; do not let it contaminate the current track's context
+        continue;
+      }
+    }
+    sessionHasGenre = updateGenreSessionState(
+      sessionGenreVector,
+      exposureStreaks,
+      sessionHasGenre,
+      index.genreVectors,
+      idx * NUM_GENRE_CLUSTERS,
+      false,
+      idx === anchorLibIdx ? 0.72 : 0.45
+    );
+  }
+
+  return sessionHasGenre;
+}
+
+/**
+ * Orders a queue using Cadence's Smart Shuffle algorithm while strictly enforcing:
+ * 1. Queue Partition Invariant:
+ *    [ Current Track ] -> [ Manual Entries ] -> [ Smart-Shuffled Context Entries ] -> [ AutoPlay Entries ]
+ * 2. Genre Relevance Gating:
+ *    Compatible candidates (>= minGenreCompatibility, then >= relaxedGenreCompatibility, then
+ *    incomplete metadata) are always prioritized ahead of incompatible candidates before
+ *    weighted random sampling.
  */
 export function buildSmartShuffleOrder(
   slots: readonly SmartShuffleQueueSlot[],
@@ -676,6 +930,16 @@ export function buildSmartShuffleOrder(
   const activeHorizon = Math.max(16, options.activeHorizon ?? 250);
   const shortlistSize = Math.max(8, options.shortlistSize ?? 64);
   const gamma = clamp(options.temperatureExponent ?? 2.2, 0.5, 5.0);
+  const minGenreCompatibility = clamp(
+    options.minGenreCompatibility ?? DEFAULT_MIN_GENRE_COMPATIBILITY,
+    0.2,
+    0.95
+  );
+  const relaxedGenreCompatibility = clamp(
+    options.relaxedGenreCompatibility ?? DEFAULT_RELAXED_GENRE_COMPATIBILITY,
+    0.15,
+    minGenreCompatibility
+  );
   const weights: SmartShuffleWeights = {
     ...DEFAULT_SMART_SHUFFLE_WEIGHTS,
     ...options.weights,
@@ -717,18 +981,64 @@ export function buildSmartShuffleOrder(
     return [safeCurrent, ...manualSlots, ...contextSlots, ...autoplaySlots];
   }
 
-  // Initialize session state from recentPlayedTrackIds + current track + manual prefix
   const sessionGenreVector = new Float32Array(NUM_GENRE_CLUSTERS);
   const exposureStreaks = new Float32Array(NUM_GENRE_CLUSTERS);
-  let sessionHasGenre = false;
   let step = 0;
 
   const lastArtistStep = new Map<number, number>();
   const lastAlbumStep = new Map<number, number>();
   const lastRecordingStep = new Map<number, number>();
 
-  const observeTrackIndex = (libIdx: number | undefined) => {
-    if (libIdx === undefined) return;
+  const recentLibIndices: number[] = [];
+  if (options.recentPlayedTrackIds) {
+    for (const tid of options.recentPlayedTrackIds) {
+      const libIdx = index.idToIndex.get(tid);
+      if (libIdx !== undefined) {
+        recentLibIndices.push(libIdx);
+        lastArtistStep.set(index.artistIds[libIdx], step);
+        lastAlbumStep.set(index.albumIds[libIdx], step);
+        lastRecordingStep.set(index.recordingIds[libIdx], step);
+        step += 1;
+      }
+    }
+  }
+
+  const seedLibIndices: number[] = [];
+  const currentTrackId = slots[safeCurrent]?.trackId;
+  if (currentTrackId !== null && currentTrackId !== undefined) {
+    const libIdx = index.idToIndex.get(currentTrackId);
+    if (libIdx !== undefined) {
+      seedLibIndices.push(libIdx);
+      lastArtistStep.set(index.artistIds[libIdx], step);
+      lastAlbumStep.set(index.albumIds[libIdx], step);
+      lastRecordingStep.set(index.recordingIds[libIdx], step);
+      step += 1;
+    }
+  }
+  for (const mSlot of manualSlots) {
+    const tid = slots[mSlot]?.trackId;
+    if (tid !== null && tid !== undefined) {
+      const libIdx = index.idToIndex.get(tid);
+      if (libIdx !== undefined) {
+        seedLibIndices.push(libIdx);
+        lastArtistStep.set(index.artistIds[libIdx], step);
+        lastAlbumStep.set(index.albumIds[libIdx], step);
+        lastRecordingStep.set(index.recordingIds[libIdx], step);
+        step += 1;
+      }
+    }
+  }
+
+  let sessionHasGenre = initializeAnchoredSessionGenreState(
+    index,
+    seedLibIndices,
+    recentLibIndices,
+    sessionGenreVector,
+    exposureStreaks,
+    relaxedGenreCompatibility
+  );
+
+  const observeSelectedTrack = (libIdx: number) => {
     sessionHasGenre = updateGenreSessionState(
       sessionGenreVector,
       exposureStreaks,
@@ -742,23 +1052,6 @@ export function buildSmartShuffleOrder(
     lastRecordingStep.set(index.recordingIds[libIdx], step);
     step += 1;
   };
-
-  if (options.recentPlayedTrackIds) {
-    for (const tid of options.recentPlayedTrackIds) {
-      observeTrackIndex(index.idToIndex.get(tid));
-    }
-  }
-
-  const currentTrackId = slots[safeCurrent]?.trackId;
-  if (currentTrackId !== null && currentTrackId !== undefined) {
-    observeTrackIndex(index.idToIndex.get(currentTrackId));
-  }
-  for (const mSlot of manualSlots) {
-    const tid = slots[mSlot]?.trackId;
-    if (tid !== null && tid !== undefined) {
-      observeTrackIndex(index.idToIndex.get(tid));
-    }
-  }
 
   // Build flat candidate pool for contextSlots
   const contextCount = contextSlots.length;
@@ -803,10 +1096,15 @@ export function buildSmartShuffleOrder(
   const horizonLimit = Math.min(remaining, activeHorizon);
 
   const shortlistPoolPositions = new Int32Array(shortlistSize);
+  const shortlistCompat = new Float32Array(shortlistSize);
+  const shortlistUnknown = new Uint8Array(shortlistSize);
+  const shortlistScores = new Float32Array(shortlistSize);
   const shortlistWeights = new Float32Array(shortlistSize);
+
   const stepProjection = new Float32Array(NUM_GENRE_CLUSTERS);
   const saturatedMask = new Uint8Array(NUM_GENRE_CLUSTERS);
   const freshMask = new Uint8Array(NUM_GENRE_CLUSTERS);
+  const dominantMask = new Uint8Array(NUM_GENRE_CLUSTERS);
 
   const sessionCtx = {
     step,
@@ -821,22 +1119,26 @@ export function buildSmartShuffleOrder(
     poolRecordingCount,
     currentDaypart,
     weights,
+    relevanceThreshold: relaxedGenreCompatibility,
     stepProjection,
     saturatedMask,
     freshMask,
+    dominantMask,
+    sessionIsFocused: true,
   };
 
-  // Tier 1: Active Horizon dynamic context sampling
+  // Tier 1: Active Horizon dynamic context sampling with Relevance Gating
   for (let h = 0; h < horizonLimit; h++) {
     sessionCtx.step = step;
     sessionCtx.sessionHasGenre = sessionHasGenre;
     if (sessionHasGenre) {
-      precomputeStepGenreProjection(
+      sessionCtx.sessionIsFocused = precomputeStepGenreProjection(
         sessionGenreVector,
         exposureStreaks,
         stepProjection,
         saturatedMask,
-        freshMask
+        freshMask,
+        dominantMask
       );
     }
 
@@ -849,7 +1151,6 @@ export function buildSmartShuffleOrder(
       // Partial Fisher-Yates draw of `shortlistSize` candidates from `0 .. remaining - 1`
       for (let k = 0; k < kCount; k++) {
         const pick = k + Math.floor(rng() * (remaining - k));
-        // Swap pool element `pick` into `k`
         const tmpQ = poolQueueIndices[k];
         poolQueueIndices[k] = poolQueueIndices[pick];
         poolQueueIndices[pick] = tmpQ;
@@ -862,15 +1163,104 @@ export function buildSmartShuffleOrder(
       }
     }
 
+    let primaryPassCount = 0;
+    let relaxedPassCount = 0;
+    let unknownMetaCount = 0;
+
     for (let k = 0; k < kCount; k++) {
       const poolPos = shortlistPoolPositions[k];
       const libIdx = poolLibIndices[poolPos];
       if (libIdx < 0) {
-        shortlistWeights[k] = Math.pow(0.35, gamma);
+        shortlistCompat[k] = NEUTRAL_UNKNOWN_GENRE_COMPATIBILITY;
+        shortlistUnknown[k] = 1;
+        shortlistScores[k] = 0.35;
+        unknownMetaCount += 1;
       } else {
-        const score = evaluateCandidateBreakdown(index, libIdx, sessionCtx).total;
-        shortlistWeights[k] = Math.pow(Math.max(0.03, score), gamma);
+        const isUnk = index.unknownGenreFlags[libIdx] === 1;
+        shortlistUnknown[k] = isUnk ? 1 : 0;
+        const breakdown = evaluateCandidateBreakdown(index, libIdx, sessionCtx);
+        shortlistCompat[k] = breakdown.genreCompatibility;
+        shortlistScores[k] = breakdown.total;
+        if (!sessionHasGenre) {
+          primaryPassCount += 1;
+        } else if (!isUnk && breakdown.genreCompatibility >= minGenreCompatibility) {
+          primaryPassCount += 1;
+        } else if (!isUnk && breakdown.genreCompatibility >= relaxedGenreCompatibility) {
+          relaxedPassCount += 1;
+        } else if (isUnk) {
+          unknownMetaCount += 1;
+        }
       }
+    }
+
+    // If the random 64-item shortlist happened to miss compatible tracks that still exist in
+    // the wider pool, scan a bounded window in the remaining pool to pull compatible candidates in.
+    if (
+      sessionHasGenre &&
+      primaryPassCount === 0 &&
+      relaxedPassCount === 0 &&
+      remaining > kCount
+    ) {
+      const scanLimit = Math.min(remaining, kCount + 256);
+      let replaceSlot = 0;
+      for (let s = kCount; s < scanLimit && replaceSlot < Math.min(8, kCount); s++) {
+        const libIdx = poolLibIndices[s];
+        if (libIdx < 0) continue;
+        const isUnk = index.unknownGenreFlags[libIdx] === 1;
+        if (isUnk) continue;
+        const compat = scoreProjectedGenreCompatibility(
+          stepProjection,
+          saturatedMask,
+          freshMask,
+          sessionHasGenre,
+          index.genreVectors,
+          libIdx * NUM_GENRE_CLUSTERS,
+          false,
+          dominantMask,
+          sessionCtx.sessionIsFocused
+        );
+        if (compat >= relaxedGenreCompatibility) {
+          // Swap into shortlist slot `replaceSlot`
+          const tmpQ = poolQueueIndices[replaceSlot];
+          poolQueueIndices[replaceSlot] = poolQueueIndices[s];
+          poolQueueIndices[s] = tmpQ;
+
+          const tmpL = poolLibIndices[replaceSlot];
+          poolLibIndices[replaceSlot] = poolLibIndices[s];
+          poolLibIndices[s] = tmpL;
+
+          const breakdown = evaluateCandidateBreakdown(index, libIdx, sessionCtx);
+          shortlistCompat[replaceSlot] = breakdown.genreCompatibility;
+          shortlistUnknown[replaceSlot] = 0;
+          shortlistScores[replaceSlot] = breakdown.total;
+          if (compat >= minGenreCompatibility) primaryPassCount += 1;
+          else relaxedPassCount += 1;
+          replaceSlot += 1;
+        }
+      }
+    }
+
+    // Apply hard Relevance Gate BEFORE weighted random selection:
+    // Rejected candidates receive weight 0 whenever any compatible candidate exists!
+    for (let k = 0; k < kCount; k++) {
+      const compat = shortlistCompat[k];
+      const isUnk = shortlistUnknown[k] === 1;
+      let admitted = false;
+
+      if (!sessionHasGenre) {
+        admitted = true;
+      } else if (primaryPassCount > 0) {
+        admitted = !isUnk && compat >= minGenreCompatibility;
+      } else if (relaxedPassCount > 0) {
+        admitted = !isUnk && compat >= relaxedGenreCompatibility;
+      } else if (unknownMetaCount > 0) {
+        admitted = isUnk;
+      } else {
+        // Only if zero compatible or unknown-genre tracks exist in the shortlist may remaining queue items be ordered
+        admitted = true;
+      }
+
+      shortlistWeights[k] = admitted ? Math.pow(Math.max(0.01, shortlistScores[k]), gamma) : 0;
     }
 
     const chosenShortlistIdx = sampleWeightedShortlist(shortlistWeights, kCount, rng);
@@ -888,15 +1278,25 @@ export function buildSmartShuffleOrder(
     }
 
     if (chosenLibIdx >= 0) {
-      observeTrackIndex(chosenLibIdx);
+      observeSelectedTrack(chosenLibIdx);
     } else {
       step += 1;
     }
   }
 
-  // Tier 2: O(N) Stratified Weighted Permutation + Artist De-clumping (when contextCount > activeHorizon)
+  // Tier 2: O(N) Stratified Relevance + Preference Permutation (when contextCount > activeHorizon)
   if (remaining > 0) {
-    // 4 strata ordered from highest to lowest stochastic priority key
+    if (sessionHasGenre) {
+      sessionCtx.sessionIsFocused = precomputeStepGenreProjection(
+        sessionGenreVector,
+        exposureStreaks,
+        stepProjection,
+        saturatedMask,
+        freshMask,
+        dominantMask
+      );
+    }
+
     const strata0: number[] = [];
     const strata1: number[] = [];
     const strata2: number[] = [];
@@ -904,23 +1304,49 @@ export function buildSmartShuffleOrder(
 
     for (let i = 0; i < remaining; i++) {
       const libIdx = poolLibIndices[i];
-      const staticWeight =
+      let compat = NEUTRAL_UNKNOWN_GENRE_COMPATIBILITY;
+      let isUnk = true;
+      if (libIdx >= 0) {
+        isUnk = index.unknownGenreFlags[libIdx] === 1;
+        compat = scoreProjectedGenreCompatibility(
+          stepProjection,
+          saturatedMask,
+          freshMask,
+          sessionHasGenre,
+          index.genreVectors,
+          libIdx * NUM_GENRE_CLUSTERS,
+          isUnk,
+          dominantMask,
+          sessionCtx.sessionIsFocused
+        );
+      }
+      const staticPref =
         libIdx >= 0
           ? clamp(
-              (0.55 * index.basePreference[libIdx] +
-                0.25 * index.effectivePopularity[libIdx] +
-                0.20 * 0.5) *
+              (0.65 * index.basePreference[libIdx] +
+                0.20 * index.effectivePopularity[libIdx] +
+                0.15 * 0.5) *
                 index.playCooldown[libIdx],
               0.05,
               1.0
             )
           : 0.4;
-      // Add controlled uniform jitter so every track can cross stratum boundaries probabilistically
-      const noisyScore = staticWeight * 0.75 + rng() * 0.25;
-      if (noisyScore >= 0.62) strata0.push(i);
-      else if (noisyScore >= 0.46) strata1.push(i);
-      else if (noisyScore >= 0.30) strata2.push(i);
-      else strata3.push(i);
+
+      if (!sessionHasGenre) {
+        const noisyScore = staticPref * 0.75 + rng() * 0.25;
+        if (noisyScore >= 0.62) strata0.push(i);
+        else if (noisyScore >= 0.46) strata1.push(i);
+        else if (noisyScore >= 0.30) strata2.push(i);
+        else strata3.push(i);
+      } else if (!isUnk && compat >= minGenreCompatibility) {
+        strata0.push(i);
+      } else if (!isUnk && compat >= relaxedGenreCompatibility) {
+        strata1.push(i);
+      } else if (isUnk) {
+        strata2.push(i);
+      } else {
+        strata3.push(i);
+      }
     }
 
     const shuffleBucket = (arr: number[]) => {
@@ -959,7 +1385,6 @@ export function buildSmartShuffleOrder(
       let poolPos = tailIndices[i];
       let libIdx = poolLibIndices[poolPos];
       if (libIdx >= 0 && index.artistIds[libIdx] === prevArtistId && i + 1 < remaining) {
-        // Look ahead up to 6 slots for a different artist to avoid back-to-back tail collisions
         for (let look = i + 1; look < Math.min(remaining, i + 7); look++) {
           const altPoolPos = tailIndices[look];
           const altLibIdx = poolLibIndices[altPoolPos];
@@ -989,30 +1414,219 @@ export interface SelectAutoPlayOptions extends BuildSmartShuffleOptions {
   seedTrackIds?: readonly number[];
 }
 
+export interface SelectAutoPlayResult {
+  trackIds: number[];
+  diagnostics: RecommendationDiagnosticsReport;
+}
+
 /**
- * Selects upcoming AutoPlay track IDs from the library that continue the genre and mood of
- * `seedTrackIds` while avoiding immediate artist/recording repetitions.
+ * Evaluates a single candidate track against a seed track and returns a structured diagnostic
+ * entry explaining its multi-cluster genre vectors, compatibility, relevance gate outcome,
+ * popularity, final score, and selection/rejection reason.
  */
-export function selectAutoPlayTracks(
+export function diagnoseCandidateRelevance(
+  currentTrack: SmartShuffleTrack,
+  candidateTrack: SmartShuffleTrack,
+  options: {
+    intelligenceByKey?: ReadonlyMap<string, TrackIntelligenceRecord>;
+    minGenreCompatibility?: number;
+    relaxedGenreCompatibility?: number;
+    now?: number;
+  } = {}
+): CandidateDiagnosticEntry {
+  const now = options.now ?? Date.now();
+  const minGenreCompatibility =
+    options.minGenreCompatibility ?? DEFAULT_MIN_GENRE_COMPATIBILITY;
+  const relaxedGenreCompatibility =
+    options.relaxedGenreCompatibility ?? DEFAULT_RELAXED_GENRE_COMPATIBILITY;
+
+  const pairTracks = [currentTrack, candidateTrack];
+  const index = buildLibraryShuffleIndex(pairTracks, {
+    now,
+    intelligenceByKey: options.intelligenceByKey,
+  });
+
+  const sessionGenreVector = new Float32Array(NUM_GENRE_CLUSTERS);
+  const exposureStreaks = new Float32Array(NUM_GENRE_CLUSTERS);
+  const sessionHasGenre = updateGenreSessionState(
+    sessionGenreVector,
+    exposureStreaks,
+    false,
+    index.genreVectors,
+    0,
+    index.unknownGenreFlags[0] === 1,
+    1.0
+  );
+
+  const lastArtistStep = new Map<number, number>([[index.artistIds[0], 0]]);
+  const lastAlbumStep = new Map<number, number>([[index.albumIds[0], 0]]);
+  const lastRecordingStep = new Map<number, number>([[index.recordingIds[0], 0]]);
+
+  const breakdown = evaluateCandidateBreakdown(index, 1, {
+    step: 1,
+    sessionGenreVector,
+    exposureStreaks,
+    sessionHasGenre,
+    lastArtistStep,
+    lastAlbumStep,
+    lastRecordingStep,
+    poolArtistCount: index.uniqueArtistCount,
+    poolAlbumCount: index.uniqueAlbumCount,
+    poolRecordingCount: index.uniqueRecordingCount,
+    currentDaypart: daypartForTimestamp(now),
+    weights: {
+      genreCompatibility: 0.44,
+      userPreference: 0.30,
+      diversity: 0.15,
+      popularity: 0.07,
+      timeOfDay: 0.04,
+    },
+    relevanceThreshold: minGenreCompatibility,
+  });
+
+  const seedClusters = summarizeGenreVector(index.genreVectors, 0);
+  const candClusters = summarizeGenreVector(index.genreVectors, NUM_GENRE_CLUSTERS);
+  const candIsUnknown = index.unknownGenreFlags[1] === 1;
+
+  let passedGate = false;
+  let activeThreshold = minGenreCompatibility;
+  let decision: "selected" | "eligible" | "rejected" = "rejected";
+  let reason: CandidateDecisionReason = "rejected-below-genre-threshold";
+
+  if (index.recordingIds[0] === index.recordingIds[1]) {
+    passedGate = false;
+    decision = "rejected";
+    reason = "rejected-duplicate-recording";
+  } else if (!sessionHasGenre) {
+    passedGate = true;
+    decision = "eligible";
+    reason = "selected-seed-genre-unknown";
+  } else if (!candIsUnknown && breakdown.genreCompatibility >= minGenreCompatibility) {
+    passedGate = true;
+    activeThreshold = minGenreCompatibility;
+    decision = "eligible";
+    reason = "selected-primary-gate";
+  } else if (!candIsUnknown && breakdown.genreCompatibility >= relaxedGenreCompatibility) {
+    passedGate = true;
+    activeThreshold = relaxedGenreCompatibility;
+    decision = "eligible";
+    reason = "selected-relaxed-gate";
+  } else if (candIsUnknown) {
+    passedGate = true;
+    activeThreshold = relaxedGenreCompatibility;
+    decision = "eligible";
+    reason = "selected-incomplete-metadata-fallback";
+  } else {
+    passedGate = false;
+    activeThreshold = relaxedGenreCompatibility;
+    decision = "rejected";
+    reason = "rejected-below-genre-threshold";
+  }
+
+  const rawPop = index.rawPopularity[1] >= 0 ? Number(index.rawPopularity[1].toFixed(3)) : null;
+  const popConf =
+    index.popularityConfidence[1] >= 0 ? Number(index.popularityConfidence[1].toFixed(3)) : null;
+
+  const explanation = passedGate
+    ? `Compatible (${reason}): genreCompatibility=${breakdown.genreCompatibility.toFixed(3)} >= threshold=${activeThreshold.toFixed(3)} [seed=(${formatClusterSummary(seedClusters)}) -> candidate=(${formatClusterSummary(candClusters)})], finalScore=${breakdown.total.toFixed(3)}`
+    : `Rejected (${reason}): genreCompatibility=${breakdown.genreCompatibility.toFixed(3)} < threshold=${activeThreshold.toFixed(3)} [seed=(${formatClusterSummary(seedClusters)}) vs candidate=(${formatClusterSummary(candClusters)})]; popularity=${rawPop ?? "none"} cannot override failed relevance gate`;
+
+  return {
+    currentTrack: {
+      id: currentTrack.id,
+      title: currentTrack.title,
+      artist: currentTrack.artist,
+      genre: currentTrack.genre,
+      clusters: seedClusters,
+    },
+    candidateTrack: {
+      id: candidateTrack.id,
+      title: candidateTrack.title,
+      artist: candidateTrack.artist,
+      genre: candidateTrack.genre,
+      clusters: candClusters,
+      isUnknownGenre: candIsUnknown,
+    },
+    genreCompatibility: Number(breakdown.genreCompatibility.toFixed(4)),
+    relevanceThreshold: Number(activeThreshold.toFixed(4)),
+    passedRelevanceGate: passedGate,
+    popularity: rawPop,
+    popularityConfidence: popConf,
+    effectivePopularity: Number(breakdown.effectivePopularity.toFixed(4)),
+    userPreference: Number(breakdown.userPreference.toFixed(4)),
+    diversity: Number(breakdown.diversity.toFixed(4)),
+    finalScore: Number(breakdown.total.toFixed(4)),
+    decision,
+    reason,
+    explanation,
+  };
+}
+
+function runAutoPlaySelection(
   tracks: readonly SmartShuffleTrack[],
-  options: SelectAutoPlayOptions = {}
-): number[] {
+  options: SelectAutoPlayOptions,
+  collectFullDiagnostics: boolean
+): SelectAutoPlayResult {
   const count = Math.max(1, options.count ?? 5);
-  const playableTracks = tracks.filter(t => t.playable !== false);
-  if (playableTracks.length === 0) return [];
+  const now = options.now ?? Date.now();
+  const minGenreCompatibility = clamp(
+    options.minGenreCompatibility ?? DEFAULT_MIN_GENRE_COMPATIBILITY,
+    0.2,
+    0.95
+  );
+  const relaxedGenreCompatibility = clamp(
+    options.relaxedGenreCompatibility ?? DEFAULT_RELAXED_GENRE_COMPATIBILITY,
+    0.15,
+    minGenreCompatibility
+  );
+  const maxDiagnosticEntries = Math.max(5, options.maxDiagnosticEntries ?? 20);
+  const wantDiagnostics = collectFullDiagnostics || Boolean(options.onDiagnostics);
+
+  let playableTracks = tracks;
+  if (!options.libraryIndex || options.libraryIndex.trackCount !== tracks.length) {
+    let hasUnplayable = false;
+    for (let i = 0; i < tracks.length; i++) {
+      if (tracks[i].playable === false) {
+        hasUnplayable = true;
+        break;
+      }
+    }
+    if (hasUnplayable) {
+      playableTracks = tracks.filter(t => t.playable !== false);
+    }
+  }
+
+  if (playableTracks.length === 0) {
+    const emptyReport: RecommendationDiagnosticsReport = {
+      mode: "autoplay",
+      timestampMs: now,
+      currentTrack: { id: null, title: "", artist: "", genre: "", clusters: [] },
+      primaryThreshold: minGenreCompatibility,
+      relaxedThreshold: relaxedGenreCompatibility,
+      activeThresholdUsed: minGenreCompatibility,
+      relaxationStage: "no-compatible-candidates",
+      totalCandidatesEvaluated: 0,
+      compatibleCandidateCount: 0,
+      rejectedIncompatibleCount: 0,
+      selectedTrackIds: [],
+      noCompatibleCandidatesReason: "Library has no playable tracks.",
+      selectedDiagnostics: [],
+      rejectedDiagnostics: [],
+    };
+    options.onDiagnostics?.(emptyReport);
+    return { trackIds: [], diagnostics: emptyReport };
+  }
 
   const rng = options.rng ?? Math.random;
-  const now = options.now ?? Date.now();
   const shortlistSize = Math.max(16, options.shortlistSize ?? 96);
   const gamma = clamp(options.temperatureExponent ?? 2.4, 0.5, 5.0);
   const weights: SmartShuffleWeights = {
     ...DEFAULT_SMART_SHUFFLE_WEIGHTS,
-    // In AutoPlay, genre continuity is slightly boosted so transitions feel seamless
-    genreCompatibility: 0.34,
-    userPreference: 0.32,
-    diversity: 0.18,
-    popularity: 0.11,
-    timeOfDay: 0.05,
+    genreCompatibility: 0.44,
+    userPreference: 0.30,
+    diversity: 0.15,
+    popularity: 0.07,
+    timeOfDay: 0.04,
     ...options.weights,
   };
 
@@ -1027,7 +1641,6 @@ export function selectAutoPlayTracks(
 
   const sessionGenreVector = new Float32Array(NUM_GENRE_CLUSTERS);
   const exposureStreaks = new Float32Array(NUM_GENRE_CLUSTERS);
-  let sessionHasGenre = false;
   let step = 0;
 
   const lastArtistStep = new Map<number, number>();
@@ -1035,30 +1648,72 @@ export function selectAutoPlayTracks(
   const lastRecordingStep = new Map<number, number>();
   const excludedRecordingIds = new Set<number>();
 
-  const observeSeed = (tid: number) => {
-    const libIdx = index.idToIndex.get(tid);
-    if (libIdx === undefined) return;
-    sessionHasGenre = updateGenreSessionState(
-      sessionGenreVector,
-      exposureStreaks,
-      sessionHasGenre,
-      index.genreVectors,
-      libIdx * NUM_GENRE_CLUSTERS,
-      index.unknownGenreFlags[libIdx] === 1
-    );
-    lastArtistStep.set(index.artistIds[libIdx], step);
-    lastAlbumStep.set(index.albumIds[libIdx], step);
-    lastRecordingStep.set(index.recordingIds[libIdx], step);
-    excludedRecordingIds.add(index.recordingIds[libIdx]);
-    step += 1;
-  };
-
+  const recentLibIndices: number[] = [];
   if (options.recentPlayedTrackIds) {
-    for (const tid of options.recentPlayedTrackIds) observeSeed(tid);
+    for (const tid of options.recentPlayedTrackIds) {
+      const libIdx = index.idToIndex.get(tid);
+      if (libIdx !== undefined) {
+        recentLibIndices.push(libIdx);
+        lastArtistStep.set(index.artistIds[libIdx], step);
+        lastAlbumStep.set(index.albumIds[libIdx], step);
+        lastRecordingStep.set(index.recordingIds[libIdx], step);
+        excludedRecordingIds.add(index.recordingIds[libIdx]);
+        step += 1;
+      }
+    }
   }
+
+  const seedLibIndices: number[] = [];
   if (options.seedTrackIds) {
-    for (const tid of options.seedTrackIds) observeSeed(tid);
+    for (const tid of options.seedTrackIds) {
+      const libIdx = index.idToIndex.get(tid);
+      if (libIdx !== undefined) {
+        seedLibIndices.push(libIdx);
+        lastArtistStep.set(index.artistIds[libIdx], step);
+        lastAlbumStep.set(index.albumIds[libIdx], step);
+        lastRecordingStep.set(index.recordingIds[libIdx], step);
+        excludedRecordingIds.add(index.recordingIds[libIdx]);
+        step += 1;
+      }
+    }
   }
+
+  let sessionHasGenre = initializeAnchoredSessionGenreState(
+    index,
+    seedLibIndices,
+    recentLibIndices,
+    sessionGenreVector,
+    exposureStreaks,
+    relaxedGenreCompatibility
+  );
+
+  const lastSeedId =
+    options.seedTrackIds && options.seedTrackIds.length > 0
+      ? options.seedTrackIds[options.seedTrackIds.length - 1]
+      : options.recentPlayedTrackIds && options.recentPlayedTrackIds.length > 0
+        ? options.recentPlayedTrackIds[options.recentPlayedTrackIds.length - 1]
+        : null;
+  const lastSeedLibIdx = lastSeedId !== null ? (index.idToIndex.get(lastSeedId) ?? -1) : -1;
+  const currentTrackMeta = wantDiagnostics
+    ? lastSeedLibIdx >= 0
+      ? {
+          id: playableTracks[lastSeedLibIdx].id,
+          title: playableTracks[lastSeedLibIdx].title,
+          artist: playableTracks[lastSeedLibIdx].artist,
+          genre: playableTracks[lastSeedLibIdx].genre,
+          clusters: summarizeGenreVector(
+            index.genreVectors,
+            lastSeedLibIdx * NUM_GENRE_CLUSTERS
+          ),
+        }
+      : {
+          id: null,
+          title: "",
+          artist: "",
+          genre: "",
+          clusters: summarizeGenreVector(sessionGenreVector, 0),
+        }
+    : { id: lastSeedId, title: "", artist: "", genre: "", clusters: [] };
 
   const excludeTrackIds = options.excludeTrackIds ?? new Set<number>();
   for (const tid of excludeTrackIds) {
@@ -1068,41 +1723,23 @@ export function selectAutoPlayTracks(
     }
   }
 
-  // Build candidate pool of non-excluded tracks; if library is smaller than exclusion set,
-  // fall back to all playable tracks except the very last seed track.
-  const lastSeedId =
-    options.seedTrackIds && options.seedTrackIds.length > 0
-      ? options.seedTrackIds[options.seedTrackIds.length - 1]
-      : null;
-
-  let candidateIndices: number[] = [];
-  for (let i = 0; i < index.trackCount; i++) {
-    const tid = index.trackIds[i];
-    if (excludeTrackIds.has(tid) || excludedRecordingIds.has(index.recordingIds[i])) continue;
-    candidateIndices.push(i);
-  }
-  if (candidateIndices.length === 0) {
-    for (let i = 0; i < index.trackCount; i++) {
-      if (index.trackIds[i] !== lastSeedId && index.trackCount > 1) {
-        candidateIndices.push(i);
-      }
-    }
-    if (candidateIndices.length === 0 && index.trackCount > 0) {
-      candidateIndices.push(0);
-    }
-  }
-
-  const pool = Int32Array.from(candidateIndices);
-  let remaining = pool.length;
-  const targetCount = Math.min(count, remaining);
-  const selectedIds: number[] = [];
-
-  const shortlistPositions = new Int32Array(shortlistSize);
-  const shortlistWeights = new Float32Array(shortlistSize);
   const stepProjection = new Float32Array(NUM_GENRE_CLUSTERS);
   const saturatedMask = new Uint8Array(NUM_GENRE_CLUSTERS);
+  const dominantMask = new Uint8Array(NUM_GENRE_CLUSTERS);
   const freshMask = new Uint8Array(NUM_GENRE_CLUSTERS);
   const currentDaypart = daypartForTimestamp(now);
+
+  let sessionIsFocused = false;
+  if (sessionHasGenre) {
+    sessionIsFocused = precomputeStepGenreProjection(
+      sessionGenreVector,
+      exposureStreaks,
+      stepProjection,
+      saturatedMask,
+      freshMask,
+      dominantMask
+    );
+  }
 
   const sessionCtx = {
     step,
@@ -1117,21 +1754,272 @@ export function selectAutoPlayTracks(
     poolRecordingCount: index.uniqueRecordingCount,
     currentDaypart,
     weights,
+    relevanceThreshold: minGenreCompatibility,
     stepProjection,
     saturatedMask,
     freshMask,
+    dominantMask,
+    sessionIsFocused,
   };
+
+  const buildDiagnosticEntry = (
+    libIdx: number,
+    compat: number,
+    threshold: number,
+    passedGate: boolean,
+    finalScore: number,
+    decision: "selected" | "eligible" | "rejected",
+    reason: CandidateDecisionReason
+  ): CandidateDiagnosticEntry => {
+    const t = playableTracks[libIdx];
+    const candClusters = summarizeGenreVector(
+      index.genreVectors,
+      libIdx * NUM_GENRE_CLUSTERS
+    );
+    const isUnk = index.unknownGenreFlags[libIdx] === 1;
+    const rawPop =
+      index.rawPopularity[libIdx] >= 0 ? Number(index.rawPopularity[libIdx].toFixed(3)) : null;
+    const popConf =
+      index.popularityConfidence[libIdx] >= 0
+        ? Number(index.popularityConfidence[libIdx].toFixed(3))
+        : null;
+
+    const explanation = passedGate
+      ? `Selected/Eligible (${reason}): '${t.title}' by ${t.artist} — genreCompatibility=${compat.toFixed(3)} >= threshold=${threshold.toFixed(3)} [seed=(${formatClusterSummary(currentTrackMeta.clusters)}) -> candidate=(${formatClusterSummary(candClusters)})], finalScore=${finalScore.toFixed(3)}`
+      : `Rejected (${reason}): '${t.title}' by ${t.artist} — genreCompatibility=${compat.toFixed(3)} < threshold=${threshold.toFixed(3)} [seed=(${formatClusterSummary(currentTrackMeta.clusters)}) vs candidate=(${formatClusterSummary(candClusters)})]; popularity=${rawPop ?? "none"} cannot override failed relevance gate`;
+
+    return {
+      currentTrack: currentTrackMeta,
+      candidateTrack: {
+        id: t.id,
+        title: t.title,
+        artist: t.artist,
+        genre: t.genre,
+        clusters: candClusters,
+        isUnknownGenre: isUnk,
+      },
+      genreCompatibility: Number(compat.toFixed(4)),
+      relevanceThreshold: Number(threshold.toFixed(4)),
+      passedRelevanceGate: passedGate,
+      popularity: rawPop,
+      popularityConfidence: popConf,
+      effectivePopularity: Number(index.effectivePopularity[libIdx].toFixed(4)),
+      userPreference: Number(index.basePreference[libIdx].toFixed(4)),
+      diversity: 1.0,
+      finalScore: Number(finalScore.toFixed(4)),
+      decision,
+      reason,
+      explanation,
+    };
+  };
+
+  // Single-pass typed-array pre-filtering by Relevance Gate tiers BEFORE weighted random selection
+  const nTracks = index.trackCount;
+  const primaryBuf = new Int32Array(nTracks);
+  const relaxedBuf = new Int32Array(nTracks);
+  const incompleteBuf = new Int32Array(nTracks);
+  let primaryCount = 0;
+  let relaxedCount = 0;
+  let incompleteCount = 0;
+  let totalCandidatesEvaluated = 0;
+  let rejectedIncompatibleCount = 0;
+  const rejectedSample: { libIdx: number; compat: number; prominence: number }[] = [];
+
+  const classifyCandidate = (libIdx: number) => {
+    totalCandidatesEvaluated += 1;
+    const isUnk = index.unknownGenreFlags[libIdx] === 1;
+    const compat = scoreProjectedGenreCompatibility(
+      stepProjection,
+      saturatedMask,
+      freshMask,
+      sessionHasGenre,
+      index.genreVectors,
+      libIdx * NUM_GENRE_CLUSTERS,
+      isUnk,
+      dominantMask,
+      sessionIsFocused
+    );
+
+    if (!sessionHasGenre) {
+      primaryBuf[primaryCount++] = libIdx;
+    } else if (!isUnk && compat >= minGenreCompatibility) {
+      primaryBuf[primaryCount++] = libIdx;
+    } else if (!isUnk && compat >= relaxedGenreCompatibility) {
+      relaxedBuf[relaxedCount++] = libIdx;
+    } else if (isUnk) {
+      incompleteBuf[incompleteCount++] = libIdx;
+    } else {
+      rejectedIncompatibleCount += 1;
+      if (wantDiagnostics) {
+        const prominence =
+          0.6 * index.effectivePopularity[libIdx] + 0.4 * index.basePreference[libIdx];
+        if (rejectedSample.length < maxDiagnosticEntries) {
+          rejectedSample.push({ libIdx, compat, prominence });
+        } else {
+          let minIdx = 0;
+          for (let r = 1; r < rejectedSample.length; r++) {
+            if (rejectedSample[r].prominence < rejectedSample[minIdx].prominence) {
+              minIdx = r;
+            }
+          }
+          if (prominence > rejectedSample[minIdx].prominence) {
+            rejectedSample[minIdx] = { libIdx, compat, prominence };
+          }
+        }
+      }
+    }
+  };
+
+  for (let i = 0; i < nTracks; i++) {
+    const tid = index.trackIds[i];
+    if (excludeTrackIds.has(tid) || excludedRecordingIds.has(index.recordingIds[i])) continue;
+    classifyCandidate(i);
+  }
+
+  // If all tracks were in excludeTrackIds (very small library), evaluate non-current tracks
+  if (totalCandidatesEvaluated === 0) {
+    for (let i = 0; i < nTracks; i++) {
+      if (index.trackIds[i] !== lastSeedId && nTracks > 1) {
+        classifyCandidate(i);
+      }
+    }
+    if (totalCandidatesEvaluated === 0 && nTracks > 0 && lastSeedLibIdx < 0) {
+      classifyCandidate(0);
+    }
+  }
+
+  let rejectedDiagnostics: CandidateDiagnosticEntry[] = [];
+  if (wantDiagnostics && rejectedSample.length > 0) {
+    rejectedSample.sort((a, b) => b.prominence - a.prominence);
+    rejectedDiagnostics = rejectedSample.map(item => {
+      const breakdown = evaluateCandidateBreakdown(index, item.libIdx, {
+        ...sessionCtx,
+        relevanceThreshold: relaxedGenreCompatibility,
+      });
+      return buildDiagnosticEntry(
+        item.libIdx,
+        item.compat,
+        relaxedGenreCompatibility,
+        false,
+        breakdown.total,
+        "rejected",
+        "rejected-below-genre-threshold"
+      );
+    });
+  }
+
+  // Gradual threshold relaxation across the 3 safe stages (never admitting rejectedIncompatible!)
+  let pool: Int32Array;
+  let remaining = 0;
+  let relaxationStage: RelevanceRelaxationStage = "primary";
+  let activeThresholdUsed = minGenreCompatibility;
+
+  if (!sessionHasGenre) {
+    pool = primaryBuf;
+    remaining = primaryCount;
+    relaxationStage = "seed-unknown";
+    activeThresholdUsed = 0;
+  } else if (
+    primaryCount >= count ||
+    (primaryCount >= Math.min(count, 2) && relaxedCount === 0) ||
+    (primaryCount > 0 && relaxedCount === 0 && incompleteCount === 0)
+  ) {
+    pool = primaryBuf;
+    remaining = primaryCount;
+    relaxationStage = "primary";
+    activeThresholdUsed = minGenreCompatibility;
+  } else if (primaryCount + relaxedCount > 0) {
+    for (let i = 0; i < relaxedCount; i++) {
+      primaryBuf[primaryCount + i] = relaxedBuf[i];
+    }
+    pool = primaryBuf;
+    remaining = primaryCount + relaxedCount;
+    relaxationStage = "relaxed";
+    activeThresholdUsed = relaxedGenreCompatibility;
+  } else if (incompleteCount > 0) {
+    pool = incompleteBuf;
+    remaining = incompleteCount;
+    relaxationStage = "incomplete-metadata";
+    activeThresholdUsed = relaxedGenreCompatibility;
+  } else {
+    // Small-library safe fallback: check if any excluded track (other than the currently playing track)
+    // is genre-compatible before declaring no compatible candidates.
+    pool = primaryBuf;
+    remaining = 0;
+    for (let i = 0; i < nTracks; i++) {
+      if (index.trackIds[i] === lastSeedId) continue;
+      const isUnk = index.unknownGenreFlags[i] === 1;
+      const compat = scoreProjectedGenreCompatibility(
+        stepProjection,
+        saturatedMask,
+        freshMask,
+        sessionHasGenre,
+        index.genreVectors,
+        i * NUM_GENRE_CLUSTERS,
+        isUnk,
+        dominantMask,
+        sessionIsFocused
+      );
+      if (!isUnk && compat >= relaxedGenreCompatibility) {
+        pool[remaining++] = i;
+        relaxationStage = compat >= minGenreCompatibility ? "primary" : "relaxed";
+        activeThresholdUsed =
+          compat >= minGenreCompatibility ? minGenreCompatibility : relaxedGenreCompatibility;
+      } else if (isUnk) {
+        pool[remaining++] = i;
+        relaxationStage = "incomplete-metadata";
+        activeThresholdUsed = relaxedGenreCompatibility;
+      }
+    }
+  }
+
+  const compatibleCandidateCount = remaining;
+
+  if (remaining === 0) {
+    const noMatchReason = `No compatible candidates met the minimum genre relevance threshold (${relaxedGenreCompatibility.toFixed(2)}) for '${currentTrackMeta.title || "current track"}' (${formatClusterSummary(currentTrackMeta.clusters)}); rejected ${rejectedIncompatibleCount} incompatible track(s) rather than injecting unrelated music.`;
+    const report: RecommendationDiagnosticsReport = {
+      mode: "autoplay",
+      timestampMs: now,
+      currentTrack: currentTrackMeta,
+      primaryThreshold: minGenreCompatibility,
+      relaxedThreshold: relaxedGenreCompatibility,
+      activeThresholdUsed: relaxedGenreCompatibility,
+      relaxationStage: "no-compatible-candidates",
+      totalCandidatesEvaluated,
+      compatibleCandidateCount: 0,
+      rejectedIncompatibleCount,
+      selectedTrackIds: [],
+      noCompatibleCandidatesReason: noMatchReason,
+      selectedDiagnostics: [],
+      rejectedDiagnostics,
+    };
+    options.onDiagnostics?.(report);
+    return { trackIds: [], diagnostics: report };
+  }
+
+  const targetCount = Math.min(count, remaining);
+  const selectedIds: number[] = [];
+  const selectedDiagnostics: CandidateDiagnosticEntry[] = [];
+
+  const shortlistPositions = new Int32Array(shortlistSize);
+  const shortlistWeights = new Float32Array(shortlistSize);
+  const shortlistBreakdowns = wantDiagnostics
+    ? new Array<CandidateScoreBreakdown>(shortlistSize)
+    : null;
+
+  sessionCtx.relevanceThreshold = activeThresholdUsed;
 
   for (let pickIdx = 0; pickIdx < targetCount && remaining > 0; pickIdx++) {
     sessionCtx.step = step;
     sessionCtx.sessionHasGenre = sessionHasGenre;
     if (sessionHasGenre) {
-      precomputeStepGenreProjection(
+      sessionCtx.sessionIsFocused = precomputeStepGenreProjection(
         sessionGenreVector,
         exposureStreaks,
         stepProjection,
         saturatedMask,
-        freshMask
+        freshMask,
+        dominantMask
       );
     }
 
@@ -1148,27 +2036,119 @@ export function selectAutoPlayTracks(
       }
     }
 
+    let anyPassedCurrentStep = false;
     for (let k = 0; k < kCount; k++) {
       const libIdx = pool[shortlistPositions[k]];
-      const score = evaluateCandidateBreakdown(index, libIdx, sessionCtx).total;
-      shortlistWeights[k] = Math.pow(Math.max(0.03, score), gamma);
+      const breakdown = evaluateCandidateBreakdown(index, libIdx, sessionCtx);
+      if (shortlistBreakdowns) shortlistBreakdowns[k] = breakdown;
+      if (breakdown.passedRelevanceGate || index.unknownGenreFlags[libIdx] === 1) {
+        anyPassedCurrentStep = true;
+        shortlistWeights[k] = Math.pow(Math.max(0.03, breakdown.total), gamma);
+      } else {
+        shortlistWeights[k] = 0;
+      }
+    }
+
+    if (!anyPassedCurrentStep) {
+      break;
     }
 
     const chosenShortlist = sampleWeightedShortlist(shortlistWeights, kCount, rng);
     const chosenPoolPos = shortlistPositions[chosenShortlist];
     const chosenLibIdx = pool[chosenPoolPos];
+    const chosenIsUnknown = index.unknownGenreFlags[chosenLibIdx] === 1;
 
     selectedIds.push(index.trackIds[chosenLibIdx]);
+
+    if (wantDiagnostics && shortlistBreakdowns) {
+      const chosenBreakdown = shortlistBreakdowns[chosenShortlist];
+      const selReason: CandidateDecisionReason = !sessionHasGenre
+        ? "selected-seed-genre-unknown"
+        : chosenIsUnknown
+          ? "selected-incomplete-metadata-fallback"
+          : chosenBreakdown.genreCompatibility >= minGenreCompatibility
+            ? "selected-primary-gate"
+            : "selected-relaxed-gate";
+
+      selectedDiagnostics.push(
+        buildDiagnosticEntry(
+          chosenLibIdx,
+          chosenBreakdown.genreCompatibility,
+          activeThresholdUsed,
+          true,
+          chosenBreakdown.total,
+          "selected",
+          selReason
+        )
+      );
+    }
 
     remaining -= 1;
     if (chosenPoolPos !== remaining) {
       pool[chosenPoolPos] = pool[remaining];
     }
 
-    observeSeed(index.trackIds[chosenLibIdx]);
+    sessionHasGenre = updateGenreSessionState(
+      sessionGenreVector,
+      exposureStreaks,
+      sessionHasGenre,
+      index.genreVectors,
+      chosenLibIdx * NUM_GENRE_CLUSTERS,
+      chosenIsUnknown
+    );
+    lastArtistStep.set(index.artistIds[chosenLibIdx], step);
+    lastAlbumStep.set(index.albumIds[chosenLibIdx], step);
+    lastRecordingStep.set(index.recordingIds[chosenLibIdx], step);
+    step += 1;
   }
 
-  return selectedIds;
+  const report: RecommendationDiagnosticsReport = {
+    mode: "autoplay",
+    timestampMs: now,
+    currentTrack: currentTrackMeta,
+    primaryThreshold: minGenreCompatibility,
+    relaxedThreshold: relaxedGenreCompatibility,
+    activeThresholdUsed,
+    relaxationStage,
+    totalCandidatesEvaluated,
+    compatibleCandidateCount,
+    rejectedIncompatibleCount,
+    selectedTrackIds: selectedIds,
+    noCompatibleCandidatesReason: null,
+    selectedDiagnostics,
+    rejectedDiagnostics,
+  };
+  options.onDiagnostics?.(report);
+
+  return { trackIds: selectedIds, diagnostics: report };
+}
+
+/**
+ * Selects upcoming AutoPlay track IDs from the library with full structured diagnostics.
+ *
+ * Strictly enforces Genre Relevance Gating BEFORE weighted random selection:
+ * - Stage 1 (Primary Gate): Known-genre candidates with `compat >= minGenreCompatibility` (0.52).
+ * - Stage 2 (Relaxed Gate): Known-genre candidates with `compat >= relaxedGenreCompatibility` (0.44).
+ * - Stage 3 (Incomplete Metadata Fallback): Untagged candidates (`unknownGenreFlags === 1`),
+ *   preferred over confidently incompatible tracks.
+ * - Never silently falls back to unrestricted random selection of incompatible tracks.
+ */
+export function selectAutoPlayTracksWithDiagnostics(
+  tracks: readonly SmartShuffleTrack[],
+  options: SelectAutoPlayOptions = {}
+): SelectAutoPlayResult {
+  return runAutoPlaySelection(tracks, options, true);
+}
+
+/**
+ * Selects upcoming AutoPlay track IDs from the library that continue the genre and mood of
+ * `seedTrackIds` while strictly rejecting genre-incompatible tracks.
+ */
+export function selectAutoPlayTracks(
+  tracks: readonly SmartShuffleTrack[],
+  options: SelectAutoPlayOptions = {}
+): number[] {
+  return runAutoPlaySelection(tracks, options, false).trackIds;
 }
 
 export { parseGenreProfile };

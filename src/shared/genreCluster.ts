@@ -260,6 +260,7 @@ const EXACT_SUBGENRE_MAP: Readonly<Record<string, GenreDistribution>> = {
   "lofi hip hop": { "hip-hop": 0.55, "ambient-chill": 0.45 },
   "lo fi hip hop": { "hip-hop": 0.55, "ambient-chill": 0.45 },
   phonk: { "hip-hop": 0.7, electronic: 0.3 },
+  "drift phonk": { "hip-hop": 0.65, electronic: 0.35 },
 
   // R&B, Soul, Funk
   "r b": { "r&b-soul": 1.0 },
@@ -343,14 +344,20 @@ const EXACT_SUBGENRE_MAP: Readonly<Record<string, GenreDistribution>> = {
   flamenco: { "latin-world": 0.8, "folk-country": 0.2 },
 
   // J-Pop, K-Pop, Anime, Vocaloid, City Pop
-  "j pop": { "jpop-kpop-anime": 0.75, pop: 0.25 },
-  jpop: { "jpop-kpop-anime": 0.75, pop: 0.25 },
+  "j pop": { "jpop-kpop-anime": 0.88, pop: 0.12 },
+  jpop: { "jpop-kpop-anime": 0.88, pop: 0.12 },
+  "j idol": { "jpop-kpop-anime": 0.9, pop: 0.1 },
+  "japanese idol": { "jpop-kpop-anime": 0.9, pop: 0.1 },
+  "idol pop": { "jpop-kpop-anime": 0.88, pop: 0.12 },
+  idol: { "jpop-kpop-anime": 0.85, pop: 0.15 },
+  kayokyoku: { "jpop-kpop-anime": 0.85, pop: 0.15 },
+  denpa: { "jpop-kpop-anime": 0.75, electronic: 0.25 },
   "j rock": { "jpop-kpop-anime": 0.6, rock: 0.4 },
   jrock: { "jpop-kpop-anime": 0.6, rock: 0.4 },
-  "k pop": { "jpop-kpop-anime": 0.7, pop: 0.3 },
-  kpop: { "jpop-kpop-anime": 0.7, pop: 0.3 },
-  "c pop": { "jpop-kpop-anime": 0.7, pop: 0.3 },
-  cpop: { "jpop-kpop-anime": 0.7, pop: 0.3 },
+  "k pop": { "jpop-kpop-anime": 0.85, pop: 0.15 },
+  kpop: { "jpop-kpop-anime": 0.85, pop: 0.15 },
+  "c pop": { "jpop-kpop-anime": 0.85, pop: 0.15 },
+  cpop: { "jpop-kpop-anime": 0.85, pop: 0.15 },
   anime: { "jpop-kpop-anime": 0.8, "classical-score": 0.2 },
   anison: { "jpop-kpop-anime": 0.75, pop: 0.15, rock: 0.1 },
   vocaloid: { "jpop-kpop-anime": 0.65, electronic: 0.2, pop: 0.15 },
@@ -399,7 +406,11 @@ const EXACT_SUBGENRE_MAP: Readonly<Record<string, GenreDistribution>> = {
  * preserving all matching macro clusters.
  */
 const KEYWORD_RULES: ReadonlyArray<{ pattern: RegExp; weights: GenreDistribution }> = [
-  { pattern: /\b(j[\s-]?pop|j[\s-]?rock|k[\s-]?pop|c[\s-]?pop|anime|anison|vocaloid|touhou|doujin)\b/, weights: { "jpop-kpop-anime": 0.8 } },
+  {
+    pattern: /\b(j[\s-]?pop|j[\s-]?rock|k[\s-]?pop|c[\s-]?pop|anime|anison|vocaloid|touhou|doujin|idol|kayokyoku|denpa|enka)\b/,
+    weights: { "jpop-kpop-anime": 0.85 },
+  },
+  { pattern: /\b(phonk)\b/, weights: { "hip-hop": 0.7, electronic: 0.3 } },
   { pattern: /\b(metal|metalcore|deathcore|thrash|doom|blackened|djent)\b/, weights: { metal: 0.9 } },
   { pattern: /\b(rock|punk|grunge|shoegaze|emo|britpop)\b/, weights: { rock: 0.85 } },
   { pattern: /\b(hip[\s-]?hop|rap|trap|drill|boom[\s-]?bap|grime)\b/, weights: { "hip-hop": 0.9 } },
@@ -422,126 +433,126 @@ const KEYWORD_RULES: ReadonlyArray<{ pattern: RegExp; weights: GenreDistribution
 const RAW_AFFINITY_PAIRS: ReadonlyArray<[GenreCluster, GenreCluster, number]> = [
   // Rock affinities
   ["rock", "metal", 0.75],
-  ["rock", "pop", 0.68],
+  ["rock", "pop", 0.65],
   ["rock", "folk-country", 0.75],
-  ["rock", "jazz-blues", 0.58],
-  ["rock", "electronic", 0.50],
-  ["rock", "jpop-kpop-anime", 0.65],
-  ["rock", "r&b-soul", 0.50],
-  ["rock", "experimental", 0.55],
-  ["rock", "ambient-chill", 0.42],
-  ["rock", "hip-hop", 0.38],
-  ["rock", "latin-world", 0.45],
-  ["rock", "classical-score", 0.35],
-  ["rock", "spoken-other", 0.10],
+  ["rock", "jazz-blues", 0.52],
+  ["rock", "electronic", 0.45],
+  ["rock", "jpop-kpop-anime", 0.52],
+  ["rock", "r&b-soul", 0.45],
+  ["rock", "experimental", 0.52],
+  ["rock", "ambient-chill", 0.38],
+  ["rock", "hip-hop", 0.30],
+  ["rock", "latin-world", 0.38],
+  ["rock", "classical-score", 0.30],
+  ["rock", "spoken-other", 0.08],
 
   // Metal affinities
-  ["metal", "experimental", 0.62],
-  ["metal", "classical-score", 0.48],
-  ["metal", "electronic", 0.42],
-  ["metal", "jpop-kpop-anime", 0.52],
-  ["metal", "folk-country", 0.38],
-  ["metal", "pop", 0.25],
-  ["metal", "hip-hop", 0.32],
-  ["metal", "jazz-blues", 0.28],
-  ["metal", "r&b-soul", 0.18],
-  ["metal", "ambient-chill", 0.22],
-  ["metal", "latin-world", 0.22],
-  ["metal", "spoken-other", 0.08],
+  ["metal", "experimental", 0.60],
+  ["metal", "classical-score", 0.45],
+  ["metal", "electronic", 0.38],
+  ["metal", "jpop-kpop-anime", 0.35],
+  ["metal", "folk-country", 0.35],
+  ["metal", "pop", 0.20],
+  ["metal", "hip-hop", 0.25],
+  ["metal", "jazz-blues", 0.20],
+  ["metal", "r&b-soul", 0.15],
+  ["metal", "ambient-chill", 0.20],
+  ["metal", "latin-world", 0.18],
+  ["metal", "spoken-other", 0.06],
 
   // Pop affinities
-  ["pop", "electronic", 0.80],
-  ["pop", "r&b-soul", 0.80],
-  ["pop", "jpop-kpop-anime", 0.82],
-  ["pop", "hip-hop", 0.65],
-  ["pop", "folk-country", 0.62],
-  ["pop", "latin-world", 0.70],
-  ["pop", "ambient-chill", 0.55],
-  ["pop", "jazz-blues", 0.50],
-  ["pop", "classical-score", 0.35],
-  ["pop", "experimental", 0.35],
-  ["pop", "spoken-other", 0.12],
+  ["pop", "electronic", 0.78],
+  ["pop", "r&b-soul", 0.78],
+  ["pop", "jpop-kpop-anime", 0.38],
+  ["pop", "hip-hop", 0.52],
+  ["pop", "folk-country", 0.55],
+  ["pop", "latin-world", 0.62],
+  ["pop", "ambient-chill", 0.48],
+  ["pop", "jazz-blues", 0.45],
+  ["pop", "classical-score", 0.28],
+  ["pop", "experimental", 0.28],
+  ["pop", "spoken-other", 0.10],
 
   // Electronic affinities
-  ["electronic", "ambient-chill", 0.80],
-  ["electronic", "hip-hop", 0.65],
-  ["electronic", "r&b-soul", 0.62],
-  ["electronic", "jpop-kpop-anime", 0.72],
-  ["electronic", "experimental", 0.70],
-  ["electronic", "latin-world", 0.55],
-  ["electronic", "jazz-blues", 0.48],
-  ["electronic", "classical-score", 0.45],
-  ["electronic", "folk-country", 0.28],
-  ["electronic", "spoken-other", 0.10],
+  ["electronic", "ambient-chill", 0.78],
+  ["electronic", "hip-hop", 0.55],
+  ["electronic", "r&b-soul", 0.55],
+  ["electronic", "jpop-kpop-anime", 0.40],
+  ["electronic", "experimental", 0.68],
+  ["electronic", "latin-world", 0.45],
+  ["electronic", "jazz-blues", 0.42],
+  ["electronic", "classical-score", 0.38],
+  ["electronic", "folk-country", 0.22],
+  ["electronic", "spoken-other", 0.08],
 
   // Hip-Hop affinities
-  ["hip-hop", "r&b-soul", 0.85],
-  ["hip-hop", "latin-world", 0.68],
-  ["hip-hop", "jazz-blues", 0.60],
-  ["hip-hop", "ambient-chill", 0.55],
-  ["hip-hop", "jpop-kpop-anime", 0.48],
-  ["hip-hop", "experimental", 0.42],
-  ["hip-hop", "folk-country", 0.25],
-  ["hip-hop", "classical-score", 0.20],
-  ["hip-hop", "spoken-other", 0.20],
+  ["hip-hop", "r&b-soul", 0.84],
+  ["hip-hop", "latin-world", 0.62],
+  ["hip-hop", "jazz-blues", 0.55],
+  ["hip-hop", "ambient-chill", 0.45],
+  ["hip-hop", "jpop-kpop-anime", 0.16],
+  ["hip-hop", "experimental", 0.38],
+  ["hip-hop", "folk-country", 0.18],
+  ["hip-hop", "classical-score", 0.15],
+  ["hip-hop", "spoken-other", 0.18],
 
   // R&B / Soul affinities
   ["r&b-soul", "jazz-blues", 0.78],
-  ["r&b-soul", "latin-world", 0.65],
-  ["r&b-soul", "ambient-chill", 0.60],
-  ["r&b-soul", "folk-country", 0.50],
-  ["r&b-soul", "jpop-kpop-anime", 0.55],
-  ["r&b-soul", "classical-score", 0.35],
-  ["r&b-soul", "experimental", 0.32],
-  ["r&b-soul", "spoken-other", 0.12],
+  ["r&b-soul", "latin-world", 0.60],
+  ["r&b-soul", "ambient-chill", 0.55],
+  ["r&b-soul", "folk-country", 0.45],
+  ["r&b-soul", "jpop-kpop-anime", 0.28],
+  ["r&b-soul", "classical-score", 0.30],
+  ["r&b-soul", "experimental", 0.28],
+  ["r&b-soul", "spoken-other", 0.10],
 
   // Jazz & Blues affinities
   ["jazz-blues", "ambient-chill", 0.68],
-  ["jazz-blues", "classical-score", 0.62],
-  ["jazz-blues", "latin-world", 0.65],
-  ["jazz-blues", "folk-country", 0.58],
-  ["jazz-blues", "experimental", 0.55],
-  ["jazz-blues", "jpop-kpop-anime", 0.45],
-  ["jazz-blues", "spoken-other", 0.15],
+  ["jazz-blues", "classical-score", 0.60],
+  ["jazz-blues", "latin-world", 0.64],
+  ["jazz-blues", "folk-country", 0.55],
+  ["jazz-blues", "experimental", 0.52],
+  ["jazz-blues", "jpop-kpop-anime", 0.35],
+  ["jazz-blues", "spoken-other", 0.12],
 
   // Classical & Score affinities
   ["classical-score", "ambient-chill", 0.78],
-  ["classical-score", "folk-country", 0.52],
-  ["classical-score", "jpop-kpop-anime", 0.55],
-  ["classical-score", "experimental", 0.55],
-  ["classical-score", "latin-world", 0.40],
-  ["classical-score", "spoken-other", 0.15],
+  ["classical-score", "folk-country", 0.48],
+  ["classical-score", "jpop-kpop-anime", 0.52],
+  ["classical-score", "experimental", 0.50],
+  ["classical-score", "latin-world", 0.35],
+  ["classical-score", "spoken-other", 0.12],
 
   // Folk & Country affinities
-  ["folk-country", "ambient-chill", 0.58],
-  ["folk-country", "latin-world", 0.55],
-  ["folk-country", "jpop-kpop-anime", 0.38],
-  ["folk-country", "experimental", 0.30],
-  ["folk-country", "spoken-other", 0.15],
+  ["folk-country", "ambient-chill", 0.55],
+  ["folk-country", "latin-world", 0.52],
+  ["folk-country", "jpop-kpop-anime", 0.28],
+  ["folk-country", "experimental", 0.25],
+  ["folk-country", "spoken-other", 0.12],
 
   // Latin & World affinities
-  ["latin-world", "ambient-chill", 0.48],
-  ["latin-world", "jpop-kpop-anime", 0.45],
-  ["latin-world", "experimental", 0.35],
-  ["latin-world", "spoken-other", 0.12],
+  ["latin-world", "ambient-chill", 0.45],
+  ["latin-world", "jpop-kpop-anime", 0.22],
+  ["latin-world", "experimental", 0.30],
+  ["latin-world", "spoken-other", 0.10],
 
   // J-Pop / K-Pop / Anime affinities
-  ["jpop-kpop-anime", "ambient-chill", 0.50],
-  ["jpop-kpop-anime", "experimental", 0.42],
-  ["jpop-kpop-anime", "spoken-other", 0.10],
+  ["jpop-kpop-anime", "ambient-chill", 0.38],
+  ["jpop-kpop-anime", "experimental", 0.30],
+  ["jpop-kpop-anime", "spoken-other", 0.08],
 
   // Ambient / Chill affinities
   ["ambient-chill", "experimental", 0.65],
-  ["ambient-chill", "spoken-other", 0.18],
+  ["ambient-chill", "spoken-other", 0.15],
 
   // Experimental affinities
-  ["experimental", "spoken-other", 0.15],
+  ["experimental", "spoken-other", 0.12],
 ];
 
 /** Flat 14x14 affinity lookup table for fast O(M^2) inner-loop evaluation. */
 export const AFFINITY_MATRIX: Float32Array = (() => {
   const matrix = new Float32Array(NUM_GENRE_CLUSTERS * NUM_GENRE_CLUSTERS);
-  matrix.fill(0.25);
+  matrix.fill(0.15);
   for (let i = 0; i < NUM_GENRE_CLUSTERS; i++) {
     matrix[i * NUM_GENRE_CLUSTERS + i] = 1.0;
   }
@@ -840,16 +851,27 @@ export function buildLibraryGenreVectors(tracks: readonly GenreTrackInput[]): {
   return { vectors, unknownFlags };
 }
 
-export const NEUTRAL_UNKNOWN_GENRE_COMPATIBILITY = 0.55;
+export const NEUTRAL_UNKNOWN_GENRE_COMPATIBILITY = 0.46;
+
+/**
+ * Damping factor applied when the session has a focused dominant cluster (weight >= 0.45)
+ * and a candidate has near-zero overlap (< 0.08) with EVERY dominant cluster of the session.
+ * Prevents secondary umbrella clusters (e.g. a minor 0.12 "pop" weight on J-Pop) from making
+ * pure disjoint genres look highly compatible.
+ */
+const DISJOINT_DOMINANT_CLUSTER_DAMPING = 0.72;
 
 /**
  * Evaluates multi-cluster bilinear genre compatibility between the current session state
  * (`sessionVector` + `exposureStreaks`) and a candidate track's genre vector.
  *
  * Includes:
- * 1. Continuous exposure streak damping when staying in an already-saturated cluster.
- * 2. Bridge bonus (+0.08) when a multi-cluster candidate smoothly pivots from a saturated
- *    cluster into a fresh cluster.
+ * 1. Gentle continuous exposure streak damping when staying in an already-saturated cluster
+ *    (bounded at >= 0.68 so staying in the user's current genre never drops below incompatible genres).
+ * 2. Dominant-cluster disjointness damping (0.72x) when the candidate has zero overlap with any
+ *    dominant cluster (>= 0.25) of a focused session.
+ * 3. Bridge bonus (+0.14) when a multi-cluster candidate shares a saturated cluster with the
+ *    session AND smoothly pivots into a fresh cluster.
  */
 export function computeGenreCompatibilityFast(
   sessionVector: Float32Array,
@@ -866,9 +888,12 @@ export function computeGenreCompatibilityFast(
   let bilinearSum = 0;
   let saturatedOverlap = 0;
   let freshOverlap = 0;
+  let dominantOverlap = 0;
+  let maxSessionWeight = 0;
 
   for (let c1 = 0; c1 < NUM_GENRE_CLUSTERS; c1++) {
     const s1 = sessionVector[c1];
+    if (s1 > maxSessionWeight) maxSessionWeight = s1;
     if (s1 <= 1e-4) continue;
     const rowOffset = c1 * NUM_GENRE_CLUSTERS;
 
@@ -880,20 +905,23 @@ export function computeGenreCompatibilityFast(
       const streak = exposureStreaks[c2];
 
       if (c1 === c2 && streak > 2.0) {
-        const damp = Math.max(0.35, 1.0 - 0.12 * (streak - 2.0));
+        const damp = Math.max(0.68, 1.0 - 0.08 * (streak - 2.0));
         affinity *= damp;
       } else if (c1 !== c2 && streak > 3.0) {
         // Slightly damp transitions into another cluster that was also heavily played recently
-        affinity *= Math.max(0.5, 1.0 - 0.08 * (streak - 3.0));
+        affinity *= Math.max(0.60, 1.0 - 0.06 * (streak - 3.0));
       }
 
       bilinearSum += s1 * affinity * g2;
     }
   }
 
-  // Check if candidate acts as a multi-cluster bridge out of a saturated cluster
+  // Check dominant cluster overlap and multi-cluster bridge potential
   for (let c = 0; c < NUM_GENRE_CLUSTERS; c++) {
     const g = candidateVectors[candidateOffset + c];
+    if (sessionVector[c] >= 0.25) {
+      dominantOverlap += g;
+    }
     if (g >= 0.2) {
       if (exposureStreaks[c] >= 2.5 && sessionVector[c] >= 0.25) {
         saturatedOverlap += g;
@@ -903,26 +931,37 @@ export function computeGenreCompatibilityFast(
     }
   }
 
-  const bridgeBonus = saturatedOverlap >= 0.2 && freshOverlap >= 0.25 ? 0.08 : 0;
+  if (maxSessionWeight >= 0.45 && dominantOverlap < 0.08) {
+    bilinearSum *= DISJOINT_DOMINANT_CLUSTER_DAMPING;
+  }
+
+  const bridgeBonus = saturatedOverlap >= 0.25 && freshOverlap >= 0.20 ? 0.14 : 0;
   return Math.min(1.0, Math.max(0.05, bilinearSum + bridgeBonus));
 }
 
 /**
- * Precomputes `p = sessionVector^T * W(exposureStreaks)` (14 floats) plus saturated/fresh cluster
- * masks once per step, reducing each candidate genre evaluation from O(14^2) = 196 ops to O(14) = 14 ops.
+ * Precomputes `p = sessionVector^T * W(exposureStreaks)` (14 floats) plus saturated/fresh/dominant
+ * cluster masks once per step, reducing each candidate genre evaluation from O(14^2) = 196 ops to O(14) = 14 ops.
  */
 export function precomputeStepGenreProjection(
   sessionVector: Float32Array,
   exposureStreaks: Float32Array,
   outProjection: Float32Array,
   outSaturatedMask: Uint8Array,
-  outFreshMask: Uint8Array
-): void {
+  outFreshMask: Uint8Array,
+  outDominantMask?: Uint8Array
+): boolean {
   outProjection.fill(0);
+  let maxSessionWeight = 0;
   for (let c2 = 0; c2 < NUM_GENRE_CLUSTERS; c2++) {
+    const s = sessionVector[c2];
+    if (s > maxSessionWeight) maxSessionWeight = s;
     const streak = exposureStreaks[c2];
-    outSaturatedMask[c2] = streak >= 2.5 && sessionVector[c2] >= 0.25 ? 1 : 0;
+    outSaturatedMask[c2] = streak >= 2.5 && s >= 0.25 ? 1 : 0;
     outFreshMask[c2] = streak < 1.0 ? 1 : 0;
+    if (outDominantMask) {
+      outDominantMask[c2] = s >= 0.25 ? 1 : 0;
+    }
   }
 
   for (let c1 = 0; c1 < NUM_GENRE_CLUSTERS; c1++) {
@@ -934,13 +973,14 @@ export function precomputeStepGenreProjection(
       let affinity = AFFINITY_MATRIX[rowOffset + c2];
       const streak = exposureStreaks[c2];
       if (c1 === c2 && streak > 2.0) {
-        affinity *= Math.max(0.35, 1.0 - 0.12 * (streak - 2.0));
+        affinity *= Math.max(0.68, 1.0 - 0.08 * (streak - 2.0));
       } else if (c1 !== c2 && streak > 3.0) {
-        affinity *= Math.max(0.5, 1.0 - 0.08 * (streak - 3.0));
+        affinity *= Math.max(0.60, 1.0 - 0.06 * (streak - 3.0));
       }
       outProjection[c2] += s1 * affinity;
     }
   }
+  return maxSessionWeight >= 0.45;
 }
 
 export function scoreProjectedGenreCompatibility(
@@ -950,7 +990,9 @@ export function scoreProjectedGenreCompatibility(
   sessionHasGenre: boolean,
   candidateVectors: Float32Array,
   candidateOffset: number,
-  candidateIsUnknown: boolean
+  candidateIsUnknown: boolean,
+  dominantMask?: Uint8Array,
+  sessionIsFocused = true
 ): number {
   if (!sessionHasGenre || candidateIsUnknown) {
     return NEUTRAL_UNKNOWN_GENRE_COMPATIBILITY;
@@ -958,18 +1000,26 @@ export function scoreProjectedGenreCompatibility(
   let bilinearSum = 0;
   let saturatedOverlap = 0;
   let freshOverlap = 0;
+  let dominantOverlap = 0;
 
   for (let c = 0; c < NUM_GENRE_CLUSTERS; c++) {
     const g = candidateVectors[candidateOffset + c];
     if (g <= 1e-4) continue;
     bilinearSum += projection[c] * g;
+    if (dominantMask && dominantMask[c] === 1) {
+      dominantOverlap += g;
+    }
     if (g >= 0.2) {
       if (saturatedMask[c] === 1) saturatedOverlap += g;
       else if (freshMask[c] === 1) freshOverlap += g;
     }
   }
 
-  const bridgeBonus = saturatedOverlap >= 0.2 && freshOverlap >= 0.25 ? 0.08 : 0;
+  if (dominantMask && sessionIsFocused && dominantOverlap < 0.08) {
+    bilinearSum *= DISJOINT_DOMINANT_CLUSTER_DAMPING;
+  }
+
+  const bridgeBonus = saturatedOverlap >= 0.25 && freshOverlap >= 0.20 ? 0.14 : 0;
   return Math.min(1.0, Math.max(0.05, bilinearSum + bridgeBonus));
 }
 

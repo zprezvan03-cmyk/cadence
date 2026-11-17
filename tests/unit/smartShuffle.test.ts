@@ -4,9 +4,13 @@ import {
   buildSmartShuffleOrder,
   computeCompletionRatio,
   computeEffectivePopularity,
+  DEFAULT_MIN_GENRE_COMPATIBILITY,
+  DEFAULT_RELAXED_GENRE_COMPATIBILITY,
   DEFAULT_SMART_SHUFFLE_WEIGHTS,
+  diagnoseCandidateRelevance,
   evaluateCandidateBreakdown,
   selectAutoPlayTracks,
+  selectAutoPlayTracksWithDiagnostics,
   smartRecordingKey,
   type SmartShuffleQueueSlot,
   type SmartShuffleTrack,
@@ -283,5 +287,443 @@ describe("smartShuffle — selectAutoPlayTracks", () => {
     expect(picked).not.toContain(2);
     // Should strongly prefer the jazz/soul/bossa tracks (3, 4, 5) over Deathcore (6)
     expect(picked.every(id => [3, 4, 5].includes(id))).toBe(true);
+  });
+});
+
+describe("smartShuffle & AutoPlay — Genre Relevance Gating & Regression Suite", () => {
+  const nagorizakura = makeTrack({
+    id: 100,
+    title: "Nagorizakura",
+    artist: "AKB48",
+    album: "Nagorizakura Single",
+    genre: "J-Pop, Idol",
+  });
+
+  const nogizakaIdol = makeTrack({
+    id: 101,
+    title: "Seifuku no Mannequin",
+    artist: "Nogizaka46",
+    album: "Toumei na Iro",
+    genre: "J-Pop, Japanese Idol",
+    playCount: 0,
+    favorite: false,
+  });
+
+  const keyakizakaIdol = makeTrack({
+    id: 102,
+    title: "Silent Majority",
+    artist: "Keyakizaka46",
+    album: "Masshiro na Mono wa Yogoshitaku Naru",
+    genre: "J-Pop, Idol",
+    playCount: 0,
+    favorite: false,
+  });
+
+  const akbSameArtist = makeTrack({
+    id: 103,
+    title: "Heavy Rotation",
+    artist: "AKB48",
+    album: "Koko ni Ita Koto",
+    genre: "J-Pop, Idol",
+  });
+
+  const animeTrack = makeTrack({
+    id: 104,
+    title: "Idol",
+    artist: "YOASOBI",
+    album: "The Book 3",
+    genre: "Anime, J-Pop",
+  });
+
+  const jrockTrack = makeTrack({
+    id: 105,
+    title: "Zenzenzense",
+    artist: "RADWIMPS",
+    album: "Your Name.",
+    genre: "J-Rock, Anime",
+  });
+
+  const cityPopTrack = makeTrack({
+    id: 106,
+    title: "Plastic Love",
+    artist: "Mariya Takeuchi",
+    album: "Variety",
+    genre: "City Pop, Kayokyoku",
+  });
+
+  const vocaloidTrack = makeTrack({
+    id: 107,
+    title: "Senbonzakura",
+    artist: "Kurousa-P",
+    album: "Vocaloid Best",
+    genre: "Vocaloid, J-Pop",
+  });
+
+  const justinBieberPop = makeTrack({
+    id: 201,
+    title: "Peaches",
+    artist: "Justin Bieber",
+    album: "Justice",
+    genre: "Pop, R&B",
+    favorite: true,
+    playCount: 300,
+    lastPlayedAt: NOW - 4 * DAY_MS,
+  });
+
+  const justinBieberMainstreamPop = makeTrack({
+    id: 202,
+    title: "Sorry",
+    artist: "Justin Bieber",
+    album: "Purpose",
+    genre: "Pop",
+    favorite: true,
+    playCount: 250,
+    lastPlayedAt: NOW - 5 * DAY_MS,
+  });
+
+  const phonkTrack = makeTrack({
+    id: 203,
+    title: "Murder in My Mind",
+    artist: "Kordhell",
+    album: "Drift Phonk Hits",
+    genre: "Phonk, Drift Phonk",
+    favorite: true,
+    playCount: 400,
+    lastPlayedAt: NOW - 3 * DAY_MS,
+  });
+
+  it("1. J-Pop idol -> J-Pop idol: selects compatible J-Pop idol tracks and avoids repeating the same artist back-to-back", () => {
+    const diagNogizaka = diagnoseCandidateRelevance(nagorizakura, nogizakaIdol);
+    expect(diagNogizaka.passedRelevanceGate).toBe(true);
+    expect(diagNogizaka.reason).toBe("selected-primary-gate");
+    expect(diagNogizaka.genreCompatibility).toBeGreaterThan(0.85);
+
+    const library = [nagorizakura, nogizakaIdol, keyakizakaIdol, akbSameArtist];
+    let immediateSameArtist = 0;
+    for (let trial = 1; trial <= 40; trial++) {
+      const picked = selectAutoPlayTracks(library, {
+        count: 1,
+        seedTrackIds: [nagorizakura.id],
+        excludeTrackIds: new Set([nagorizakura.id]),
+        rng: makeRng(trial * 53),
+      });
+      expect(picked).toHaveLength(1);
+      if (picked[0] === akbSameArtist.id) {
+        immediateSameArtist += 1;
+      }
+    }
+    // Prefers Nogizaka46 / Keyakizaka46 over immediately repeating AKB48
+    expect(immediateSameArtist).toBeLessThanOrEqual(5);
+  });
+
+  it("2. J-Pop -> compatible neighboring genres: allows Anime, J-Rock, City Pop, and Vocaloid via the genre affinity model", () => {
+    for (const neighbor of [animeTrack, jrockTrack, cityPopTrack, vocaloidTrack]) {
+      const diag = diagnoseCandidateRelevance(nagorizakura, neighbor);
+      expect(diag.passedRelevanceGate).toBe(true);
+      expect(diag.genreCompatibility).toBeGreaterThanOrEqual(DEFAULT_MIN_GENRE_COMPATIBILITY);
+      expect(["selected-primary-gate", "selected-relaxed-gate"]).toContain(diag.reason);
+    }
+
+    const library = [
+      nagorizakura,
+      animeTrack,
+      jrockTrack,
+      cityPopTrack,
+      vocaloidTrack,
+      justinBieberPop,
+      phonkTrack,
+    ];
+    const { trackIds, diagnostics } = selectAutoPlayTracksWithDiagnostics(library, {
+      count: 4,
+      seedTrackIds: [nagorizakura.id],
+      excludeTrackIds: new Set([nagorizakura.id]),
+      rng: makeRng(101),
+    });
+
+    expect(trackIds.sort((a, b) => a - b)).toEqual([
+      animeTrack.id,
+      jrockTrack.id,
+      cityPopTrack.id,
+      vocaloidTrack.id,
+    ]);
+    expect(diagnostics.rejectedIncompatibleCount).toBe(2);
+  });
+
+  it("3 & 4. J-Pop -> Phonk and J-Pop -> unrelated mainstream Pop (Justin Bieber) are strictly rejected by the relevance gate", () => {
+    const diagPhonk = diagnoseCandidateRelevance(nagorizakura, phonkTrack);
+    expect(diagPhonk.passedRelevanceGate).toBe(false);
+    expect(diagPhonk.decision).toBe("rejected");
+    expect(diagPhonk.reason).toBe("rejected-below-genre-threshold");
+    expect(diagPhonk.genreCompatibility).toBeLessThan(0.28);
+    expect(diagPhonk.explanation).toContain("Rejected");
+
+    const diagBieberRnb = diagnoseCandidateRelevance(nagorizakura, justinBieberPop);
+    expect(diagBieberRnb.passedRelevanceGate).toBe(false);
+    expect(diagBieberRnb.decision).toBe("rejected");
+    expect(diagBieberRnb.reason).toBe("rejected-below-genre-threshold");
+    expect(diagBieberRnb.genreCompatibility).toBeLessThan(DEFAULT_RELAXED_GENRE_COMPATIBILITY);
+
+    const diagBieberPop = diagnoseCandidateRelevance(nagorizakura, justinBieberMainstreamPop);
+    expect(diagBieberPop.passedRelevanceGate).toBe(false);
+    expect(diagBieberPop.decision).toBe("rejected");
+    expect(diagBieberPop.reason).toBe("rejected-below-genre-threshold");
+    expect(diagBieberPop.genreCompatibility).toBeLessThan(DEFAULT_RELAXED_GENRE_COMPATIBILITY);
+  });
+
+  it("5. Popularity-heavy but genre-incompatible candidates NEVER beat a less popular compatible track", () => {
+    const intelMap = new Map<string, TrackIntelligenceRecord>([
+      makeIntel(nogizakaIdol, {
+        popularity: 0.04,
+        popularityConfidence: 0.95,
+        completeCount: 0,
+        skipCount: 0,
+      }),
+      makeIntel(jrockTrack, {
+        popularity: 0.08,
+        popularityConfidence: 0.95,
+        completeCount: 0,
+        skipCount: 0,
+      }),
+      makeIntel(justinBieberPop, {
+        popularity: 1.0,
+        popularityConfidence: 1.0,
+        completeCount: 150,
+        skipCount: 0,
+      }),
+      makeIntel(justinBieberMainstreamPop, {
+        popularity: 1.0,
+        popularityConfidence: 1.0,
+        completeCount: 150,
+        skipCount: 0,
+      }),
+      makeIntel(phonkTrack, {
+        popularity: 1.0,
+        popularityConfidence: 1.0,
+        completeCount: 200,
+        skipCount: 0,
+      }),
+    ]);
+
+    const diagCompatibleLowPop = diagnoseCandidateRelevance(nagorizakura, nogizakaIdol, {
+      intelligenceByKey: intelMap,
+    });
+    const diagBieberMaxPop = diagnoseCandidateRelevance(nagorizakura, justinBieberPop, {
+      intelligenceByKey: intelMap,
+    });
+    const diagPhonkMaxPop = diagnoseCandidateRelevance(nagorizakura, phonkTrack, {
+      intelligenceByKey: intelMap,
+    });
+
+    // Even in raw finalScore, the low-popularity compatible track beats the 1.0-popularity incompatible tracks
+    expect(diagCompatibleLowPop.passedRelevanceGate).toBe(true);
+    expect(diagBieberMaxPop.passedRelevanceGate).toBe(false);
+    expect(diagPhonkMaxPop.passedRelevanceGate).toBe(false);
+    expect(diagCompatibleLowPop.finalScore).toBeGreaterThan(diagBieberMaxPop.finalScore * 4);
+    expect(diagCompatibleLowPop.finalScore).toBeGreaterThan(diagPhonkMaxPop.finalScore * 4);
+
+    // Across 100 trials of AutoPlay and Smart Shuffle, Justin Bieber and Phonk are NEVER picked before compatible tracks
+    const library = [
+      nagorizakura,
+      nogizakaIdol,
+      jrockTrack,
+      justinBieberPop,
+      justinBieberMainstreamPop,
+      phonkTrack,
+    ];
+
+    for (let trial = 1; trial <= 100; trial++) {
+      const picked = selectAutoPlayTracks(library, {
+        count: 2,
+        seedTrackIds: [nagorizakura.id],
+        excludeTrackIds: new Set([nagorizakura.id]),
+        intelligenceByKey: intelMap,
+        rng: makeRng(trial * 37),
+      });
+      expect(picked.sort((a, b) => a - b)).toEqual([nogizakaIdol.id, jrockTrack.id]);
+
+      const slots: SmartShuffleQueueSlot[] = library.map((t, i) => ({
+        queueIndex: i,
+        trackId: t.id,
+        origin: "context",
+      }));
+      const order = buildSmartShuffleOrder(slots, 0, library, {
+        intelligenceByKey: intelMap,
+        rng: makeRng(trial * 41),
+      });
+      const firstTwoUpcomingIds = [library[order[1]].id, library[order[2]].id].sort(
+        (a, b) => a - b
+      );
+      expect(firstTwoUpcomingIds).toEqual([nogizakaIdol.id, jrockTrack.id]);
+    }
+  });
+
+  it("uses popularity as a secondary tie-breaker ONLY among compatible candidates", () => {
+    const popularJpop = makeTrack({
+      id: 301,
+      title: "Popular Idol Hit",
+      artist: "Idol Group A",
+      genre: "J-Pop, Idol",
+    });
+    const obscureJpop = makeTrack({
+      id: 302,
+      title: "Obscure Idol Track",
+      artist: "Idol Group B",
+      genre: "J-Pop, Idol",
+    });
+
+    const intelMap = new Map<string, TrackIntelligenceRecord>([
+      makeIntel(popularJpop, { popularity: 0.95, popularityConfidence: 0.95 }),
+      makeIntel(obscureJpop, { popularity: 0.10, popularityConfidence: 0.95 }),
+    ]);
+
+    const diagPop = diagnoseCandidateRelevance(nagorizakura, popularJpop, {
+      intelligenceByKey: intelMap,
+    });
+    const diagObscure = diagnoseCandidateRelevance(nagorizakura, obscureJpop, {
+      intelligenceByKey: intelMap,
+    });
+
+    expect(diagPop.passedRelevanceGate).toBe(true);
+    expect(diagObscure.passedRelevanceGate).toBe(true);
+    expect(diagPop.finalScore).toBeGreaterThan(diagObscure.finalScore);
+  });
+
+  it("6. Multi-genre tracks preserve multiple cluster memberships and bridge smoothly across both genres", () => {
+    const multiGenreSeed = makeTrack({
+      id: 400,
+      title: "Cyber Anisong Rock",
+      artist: "Hybrid Unit",
+      genre: "J-Pop / Electronic / Rock",
+    });
+    const electronicNeighbor = makeTrack({
+      id: 401,
+      title: "Future Bass Sunrise",
+      artist: "Synth Producer",
+      genre: "Future Bass, Electronic",
+    });
+    const rockNeighbor = makeTrack({
+      id: 402,
+      title: "Alt Rock Anthem",
+      artist: "Guitar Band",
+      genre: "Alternative Rock",
+    });
+    const countryOutlier = makeTrack({
+      id: 403,
+      title: "Honky Tonk Road",
+      artist: "Country Singer",
+      genre: "Country, Bluegrass",
+    });
+
+    const diagElec = diagnoseCandidateRelevance(multiGenreSeed, electronicNeighbor);
+    const diagRock = diagnoseCandidateRelevance(multiGenreSeed, rockNeighbor);
+    const diagCountry = diagnoseCandidateRelevance(multiGenreSeed, countryOutlier);
+
+    // Seed track retains all 3 clusters in its diagnostic summary
+    expect(diagElec.currentTrack.clusters.length).toBeGreaterThanOrEqual(3);
+    expect(diagElec.passedRelevanceGate).toBe(true);
+    expect(diagRock.passedRelevanceGate).toBe(true);
+    expect(diagCountry.passedRelevanceGate).toBe(false);
+  });
+
+  it("7. Missing or unreliable genre metadata is preferred over confidently incompatible tracks when no tagged compatible tracks remain", () => {
+    const untaggedTrack = makeTrack({
+      id: 501,
+      title: "Track 01 (Unlabeled Rip)",
+      artist: "Unknown Artist",
+      album: "Unknown Album",
+      genre: "",
+      path: "/music/imports/track01.flac",
+    });
+
+    const library = [nagorizakura, untaggedTrack, justinBieberPop, phonkTrack];
+    const { trackIds, diagnostics } = selectAutoPlayTracksWithDiagnostics(library, {
+      count: 2,
+      seedTrackIds: [nagorizakura.id],
+      excludeTrackIds: new Set([nagorizakura.id]),
+      rng: makeRng(88),
+    });
+
+    // Selects only the incomplete-metadata track and still rejects Justin Bieber & Phonk
+    expect(trackIds).toEqual([untaggedTrack.id]);
+    expect(diagnostics.relaxationStage).toBe("incomplete-metadata");
+    expect(diagnostics.rejectedIncompatibleCount).toBe(2);
+    expect(diagnostics.selectedDiagnostics[0].reason).toBe(
+      "selected-incomplete-metadata-fallback"
+    );
+  });
+
+  it("8. Very small libraries relax safely without selecting incompatible tracks or crashing", () => {
+    const smallLibrary = [nagorizakura, nogizakaIdol, phonkTrack];
+    // Even if nogizakaIdol was in excludeTrackIds (e.g. played earlier in the small 3-track library),
+    // the small-library fallback re-admits the compatible track rather than picking Phonk!
+    const { trackIds, diagnostics } = selectAutoPlayTracksWithDiagnostics(smallLibrary, {
+      count: 2,
+      seedTrackIds: [nagorizakura.id],
+      excludeTrackIds: new Set([nagorizakura.id, nogizakaIdol.id]),
+      rng: makeRng(19),
+    });
+
+    expect(trackIds).toEqual([nogizakaIdol.id]);
+    expect(trackIds).not.toContain(phonkTrack.id);
+    expect(diagnostics.relaxationStage).toBe("primary");
+  });
+
+  it("9. No compatible candidates: returns empty selection and explicit diagnostic explanation instead of injecting unrelated tracks", () => {
+    const incompatibleOnlyLibrary = [
+      nagorizakura,
+      justinBieberPop,
+      justinBieberMainstreamPop,
+      phonkTrack,
+    ];
+
+    const { trackIds, diagnostics } = selectAutoPlayTracksWithDiagnostics(
+      incompatibleOnlyLibrary,
+      {
+        count: 3,
+        seedTrackIds: [nagorizakura.id],
+        excludeTrackIds: new Set([nagorizakura.id]),
+        rng: makeRng(55),
+      }
+    );
+
+    expect(trackIds).toEqual([]);
+    expect(diagnostics.relaxationStage).toBe("no-compatible-candidates");
+    expect(diagnostics.compatibleCandidateCount).toBe(0);
+    expect(diagnostics.rejectedIncompatibleCount).toBe(3);
+    expect(diagnostics.noCompatibleCandidatesReason).toContain(
+      "No compatible candidates met the minimum genre relevance threshold"
+    );
+    expect(diagnostics.rejectedDiagnostics).toHaveLength(3);
+    expect(
+      diagnostics.rejectedDiagnostics.every(
+        d => d.decision === "rejected" && d.reason === "rejected-below-genre-threshold"
+      )
+    ).toBe(true);
+  });
+
+  it("anchors session genre context to the current track when the user manually switches from an unrelated genre", () => {
+    // User previously listened to Phonk & Western Pop, then manually clicked Nagorizakura (J-Pop)
+    const library = [
+      phonkTrack,
+      justinBieberPop,
+      justinBieberMainstreamPop,
+      nagorizakura,
+      nogizakaIdol,
+      animeTrack,
+    ];
+
+    const { trackIds, diagnostics } = selectAutoPlayTracksWithDiagnostics(library, {
+      count: 2,
+      recentPlayedTrackIds: [phonkTrack.id, justinBieberPop.id],
+      seedTrackIds: [justinBieberPop.id, nagorizakura.id],
+      excludeTrackIds: new Set([nagorizakura.id]),
+      rng: makeRng(63),
+    });
+
+    expect(trackIds.sort((a, b) => a - b)).toEqual([nogizakaIdol.id, animeTrack.id]);
+    expect(diagnostics.rejectedIncompatibleCount).toBe(1);
+    expect(diagnostics.rejectedDiagnostics[0].candidateTrack.id).toBe(
+      justinBieberMainstreamPop.id
+    );
   });
 });

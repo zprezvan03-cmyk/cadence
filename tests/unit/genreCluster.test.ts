@@ -209,4 +209,136 @@ describe("genreCluster — bilinear compatibility, streak damping, and bridge tr
     );
     expect(score).toBe(NEUTRAL_UNKNOWN_GENRE_COMPATIBILITY);
   });
+
+  it("separates J-Pop / Idol from unrelated mainstream Western Pop and Phonk while keeping Anime, J-Rock, and City Pop compatible", () => {
+    const jpopIdol = parseGenreProfile("J-Pop, Idol").vector;
+    const jpopPure = parseGenreProfile("J-Pop").vector;
+    const animeSong = parseGenreProfile("Anime, J-Pop").vector;
+    const jrock = parseGenreProfile("J-Rock").vector;
+    const cityPop = parseGenreProfile("City Pop").vector;
+    const westernPop = parseGenreProfile("Pop").vector;
+    const westernPopRnb = parseGenreProfile("Pop, R&B").vector;
+    const phonk = parseGenreProfile("Phonk").vector;
+    const driftPhonk = parseGenreProfile("Drift Phonk").vector;
+    const streaks = new Float32Array(NUM_GENRE_CLUSTERS);
+
+    const compatJpopToJpop = computeGenreCompatibilityFast(
+      jpopIdol,
+      streaks,
+      true,
+      jpopPure,
+      0,
+      false
+    );
+    const compatJpopToAnime = computeGenreCompatibilityFast(
+      jpopIdol,
+      streaks,
+      true,
+      animeSong,
+      0,
+      false
+    );
+    const compatJpopToJrock = computeGenreCompatibilityFast(
+      jpopIdol,
+      streaks,
+      true,
+      jrock,
+      0,
+      false
+    );
+    const compatJpopToCityPop = computeGenreCompatibilityFast(
+      jpopIdol,
+      streaks,
+      true,
+      cityPop,
+      0,
+      false
+    );
+    const compatJpopToWesternPop = computeGenreCompatibilityFast(
+      jpopIdol,
+      streaks,
+      true,
+      westernPop,
+      0,
+      false
+    );
+    const compatJpopToWesternPopRnb = computeGenreCompatibilityFast(
+      jpopIdol,
+      streaks,
+      true,
+      westernPopRnb,
+      0,
+      false
+    );
+    const compatJpopToPhonk = computeGenreCompatibilityFast(
+      jpopIdol,
+      streaks,
+      true,
+      phonk,
+      0,
+      false
+    );
+    const compatJpopToDriftPhonk = computeGenreCompatibilityFast(
+      jpopIdol,
+      streaks,
+      true,
+      driftPhonk,
+      0,
+      false
+    );
+
+    // J-Pop -> J-Pop & compatible neighbors pass primary gate (>= 0.52)
+    expect(compatJpopToJpop).toBeGreaterThan(0.85);
+    expect(compatJpopToAnime).toBeGreaterThan(0.84);
+    expect(compatJpopToJrock).toBeGreaterThan(0.65);
+    expect(compatJpopToCityPop).toBeGreaterThan(0.55);
+
+    // Unrelated mainstream Western Pop & R&B and Phonk fall strictly below relaxed gate (0.44)
+    expect(compatJpopToWesternPop).toBeLessThan(0.40);
+    expect(compatJpopToWesternPopRnb).toBeLessThan(0.35);
+    expect(compatJpopToPhonk).toBeLessThan(0.28);
+    expect(compatJpopToDriftPhonk).toBeLessThan(0.28);
+  });
+
+  it("never damps same-genre streaks below unrelated genres", () => {
+    const sessionVector = new Float32Array(NUM_GENRE_CLUSTERS);
+    const exposureStreaks = new Float32Array(NUM_GENRE_CLUSTERS);
+    const jpop = parseGenreProfile("J-Pop").vector;
+    const westernPop = parseGenreProfile("Pop").vector;
+    const phonk = parseGenreProfile("Phonk").vector;
+
+    let hasGenre = false;
+    for (let i = 0; i < 8; i++) {
+      hasGenre = updateGenreSessionState(sessionVector, exposureStreaks, hasGenre, jpop, 0, false);
+    }
+
+    const sameGenreAfterLongStreak = computeGenreCompatibilityFast(
+      sessionVector,
+      exposureStreaks,
+      hasGenre,
+      jpop,
+      0,
+      false
+    );
+    const unrelatedPopAfterStreak = computeGenreCompatibilityFast(
+      sessionVector,
+      exposureStreaks,
+      hasGenre,
+      westernPop,
+      0,
+      false
+    );
+    const phonkAfterStreak = computeGenreCompatibilityFast(
+      sessionVector,
+      exposureStreaks,
+      hasGenre,
+      phonk,
+      0,
+      false
+    );
+
+    expect(sameGenreAfterLongStreak).toBeGreaterThan(0.60);
+    expect(sameGenreAfterLongStreak).toBeGreaterThan(unrelatedPopAfterStreak + 0.25);
+    expect(sameGenreAfterLongStreak).toBeGreaterThan(phonkAfterStreak + 0.40);
+  });
 });

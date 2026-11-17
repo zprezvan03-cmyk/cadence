@@ -20,6 +20,7 @@ import {
   buildLibraryShuffleIndex,
   smartRecordingKey,
   type LibraryShuffleIndex,
+  type RecommendationDiagnosticsReport,
   type SmartShuffleTrack,
   type TrackIntelligenceRecord,
 } from "../../shared/smartShuffle";
@@ -30,7 +31,9 @@ interface IntelligenceState {
   version: number;
   loaded: boolean;
   loading: boolean;
+  lastDiagnostics: RecommendationDiagnosticsReport | null;
   load: () => Promise<void>;
+  recordDiagnostics: (report: RecommendationDiagnosticsReport) => void;
   applyTelemetryEvent: (event: TelemetrySessionEvent | null) => TrackIntelligenceRecord | null;
   upsertRecords: (records: readonly TrackIntelligenceRecord[]) => void;
   resolveTrackPopularity: (
@@ -86,6 +89,11 @@ export const useIntelligence = create<IntelligenceState>()((set, get) => ({
   version: 0,
   loaded: false,
   loading: false,
+  lastDiagnostics: null,
+
+  recordDiagnostics: report => {
+    set({ lastDiagnostics: report });
+  },
 
   load: async () => {
     if (get().loaded || get().loading) return;
@@ -302,6 +310,12 @@ export const useIntelligence = create<IntelligenceState>()((set, get) => ({
       clearTimeout(persistTimer);
       persistTimer = null;
     }
-    set({ byRecordingKey: new Map(), version: 0, loaded: false, loading: false });
+    set({
+      byRecordingKey: new Map(),
+      version: 0,
+      loaded: false,
+      loading: false,
+      lastDiagnostics: null,
+    });
   },
 }));
