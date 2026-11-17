@@ -303,6 +303,7 @@ pub fn run() {
             commands::cmd_decode_delete_files,
             commands::cmd_decode_export_list,
             commands::cmd_http_fetch,
+            commands::cmd_http_fetch_image,
             commands::cmd_http_abort,
             commands::cmd_shell_show_in_folder,
             commands::cmd_shell_open_external,

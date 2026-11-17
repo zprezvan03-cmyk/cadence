@@ -125,7 +125,7 @@ store/UI conventions — no second settings system, no new page:
 | Refresh cached pictures | `refreshAfterDays` | Background staleness refresh window (0 = never). |
 | Provider switches | `providerOrder` with `d_` slots | A disabled provider keeps its priority slot (the same convention as the lyrics provider order) and is never instantiated, so it cannot be queried. Restoring it returns it to the same position. |
 | Provider priority | `providerOrder` | ↑/↓ move active providers; disabled slots stay in place. |
-| Refresh | action | Re-queries every artist in the index, sequentially, with progress and a Stop button. Disabled providers are skipped automatically. |
+| Refresh | action | Re-queries every artist in the index, sequentially, with progress and a Stop button. Disabled providers are skipped automatically, and the run ends with how many artists actually got a picture (plus the recorded reason when none did). |
 | Clear cache | action | Confirmation required; empties the index so pictures are fetched again on demand. |
 
 Changes apply immediately: the bridge rebuilds its `ArtistImageService` whenever `enabled`,
@@ -144,15 +144,28 @@ drops its in-memory entries so mounted avatars resolve against the new settings.
 5. Cache hits (memory + persisted index) are answered without any network access; `cached()` exists
    for instant first paint if a view wants it.
 
+### Why pictures do not use the shared HTTP transport
+
+The shared runtime transport (`src/main/lyrics/http.ts` → `cmd_http_fetch`) returns the response body
+as a **UTF-8 string**. That is right for the JSON APIs it was written for and fatal for images: invalid
+UTF-8 to U+FFFD replacement means a downloaded JPEG no longer starts with `FF D8`, so the inspector
+correctly rejects it and *every* provider looks like it has no picture. Image downloads therefore go
+through `cmd_http_fetch_image` (`src/main/media/imageFetch.ts` on the JS side), which returns the body
+over the binary IPC channel untouched and reports the HTTP status through its error string
+(`HTTP:404`, `TIMEOUT`, `NETWORK: …`, `ABORTED`) — the same vocabulary the text transport uses. The
+validator keeps sniffing the real format from the magic bytes, so nothing is trusted more than before.
+
 ## 8. Diagnostics
 
 With **Settings → Appearance → … → Advanced logging** enabled, the main process logs one line per
 resolution: artist, status, provider, confidence, elapsed time, every provider attempt and its
 reason (`no-image`, `artist-name-mismatch`, `license-not-allowed`, `too-small`,
 `non-image-content-type`, `http-404`, …). `refused-downgrade` events are logged when a weaker
-result was correctly rejected. Settings → Cache → Artist pictures also lists each source's live
+result was correctly rejected. Settings → Cache → Artist images also lists each source's live
 status (`needs setup` for Last.fm without a key, `excluded` reasons for the sources that publish
-no artist imagery).
+no artist imagery) and reports the outcome of the last manual refresh (`0 of 24 artists had a
+picture · providers-unavailable` is a very different signal from a library of artists who genuinely
+have no portrait).
 
 ## 9. Files
 
@@ -168,12 +181,15 @@ no artist imagery).
 | `src/renderer/components/Cards.tsx`, `features/library/DetailViews.tsx`, `features/stats/StatsView.tsx`, `features/player/PlayerBar.tsx` | surfaces |
 | `src/renderer/features/settings/ArtistImagesSettings.tsx`, `SettingsView.tsx` | Settings panel |
 | `src/tauri/bridge.ts` | `window.cadence.artistImages`, bootstrap index, artwork writes |
-| `src-tauri/src/commands.rs` | `artist-images.json` in the bootstrap payload and writer whitelist |
+| `src/main/media/imageFetch.ts` | binary image download over `cmd_http_fetch_image` |
+| `src-tauri/src/commands.rs` | `artist-images.json` in the bootstrap payload and writer whitelist; `cmd_http_fetch_image` |
 | `src/shared/types.ts`, `src/main/settingsCore.ts` | settings + IPC contracts |
-| `tests/unit/artistImageProviders.test.ts`, `tests/unit/artistImageService.test.ts`, `tests/unit/settings.test.ts` | tests |
+| `tests/unit/artistImageProviders.test.ts`, `tests/unit/artistImageService.test.ts`, `tests/unit/artistImageFetcher.test.ts`, `tests/unit/settings.test.ts` | tests (the fetcher suite pins that downloaded bytes reach the validator unchanged) |
 
-Migration: none. The settings section is added with defaults on load, the index file is created on
-first use, and every existing artwork/listening path is untouched.
+Migration: the settings section is added with defaults on load, the index file is created on first
+use, and every existing artwork/listening path is untouched. The index is versioned
+(`ARTIST_IMAGE_CACHE_VERSION`); v1 indexes — which could only contain the negative answers the broken
+image transport produced — are discarded on load and rebuilt on demand.
 
 ## 10. Known limitations
 

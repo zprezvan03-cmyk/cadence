@@ -30,6 +30,7 @@ import type {
 } from "../shared/types";
 import { isPathInside, type PathPlatform } from "../main/media/allowlist";
 import { toTauriMediaUrl } from "../main/media/protocolHandler";
+import { createArtistImageFetch } from "../main/media/imageFetch";
 import { SettingsCore } from "../main/settingsCore";
 import { LyricsCacheCore } from "../main/lyrics/cacheCore";
 import { ArtistImageCacheCore } from "../shared/artistImageCache";
@@ -426,6 +427,12 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
   };
 
   /**
+   * Artist pictures are the one thing downloaded as raw bytes, so they bypass the text-based runtime
+   * transport (which would mangle them) and use the binary IPC command instead.
+   */
+  const fetchArtistImage = createArtistImageFetch((command, payload) => invoke(command, payload));
+
+  /**
    * The service snapshots provider priority and credentials, so it is rebuilt only when one of those
    * settings actually changes. The cache instance is shared, so rebuilding never loses entries and
    * in-flight requests finish on the instance that started them.
@@ -460,6 +467,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
           : Number.POSITIVE_INFINITY,
       autoFetch: current.artistImages.autoFetch,
       saveImage: (bytes, mimeType) => saveArtworkBytes(bytes, mimeType),
+      fetchImage: fetchArtistImage,
       onDiagnostic: event => {
         if (settings.get().advanced.showLogs) console.info("[Cadence] artist picture", event);
       },

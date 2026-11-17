@@ -17,7 +17,15 @@
 
 import { isValidMusicBrainzId, type ArtistImageProviderId } from "./artistImageProviders";
 
-export const ARTIST_IMAGE_CACHE_VERSION = 1;
+/**
+ * Index schema version. A different version is discarded on load.
+ *
+ * v2: pictures used to be downloaded through the text-based HTTP transport, which corrupted every
+ * image, so v1 indexes contain nothing but negative answers ("invalid-image" / "providers-unavailable")
+ * for artists that actually have portraits. Rising to 2 drops those stale misses; cached pictures are
+ * re-fetched on demand.
+ */
+export const ARTIST_IMAGE_CACHE_VERSION = 2;
 
 /** How long a successful picture is considered fresh before a view may refresh it in the background. */
 export const DEFAULT_ARTIST_IMAGE_REFRESH_AFTER_MS = 30 * 24 * 60 * 60 * 1000;

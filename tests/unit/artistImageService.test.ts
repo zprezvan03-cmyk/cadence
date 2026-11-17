@@ -6,6 +6,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import {
+  ARTIST_IMAGE_CACHE_VERSION,
   ArtistImageCacheCore,
   DEFAULT_ARTIST_IMAGE_MISS_TTL_MS,
   artistImageKey,
@@ -632,13 +633,37 @@ describe("artist image cache core", () => {
     expect(shouldReplaceImage(record(), record({ savedAt: 20_000 }), 20_000, 10_000).stored).toBe(true);
   });
 
+  it("discards an index written by an older version", () => {
+    // v1 indexes hold the negative answers produced while the image transport corrupted every
+    // download, so they must not survive the upgrade.
+    const stale = new ArtistImageCacheCore({
+      initialJson: JSON.stringify({
+        version: ARTIST_IMAGE_CACHE_VERSION - 1,
+        artists: { [artistImageKey("Stale")]: record({ artistName: "Stale" }) },
+        misses: {
+          [artistImageKey("Stale")]: {
+            artistKey: artistImageKey("Stale"),
+            artistName: "Stale",
+            reason: "providers-unavailable",
+            attempted: ["deezer"],
+            failedAt: 1000,
+            retryAfter: 10_000_000,
+          },
+        },
+      }),
+    });
+    expect(stale.stats().artists).toBe(0);
+    expect(stale.get(artistImageKey("Stale"))).toBeNull();
+    expect(stale.getMiss(artistImageKey("Stale"))).toBeNull();
+  });
+
   it("ignores corrupt files and unsafe file names instead of throwing", () => {
     const corrupt = new ArtistImageCacheCore({ initialJson: "{not json" });
     expect(corrupt.stats().artists).toBe(0);
 
     const traversal = new ArtistImageCacheCore({
       initialJson: JSON.stringify({
-        version: 1,
+        version: ARTIST_IMAGE_CACHE_VERSION,
         artists: {
           [artistImageKey("Escape")]: { ...record({ artistName: "Escape" }), artistKey: artistImageKey("Escape"), fileName: "../../secrets.png" },
         },
