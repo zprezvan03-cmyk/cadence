@@ -729,8 +729,17 @@ export interface AppSettings {
  * with a newer provider list still loads; `normalizeArtistImageProviderOrder` reconciles it.
  */
 export interface ArtistImageSettings {
+  /** Master switch: when off, pictures are neither shown nor fetched. */
   enabled: boolean;
-  /** Provider priority; the resolver falls through this order until one returns a valid picture. */
+  /**
+   * Fetch pictures that are not cached yet. Off = "cached pictures only": existing pictures keep
+   * displaying and nothing is deleted, but no provider is queried until a manual refresh.
+   */
+  autoFetch: boolean;
+  /**
+   * Provider priority. A switched-off provider keeps its slot with a `d_` prefix (the same
+   * convention as `settings.lyrics.providerOrder`), so "off" survives a reload.
+   */
   providerOrder: string[];
   /** Days after which a cached picture may be refreshed in the background (0 = never). */
   refreshAfterDays: number;
@@ -903,6 +912,8 @@ export interface ArtistImageProviderReport {
   requiresCredentials: boolean;
   attributionRequired: boolean;
   license: string | null;
+  /** True when the provider is switched on in the artist-image provider order. */
+  enabled: boolean;
   /** True when the provider is usable with the current settings (e.g. an API key is present). */
   available: boolean;
   statusReason: string;
@@ -919,6 +930,13 @@ export interface ArtistImageStats {
 export interface ArtistImageClearResult {
   removedImages: number;
   removedMisses: number;
+}
+
+/** Artists the picture index knows about, for the Settings "refresh all pictures" action. */
+export interface ArtistImageIndex {
+  withImage: string[];
+  /** Artists remembered as having no usable picture (refreshing retries them). */
+  withoutImage: string[];
 }
 
 /** The API exposed on `window.cadence` by the desktop runtime bridge. */
@@ -950,6 +968,8 @@ export interface CadenceApi {
     refresh(request: { artistName: string; mbid?: string | null }): Promise<ArtistImageInfo>;
     /** Capability report for every investigated source, including unimplemented ones. */
     providers(): Promise<ArtistImageProviderReport[]>;
+    /** Artists in the picture index, split by outcome. */
+    indexed(): Promise<ArtistImageIndex>;
     stats(): Promise<ArtistImageStats>;
     /** Empties the artist picture index so pictures are fetched again on demand. */
     clearCache(): Promise<ArtistImageClearResult>;

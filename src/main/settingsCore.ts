@@ -90,6 +90,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   artistImages: {
     enabled: true,
+    autoFetch: true,
     providerOrder: [...DEFAULT_ARTIST_IMAGE_PROVIDER_ORDER],
     refreshAfterDays: 30,
   },
@@ -214,6 +215,10 @@ function normalizeSettings(settings: AppSettings): AppSettings {
       typeof artistImageSource.enabled === "boolean"
         ? artistImageSource.enabled
         : DEFAULT_SETTINGS.artistImages.enabled,
+    autoFetch:
+      typeof artistImageSource.autoFetch === "boolean"
+        ? artistImageSource.autoFetch
+        : DEFAULT_SETTINGS.artistImages.autoFetch,
     providerOrder: normalizeArtistImageProviderOrder(
       Array.isArray(artistImageSource.providerOrder)
         ? artistImageSource.providerOrder.filter((entry): entry is string => typeof entry === "string")

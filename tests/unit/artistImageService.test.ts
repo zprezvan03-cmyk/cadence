@@ -117,6 +117,7 @@ function makeHarness(options: {
   cache?: ArtistImageCacheCore;
   enabled?: boolean;
   refreshStaleInBackground?: boolean;
+  autoFetch?: boolean;
   maxConcurrentRequests?: number;
   now?: () => number;
   saveImage?: ArtistImageServiceOptions["saveImage"];
@@ -135,6 +136,7 @@ function makeHarness(options: {
       minProviderIntervalMs: { lastfm: 0, wikidata: 0, deezer: 0, musicbrainz: 0 },
     }),
     refreshStaleInBackground: options.refreshStaleInBackground ?? false,
+    autoFetch: options.autoFetch ?? true,
     maxConcurrentRequests: options.maxConcurrentRequests,
     now,
     saveImage:
@@ -487,6 +489,23 @@ describe("artist image resolution pipeline", () => {
     expect(provider.calls).toBe(0);
   });
 
+  it("lists the indexed artists so Settings can offer a refresh of all pictures", async () => {
+    let provider = "hit";
+    const stub = new StubProvider("lastfm", () =>
+      provider === "hit" ? hitResult("lastfm") : missResult("lastfm")
+    );
+    const harness = makeHarness({ providers: [stub] });
+
+    await harness.service.resolve({ name: "Nagorizakura" });
+    provider = "miss";
+    await harness.service.resolve({ name: "Nogizaka46" });
+
+    expect(harness.cache.indexedArtists()).toEqual({
+      withImage: ["Nagorizakura"],
+      withoutImage: ["Nogizaka46"],
+    });
+  });
+
   it("clears the index and fetches again afterwards", async () => {
     const provider = new StubProvider("lastfm", () => hitResult("lastfm"));
     const harness = makeHarness({ providers: [provider] });
@@ -501,6 +520,63 @@ describe("artist image resolution pipeline", () => {
 
     await harness.service.resolve({ name: "Nagorizakura" });
     expect(provider.calls).toBe(2);
+  });
+
+  it("serves cached pictures without touching the network when automatic fetching is off", async () => {
+    const provider = new StubProvider("lastfm", () => hitResult("lastfm"));
+    const online = makeHarness({ providers: [provider] });
+    await online.service.resolve({ name: "Nagorizakura" });
+    expect(provider.calls).toBe(1);
+
+    // Same cache, automatic fetching switched off: the picture keeps showing from disk.
+    const offline = makeHarness({ providers: [provider], cache: online.cache, autoFetch: false });
+    const cached = await offline.service.resolve({ name: "Nagorizakura" });
+    expect(cached.status).toBe("cached");
+    expect(cached.record?.fileName).toBe("photo-1.png");
+    expect(provider.calls).toBe(1);
+  });
+
+  it("stops querying providers but keeps every cached picture when automatic fetching is off", async () => {
+    let now = 5_000_000;
+    const provider = new StubProvider("lastfm", () => hitResult("lastfm"));
+    const online = makeHarness({ providers: [provider], now: () => now });
+    await online.service.resolve({ name: "Nagorizakura" });
+    expect(online.cache.stats().artists).toBe(1);
+
+    const offline = makeHarness({ providers: [provider], cache: online.cache, autoFetch: false, now: () => now });
+    const uncached = await offline.service.resolve({ name: "Nogizaka46" });
+
+    expect(uncached.status).toBe("unavailable");
+    expect(uncached.reason).toBe("auto-fetch-disabled");
+    expect(provider.calls).toBe(1);
+    // Nothing was deleted and no permanent "no picture" answer was recorded for the untouched artist.
+    expect(online.cache.stats().artists).toBe(1);
+    expect(online.cache.stats().misses).toBe(0);
+  });
+
+  it("does not record a negative answer for artists skipped by the automatic-fetch switch", async () => {
+    const provider = new StubProvider("lastfm", () => hitResult("lastfm"));
+    const offline = makeHarness({ providers: [provider], autoFetch: false });
+    await offline.service.resolve({ name: "Nagorizakura" });
+    expect(offline.cache.stats().misses).toBe(0);
+
+    // Re-enabling automatic fetching must therefore work on the very next request.
+    const online = makeHarness({ providers: [provider], cache: offline.cache, autoFetch: true });
+    const resolved = await online.service.resolve({ name: "Nagorizakura" });
+    expect(resolved.status).toBe("fetched");
+    expect(provider.calls).toBe(1);
+  });
+
+  it("still honours an explicit manual refresh while automatic fetching is off", async () => {
+    const provider = new StubProvider("lastfm", () => hitResult("lastfm"));
+    const harness = makeHarness({ providers: [provider], autoFetch: false });
+
+    const automatic = await harness.service.resolve({ name: "Nagorizakura" });
+    expect(automatic.reason).toBe("auto-fetch-disabled");
+
+    const manual = await harness.service.refresh({ name: "Nagorizakura" });
+    expect(manual.status).toBe("fetched");
+    expect(manual.record?.provider).toBe("lastfm");
   });
 
   it("answers cached() without any network access for instant first paint", async () => {

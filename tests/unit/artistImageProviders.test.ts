@@ -10,6 +10,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ARTIST_IMAGE_PROVIDER_IDS,
+  activeArtistImageProviders,
+  createArtistImageProviders,
   type ArtistIdentity,
   type ArtistIdentityResolver,
   DEFAULT_ARTIST_IMAGE_PROVIDER_ORDER,
@@ -82,6 +84,41 @@ describe("artist image provider registry", () => {
       "deezer",
     ]);
     expect(normalizeArtistImageProviderOrder(undefined)).toEqual(["lastfm", "wikidata", "deezer"]);
+  });
+
+  it("preserves switched-off providers in their slot and never silently re-enables them", () => {
+    // `d_` = known but disabled (the convention shared with the lyrics provider order).
+    expect(normalizeArtistImageProviderOrder(["d_wikidata", "deezer"])).toEqual([
+      "d_wikidata",
+      "deezer",
+      "lastfm",
+    ]);
+    expect(normalizeArtistImageProviderOrder(["lastfm", "d_wikidata"])).toEqual([
+      "lastfm",
+      "d_wikidata",
+      "deezer",
+    ]);
+    // Duplicates collapse on the id, keeping the first (disabled) occurrence.
+    expect(normalizeArtistImageProviderOrder(["d_lastfm", "lastfm"])).toEqual([
+      "d_lastfm",
+      "wikidata",
+      "deezer",
+    ]);
+  });
+
+  it("reports the enabled providers in priority order", () => {
+    expect(activeArtistImageProviders(["deezer", "d_wikidata", "lastfm"])).toEqual(["deezer", "lastfm"]);
+    expect(activeArtistImageProviders(normalizeArtistImageProviderOrder(["d_lastfm"]))).toEqual([
+      "wikidata",
+      "deezer",
+    ]);
+  });
+
+  it("never instantiates a switched-off provider, so it cannot be queried at all", () => {
+    const config = configWith(vi.fn() as unknown as typeof fetch);
+    const providers = createArtistImageProviders(config, ["lastfm", "d_wikidata", "deezer"]);
+    expect(providers.map(provider => provider.id)).toEqual(["lastfm", "deezer"]);
+    expect(createArtistImageProviders(config, ["d_lastfm", "d_wikidata", "d_deezer"])).toEqual([]);
   });
 
   it("documents the actual capability of every investigated source", () => {

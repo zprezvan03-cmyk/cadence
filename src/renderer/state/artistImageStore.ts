@@ -10,6 +10,8 @@
  *  - one request per artist regardless of how many cards are mounted (keyed by normalized name);
  *  - a terminal state per artist (`ready` / `missing` / `disabled`), so a failed lookup is not
  *    retried on every render;
+ *  - "automatic fetching off" only changes *where* the answer comes from (cache instead of the
+ *    network), so pictures already on disk keep showing;
  *  - nothing is fetched at startup; requests only happen when a component asks for a picture that
  *    is actually on screen.
  *
@@ -129,11 +131,19 @@ export const useArtistImages = create<ArtistImageState>()((set, get) => {
         set(state => ({
           entries: { ...state.entries, [next.key]: { ...pendingEntry(next.artistName, "loading") } },
         }));
-        void api
-          .resolve({ artistName: next.artistName })
+        const autoFetch = useSettings.getState().settings?.artistImages.autoFetch ?? true;
+        const request = autoFetch
+          ? api.resolve({ artistName: next.artistName })
+          : api.cached(next.artistName).then(info => info);
+        void request
           .then(info => {
             set(state => ({
-              entries: { ...state.entries, [next.key]: entryFromInfo(info, next.artistName) },
+              entries: {
+                ...state.entries,
+                [next.key]: info
+                  ? entryFromInfo(info, next.artistName)
+                  : { ...pendingEntry(next.artistName, "missing"), reason: "not-cached" },
+              },
             }));
           })
           .catch((error: unknown) => {

@@ -297,6 +297,20 @@ export class ArtistImageCacheCore {
     return [...this.artists.values()].sort((a, b) => b.lastAccessAt - a.lastAccessAt);
   }
 
+  /**
+   * Artist names in the index, split by outcome. Settings uses it to offer "refresh every picture",
+   * including a retry for artists that previously had no usable picture.
+   */
+  indexedArtists(): { withImage: string[]; withoutImage: string[] } {
+    const misses = [...this.misses.values()].filter(record => !this.artists.has(record.artistKey));
+    return {
+      withImage: [...this.artists.values()]
+        .sort((a, b) => b.lastAccessAt - a.lastAccessAt)
+        .map(record => record.artistName),
+      withoutImage: misses.map(record => record.artistName),
+    };
+  }
+
   stats(): ArtistImageCacheStats {
     const json = this.serialize();
     return {

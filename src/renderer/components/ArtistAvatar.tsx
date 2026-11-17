@@ -13,6 +13,7 @@ import { useEffect } from "react";
 import { UserRound } from "lucide-react";
 import { artistImageKey } from "../../shared/artistImageCache";
 import { useArtistImages } from "../state/artistImageStore";
+import { useSettings } from "../state/settingsStore";
 import { Artwork } from "./Artwork";
 
 export interface ArtistAvatarProps {
@@ -25,10 +26,12 @@ export interface ArtistAvatarProps {
 export function ArtistAvatar({ name, size = "md", className = "" }: ArtistAvatarProps) {
   const request = useArtistImages(state => state.request);
   const entry = useArtistImages(state => state.entries[artistImageKey(name)]);
+  // The master switch hides pictures as well as stopping lookups, without touching the cache.
+  const enabled = useSettings(state => state.settings?.artistImages.enabled ?? true);
 
   useEffect(() => {
-    if (name.trim()) request(name);
-  }, [name, request]);
+    if (name.trim() && enabled) request(name);
+  }, [name, enabled, request]);
 
   const credit =
     entry?.status === "ready" && entry.attribution
@@ -37,7 +40,7 @@ export function ArtistAvatar({ name, size = "md", className = "" }: ArtistAvatar
 
   return (
     <Artwork
-      src={entry?.status === "ready" ? entry.url : null}
+      src={enabled && entry?.status === "ready" ? entry.url : null}
       alt={name}
       size={size}
       rounded="full"
@@ -54,7 +57,8 @@ export function ArtistAvatar({ name, size = "md", className = "" }: ArtistAvatar
  */
 export function ArtistImageCredit({ name }: { name: string }) {
   const entry = useArtistImages(state => state.entries[artistImageKey(name)]);
-  if (entry?.status !== "ready" || !entry.attribution) return null;
+  const enabled = useSettings(state => state.settings?.artistImages.enabled ?? true);
+  if (!enabled || entry?.status !== "ready" || !entry.attribution) return null;
   const label = entry.license ? `Photo: ${entry.attribution}` : `Photo via ${entry.provider ?? entry.attribution}`;
   const openPage = () => {
     const pageUrl = entry.pageUrl;

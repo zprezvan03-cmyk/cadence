@@ -39,8 +39,10 @@ import {
 } from "../shared/artistImageService";
 import {
   ARTIST_IMAGE_PROVIDER_LABELS,
+  activeArtistImageProviders,
   createArtistImageProviderConfig,
   INVESTIGATED_ARTIST_IMAGE_SOURCES,
+  normalizeArtistImageProviderOrder,
   DEFAULT_ARTIST_IMAGE_USER_AGENT,
 } from "../shared/artistImageProviders";
 import { createLocalLyricsReader } from "../main/lyrics/localLyricsCore";
@@ -434,6 +436,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
     const current = settings.get();
     const signature = JSON.stringify([
       current.artistImages.enabled,
+      current.artistImages.autoFetch,
       current.artistImages.providerOrder,
       current.artistImages.refreshAfterDays,
       current.scrobbling.apiKey,
@@ -450,7 +453,12 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         userAgent: DEFAULT_ARTIST_IMAGE_USER_AGENT,
         fetchFn: (...args) => runtimeFetch(...args),
       }),
-      staleAfterMs: Math.max(1, current.artistImages.refreshAfterDays) * 24 * 60 * 60 * 1000,
+      // 0 days means "never refresh in the background", not "refresh immediately".
+      staleAfterMs:
+        current.artistImages.refreshAfterDays > 0
+          ? current.artistImages.refreshAfterDays * 24 * 60 * 60 * 1000
+          : Number.POSITIVE_INFINITY,
+      autoFetch: current.artistImages.autoFetch,
       saveImage: (bytes, mimeType) => saveArtworkBytes(bytes, mimeType),
       onDiagnostic: event => {
         if (settings.get().advanced.showLogs) console.info("[Cadence] artist picture", event);
@@ -979,9 +987,13 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
       async providers(): Promise<ArtistImageProviderReport[]> {
         const current = settings.get();
         const lastFmConfigured = Boolean(current.scrobbling.apiKey.trim());
+        const enabledSlots = new Set(
+          activeArtistImageProviders(normalizeArtistImageProviderOrder(current.artistImages.providerOrder))
+        );
         return INVESTIGATED_ARTIST_IMAGE_SOURCES.map(report => {
           const credentialsSatisfied = !report.requiresCredentials || lastFmConfigured;
-          const available = report.implemented && report.feasible && credentialsSatisfied;
+          const enabled = enabledSlots.has(report.provider as never);
+          const available = enabled && report.implemented && report.feasible && credentialsSatisfied;
           return {
             provider: report.provider,
             name: ARTIST_IMAGE_PROVIDER_LABELS[report.provider] ?? report.name,
@@ -990,6 +1002,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
             requiresCredentials: report.requiresCredentials,
             attributionRequired: report.attributionRequired,
             license: report.license,
+            enabled,
             available,
             statusReason:
               report.feasible && report.implemented && !credentialsSatisfied
@@ -999,6 +1012,10 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
             limitations: [...report.limitations],
           };
         });
+      },
+
+      async indexed() {
+        return artistImageCache.indexedArtists();
       },
 
       async stats() {

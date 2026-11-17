@@ -101,6 +101,12 @@ export interface ArtistImageServiceOptions {
   missTtlMs?: number;
   errorTtlMs?: number;
   maxConcurrentRequests?: number;
+  /**
+   * Fetch missing pictures automatically (`settings.artistImages.autoFetch`). When false the service
+   * only ever answers from the cache: cached pictures keep displaying, nothing is downloaded, and no
+   * negative entry is written, so switching automatic fetching back on immediately works again.
+   */
+  autoFetch?: boolean;
   /** Disable the opportunistic background refresh of stale entries (tests, offline mode). */
   refreshStaleInBackground?: boolean;
   now?: () => number;
@@ -143,6 +149,7 @@ export class ArtistImageService {
   private readonly staleAfterMs: number;
   private readonly missTtlMs: number;
   private readonly errorTtlMs: number;
+  private readonly autoFetch: boolean;
   private readonly refreshStaleInBackground: boolean;
   private readonly now: () => number;
   private readonly semaphore: Semaphore;
@@ -160,6 +167,7 @@ export class ArtistImageService {
     this.staleAfterMs = options.staleAfterMs ?? DEFAULT_ARTIST_IMAGE_REFRESH_AFTER_MS;
     this.missTtlMs = options.missTtlMs ?? DEFAULT_ARTIST_IMAGE_MISS_TTL_MS;
     this.errorTtlMs = options.errorTtlMs ?? DEFAULT_ARTIST_IMAGE_ERROR_TTL_MS;
+    this.autoFetch = options.autoFetch ?? true;
     this.refreshStaleInBackground = options.refreshStaleInBackground ?? true;
     this.now = options.now ?? (() => Date.now());
     this.semaphore = new Semaphore(Math.max(1, options.maxConcurrentRequests ?? 3));
@@ -270,7 +278,7 @@ export class ArtistImageService {
       const hit = this.cache.get(key, { staleAfterMs: this.staleAfterMs });
       if (hit) {
         this.onDiagnostic?.({ type: "cache-hit", artistName, stale: hit.stale });
-        if (hit.stale && this.refreshStaleInBackground) {
+        if (hit.stale && this.refreshStaleInBackground && this.autoFetch) {
           // Fire and forget: the stale picture is already usable, this only keeps it current.
           this.scheduleBackgroundRefresh(query, key);
           return {
@@ -304,6 +312,20 @@ export class ArtistImageService {
           elapsedMs: this.now() - startedAt,
         };
       }
+    }
+
+    if (!this.autoFetch && !options.force) {
+      // Serving only what is cached already. This is not a "no picture exists" answer, so nothing is
+      // recorded: a manual refresh (force) or re-enabling automatic fetching queries providers again.
+      return {
+        status: "unavailable",
+        artistName,
+        artistKey: key,
+        record: null,
+        providers: [],
+        reason: "auto-fetch-disabled",
+        elapsedMs: this.now() - startedAt,
+      };
     }
 
     return this.runProviders(query, key, artistName);

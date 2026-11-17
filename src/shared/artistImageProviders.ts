@@ -182,7 +182,10 @@ export interface ArtistIdentityResolver {
 export interface ArtistImageProviderConfig {
   /** Master switch (`settings.artistImages.enabled`). */
   enabled: boolean;
-  /** Provider priority; unknown or unavailable ids are simply skipped. */
+  /**
+   * Provider priority (`settings.artistImages.providerOrder`). Entries prefixed with `d_` are known
+   * but switched off and are never instantiated; unknown ids are simply skipped.
+   */
   providerOrder: readonly string[];
   /** User-supplied Last.fm API key (`settings.scrobbling.apiKey`). */
   lastFmApiKey: string;
@@ -237,21 +240,39 @@ export function createArtistImageProviderConfig(
 }
 
 /**
- * Keeps a stored provider order valid: unknown entries are dropped, duplicates collapse, and any
- * known provider the order is missing is appended, so shipping a new provider in an update reaches
- * existing users without a settings migration.
+ * A switched-off provider keeps its slot in the stored order with a `d_` prefix — the same
+ * representation Cadence's lyrics provider order already uses (`src/shared/providerOrder.ts`).
+ * Keeping the slot (instead of removing the entry) is what makes "off" survive a reload: the
+ * normalization below would otherwise re-insert every known provider as enabled.
+ */
+export const DISABLED_PROVIDER_PREFIX = "d_";
+
+export function isDisabledArtistImageProviderEntry(entry: string): boolean {
+  return entry.startsWith(DISABLED_PROVIDER_PREFIX);
+}
+
+export function artistImageProviderIdOf(entry: string): string {
+  return isDisabledArtistImageProviderEntry(entry) ? entry.slice(DISABLED_PROVIDER_PREFIX.length) : entry;
+}
+
+/**
+ * Keeps a stored provider order valid: unknown entries are dropped, duplicates collapse, disabled
+ * slots are preserved in place, and any known provider the order is missing is appended as enabled,
+ * so shipping a new provider in an update reaches existing users without a settings migration.
  */
 export function normalizeArtistImageProviderOrder(
   order: readonly string[] | null | undefined
-): ArtistImageSourceId[] {
-  const seen = new Set<ArtistImageSourceId>();
-  const result: ArtistImageSourceId[] = [];
+): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
   for (const entry of order ?? []) {
-    if (!ARTIST_IMAGE_PROVIDER_IDS.includes(entry as ArtistImageSourceId)) continue;
-    const id = entry as ArtistImageSourceId;
+    if (typeof entry !== "string" || !entry) continue;
+    const disabled = isDisabledArtistImageProviderEntry(entry);
+    const id = artistImageProviderIdOf(entry);
+    if (!ARTIST_IMAGE_PROVIDER_IDS.includes(id as ArtistImageSourceId)) continue;
     if (seen.has(id)) continue;
     seen.add(id);
-    result.push(id);
+    result.push(disabled ? `${DISABLED_PROVIDER_PREFIX}${id}` : id);
   }
   for (const id of DEFAULT_ARTIST_IMAGE_PROVIDER_ORDER) {
     if (!seen.has(id)) {
@@ -260,6 +281,14 @@ export function normalizeArtistImageProviderOrder(
     }
   }
   return result;
+}
+
+/** Enabled providers, in priority order (the request order the service actually walks). */
+export function activeArtistImageProviders(order: readonly string[]): ArtistImageSourceId[] {
+  return order
+    .filter(entry => !isDisabledArtistImageProviderEntry(entry))
+    .map(artistImageProviderIdOf)
+    .filter((id): id is ArtistImageSourceId => ARTIST_IMAGE_PROVIDER_IDS.includes(id as ArtistImageSourceId));
 }
 
 /** Artist names that can never be resolved to a real portrait. */
@@ -1129,7 +1158,9 @@ export function createArtistImageProviders(
 ): ArtistImageProvider[] {
   const resolver = config.identityResolver ?? new MusicBrainzArtistIdentityResolver(config);
   const providers: ArtistImageProvider[] = [];
-  for (const id of normalizeArtistImageProviderOrder(order)) {
+  // Only enabled slots are instantiated: a switched-off provider is never even asked, which keeps
+  // "off" meaningful for rate limits, credentials and privacy alike.
+  for (const id of activeArtistImageProviders(normalizeArtistImageProviderOrder(order))) {
     if (id === "lastfm") providers.push(new LastFmArtistImageProvider(config));
     else if (id === "wikidata") providers.push(new WikidataArtistImageProvider(config, resolver));
     else if (id === "deezer") providers.push(new DeezerArtistImageProvider(config));
