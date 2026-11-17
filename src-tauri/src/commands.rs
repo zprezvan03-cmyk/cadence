@@ -17,7 +17,7 @@ use tauri::{State, WebviewWindow};
 use tokio::sync::oneshot;
 
 use crate::allowlist::MediaAllowlist;
-use crate::db::{DbMutation, DbSnapshot, LibraryDb};
+use crate::db::{DbMutation, DbSnapshot, LibraryDb, TrackIntelligenceRow};
 
 const MAX_CHUNK_READ_BYTES: usize = 4 * 1024 * 1024;
 const MAX_SIDECAR_TEXT_BYTES: u64 = 2 * 1024 * 1024;
@@ -464,6 +464,29 @@ pub async fn cmd_history_list(state: State<'_, AppState>) -> Result<Vec<HistoryE
 pub async fn cmd_history_clear(state: State<'_, AppState>) -> Result<(), String> {
     let db = Arc::clone(&state.db);
     tauri::async_runtime::spawn_blocking(move || db.clear_history())
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Returns all cached track intelligence rows (popularity estimates and skip/completion counts).
+#[tauri::command]
+pub async fn cmd_intelligence_list(
+    state: State<'_, AppState>,
+) -> Result<Vec<TrackIntelligenceRow>, String> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || db.list_intelligence())
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Upserts a batch of track intelligence rows (popularity cache + behavioral counters).
+#[tauri::command]
+pub async fn cmd_intelligence_upsert(
+    records: Vec<TrackIntelligenceRow>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || db.upsert_intelligence(&records))
         .await
         .map_err(|e| e.to_string())?
 }

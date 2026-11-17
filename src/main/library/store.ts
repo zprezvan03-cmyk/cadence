@@ -19,6 +19,7 @@ import type {
   RemoteHistoryPayload,
   TrackSource,
 } from "../../shared/types";
+import type { TrackIntelligenceRecord } from "../../shared/smartShuffle";
 
 /** The most history rows to keep, mirroring `HISTORY_CAP` in src-tauri/src/db.rs. */
 const HISTORY_CAP = 1000;
@@ -160,6 +161,8 @@ export class LibraryStore extends LibraryStoreCore {
   private sqliteDb: SqliteDatabase | null = null;
   /** Session-only history when SQLite is unavailable (JSON fallback engine). */
   private memoryHistory: HistoryEntry[] = [];
+  /** Session-only intelligence map when SQLite is unavailable (JSON fallback engine). */
+  private memoryIntelligence = new Map<string, TrackIntelligenceRecord>();
 
   constructor(
     dbPath: string,
@@ -217,6 +220,28 @@ export class LibraryStore extends LibraryStoreCore {
             );
             CREATE INDEX IF NOT EXISTS idx_listening_history_played_at
               ON listening_history(played_at DESC, id DESC);
+            CREATE TABLE IF NOT EXISTS track_intelligence (
+              recording_key TEXT PRIMARY KEY,
+              track_id INTEGER,
+              artist TEXT NOT NULL,
+              title TEXT NOT NULL,
+              popularity REAL,
+              popularity_source TEXT,
+              popularity_confidence REAL,
+              external_listeners INTEGER,
+              external_genres TEXT NOT NULL DEFAULT '[]',
+              fetched_at INTEGER,
+              expires_at INTEGER,
+              skip_count INTEGER NOT NULL DEFAULT 0,
+              complete_count INTEGER NOT NULL DEFAULT 0,
+              last_skipped_at INTEGER,
+              last_completed_at INTEGER,
+              updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_track_intelligence_track_id
+              ON track_intelligence(track_id);
+            CREATE INDEX IF NOT EXISTS idx_track_intelligence_expires_at
+              ON track_intelligence(expires_at);
           `);
           const historyColumns = sqlite
             .prepare("PRAGMA table_info(listening_history)")
@@ -415,5 +440,132 @@ export class LibraryStore extends LibraryStoreCore {
       return;
     }
     this.sqliteDb.prepare("DELETE FROM listening_history").run();
+  }
+
+  listIntelligence(): TrackIntelligenceRecord[] {
+    if (!this.sqliteDb) {
+      return [...this.memoryIntelligence.values()];
+    }
+    const rows = this.sqliteDb
+      .prepare(
+        `SELECT recording_key, track_id, artist, title, popularity, popularity_source,
+                popularity_confidence, external_listeners, external_genres, fetched_at,
+                expires_at, skip_count, complete_count, last_skipped_at, last_completed_at,
+                updated_at
+           FROM track_intelligence`
+      )
+      .all() as Array<{
+      recording_key: string;
+      track_id: number | null;
+      artist: string;
+      title: string;
+      popularity: number | null;
+      popularity_source: string | null;
+      popularity_confidence: number | null;
+      external_listeners: number | null;
+      external_genres: string;
+      fetched_at: number | null;
+      expires_at: number | null;
+      skip_count: number;
+      complete_count: number;
+      last_skipped_at: number | null;
+      last_completed_at: number | null;
+      updated_at: number;
+    }>;
+
+    return rows.map(row => {
+      let externalGenres: string[] = [];
+      try {
+        const parsed = JSON.parse(row.external_genres);
+        if (Array.isArray(parsed)) {
+          externalGenres = parsed.filter((g): g is string => typeof g === "string");
+        }
+      } catch {
+        externalGenres = [];
+      }
+      return {
+        recordingKey: row.recording_key,
+        trackId: row.track_id,
+        artist: row.artist,
+        title: row.title,
+        popularity: row.popularity,
+        popularitySource: row.popularity_source,
+        popularityConfidence: row.popularity_confidence,
+        externalListeners: row.external_listeners,
+        externalGenres,
+        fetchedAt: row.fetched_at,
+        expiresAt: row.expires_at,
+        skipCount: row.skip_count ?? 0,
+        completeCount: row.complete_count ?? 0,
+        lastSkippedAt: row.last_skipped_at,
+        lastCompletedAt: row.last_completed_at,
+        updatedAt: row.updated_at,
+      };
+    });
+  }
+
+  upsertIntelligence(records: readonly TrackIntelligenceRecord[]): void {
+    if (records.length === 0) return;
+    if (!this.sqliteDb) {
+      for (const rec of records) {
+        this.memoryIntelligence.set(rec.recordingKey, {
+          ...rec,
+          externalGenres: [...(rec.externalGenres ?? [])],
+        });
+      }
+      return;
+    }
+    const db = this.sqliteDb;
+    const stmt = db.prepare(`
+      INSERT INTO track_intelligence (
+        recording_key, track_id, artist, title, popularity, popularity_source,
+        popularity_confidence, external_listeners, external_genres, fetched_at,
+        expires_at, skip_count, complete_count, last_skipped_at, last_completed_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(recording_key) DO UPDATE SET
+        track_id = COALESCE(excluded.track_id, track_intelligence.track_id),
+        artist = excluded.artist,
+        title = excluded.title,
+        popularity = excluded.popularity,
+        popularity_source = excluded.popularity_source,
+        popularity_confidence = excluded.popularity_confidence,
+        external_listeners = excluded.external_listeners,
+        external_genres = excluded.external_genres,
+        fetched_at = excluded.fetched_at,
+        expires_at = excluded.expires_at,
+        skip_count = excluded.skip_count,
+        complete_count = excluded.complete_count,
+        last_skipped_at = excluded.last_skipped_at,
+        last_completed_at = excluded.last_completed_at,
+        updated_at = excluded.updated_at
+    `);
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const rec of records) {
+        stmt.run(
+          rec.recordingKey,
+          rec.trackId,
+          rec.artist,
+          rec.title,
+          rec.popularity,
+          rec.popularitySource,
+          rec.popularityConfidence,
+          rec.externalListeners,
+          JSON.stringify(rec.externalGenres ?? []),
+          rec.fetchedAt,
+          rec.expiresAt,
+          rec.skipCount,
+          rec.completeCount,
+          rec.lastSkippedAt,
+          rec.lastCompletedAt,
+          rec.updatedAt
+        );
+      }
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
   }
 }

@@ -285,6 +285,8 @@ pub fn run() {
             commands::cmd_history_add,
             commands::cmd_history_list,
             commands::cmd_history_clear,
+            commands::cmd_intelligence_list,
+            commands::cmd_intelligence_upsert,
             commands::cmd_load_lyrics,
             commands::cmd_write_user_json,
             commands::cmd_pick_folder,

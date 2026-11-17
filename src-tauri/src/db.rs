@@ -52,6 +52,29 @@ pub struct HistoryEntry {
 /// the oldest plays once the cap is reached.
 const HISTORY_CAP: usize = 1000;
 
+/// Cached popularity and behavioral listening intelligence keyed by normalized recording identity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackIntelligenceRow {
+    pub recording_key: String,
+    pub track_id: Option<i64>,
+    pub artist: String,
+    pub title: String,
+    pub popularity: Option<f64>,
+    pub popularity_source: Option<String>,
+    pub popularity_confidence: Option<f64>,
+    pub external_listeners: Option<i64>,
+    #[serde(default)]
+    pub external_genres: Vec<String>,
+    pub fetched_at: Option<i64>,
+    pub expires_at: Option<i64>,
+    pub skip_count: i64,
+    pub complete_count: i64,
+    pub last_skipped_at: Option<i64>,
+    pub last_completed_at: Option<i64>,
+    pub updated_at: i64,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase")]
 pub enum DbMutation {
@@ -192,6 +215,28 @@ impl LibraryDb {
             );
             CREATE INDEX IF NOT EXISTS idx_listening_history_played_at
               ON listening_history(played_at DESC, id DESC);
+            CREATE TABLE IF NOT EXISTS track_intelligence (
+              recording_key TEXT PRIMARY KEY,
+              track_id INTEGER,
+              artist TEXT NOT NULL,
+              title TEXT NOT NULL,
+              popularity REAL,
+              popularity_source TEXT,
+              popularity_confidence REAL,
+              external_listeners INTEGER,
+              external_genres TEXT NOT NULL DEFAULT '[]',
+              fetched_at INTEGER,
+              expires_at INTEGER,
+              skip_count INTEGER NOT NULL DEFAULT 0,
+              complete_count INTEGER NOT NULL DEFAULT 0,
+              last_skipped_at INTEGER,
+              last_completed_at INTEGER,
+              updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_track_intelligence_track_id
+              ON track_intelligence(track_id);
+            CREATE INDEX IF NOT EXISTS idx_track_intelligence_expires_at
+              ON track_intelligence(expires_at);
             ",
         )
         .map_err(|e| e.to_string())?;
@@ -427,6 +472,105 @@ impl LibraryDb {
         conn.execute("DELETE FROM listening_history", [])
             .map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    pub fn list_intelligence(&self) -> Result<Vec<TrackIntelligenceRow>, String> {
+        let conn = self.conn.lock().map_err(|_| "DB mutex poisoned")?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT recording_key, track_id, artist, title, popularity, popularity_source,
+                        popularity_confidence, external_listeners, external_genres, fetched_at,
+                        expires_at, skip_count, complete_count, last_skipped_at, last_completed_at,
+                        updated_at
+                   FROM track_intelligence",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                let raw_genres: String = row.get(8).unwrap_or_else(|_| "[]".to_string());
+                let external_genres: Vec<String> =
+                    serde_json::from_str(&raw_genres).unwrap_or_default();
+                Ok(TrackIntelligenceRow {
+                    recording_key: row.get(0)?,
+                    track_id: row.get(1)?,
+                    artist: row.get(2)?,
+                    title: row.get(3)?,
+                    popularity: row.get(4)?,
+                    popularity_source: row.get(5)?,
+                    popularity_confidence: row.get(6)?,
+                    external_listeners: row.get(7)?,
+                    external_genres,
+                    fetched_at: row.get(9)?,
+                    expires_at: row.get(10)?,
+                    skip_count: row.get(11)?,
+                    complete_count: row.get(12)?,
+                    last_skipped_at: row.get(13)?,
+                    last_completed_at: row.get(14)?,
+                    updated_at: row.get(15)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        for row in rows.flatten() {
+            out.push(row);
+        }
+        Ok(out)
+    }
+
+    pub fn upsert_intelligence(&self, records: &[TrackIntelligenceRow]) -> Result<(), String> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn.lock().map_err(|_| "DB mutex poisoned")?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        for rec in records {
+            let genres_json =
+                serde_json::to_string(&rec.external_genres).unwrap_or_else(|_| "[]".to_string());
+            tx.execute(
+                "INSERT INTO track_intelligence (
+                   recording_key, track_id, artist, title, popularity, popularity_source,
+                   popularity_confidence, external_listeners, external_genres, fetched_at,
+                   expires_at, skip_count, complete_count, last_skipped_at, last_completed_at,
+                   updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                 ON CONFLICT(recording_key) DO UPDATE SET
+                   track_id = COALESCE(excluded.track_id, track_intelligence.track_id),
+                   artist = excluded.artist,
+                   title = excluded.title,
+                   popularity = excluded.popularity,
+                   popularity_source = excluded.popularity_source,
+                   popularity_confidence = excluded.popularity_confidence,
+                   external_listeners = excluded.external_listeners,
+                   external_genres = excluded.external_genres,
+                   fetched_at = excluded.fetched_at,
+                   expires_at = excluded.expires_at,
+                   skip_count = excluded.skip_count,
+                   complete_count = excluded.complete_count,
+                   last_skipped_at = excluded.last_skipped_at,
+                   last_completed_at = excluded.last_completed_at,
+                   updated_at = excluded.updated_at",
+                params![
+                    rec.recording_key,
+                    rec.track_id,
+                    rec.artist,
+                    rec.title,
+                    rec.popularity,
+                    rec.popularity_source,
+                    rec.popularity_confidence,
+                    rec.external_listeners,
+                    genres_json,
+                    rec.fetched_at,
+                    rec.expires_at,
+                    rec.skip_count,
+                    rec.complete_count,
+                    rec.last_skipped_at,
+                    rec.last_completed_at,
+                    rec.updated_at,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())
     }
 
     pub fn apply_batch(&self, ops: &[DbMutation]) -> Result<(), String> {
