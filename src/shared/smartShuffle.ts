@@ -242,7 +242,7 @@ function clamp(value: number, min: number, max: number): number {
 export function summarizeGenreVector(
   vectors: Float32Array,
   offset = 0,
-  minWeight = 0.05
+  minWeight = 0.05,
 ): ClusterWeightSummary[] {
   const out: ClusterWeightSummary[] = [];
   for (let c = 0; c < NUM_GENRE_CLUSTERS; c++) {
@@ -258,9 +258,11 @@ export function summarizeGenreVector(
   return out;
 }
 
-function formatClusterSummary(clusters: readonly ClusterWeightSummary[]): string {
+function formatClusterSummary(
+  clusters: readonly ClusterWeightSummary[],
+): string {
   if (clusters.length === 0) return "unknown";
-  return clusters.map(c => `${c.cluster}:${c.weight.toFixed(2)}`).join(", ");
+  return clusters.map((c) => `${c.cluster}:${c.weight.toFixed(2)}`).join(", ");
 }
 
 /**
@@ -299,7 +301,9 @@ export function smartRecordingKey(input: {
     return `track:${input.id ?? 0}:${artist}|${title}`;
   }
   const durationBucket =
-    typeof input.duration === "number" && Number.isFinite(input.duration) && input.duration > 0
+    typeof input.duration === "number" &&
+    Number.isFinite(input.duration) &&
+    input.duration > 0
       ? Math.round(input.duration / 3) * 3
       : 0;
   return `${artist}|${title}|${durationBucket}`;
@@ -318,7 +322,10 @@ export function daypartForTimestamp(timestampMs: number): 0 | 1 | 2 | 3 {
  * Bayesian-smoothed completion ratio in (0, 1).
  * Unplayed tracks start at 2/3 (~0.67). Completions push it toward 1.0; early skips push it toward 0.05.
  */
-export function computeCompletionRatio(completeCount: number, skipCount: number): number {
+export function computeCompletionRatio(
+  completeCount: number,
+  skipCount: number,
+): number {
   const c = Math.max(0, completeCount);
   const s = Math.max(0, skipCount);
   return (c + 2) / (c + s + 3);
@@ -331,10 +338,12 @@ export function computeCompletionRatio(completeCount: number, skipCount: number)
 export function computeEffectivePopularity(
   popularity: number | null | undefined,
   confidence: number | null | undefined,
-  completionRatio: number
+  completionRatio: number,
 ): number {
   const rawPop =
-    typeof popularity === "number" && Number.isFinite(popularity) ? clamp(popularity, 0, 1) : 0.5;
+    typeof popularity === "number" && Number.isFinite(popularity)
+      ? clamp(popularity, 0, 1)
+      : 0.5;
   const conf =
     typeof confidence === "number" && Number.isFinite(confidence)
       ? clamp(confidence, 0, 1)
@@ -344,7 +353,8 @@ export function computeEffectivePopularity(
 
   const shrunk = conf * rawPop + (1 - conf) * 0.5;
   // If the user frequently skips this track (completionRatio < 0.5), attenuate global popularity
-  const personalAttenuation = completionRatio < 0.5 ? clamp(completionRatio / 0.5, 0.15, 1.0) : 1.0;
+  const personalAttenuation =
+    completionRatio < 0.5 ? clamp(completionRatio / 0.5, 0.15, 1.0) : 1.0;
   return clamp(shrunk * personalAttenuation, 0.05, 1.0);
 }
 
@@ -358,7 +368,7 @@ export function buildLibraryShuffleIndex(
     now?: number;
     intelligenceByKey?: ReadonlyMap<string, TrackIntelligenceRecord>;
     historyEntries?: readonly HistoryEntry[];
-  } = {}
+  } = {},
 ): LibraryShuffleIndex {
   const n = tracks.length;
   const now = options.now ?? Date.now();
@@ -396,7 +406,7 @@ export function buildLibraryShuffleIndex(
     if (entry.source.kind === "local" && entry.playedAt >= recentCutoff) {
       recentHistoryCount.set(
         entry.source.trackId,
-        (recentHistoryCount.get(entry.source.trackId) ?? 0) + 1
+        (recentHistoryCount.get(entry.source.trackId) ?? 0) + 1,
       );
     }
   }
@@ -416,10 +426,16 @@ export function buildLibraryShuffleIndex(
     }
     artistIds[i] = artistId;
 
-    const albumArtistKey = (track.albumArtist || track.artist || "unknown artist")
+    const albumArtistKey = (
+      track.albumArtist ||
+      track.artist ||
+      "unknown artist"
+    )
       .trim()
       .toLocaleLowerCase();
-    const albumNameKey = (track.album || "unknown album").trim().toLocaleLowerCase();
+    const albumNameKey = (track.album || "unknown album")
+      .trim()
+      .toLocaleLowerCase();
     const albumKey = `${albumArtistKey}\u0000${albumNameKey}`;
     let albumId = albumIntern.get(albumKey);
     if (albumId === undefined) {
@@ -449,11 +465,14 @@ export function buildLibraryShuffleIndex(
       0,
       Math.max(0, track.playCount - Math.floor(skips * 0.85)) +
         completes * 0.6 +
-        recentPlays * 0.75
+        recentPlays * 0.75,
     );
     netPlaysArray[i] = netPlays;
 
-    artistPlayTotals.set(artistId, (artistPlayTotals.get(artistId) ?? 0) + netPlays);
+    artistPlayTotals.set(
+      artistId,
+      (artistPlayTotals.get(artistId) ?? 0) + netPlays,
+    );
     if (track.favorite) {
       artistFavCounts.set(artistId, (artistFavCounts.get(artistId) ?? 0) + 1);
     }
@@ -497,26 +516,42 @@ export function buildLibraryShuffleIndex(
     const completes = intel?.completeCount ?? 0;
     const completionRatio = computeCompletionRatio(completes, skips);
 
-    const favBonus = track.favorite ? 0.30 : 0.0;
+    const favBonus = track.favorite ? 0.3 : 0.0;
     const freqScore = clamp(Math.log1p(netPlaysArray[i]) / logPlayDenom, 0, 1);
 
     const aId = artistIds[i];
-    const artistRaw = (artistPlayTotals.get(aId) ?? 0) + (artistFavCounts.get(aId) ?? 0) * 4;
+    const artistRaw =
+      (artistPlayTotals.get(aId) ?? 0) + (artistFavCounts.get(aId) ?? 0) * 4;
     const artistAffinity = clamp(Math.log1p(artistRaw) / logArtistDenom, 0, 1);
 
-    const lastPlayed = Math.max(track.lastPlayedAt ?? 0, intel?.lastCompletedAt ?? 0);
-    const daysSincePlay = lastPlayed > 0 ? (now - lastPlayed) / DAY_MS : Number.POSITIVE_INFINITY;
+    const lastPlayed = Math.max(
+      track.lastPlayedAt ?? 0,
+      intel?.lastCompletedAt ?? 0,
+    );
+    const daysSincePlay =
+      lastPlayed > 0 ? (now - lastPlayed) / DAY_MS : Number.POSITIVE_INFINITY;
 
     let rediscoveryOrExploration = 0;
     if (lastPlayed <= 0 && track.playCount <= 0) {
       // Subtle exploration nudge for unplayed tracks so they surface periodically
       rediscoveryOrExploration = 0.05;
-    } else if ((track.favorite || netPlaysArray[i] >= 3) && daysSincePlay >= 30) {
-      rediscoveryOrExploration = clamp(0.08 + 0.07 * Math.min(1, (daysSincePlay - 30) / 60), 0, 0.15);
+    } else if (
+      (track.favorite || netPlaysArray[i] >= 3) &&
+      daysSincePlay >= 30
+    ) {
+      rediscoveryOrExploration = clamp(
+        0.08 + 0.07 * Math.min(1, (daysSincePlay - 30) / 60),
+        0,
+        0.15,
+      );
     }
 
     let recentSkipPenalty = 0;
-    if (intel?.lastSkippedAt && intel.lastSkippedAt > 0 && now >= intel.lastSkippedAt) {
+    if (
+      intel?.lastSkippedAt &&
+      intel.lastSkippedAt > 0 &&
+      now >= intel.lastSkippedAt
+    ) {
       const hoursSinceSkip = (now - intel.lastSkippedAt) / HOUR_MS;
       if (hoursSinceSkip < 24) {
         recentSkipPenalty = 0.25 * Math.exp(-hoursSinceSkip / 6.0);
@@ -534,11 +569,14 @@ export function buildLibraryShuffleIndex(
         rediscoveryOrExploration -
         recentSkipPenalty,
       0.05,
-      1.0
+      1.0,
     );
     basePreference[i] = pref;
 
-    if (typeof intel?.popularity === "number" && Number.isFinite(intel.popularity)) {
+    if (
+      typeof intel?.popularity === "number" &&
+      Number.isFinite(intel.popularity)
+    ) {
       rawPopularity[i] = clamp(intel.popularity, 0, 1);
     }
     if (
@@ -551,7 +589,7 @@ export function buildLibraryShuffleIndex(
     effectivePopularity[i] = computeEffectivePopularity(
       intel?.popularity,
       intel?.popularityConfidence,
-      completionRatio
+      completionRatio,
     );
 
     // Soft exponential cooldown based on hours since last play + multiplicative skip suppression
@@ -560,9 +598,17 @@ export function buildLibraryShuffleIndex(
       const hoursSincePlay = (now - lastPlayed) / HOUR_MS;
       cooldown = clamp(1.0 - 0.85 * Math.exp(-hoursSincePlay / 6.0), 0.15, 1.0);
     }
-    if (intel?.lastSkippedAt && intel.lastSkippedAt > 0 && now >= intel.lastSkippedAt) {
+    if (
+      intel?.lastSkippedAt &&
+      intel.lastSkippedAt > 0 &&
+      now >= intel.lastSkippedAt
+    ) {
       const hoursSinceSkip = (now - intel.lastSkippedAt) / HOUR_MS;
-      const skipCooldown = clamp(1.0 - 0.80 * Math.exp(-hoursSinceSkip / 12.0), 0.20, 1.0);
+      const skipCooldown = clamp(
+        1.0 - 0.8 * Math.exp(-hoursSinceSkip / 12.0),
+        0.2,
+        1.0,
+      );
       cooldown = Math.min(cooldown, skipCooldown);
     }
     if (completionRatio < 0.5) {
@@ -576,7 +622,8 @@ export function buildLibraryShuffleIndex(
   const daypartHasSignal = new Uint8Array(4);
   for (let i = 0; i < historyEntries.length; i++) {
     const entry = historyEntries[i];
-    if (entry.source.kind !== "local" || !Number.isFinite(entry.playedAt)) continue;
+    if (entry.source.kind !== "local" || !Number.isFinite(entry.playedAt))
+      continue;
     const idx = idToIndex.get(entry.source.trackId);
     if (idx === undefined || unknownGenreFlags[idx] === 1) continue;
     const dp = daypartForTimestamp(entry.playedAt);
@@ -591,7 +638,7 @@ export function buildLibraryShuffleIndex(
     if (daypartHasSignal[dp] === 1) {
       const slice = daypartVectors.subarray(
         dp * NUM_GENRE_CLUSTERS,
-        (dp + 1) * NUM_GENRE_CLUSTERS
+        (dp + 1) * NUM_GENRE_CLUSTERS,
       );
       if (!normalizeGenreVectorInPlace(slice)) {
         daypartHasSignal[dp] = 0;
@@ -650,9 +697,8 @@ export function evaluateCandidateBreakdown(
     stepProjection?: Float32Array;
     saturatedMask?: Uint8Array;
     freshMask?: Uint8Array;
-    dominantMask?: Uint8Array;
     sessionIsFocused?: boolean;
-  }
+  },
 ): CandidateScoreBreakdown {
   const {
     step,
@@ -670,7 +716,6 @@ export function evaluateCandidateBreakdown(
     stepProjection,
     saturatedMask,
     freshMask,
-    dominantMask,
     sessionIsFocused,
   } = session;
 
@@ -679,7 +724,10 @@ export function evaluateCandidateBreakdown(
 
   const recId = index.recordingIds[candIdx];
   const prevRecStep = lastRecordingStep.get(recId);
-  const recExclusionWindow = Math.min(25, Math.max(1, Math.floor(poolRecordingCount / 2)));
+  const recExclusionWindow = Math.min(
+    25,
+    Math.max(1, Math.floor(poolRecordingCount / 2)),
+  );
 
   let recencyGate = index.playCooldown[candIdx];
   if (prevRecStep !== undefined) {
@@ -702,8 +750,8 @@ export function evaluateCandidateBreakdown(
           index.genreVectors,
           candIdx * NUM_GENRE_CLUSTERS,
           candidateIsUnknown,
-          dominantMask,
-          sessionIsFocused ?? true
+          sessionIsFocused ?? true,
+          sessionGenreVector,
         )
       : computeGenreCompatibilityFast(
           sessionGenreVector,
@@ -711,7 +759,7 @@ export function evaluateCandidateBreakdown(
           sessionHasGenre,
           index.genreVectors,
           candIdx * NUM_GENRE_CLUSTERS,
-          candidateIsUnknown
+          candidateIsUnknown,
         );
 
   const passedRelevanceGate =
@@ -726,7 +774,7 @@ export function evaluateCandidateBreakdown(
       const relaxFactor = poolArtistCount <= 2 ? 0.35 : 0.0;
       if (dArtist <= 1) artistSpacing = Math.max(relaxFactor, 0.08);
       else if (dArtist === 2) artistSpacing = Math.max(relaxFactor, 0.42);
-      else if (dArtist === 3) artistSpacing = Math.max(relaxFactor, 0.80);
+      else if (dArtist === 3) artistSpacing = Math.max(relaxFactor, 0.8);
     }
   }
 
@@ -736,24 +784,22 @@ export function evaluateCandidateBreakdown(
     if (prevAlbumStep !== undefined) {
       const dAlbum = step - prevAlbumStep;
       const relaxFactor = poolAlbumCount <= 2 ? 0.65 : 0.0;
-      if (dAlbum <= 1) albumSpacing = Math.max(relaxFactor, 0.20);
+      if (dAlbum <= 1) albumSpacing = Math.max(relaxFactor, 0.2);
       else if (dAlbum === 2) albumSpacing = Math.max(relaxFactor, 0.55);
     }
   }
 
-  const diversity = 0.70 * artistSpacing + 0.30 * albumSpacing;
+  const diversity = 0.7 * artistSpacing + 0.3 * albumSpacing;
 
   // Time-of-day alignment
   let timeOfDay = 0.5;
-  if (
-    index.daypartHasSignal[currentDaypart] === 1 &&
-    !candidateIsUnknown
-  ) {
+  if (index.daypartHasSignal[currentDaypart] === 1 && !candidateIsUnknown) {
     let dot = 0;
     const dpOffset = currentDaypart * NUM_GENRE_CLUSTERS;
     const vecOffset = candIdx * NUM_GENRE_CLUSTERS;
     for (let c = 0; c < NUM_GENRE_CLUSTERS; c++) {
-      dot += index.daypartVectors[dpOffset + c] * index.genreVectors[vecOffset + c];
+      dot +=
+        index.daypartVectors[dpOffset + c] * index.genreVectors[vecOffset + c];
     }
     timeOfDay = clamp(0.35 + 0.65 * dot, 0.2, 1.0);
   }
@@ -780,7 +826,14 @@ export function evaluateCandidateBreakdown(
   // Apply strong multiplicative penalty when the candidate fails the relevance gate
   const relevanceGateMultiplier = passedRelevanceGate
     ? 1.0
-    : Math.pow(clamp(genreCompatibility / Math.max(0.1, relevanceThreshold), 0.05, 0.9), 3) * 0.12;
+    : Math.pow(
+        clamp(
+          genreCompatibility / Math.max(0.1, relevanceThreshold),
+          0.05,
+          0.9,
+        ),
+        3,
+      ) * 0.12;
 
   // Apply strong multiplicative penalty when the same artist or album just played so even
   // a favorite song does not play back-to-back with the same artist when alternatives exist.
@@ -788,7 +841,7 @@ export function evaluateCandidateBreakdown(
   const total = clamp(
     recencyGate * spacingGate * relevanceGateMultiplier * rawWeighted,
     0.001,
-    1.0
+    1.0,
   );
 
   return {
@@ -811,7 +864,7 @@ export function evaluateCandidateBreakdown(
 export function sampleWeightedShortlist(
   weights: Float32Array,
   count: number,
-  rng: ShuffleRng
+  rng: ShuffleRng,
 ): number {
   let sum = 0;
   for (let i = 0; i < count; i++) {
@@ -839,7 +892,7 @@ function initializeAnchoredSessionGenreState(
   recentLibIndices: readonly number[],
   sessionGenreVector: Float32Array,
   exposureStreaks: Float32Array,
-  relaxedThreshold: number
+  relaxedThreshold: number,
 ): boolean {
   sessionGenreVector.fill(0);
   exposureStreaks.fill(0);
@@ -869,7 +922,7 @@ function initializeAnchoredSessionGenreState(
 
   const anchorVec = index.genreVectors.subarray(
     anchorLibIdx * NUM_GENRE_CLUSTERS,
-    (anchorLibIdx + 1) * NUM_GENRE_CLUSTERS
+    (anchorLibIdx + 1) * NUM_GENRE_CLUSTERS,
   );
   const zeroStreaks = new Float32Array(NUM_GENRE_CLUSTERS);
   let sessionHasGenre = false;
@@ -885,7 +938,7 @@ function initializeAnchoredSessionGenreState(
         true,
         index.genreVectors,
         idx * NUM_GENRE_CLUSTERS,
-        false
+        false,
       );
       if (compatWithAnchor < relaxedThreshold) {
         // User switched away from this older genre; do not let it contaminate the current track's context
@@ -899,7 +952,7 @@ function initializeAnchoredSessionGenreState(
       index.genreVectors,
       idx * NUM_GENRE_CLUSTERS,
       false,
-      idx === anchorLibIdx ? 0.72 : 0.45
+      idx === anchorLibIdx ? 0.72 : 0.45,
     );
   }
 
@@ -919,7 +972,7 @@ export function buildSmartShuffleOrder(
   slots: readonly SmartShuffleQueueSlot[],
   currentQueueIndex: number,
   tracks: readonly SmartShuffleTrack[],
-  options: BuildSmartShuffleOptions = {}
+  options: BuildSmartShuffleOptions = {},
 ): number[] {
   const length = slots.length;
   if (length === 0) return [];
@@ -933,12 +986,12 @@ export function buildSmartShuffleOrder(
   const minGenreCompatibility = clamp(
     options.minGenreCompatibility ?? DEFAULT_MIN_GENRE_COMPATIBILITY,
     0.2,
-    0.95
+    0.95,
   );
   const relaxedGenreCompatibility = clamp(
     options.relaxedGenreCompatibility ?? DEFAULT_RELAXED_GENRE_COMPATIBILITY,
     0.15,
-    minGenreCompatibility
+    minGenreCompatibility,
   );
   const weights: SmartShuffleWeights = {
     ...DEFAULT_SMART_SHUFFLE_WEIGHTS,
@@ -1035,7 +1088,7 @@ export function buildSmartShuffleOrder(
     recentLibIndices,
     sessionGenreVector,
     exposureStreaks,
-    relaxedGenreCompatibility
+    relaxedGenreCompatibility,
   );
 
   const observeSelectedTrack = (libIdx: number) => {
@@ -1045,7 +1098,7 @@ export function buildSmartShuffleOrder(
       sessionHasGenre,
       index.genreVectors,
       libIdx * NUM_GENRE_CLUSTERS,
-      index.unknownGenreFlags[libIdx] === 1
+      index.unknownGenreFlags[libIdx] === 1,
     );
     lastArtistStep.set(index.artistIds[libIdx], step);
     lastAlbumStep.set(index.albumIds[libIdx], step);
@@ -1070,7 +1123,10 @@ export function buildSmartShuffleOrder(
       const qIdx = contextSlots[i];
       poolQueueIndices[i] = qIdx;
       const tid = slots[qIdx].trackId;
-      const libIdx = tid !== null && tid !== undefined ? (index.idToIndex.get(tid) ?? -1) : -1;
+      const libIdx =
+        tid !== null && tid !== undefined
+          ? (index.idToIndex.get(tid) ?? -1)
+          : -1;
       poolLibIndices[i] = libIdx;
       if (libIdx >= 0) {
         poolArtistSet.add(index.artistIds[libIdx]);
@@ -1086,7 +1142,10 @@ export function buildSmartShuffleOrder(
       const qIdx = contextSlots[i];
       poolQueueIndices[i] = qIdx;
       const tid = slots[qIdx].trackId;
-      poolLibIndices[i] = tid !== null && tid !== undefined ? (index.idToIndex.get(tid) ?? -1) : -1;
+      poolLibIndices[i] =
+        tid !== null && tid !== undefined
+          ? (index.idToIndex.get(tid) ?? -1)
+          : -1;
     }
   }
   const currentDaypart = daypartForTimestamp(now);
@@ -1104,7 +1163,6 @@ export function buildSmartShuffleOrder(
   const stepProjection = new Float32Array(NUM_GENRE_CLUSTERS);
   const saturatedMask = new Uint8Array(NUM_GENRE_CLUSTERS);
   const freshMask = new Uint8Array(NUM_GENRE_CLUSTERS);
-  const dominantMask = new Uint8Array(NUM_GENRE_CLUSTERS);
 
   const sessionCtx = {
     step,
@@ -1123,7 +1181,6 @@ export function buildSmartShuffleOrder(
     stepProjection,
     saturatedMask,
     freshMask,
-    dominantMask,
     sessionIsFocused: true,
   };
 
@@ -1138,7 +1195,6 @@ export function buildSmartShuffleOrder(
         stepProjection,
         saturatedMask,
         freshMask,
-        dominantMask
       );
     }
 
@@ -1183,9 +1239,15 @@ export function buildSmartShuffleOrder(
         shortlistScores[k] = breakdown.total;
         if (!sessionHasGenre) {
           primaryPassCount += 1;
-        } else if (!isUnk && breakdown.genreCompatibility >= minGenreCompatibility) {
+        } else if (
+          !isUnk &&
+          breakdown.genreCompatibility >= minGenreCompatibility
+        ) {
           primaryPassCount += 1;
-        } else if (!isUnk && breakdown.genreCompatibility >= relaxedGenreCompatibility) {
+        } else if (
+          !isUnk &&
+          breakdown.genreCompatibility >= relaxedGenreCompatibility
+        ) {
           relaxedPassCount += 1;
         } else if (isUnk) {
           unknownMetaCount += 1;
@@ -1203,7 +1265,11 @@ export function buildSmartShuffleOrder(
     ) {
       const scanLimit = Math.min(remaining, kCount + 256);
       let replaceSlot = 0;
-      for (let s = kCount; s < scanLimit && replaceSlot < Math.min(8, kCount); s++) {
+      for (
+        let s = kCount;
+        s < scanLimit && replaceSlot < Math.min(8, kCount);
+        s++
+      ) {
         const libIdx = poolLibIndices[s];
         if (libIdx < 0) continue;
         const isUnk = index.unknownGenreFlags[libIdx] === 1;
@@ -1216,8 +1282,8 @@ export function buildSmartShuffleOrder(
           index.genreVectors,
           libIdx * NUM_GENRE_CLUSTERS,
           false,
-          dominantMask,
-          sessionCtx.sessionIsFocused
+          sessionCtx.sessionIsFocused,
+          sessionCtx.sessionGenreVector,
         );
         if (compat >= relaxedGenreCompatibility) {
           // Swap into shortlist slot `replaceSlot`
@@ -1229,7 +1295,11 @@ export function buildSmartShuffleOrder(
           poolLibIndices[replaceSlot] = poolLibIndices[s];
           poolLibIndices[s] = tmpL;
 
-          const breakdown = evaluateCandidateBreakdown(index, libIdx, sessionCtx);
+          const breakdown = evaluateCandidateBreakdown(
+            index,
+            libIdx,
+            sessionCtx,
+          );
           shortlistCompat[replaceSlot] = breakdown.genreCompatibility;
           shortlistUnknown[replaceSlot] = 0;
           shortlistScores[replaceSlot] = breakdown.total;
@@ -1260,10 +1330,16 @@ export function buildSmartShuffleOrder(
         admitted = true;
       }
 
-      shortlistWeights[k] = admitted ? Math.pow(Math.max(0.01, shortlistScores[k]), gamma) : 0;
+      shortlistWeights[k] = admitted
+        ? Math.pow(Math.max(0.01, shortlistScores[k]), gamma)
+        : 0;
     }
 
-    const chosenShortlistIdx = sampleWeightedShortlist(shortlistWeights, kCount, rng);
+    const chosenShortlistIdx = sampleWeightedShortlist(
+      shortlistWeights,
+      kCount,
+      rng,
+    );
     const chosenPoolPos = shortlistPoolPositions[chosenShortlistIdx];
     const chosenQueueIndex = poolQueueIndices[chosenPoolPos];
     const chosenLibIdx = poolLibIndices[chosenPoolPos];
@@ -1293,7 +1369,6 @@ export function buildSmartShuffleOrder(
         stepProjection,
         saturatedMask,
         freshMask,
-        dominantMask
       );
     }
 
@@ -1316,19 +1391,19 @@ export function buildSmartShuffleOrder(
           index.genreVectors,
           libIdx * NUM_GENRE_CLUSTERS,
           isUnk,
-          dominantMask,
-          sessionCtx.sessionIsFocused
+          sessionCtx.sessionIsFocused,
+          sessionCtx.sessionGenreVector,
         );
       }
       const staticPref =
         libIdx >= 0
           ? clamp(
               (0.65 * index.basePreference[libIdx] +
-                0.20 * index.effectivePopularity[libIdx] +
+                0.2 * index.effectivePopularity[libIdx] +
                 0.15 * 0.5) *
                 index.playCooldown[libIdx],
               0.05,
-              1.0
+              1.0,
             )
           : 0.4;
 
@@ -1336,7 +1411,7 @@ export function buildSmartShuffleOrder(
         const noisyScore = staticPref * 0.75 + rng() * 0.25;
         if (noisyScore >= 0.62) strata0.push(i);
         else if (noisyScore >= 0.46) strata1.push(i);
-        else if (noisyScore >= 0.30) strata2.push(i);
+        else if (noisyScore >= 0.3) strata2.push(i);
         else strata3.push(i);
       } else if (!isUnk && compat >= minGenreCompatibility) {
         strata0.push(i);
@@ -1376,7 +1451,10 @@ export function buildSmartShuffleOrder(
         ? (() => {
             const lastQ = orderedContext[orderedContext.length - 1];
             const tid = slots[lastQ].trackId;
-            const lIdx = tid !== null && tid !== undefined ? index.idToIndex.get(tid) : undefined;
+            const lIdx =
+              tid !== null && tid !== undefined
+                ? index.idToIndex.get(tid)
+                : undefined;
             return lIdx !== undefined ? index.artistIds[lIdx] : -1;
           })()
         : -1;
@@ -1384,7 +1462,11 @@ export function buildSmartShuffleOrder(
     for (let i = 0; i < remaining; i++) {
       let poolPos = tailIndices[i];
       let libIdx = poolLibIndices[poolPos];
-      if (libIdx >= 0 && index.artistIds[libIdx] === prevArtistId && i + 1 < remaining) {
+      if (
+        libIdx >= 0 &&
+        index.artistIds[libIdx] === prevArtistId &&
+        i + 1 < remaining
+      ) {
         for (let look = i + 1; look < Math.min(remaining, i + 7); look++) {
           const altPoolPos = tailIndices[look];
           const altLibIdx = poolLibIndices[altPoolPos];
@@ -1432,7 +1514,7 @@ export function diagnoseCandidateRelevance(
     minGenreCompatibility?: number;
     relaxedGenreCompatibility?: number;
     now?: number;
-  } = {}
+  } = {},
 ): CandidateDiagnosticEntry {
   const now = options.now ?? Date.now();
   const minGenreCompatibility =
@@ -1455,12 +1537,14 @@ export function diagnoseCandidateRelevance(
     index.genreVectors,
     0,
     index.unknownGenreFlags[0] === 1,
-    1.0
+    1.0,
   );
 
   const lastArtistStep = new Map<number, number>([[index.artistIds[0], 0]]);
   const lastAlbumStep = new Map<number, number>([[index.albumIds[0], 0]]);
-  const lastRecordingStep = new Map<number, number>([[index.recordingIds[0], 0]]);
+  const lastRecordingStep = new Map<number, number>([
+    [index.recordingIds[0], 0],
+  ]);
 
   const breakdown = evaluateCandidateBreakdown(index, 1, {
     step: 1,
@@ -1476,7 +1560,7 @@ export function diagnoseCandidateRelevance(
     currentDaypart: daypartForTimestamp(now),
     weights: {
       genreCompatibility: 0.44,
-      userPreference: 0.30,
+      userPreference: 0.3,
       diversity: 0.15,
       popularity: 0.07,
       timeOfDay: 0.04,
@@ -1485,7 +1569,10 @@ export function diagnoseCandidateRelevance(
   });
 
   const seedClusters = summarizeGenreVector(index.genreVectors, 0);
-  const candClusters = summarizeGenreVector(index.genreVectors, NUM_GENRE_CLUSTERS);
+  const candClusters = summarizeGenreVector(
+    index.genreVectors,
+    NUM_GENRE_CLUSTERS,
+  );
   const candIsUnknown = index.unknownGenreFlags[1] === 1;
 
   let passedGate = false;
@@ -1501,12 +1588,18 @@ export function diagnoseCandidateRelevance(
     passedGate = true;
     decision = "eligible";
     reason = "selected-seed-genre-unknown";
-  } else if (!candIsUnknown && breakdown.genreCompatibility >= minGenreCompatibility) {
+  } else if (
+    !candIsUnknown &&
+    breakdown.genreCompatibility >= minGenreCompatibility
+  ) {
     passedGate = true;
     activeThreshold = minGenreCompatibility;
     decision = "eligible";
     reason = "selected-primary-gate";
-  } else if (!candIsUnknown && breakdown.genreCompatibility >= relaxedGenreCompatibility) {
+  } else if (
+    !candIsUnknown &&
+    breakdown.genreCompatibility >= relaxedGenreCompatibility
+  ) {
     passedGate = true;
     activeThreshold = relaxedGenreCompatibility;
     decision = "eligible";
@@ -1523,9 +1616,14 @@ export function diagnoseCandidateRelevance(
     reason = "rejected-below-genre-threshold";
   }
 
-  const rawPop = index.rawPopularity[1] >= 0 ? Number(index.rawPopularity[1].toFixed(3)) : null;
+  const rawPop =
+    index.rawPopularity[1] >= 0
+      ? Number(index.rawPopularity[1].toFixed(3))
+      : null;
   const popConf =
-    index.popularityConfidence[1] >= 0 ? Number(index.popularityConfidence[1].toFixed(3)) : null;
+    index.popularityConfidence[1] >= 0
+      ? Number(index.popularityConfidence[1].toFixed(3))
+      : null;
 
   const explanation = passedGate
     ? `Compatible (${reason}): genreCompatibility=${breakdown.genreCompatibility.toFixed(3)} >= threshold=${activeThreshold.toFixed(3)} [seed=(${formatClusterSummary(seedClusters)}) -> candidate=(${formatClusterSummary(candClusters)})], finalScore=${breakdown.total.toFixed(3)}`
@@ -1565,25 +1663,29 @@ export function diagnoseCandidateRelevance(
 function runAutoPlaySelection(
   tracks: readonly SmartShuffleTrack[],
   options: SelectAutoPlayOptions,
-  collectFullDiagnostics: boolean
+  collectFullDiagnostics: boolean,
 ): SelectAutoPlayResult {
   const count = Math.max(1, options.count ?? 5);
   const now = options.now ?? Date.now();
   const minGenreCompatibility = clamp(
     options.minGenreCompatibility ?? DEFAULT_MIN_GENRE_COMPATIBILITY,
     0.2,
-    0.95
+    0.95,
   );
   const relaxedGenreCompatibility = clamp(
     options.relaxedGenreCompatibility ?? DEFAULT_RELAXED_GENRE_COMPATIBILITY,
     0.15,
-    minGenreCompatibility
+    minGenreCompatibility,
   );
   const maxDiagnosticEntries = Math.max(5, options.maxDiagnosticEntries ?? 20);
-  const wantDiagnostics = collectFullDiagnostics || Boolean(options.onDiagnostics);
+  const wantDiagnostics =
+    collectFullDiagnostics || Boolean(options.onDiagnostics);
 
   let playableTracks = tracks;
-  if (!options.libraryIndex || options.libraryIndex.trackCount !== tracks.length) {
+  if (
+    !options.libraryIndex ||
+    options.libraryIndex.trackCount !== tracks.length
+  ) {
     let hasUnplayable = false;
     for (let i = 0; i < tracks.length; i++) {
       if (tracks[i].playable === false) {
@@ -1592,7 +1694,7 @@ function runAutoPlaySelection(
       }
     }
     if (hasUnplayable) {
-      playableTracks = tracks.filter(t => t.playable !== false);
+      playableTracks = tracks.filter((t) => t.playable !== false);
     }
   }
 
@@ -1600,7 +1702,13 @@ function runAutoPlaySelection(
     const emptyReport: RecommendationDiagnosticsReport = {
       mode: "autoplay",
       timestampMs: now,
-      currentTrack: { id: null, title: "", artist: "", genre: "", clusters: [] },
+      currentTrack: {
+        id: null,
+        title: "",
+        artist: "",
+        genre: "",
+        clusters: [],
+      },
       primaryThreshold: minGenreCompatibility,
       relaxedThreshold: relaxedGenreCompatibility,
       activeThresholdUsed: minGenreCompatibility,
@@ -1623,7 +1731,7 @@ function runAutoPlaySelection(
   const weights: SmartShuffleWeights = {
     ...DEFAULT_SMART_SHUFFLE_WEIGHTS,
     genreCompatibility: 0.44,
-    userPreference: 0.30,
+    userPreference: 0.3,
     diversity: 0.15,
     popularity: 0.07,
     timeOfDay: 0.04,
@@ -1631,7 +1739,8 @@ function runAutoPlaySelection(
   };
 
   const index =
-    options.libraryIndex && options.libraryIndex.trackCount === playableTracks.length
+    options.libraryIndex &&
+    options.libraryIndex.trackCount === playableTracks.length
       ? options.libraryIndex
       : buildLibraryShuffleIndex(playableTracks, {
           now,
@@ -1684,7 +1793,7 @@ function runAutoPlaySelection(
     recentLibIndices,
     sessionGenreVector,
     exposureStreaks,
-    relaxedGenreCompatibility
+    relaxedGenreCompatibility,
   );
 
   const lastSeedId =
@@ -1693,7 +1802,8 @@ function runAutoPlaySelection(
       : options.recentPlayedTrackIds && options.recentPlayedTrackIds.length > 0
         ? options.recentPlayedTrackIds[options.recentPlayedTrackIds.length - 1]
         : null;
-  const lastSeedLibIdx = lastSeedId !== null ? (index.idToIndex.get(lastSeedId) ?? -1) : -1;
+  const lastSeedLibIdx =
+    lastSeedId !== null ? (index.idToIndex.get(lastSeedId) ?? -1) : -1;
   const currentTrackMeta = wantDiagnostics
     ? lastSeedLibIdx >= 0
       ? {
@@ -1703,7 +1813,7 @@ function runAutoPlaySelection(
           genre: playableTracks[lastSeedLibIdx].genre,
           clusters: summarizeGenreVector(
             index.genreVectors,
-            lastSeedLibIdx * NUM_GENRE_CLUSTERS
+            lastSeedLibIdx * NUM_GENRE_CLUSTERS,
           ),
         }
       : {
@@ -1725,7 +1835,6 @@ function runAutoPlaySelection(
 
   const stepProjection = new Float32Array(NUM_GENRE_CLUSTERS);
   const saturatedMask = new Uint8Array(NUM_GENRE_CLUSTERS);
-  const dominantMask = new Uint8Array(NUM_GENRE_CLUSTERS);
   const freshMask = new Uint8Array(NUM_GENRE_CLUSTERS);
   const currentDaypart = daypartForTimestamp(now);
 
@@ -1737,7 +1846,6 @@ function runAutoPlaySelection(
       stepProjection,
       saturatedMask,
       freshMask,
-      dominantMask
     );
   }
 
@@ -1758,7 +1866,6 @@ function runAutoPlaySelection(
     stepProjection,
     saturatedMask,
     freshMask,
-    dominantMask,
     sessionIsFocused,
   };
 
@@ -1769,16 +1876,18 @@ function runAutoPlaySelection(
     passedGate: boolean,
     finalScore: number,
     decision: "selected" | "eligible" | "rejected",
-    reason: CandidateDecisionReason
+    reason: CandidateDecisionReason,
   ): CandidateDiagnosticEntry => {
     const t = playableTracks[libIdx];
     const candClusters = summarizeGenreVector(
       index.genreVectors,
-      libIdx * NUM_GENRE_CLUSTERS
+      libIdx * NUM_GENRE_CLUSTERS,
     );
     const isUnk = index.unknownGenreFlags[libIdx] === 1;
     const rawPop =
-      index.rawPopularity[libIdx] >= 0 ? Number(index.rawPopularity[libIdx].toFixed(3)) : null;
+      index.rawPopularity[libIdx] >= 0
+        ? Number(index.rawPopularity[libIdx].toFixed(3))
+        : null;
     const popConf =
       index.popularityConfidence[libIdx] >= 0
         ? Number(index.popularityConfidence[libIdx].toFixed(3))
@@ -1823,7 +1932,11 @@ function runAutoPlaySelection(
   let incompleteCount = 0;
   let totalCandidatesEvaluated = 0;
   let rejectedIncompatibleCount = 0;
-  const rejectedSample: { libIdx: number; compat: number; prominence: number }[] = [];
+  const rejectedSample: {
+    libIdx: number;
+    compat: number;
+    prominence: number;
+  }[] = [];
 
   const classifyCandidate = (libIdx: number) => {
     totalCandidatesEvaluated += 1;
@@ -1836,8 +1949,8 @@ function runAutoPlaySelection(
       index.genreVectors,
       libIdx * NUM_GENRE_CLUSTERS,
       isUnk,
-      dominantMask,
-      sessionIsFocused
+      sessionIsFocused,
+      sessionGenreVector,
     );
 
     if (!sessionHasGenre) {
@@ -1852,13 +1965,16 @@ function runAutoPlaySelection(
       rejectedIncompatibleCount += 1;
       if (wantDiagnostics) {
         const prominence =
-          0.6 * index.effectivePopularity[libIdx] + 0.4 * index.basePreference[libIdx];
+          0.6 * index.effectivePopularity[libIdx] +
+          0.4 * index.basePreference[libIdx];
         if (rejectedSample.length < maxDiagnosticEntries) {
           rejectedSample.push({ libIdx, compat, prominence });
         } else {
           let minIdx = 0;
           for (let r = 1; r < rejectedSample.length; r++) {
-            if (rejectedSample[r].prominence < rejectedSample[minIdx].prominence) {
+            if (
+              rejectedSample[r].prominence < rejectedSample[minIdx].prominence
+            ) {
               minIdx = r;
             }
           }
@@ -1872,7 +1988,11 @@ function runAutoPlaySelection(
 
   for (let i = 0; i < nTracks; i++) {
     const tid = index.trackIds[i];
-    if (excludeTrackIds.has(tid) || excludedRecordingIds.has(index.recordingIds[i])) continue;
+    if (
+      excludeTrackIds.has(tid) ||
+      excludedRecordingIds.has(index.recordingIds[i])
+    )
+      continue;
     classifyCandidate(i);
   }
 
@@ -1891,7 +2011,7 @@ function runAutoPlaySelection(
   let rejectedDiagnostics: CandidateDiagnosticEntry[] = [];
   if (wantDiagnostics && rejectedSample.length > 0) {
     rejectedSample.sort((a, b) => b.prominence - a.prominence);
-    rejectedDiagnostics = rejectedSample.map(item => {
+    rejectedDiagnostics = rejectedSample.map((item) => {
       const breakdown = evaluateCandidateBreakdown(index, item.libIdx, {
         ...sessionCtx,
         relevanceThreshold: relaxedGenreCompatibility,
@@ -1903,7 +2023,7 @@ function runAutoPlaySelection(
         false,
         breakdown.total,
         "rejected",
-        "rejected-below-genre-threshold"
+        "rejected-below-genre-threshold",
       );
     });
   }
@@ -1957,14 +2077,17 @@ function runAutoPlaySelection(
         index.genreVectors,
         i * NUM_GENRE_CLUSTERS,
         isUnk,
-        dominantMask,
-        sessionIsFocused
+        sessionIsFocused,
+        sessionGenreVector,
       );
       if (!isUnk && compat >= relaxedGenreCompatibility) {
         pool[remaining++] = i;
-        relaxationStage = compat >= minGenreCompatibility ? "primary" : "relaxed";
+        relaxationStage =
+          compat >= minGenreCompatibility ? "primary" : "relaxed";
         activeThresholdUsed =
-          compat >= minGenreCompatibility ? minGenreCompatibility : relaxedGenreCompatibility;
+          compat >= minGenreCompatibility
+            ? minGenreCompatibility
+            : relaxedGenreCompatibility;
       } else if (isUnk) {
         pool[remaining++] = i;
         relaxationStage = "incomplete-metadata";
@@ -2019,7 +2142,6 @@ function runAutoPlaySelection(
         stepProjection,
         saturatedMask,
         freshMask,
-        dominantMask
       );
     }
 
@@ -2041,7 +2163,10 @@ function runAutoPlaySelection(
       const libIdx = pool[shortlistPositions[k]];
       const breakdown = evaluateCandidateBreakdown(index, libIdx, sessionCtx);
       if (shortlistBreakdowns) shortlistBreakdowns[k] = breakdown;
-      if (breakdown.passedRelevanceGate || index.unknownGenreFlags[libIdx] === 1) {
+      if (
+        breakdown.passedRelevanceGate ||
+        index.unknownGenreFlags[libIdx] === 1
+      ) {
         anyPassedCurrentStep = true;
         shortlistWeights[k] = Math.pow(Math.max(0.03, breakdown.total), gamma);
       } else {
@@ -2053,7 +2178,11 @@ function runAutoPlaySelection(
       break;
     }
 
-    const chosenShortlist = sampleWeightedShortlist(shortlistWeights, kCount, rng);
+    const chosenShortlist = sampleWeightedShortlist(
+      shortlistWeights,
+      kCount,
+      rng,
+    );
     const chosenPoolPos = shortlistPositions[chosenShortlist];
     const chosenLibIdx = pool[chosenPoolPos];
     const chosenIsUnknown = index.unknownGenreFlags[chosenLibIdx] === 1;
@@ -2078,8 +2207,8 @@ function runAutoPlaySelection(
           true,
           chosenBreakdown.total,
           "selected",
-          selReason
-        )
+          selReason,
+        ),
       );
     }
 
@@ -2094,7 +2223,7 @@ function runAutoPlaySelection(
       sessionHasGenre,
       index.genreVectors,
       chosenLibIdx * NUM_GENRE_CLUSTERS,
-      chosenIsUnknown
+      chosenIsUnknown,
     );
     lastArtistStep.set(index.artistIds[chosenLibIdx], step);
     lastAlbumStep.set(index.albumIds[chosenLibIdx], step);
@@ -2135,7 +2264,7 @@ function runAutoPlaySelection(
  */
 export function selectAutoPlayTracksWithDiagnostics(
   tracks: readonly SmartShuffleTrack[],
-  options: SelectAutoPlayOptions = {}
+  options: SelectAutoPlayOptions = {},
 ): SelectAutoPlayResult {
   return runAutoPlaySelection(tracks, options, true);
 }
@@ -2146,7 +2275,7 @@ export function selectAutoPlayTracksWithDiagnostics(
  */
 export function selectAutoPlayTracks(
   tracks: readonly SmartShuffleTrack[],
-  options: SelectAutoPlayOptions = {}
+  options: SelectAutoPlayOptions = {},
 ): number[] {
   return runAutoPlaySelection(tracks, options, false).trackIds;
 }

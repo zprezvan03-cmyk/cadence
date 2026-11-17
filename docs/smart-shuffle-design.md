@@ -47,7 +47,7 @@ When `track.genre` is empty or unparsable:
 4. **Folder/path keyword inference**: Inspects parent directory names for known genre tokens.
 5. **Neutral unknown vector**: Flagged as `isUnknown = true`, receiving a neutral compatibility score ($0.46$)—positioned below the primary relevance gate ($0.52$) and above the relaxed relevance gate ($0.44$) so incomplete-metadata tracks are preferred over confidently incompatible tracks ($< 0.44$).
 
-### 1.4 Bilinear Compatibility, Disjoint Cluster Damping & Bounded Exposure Damping
+### 1.4 Bilinear Compatibility, Shared-Mass Relevance & Bounded Exposure Damping
 Let $\mathbf{s} \in [0, 1]^M$ be the session's active genre context vector (anchored to the current seed track so a manual genre switch immediately pivots the context) and $\mathbf{e} \in \mathbb{R}_{\ge 0}^M$ be the continuous cluster exposure streak vector:
 - After playing a track with distribution $\mathbf{g}$, for each cluster $c$:
   $$e_c \leftarrow \begin{cases} e_c + g_c & \text{if } g_c \ge 0.20 \\ \max(0, e_c - 0.50) & \text{if } g_c < 0.20 \end{cases}$$
@@ -55,16 +55,17 @@ Let $\mathbf{s} \in [0, 1]^M$ be the session's active genre context vector (anch
   $$\tilde{A}(c_1, c_2) = A(c_1, c_2) \times \begin{cases} \max(0.68,\; 1.0 - 0.06 \cdot \max(0, e_{c_2} - 2.5)) & \text{if } c_1 = c_2 \\ 1.0 & \text{if } c_1 \ne c_2 \end{cases}$$
 - Compatibility is evaluated via the bilinear form:
   $$G_{\text{compat}}(i, \mathcal{S}) = \sum_{c_1=0}^{M-1} \sum_{c_2=0}^{M-1} s_{c_1} \cdot \tilde{A}(c_1, c_2) \cdot g_{i, c_2}$$
-- **Dominant-Cluster Agreement Damping**: When the session is focused ($\max_c s_c \ge 0.45$), the raw bilinear sum is scaled by how much of the candidate's mass actually sits in the session's dominant clusters ($s_c \ge 0.25$):
-  $$d = \sum_{c:\,s_c \ge 0.25} g_{i,c} \qquad
-    G_{\text{compat}} = G_{\text{bilinear}} \cdot \Big(0.45 + 0.55 \cdot \min\big(1, \tfrac{d}{0.10}\big)\Big)$$
-  A candidate that shares nothing with the session's dominant clusters keeps only $0.45\times$ its affinity-matrix score; one that carries at least $10\%$ of its mass in them is undamped. The floor used to be an all-or-nothing $0.72$ for "no overlap at all", which was too generous: the `pop` $\leftrightarrow$ `electronic` affinity is $0.78$, so a pure-Electronic candidate scored $0.78 \cdot 0.72 = 0.5616$ against a pure-Pop session and cleared the $0.52$ primary gate, and Phonk (`hip-hop` $0.7$ + `electronic` $0.3$) reached $0.4306$ — a hair under the relaxed gate — on its electronic share alone. At $0.45$ those become $0.351$ and $0.269$ (both rejected), while a J-Pop track keeps a real $0.12$ `pop` share and therefore stays a legitimate relaxed neighbour.
+- **Shared-Mass Relevance (one rule for every cluster)**: when the session is focused ($\max_c s_c \ge \phi$, $\phi = 0.45$), the bilinear sum is scaled by the *symmetric* shared mass of the two distributions:
+  $$d(\mathbf{s}, \mathbf{g}_i) = \sum_{c=0}^{M-1} \min(s_c, g_{i,c}) \qquad
+    G_{\text{compat}} = G_{\text{bilinear}} \cdot \big(\phi + (1-\phi)\, d\big)$$
+  There is no threshold, no ramp and no per-cluster branch: $d$ is the histogram intersection of the two vectors, so $d = 0$ for distributions with disjoint support and $d = 1$ for identical ones. $\phi = 0.45$ is *derived* from the taxonomy, not tuned: with a maximum off-diagonal affinity of $0.84$ (`hip-hop` $\leftrightarrow$ `r&b-soul`), any $\phi \le 0.523$ keeps every zero-overlap pair below the $0.44$ relaxed gate, and $0.45 \cdot 0.84 = 0.378$ leaves a deliberate margin. For a pure-Pop session this yields $0.780 \cdot 0.45 = 0.351$ for pure Electronic, $0.269$ for Phonk, and $0.234$ for a pure `J-Pop` tag — all rejected, all by the same formula.
+  The earlier "dominant-cluster overlap" damping ($0.45 + 0.55 \cdot \min(1, d/0.10)$, $d = \sum_{c: s_c \ge 0.25} g_{i,c}$) was replaced because it was an implicit step function whose $0.10$ knee happened to sit just under one library's J-Pop share ($0.12$): every candidate with more than $10\%$ mass in a dominant cluster was scored as if it were fully aligned, and the asymmetry ($s_c \ge 0.25$ on one side only) made the score depend on argument order.
 - **Bridge Track Bonus**: When a dominant cluster $c_1$ is saturated ($e_{c_1} > 2.5$), candidates that blend $c_1$ with a fresh cluster $c_2$ ($g_{i,c_1} \ge 0.25 \land g_{i,c_2} \ge 0.20$) receive a $+0.14$ bridge bonus to encourage smooth genre pivots.
 
 ### 1.5 Genre Relevance Gating & Gradual Fallback (`src/shared/smartShuffle.ts`)
 Candidates are gated on multi-cluster genre compatibility **before** weighted random selection:
 1. **Stage 1 — Primary Gate (`minGenreCompatibility = 0.52`)**: Admits same-genre and compatible neighboring genres (e.g., J-Pop idol $\to$ J-Pop idol, Anime/Anisong, J-Rock, City Pop, Vocaloid).
-2. **Stage 2 — Relaxed Gate (`relaxedGenreCompatibility = 0.44`)**: Used when the primary pool is too small; admits broader compatible neighbors while still rejecting unrelated genres (e.g., J-Pop $\to$ Western Pop & R&B at $0.31$, J-Pop $\to$ Phonk at $0.19$).
+2. **Stage 2 — Relaxed Gate (`relaxedGenreCompatibility = 0.44`)**: Used when the primary pool is too small; admits broader compatible neighbors while still rejecting unrelated genres (e.g., J-Pop/idol $\to$ Pop at $0.242$, J-Pop/idol $\to$ Phonk at $0.19$).
 3. **Stage 3 — Incomplete-Metadata Fallback (`0.46`)**: Used only when no tagged compatible tracks remain; prefers tracks with missing/unknown genre metadata over confidently incompatible tracks.
 4. **No Unrestricted Random Fallback**: If zero candidates pass Stages 1–3, `selectAutoPlayTracks` returns `[]` and `selectAutoPlayTracksWithDiagnostics` reports `relaxationStage = "no-compatible-candidates"` with an explicit `noCompatibleCandidatesReason` rather than injecting an unrelated track.
 5. **Popularity as a Secondary Signal Only**: Popularity weight ($0.07$–$0.08$) and non-genre terms are modulated by genre compatibility and gated by `passedRelevanceGate`, ensuring an extremely popular incompatible track can never outscore a less-popular compatible track.

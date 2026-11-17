@@ -4,10 +4,13 @@ import {
   CLUSTER_INDEX,
   clusterAffinity,
   computeGenreCompatibilityFast,
+  DISJOINT_CLUSTER_FLOOR,
+  GENRE_CLUSTERS,
   NEUTRAL_UNKNOWN_GENRE_COMPATIBILITY,
   NUM_GENRE_CLUSTERS,
   normalizeGenreToken,
   parseGenreProfile,
+  sharedGenreMass,
   tokenizeGenreString,
   updateGenreSessionState,
 } from "../../src/shared/genreCluster";
@@ -15,6 +18,62 @@ import {
   DEFAULT_MIN_GENRE_COMPATIBILITY,
   DEFAULT_RELAXED_GENRE_COMPATIBILITY,
 } from "../../src/shared/smartShuffle";
+
+const ZERO_STREAKS = () => new Float32Array(NUM_GENRE_CLUSTERS);
+
+/**
+ * Reference implementation of the documented relevance model. With no exposure history there is no
+ * streak damping and no bridge bonus, so the score is exactly
+ *   bilinear(seed, candidate) * (focused ? 0.45 + 0.55 * sharedMass : 1), clamped to [0.05, 1].
+ */
+function referenceCompatibility(
+  seed: Float32Array,
+  candidate: Float32Array,
+): number {
+  let bilinear = 0;
+  let maxSeed = 0;
+  for (let i = 0; i < NUM_GENRE_CLUSTERS; i++) {
+    const si = seed[i];
+    if (si > maxSeed) maxSeed = si;
+    if (si <= 1e-4) continue;
+    for (let j = 0; j < NUM_GENRE_CLUSTERS; j++) {
+      const gj = candidate[j];
+      if (gj <= 1e-4) continue;
+      bilinear +=
+        si * clusterAffinity(GENRE_CLUSTERS[i], GENRE_CLUSTERS[j]) * gj;
+    }
+  }
+  const shared = sharedGenreMass(seed, 0, candidate, 0);
+  const factor =
+    maxSeed >= DISJOINT_CLUSTER_FLOOR
+      ? DISJOINT_CLUSTER_FLOOR + (1 - DISJOINT_CLUSTER_FLOOR) * shared
+      : 1;
+  return Math.min(1, Math.max(0.05, bilinear * factor));
+}
+
+/** Deterministic LCG so the property sweeps are reproducible. */
+function makeRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+}
+
+function randomVector(
+  random: () => number,
+  clustersInPlay: number,
+): Float32Array {
+  const vector = new Float32Array(NUM_GENRE_CLUSTERS);
+  let sum = 0;
+  for (let i = 0; i < clustersInPlay; i++) {
+    const value = 0.1 + random();
+    vector[i] = value;
+    sum += value;
+  }
+  for (let i = 0; i < NUM_GENRE_CLUSTERS; i++) vector[i] /= sum;
+  return vector;
+}
 
 describe("genreCluster — tokenization and normalization", () => {
   it("normalizes punctuation, casing, and ID3v1 numeric genre codes", () => {
@@ -26,12 +85,9 @@ describe("genreCluster — tokenization and normalization", () => {
   });
 
   it("splits multi-genre strings across commas, slashes, semicolons, and pipes while preserving R&B and Drum & Bass", () => {
-    expect(tokenizeGenreString("Alternative Rock, Shoegaze / Dream Pop; Electronic")).toEqual([
-      "alternative rock",
-      "shoegaze",
-      "dream pop",
-      "electronic",
-    ]);
+    expect(
+      tokenizeGenreString("Alternative Rock, Shoegaze / Dream Pop; Electronic"),
+    ).toEqual(["alternative rock", "shoegaze", "dream pop", "electronic"]);
     expect(tokenizeGenreString("R&B / Soul, Drum & Bass")).toEqual([
       "r&b",
       "soul",
@@ -52,7 +108,9 @@ describe("genreCluster — multi-cluster distributions", () => {
     const dreamPop = parseGenreProfile("Dream Pop");
     expect(dreamPop.vector[CLUSTER_INDEX.pop]).toBeGreaterThan(0.5);
     expect(dreamPop.vector[CLUSTER_INDEX.rock]).toBeGreaterThan(0.2);
-    expect(dreamPop.vector[CLUSTER_INDEX["ambient-chill"]]).toBeGreaterThan(0.15);
+    expect(dreamPop.vector[CLUSTER_INDEX["ambient-chill"]]).toBeGreaterThan(
+      0.15,
+    );
     expect(dreamPop.dominantClusters).toContain("pop");
     expect(dreamPop.dominantClusters).toContain("rock");
     expect(dreamPop.dominantClusters).toContain("ambient-chill");
@@ -72,7 +130,7 @@ describe("genreCluster — multi-cluster distributions", () => {
     const empty = parseGenreProfile("");
     expect(empty.isUnknown).toBe(true);
     expect(empty.dominantClusters).toEqual([]);
-    expect(empty.vector.every(v => v === 0)).toBe(true);
+    expect(empty.vector.every((v) => v === 0)).toBe(true);
   });
 });
 
@@ -124,13 +182,19 @@ describe("genreCluster — fallback inference across library", () => {
     const { vectors, unknownFlags } = buildLibraryGenreVectors(tracks);
     expect(unknownFlags[0]).toBe(0);
     expect(unknownFlags[1]).toBe(0); // Album fallback
-    expect(vectors[1 * NUM_GENRE_CLUSTERS + CLUSTER_INDEX.rock]).toBeGreaterThan(0.6);
+    expect(
+      vectors[1 * NUM_GENRE_CLUSTERS + CLUSTER_INDEX.rock],
+    ).toBeGreaterThan(0.6);
 
     expect(unknownFlags[2]).toBe(0); // Artist fallback
-    expect(vectors[2 * NUM_GENRE_CLUSTERS + CLUSTER_INDEX.rock]).toBeGreaterThan(0.6);
+    expect(
+      vectors[2 * NUM_GENRE_CLUSTERS + CLUSTER_INDEX.rock],
+    ).toBeGreaterThan(0.6);
 
     expect(unknownFlags[3]).toBe(0); // Folder path fallback
-    expect(vectors[3 * NUM_GENRE_CLUSTERS + CLUSTER_INDEX["jazz-blues"]]).toBeCloseTo(1.0, 4);
+    expect(
+      vectors[3 * NUM_GENRE_CLUSTERS + CLUSTER_INDEX["jazz-blues"]],
+    ).toBeCloseTo(1.0, 4);
 
     expect(unknownFlags[4]).toBe(1); // Remains unknown
   });
@@ -139,41 +203,48 @@ describe("genreCluster — fallback inference across library", () => {
 describe("genreCluster — bilinear compatibility, streak damping, and bridge transitions", () => {
   it("scores related genres higher than jarring genre jumps", () => {
     expect(clusterAffinity("pop", "electronic")).toBeGreaterThan(0.75);
-    expect(clusterAffinity("hip-hop", "r&b-soul")).toBeGreaterThan(0.80);
-    expect(clusterAffinity("metal", "ambient-chill")).toBeLessThan(0.30);
+    expect(clusterAffinity("hip-hop", "r&b-soul")).toBeGreaterThan(0.8);
+    expect(clusterAffinity("metal", "ambient-chill")).toBeLessThan(0.3);
   });
 
-  it("damps same-cluster compatibility after consecutive streak plays and rewards bridge tracks", () => {
+  it("damps same-cluster compatibility after consecutive streak plays and keeps bridge tracks relevant", () => {
     const sessionVector = new Float32Array(NUM_GENRE_CLUSTERS);
     const exposureStreaks = new Float32Array(NUM_GENRE_CLUSTERS);
     let hasGenre = false;
 
     const pureRock = parseGenreProfile("Rock").vector;
-    const rockPopBridge = parseGenreProfile("Indie Pop, Alternative Rock").vector;
+    const rockPopBridge = parseGenreProfile(
+      "Indie Pop, Alternative Rock",
+    ).vector;
+    const disjointJump = parseGenreProfile("Electronic").vector;
 
-    // First rock track played
     hasGenre = updateGenreSessionState(
       sessionVector,
       exposureStreaks,
       hasGenre,
       pureRock,
       0,
-      false
+      false,
     );
-
     const freshRockCompat = computeGenreCompatibilityFast(
       sessionVector,
       exposureStreaks,
       hasGenre,
       pureRock,
       0,
-      false
+      false,
     );
     expect(freshRockCompat).toBeCloseTo(1.0, 2);
 
-    // Simulate 5 consecutive pure rock tracks
     for (let i = 0; i < 5; i++) {
-      updateGenreSessionState(sessionVector, exposureStreaks, hasGenre, pureRock, 0, false);
+      updateGenreSessionState(
+        sessionVector,
+        exposureStreaks,
+        hasGenre,
+        pureRock,
+        0,
+        false,
+      );
     }
 
     const saturatedRockCompat = computeGenreCompatibilityFast(
@@ -182,7 +253,7 @@ describe("genreCluster — bilinear compatibility, streak damping, and bridge tr
       hasGenre,
       pureRock,
       0,
-      false
+      false,
     );
     const bridgeCompat = computeGenreCompatibilityFast(
       sessionVector,
@@ -190,12 +261,28 @@ describe("genreCluster — bilinear compatibility, streak damping, and bridge tr
       hasGenre,
       rockPopBridge,
       0,
-      false
+      false,
+    );
+    const jumpCompat = computeGenreCompatibilityFast(
+      sessionVector,
+      exposureStreaks,
+      hasGenre,
+      disjointJump,
+      0,
+      false,
     );
 
     expect(saturatedRockCompat).toBeLessThan(freshRockCompat);
-    // Bridge track blending rock + fresh pop scores competitively or higher than a 7th straight pure rock track
-    expect(bridgeCompat).toBeGreaterThan(saturatedRockCompat);
+
+    // A half-pivot bridge keeps a rock foothold and adds fresh pop mass. The shared-mass
+    // attenuation scales it by 0.45 + 0.55 * d (~0.75 at d ~= 0.55), so a 7th straight rock track
+    // edges it out; the bridge must still clear the primary gate and must stay far ahead of a jump
+    // into a cluster that shares nothing with the session.
+    expect(bridgeCompat).toBeGreaterThanOrEqual(
+      DEFAULT_MIN_GENRE_COMPATIBILITY,
+    );
+    expect(bridgeCompat).toBeGreaterThan(jumpCompat);
+    expect(jumpCompat).toBeLessThan(DEFAULT_RELAXED_GENRE_COMPATIBILITY);
   });
 
   it("assigns neutral compatibility to unknown-genre tracks so they are neither starved nor dominant", () => {
@@ -209,126 +296,188 @@ describe("genreCluster — bilinear compatibility, streak damping, and bridge tr
       true,
       unknownVec,
       0,
-      true
+      true,
     );
     expect(score).toBe(NEUTRAL_UNKNOWN_GENRE_COMPATIBILITY);
   });
 
-  it("separates J-Pop / Idol from unrelated mainstream Western Pop and Phonk while keeping Anime, J-Rock, and City Pop compatible", () => {
-    const jpopIdol = parseGenreProfile("J-Pop, Idol").vector;
-    const jpopPure = parseGenreProfile("J-Pop").vector;
-    const animeSong = parseGenreProfile("Anime, J-Pop").vector;
-    const jrock = parseGenreProfile("J-Rock").vector;
-    const cityPop = parseGenreProfile("City Pop").vector;
-    const westernPop = parseGenreProfile("Pop").vector;
-    const westernPopRnb = parseGenreProfile("Pop, R&B").vector;
-    const phonk = parseGenreProfile("Phonk").vector;
-    const driftPhonk = parseGenreProfile("Drift Phonk").vector;
-    const streaks = new Float32Array(NUM_GENRE_CLUSTERS);
+  it("derives cross-genre relevance from shared cluster mass (label-keyed table, no genre special cases)", () => {
+    const strengths = ZERO_STREAKS();
+    const seed = parseGenreProfile("J-Pop, Idol").vector;
 
-    const compatJpopToJpop = computeGenreCompatibilityFast(
-      jpopIdol,
-      streaks,
-      true,
-      jpopPure,
-      0,
-      false
-    );
-    const compatJpopToAnime = computeGenreCompatibilityFast(
-      jpopIdol,
-      streaks,
-      true,
-      animeSong,
-      0,
-      false
-    );
-    const compatJpopToJrock = computeGenreCompatibilityFast(
-      jpopIdol,
-      streaks,
-      true,
-      jrock,
-      0,
-      false
-    );
-    const compatJpopToCityPop = computeGenreCompatibilityFast(
-      jpopIdol,
-      streaks,
-      true,
-      cityPop,
-      0,
-      false
-    );
-    const compatJpopToWesternPop = computeGenreCompatibilityFast(
-      jpopIdol,
-      streaks,
-      true,
-      westernPop,
-      0,
-      false
-    );
-    const compatJpopToWesternPopRnb = computeGenreCompatibilityFast(
-      jpopIdol,
-      streaks,
-      true,
-      westernPopRnb,
-      0,
-      false
-    );
-    const compatJpopToPhonk = computeGenreCompatibilityFast(
-      jpopIdol,
-      streaks,
-      true,
-      phonk,
-      0,
-      false
-    );
-    const compatJpopToDriftPhonk = computeGenreCompatibilityFast(
-      jpopIdol,
-      streaks,
-      true,
-      driftPhonk,
-      0,
-      false
-    );
+    const table: Array<{ label: string; expect: "primary" | "rejected" }> = [
+      { label: "J-Pop, Idol", expect: "primary" },
+      { label: "Anime, J-Pop", expect: "primary" },
+      { label: "J-Rock", expect: "primary" },
+      { label: "City Pop", expect: "primary" },
+      { label: "Pop", expect: "rejected" },
+      { label: "Pop, R&B", expect: "rejected" },
+      { label: "Phonk", expect: "rejected" },
+      { label: "Drift Phonk", expect: "rejected" },
+      { label: "Electronic", expect: "rejected" },
+    ];
 
-    // J-Pop -> J-Pop & compatible neighbors pass primary gate (>= 0.52)
-    expect(compatJpopToJpop).toBeGreaterThan(0.85);
-    expect(compatJpopToAnime).toBeGreaterThan(0.84);
-    expect(compatJpopToJrock).toBeGreaterThan(0.65);
-    expect(compatJpopToCityPop).toBeGreaterThan(0.55);
+    const measured = table.map((row) => {
+      const candidate = parseGenreProfile(row.label).vector;
+      return {
+        ...row,
+        shared: sharedGenreMass(seed, 0, candidate, 0),
+        score: computeGenreCompatibilityFast(
+          seed,
+          strengths,
+          true,
+          candidate,
+          0,
+          false,
+        ),
+      };
+    });
 
-    // Unrelated mainstream Western Pop & R&B and Phonk fall strictly below relaxed gate (0.44)
-    expect(compatJpopToWesternPop).toBeLessThan(0.40);
-    expect(compatJpopToWesternPopRnb).toBeLessThan(0.35);
-    expect(compatJpopToPhonk).toBeLessThan(0.28);
-    expect(compatJpopToDriftPhonk).toBeLessThan(0.28);
+    for (const row of measured) {
+      if (row.expect === "primary") {
+        expect(row.score, row.label).toBeGreaterThanOrEqual(
+          DEFAULT_MIN_GENRE_COMPATIBILITY,
+        );
+      } else {
+        expect(row.score, row.label).toBeLessThan(
+          DEFAULT_RELAXED_GENRE_COMPATIBILITY,
+        );
+      }
+    }
+
+    // Which rows pass is decided by shared mass, not by genre identity: every "primary" row shares
+    // more mass with the seed than the most generous "rejected" row.
+    const weakestPrimary = Math.min(
+      ...measured
+        .filter((row) => row.expect === "primary")
+        .map((row) => row.shared),
+    );
+    const strongestRejected = Math.max(
+      ...measured
+        .filter((row) => row.expect === "rejected")
+        .map((row) => row.shared),
+    );
+    expect(weakestPrimary).toBeGreaterThan(strongestRejected);
   });
 
-  it("requires dominant-cluster overlap, so Electronic and Phonk never become relevant to a pure Pop session", () => {
-    // Regression: pop<->electronic affinity is 0.78 and the old disjoint damping was an
-    // all-or-nothing 0.72, so a pure-Electronic candidate scored 0.5616 against a pure-Pop seed and
-    // cleared the 0.52 primary gate. Phonk (hip-hop 0.7 + electronic 0.3) reached 0.4306 — a hair
-    // under the relaxed gate — purely through its electronic share.
+  it("attenuates by shared mass alone, whatever clusters supply that mass", () => {
+    const strengths = ZERO_STREAKS();
+    const seed = parseGenreProfile("Pop, Indie Pop").vector;
+    const seedClusters = GENRE_CLUSTERS.filter(
+      (name) => seed[CLUSTER_INDEX[name]] > 1e-4,
+    );
+
+    // Identical shared mass (0.5 in a cluster the seed occupies) supplied through a different
+    // partner cluster each time: the attenuation must not care which clusters are involved.
+    for (const target of seedClusters) {
+      for (const other of GENRE_CLUSTERS) {
+        if (seed[CLUSTER_INDEX[other]] > 1e-4) continue;
+        const candidate = new Float32Array(NUM_GENRE_CLUSTERS);
+        candidate[CLUSTER_INDEX[target]] = 0.5;
+        candidate[CLUSTER_INDEX[other]] = 0.5;
+        const score = computeGenreCompatibilityFast(
+          seed,
+          strengths,
+          true,
+          candidate,
+          0,
+          false,
+        );
+        expect(score, `${target}/${other}`).toBeCloseTo(
+          referenceCompatibility(seed, candidate),
+          9,
+        );
+      }
+    }
+
+    // Randomised sweep: the same rule holds for arbitrary multi-cluster distributions.
+    const random = makeRandom(0x5eed);
+    for (let n = 0; n < 120; n++) {
+      const randomSeed = randomVector(random, 3);
+      const randomCandidate = randomVector(
+        random,
+        2 + Math.floor(random() * 5),
+      );
+      const score = computeGenreCompatibilityFast(
+        randomSeed,
+        strengths,
+        true,
+        randomCandidate,
+        0,
+        false,
+      );
+      expect(score, `random #${n}`).toBeCloseTo(
+        referenceCompatibility(randomSeed, randomCandidate),
+        9,
+      );
+    }
+  });
+
+  it("matches the documented rule for every pure-cluster pair, symmetrically, and rejects zero shared mass", () => {
+    const strengths = ZERO_STREAKS();
+    let disjointPairs = 0;
+
+    for (const seedName of GENRE_CLUSTERS) {
+      const seed = parseGenreProfile(seedName).vector;
+      for (const candidateName of GENRE_CLUSTERS) {
+        const candidate = parseGenreProfile(candidateName).vector;
+        const score = computeGenreCompatibilityFast(
+          seed,
+          strengths,
+          true,
+          candidate,
+          0,
+          false,
+        );
+        expect(score, `${seedName} -> ${candidateName}`).toBeCloseTo(
+          referenceCompatibility(seed, candidate),
+          9,
+        );
+
+        // Symmetry: with no exposure history the model cannot prefer one direction.
+        const reverse = computeGenreCompatibilityFast(
+          candidate,
+          strengths,
+          true,
+          seed,
+          0,
+          false,
+        );
+        expect(
+          Math.abs(score - reverse),
+          `${seedName} <-> ${candidateName}`,
+        ).toBeLessThan(1e-12);
+
+        if (
+          seedName !== candidateName &&
+          sharedGenreMass(seed, 0, candidate, 0) < 1e-6
+        ) {
+          disjointPairs++;
+          expect(score, `${seedName} -> ${candidateName}`).toBeLessThan(
+            DEFAULT_RELAXED_GENRE_COMPATIBILITY,
+          );
+        }
+      }
+    }
+    expect(disjointPairs).toBeGreaterThan(100);
+
+    // The sharpest case (pure Pop seed): the old damping let these through at 0.5616 / 0.4306.
     const pop = parseGenreProfile("Pop").vector;
-    const jpop = parseGenreProfile("J-Pop").vector;
-    const phonk = parseGenreProfile("Phonk").vector;
-    const electronic = parseGenreProfile("Electronic").vector;
-    const streaks = new Float32Array(NUM_GENRE_CLUSTERS);
-
-    const score = (candidate: Float32Array) =>
-      computeGenreCompatibilityFast(pop, streaks, true, candidate, 0, false);
-
-    expect(score(electronic)).toBeCloseTo(0.351, 3); // 0.78 * 0.45 damping floor
-    expect(score(phonk)).toBeCloseTo(0.2691, 3); // 0.598 * 0.45
-    expect(score(electronic)).toBeLessThan(DEFAULT_RELAXED_GENRE_COMPATIBILITY);
-    expect(score(phonk)).toBeLessThan(DEFAULT_RELAXED_GENRE_COMPATIBILITY);
-
-    // A J-Pop track keeps a real 0.12 "pop" share, which is genuine overlap rather than a bridge,
-    // so it stays a legitimate (relaxed) neighbour of a Pop seed.
-    expect(score(jpop)).toBeGreaterThan(DEFAULT_RELAXED_GENRE_COMPATIBILITY);
-    expect(score(jpop)).toBeLessThan(DEFAULT_MIN_GENRE_COMPATIBILITY);
-    // And the identical genre of course stays a primary match.
-    expect(score(pop)).toBeCloseTo(1.0, 2);
+    const scoreOf = (label: string) =>
+      computeGenreCompatibilityFast(
+        pop,
+        strengths,
+        true,
+        parseGenreProfile(label).vector,
+        0,
+        false,
+      );
+    expect(scoreOf("Electronic")).toBeCloseTo(
+      clusterAffinity("pop", "electronic") * DISJOINT_CLUSTER_FLOOR,
+      6,
+    );
+    expect(scoreOf("Phonk")).toBeLessThan(DEFAULT_RELAXED_GENRE_COMPATIBILITY);
+    expect(scoreOf("Pop")).toBeCloseTo(1.0, 6);
   });
 
   it("never damps same-genre streaks below unrelated genres", () => {
@@ -340,7 +489,14 @@ describe("genreCluster — bilinear compatibility, streak damping, and bridge tr
 
     let hasGenre = false;
     for (let i = 0; i < 8; i++) {
-      hasGenre = updateGenreSessionState(sessionVector, exposureStreaks, hasGenre, jpop, 0, false);
+      hasGenre = updateGenreSessionState(
+        sessionVector,
+        exposureStreaks,
+        hasGenre,
+        jpop,
+        0,
+        false,
+      );
     }
 
     const sameGenreAfterLongStreak = computeGenreCompatibilityFast(
@@ -349,7 +505,7 @@ describe("genreCluster — bilinear compatibility, streak damping, and bridge tr
       hasGenre,
       jpop,
       0,
-      false
+      false,
     );
     const unrelatedPopAfterStreak = computeGenreCompatibilityFast(
       sessionVector,
@@ -357,7 +513,7 @@ describe("genreCluster — bilinear compatibility, streak damping, and bridge tr
       hasGenre,
       westernPop,
       0,
-      false
+      false,
     );
     const phonkAfterStreak = computeGenreCompatibilityFast(
       sessionVector,
@@ -365,11 +521,13 @@ describe("genreCluster — bilinear compatibility, streak damping, and bridge tr
       hasGenre,
       phonk,
       0,
-      false
+      false,
     );
 
-    expect(sameGenreAfterLongStreak).toBeGreaterThan(0.60);
-    expect(sameGenreAfterLongStreak).toBeGreaterThan(unrelatedPopAfterStreak + 0.25);
-    expect(sameGenreAfterLongStreak).toBeGreaterThan(phonkAfterStreak + 0.40);
+    expect(sameGenreAfterLongStreak).toBeGreaterThan(0.6);
+    expect(sameGenreAfterLongStreak).toBeGreaterThan(
+      unrelatedPopAfterStreak + 0.25,
+    );
+    expect(sameGenreAfterLongStreak).toBeGreaterThan(phonkAfterStreak + 0.4);
   });
 });

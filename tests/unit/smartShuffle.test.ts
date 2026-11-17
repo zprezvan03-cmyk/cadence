@@ -28,12 +28,15 @@ function makeRng(seed = 42): () => number {
   };
 }
 
-function makeTrack(overrides: Partial<SmartShuffleTrack> & { id: number }): SmartShuffleTrack {
+function makeTrack(
+  overrides: Partial<SmartShuffleTrack> & { id: number },
+): SmartShuffleTrack {
   return {
     id: overrides.id,
     title: overrides.title ?? `Song ${overrides.id}`,
     artist: overrides.artist ?? `Artist ${overrides.id}`,
-    albumArtist: overrides.albumArtist ?? overrides.artist ?? `Artist ${overrides.id}`,
+    albumArtist:
+      overrides.albumArtist ?? overrides.artist ?? `Artist ${overrides.id}`,
     album: overrides.album ?? `Album ${overrides.id}`,
     genre: overrides.genre ?? "Pop",
     duration: overrides.duration ?? 210,
@@ -48,7 +51,7 @@ function makeTrack(overrides: Partial<SmartShuffleTrack> & { id: number }): Smar
 
 function makeIntel(
   track: SmartShuffleTrack,
-  overrides: Partial<TrackIntelligenceRecord> = {}
+  overrides: Partial<TrackIntelligenceRecord> = {},
 ): [string, TrackIntelligenceRecord] {
   const key = smartRecordingKey(track);
   return [
@@ -173,7 +176,7 @@ describe("smartShuffle — personal preference vs global popularity guardrail", 
 describe("smartShuffle — Queue Partition Invariant & manual priority", () => {
   it("always keeps current first, then manual entries in exact order, then context, then autoplay", () => {
     const tracks = Array.from({ length: 10 }, (_, i) =>
-      makeTrack({ id: i + 1, genre: i % 2 === 0 ? "Rock" : "Electronic" })
+      makeTrack({ id: i + 1, genre: i % 2 === 0 ? "Rock" : "Electronic" }),
     );
     const slots: SmartShuffleQueueSlot[] = [
       { queueIndex: 0, trackId: 1, origin: "context" },
@@ -186,7 +189,9 @@ describe("smartShuffle — Queue Partition Invariant & manual priority", () => {
       { queueIndex: 7, trackId: 8, origin: "autoplay" }, // AutoPlay 2
     ];
 
-    const order = buildSmartShuffleOrder(slots, 3, tracks, { rng: makeRng(123) });
+    const order = buildSmartShuffleOrder(slots, 3, tracks, {
+      rng: makeRng(123),
+    });
 
     // 1. Current track is at index 0
     expect(order[0]).toBe(3);
@@ -203,13 +208,48 @@ describe("smartShuffle — Queue Partition Invariant & manual priority", () => {
 describe("smartShuffle — probabilistic diversity & artist separation", () => {
   it("spaces out tracks by the same artist and avoids duplicate recordings back-to-back", () => {
     const tracks: SmartShuffleTrack[] = [
-      makeTrack({ id: 1, artist: "Artist A", title: "Alpha", genre: "Synthpop" }),
-      makeTrack({ id: 2, artist: "Artist A", title: "Alpha", genre: "Synthpop" }), // Duplicate recording of 1
-      makeTrack({ id: 3, artist: "Artist A", title: "Beta", genre: "Synthpop" }),
-      makeTrack({ id: 4, artist: "Artist B", title: "Gamma", genre: "Synthpop" }),
-      makeTrack({ id: 5, artist: "Artist C", title: "Delta", genre: "Electropop" }),
-      makeTrack({ id: 6, artist: "Artist D", title: "Epsilon", genre: "Indie Pop" }),
-      makeTrack({ id: 7, artist: "Artist E", title: "Zeta", genre: "Dream Pop" }),
+      makeTrack({
+        id: 1,
+        artist: "Artist A",
+        title: "Alpha",
+        genre: "Synthpop",
+      }),
+      makeTrack({
+        id: 2,
+        artist: "Artist A",
+        title: "Alpha",
+        genre: "Synthpop",
+      }), // Duplicate recording of 1
+      makeTrack({
+        id: 3,
+        artist: "Artist A",
+        title: "Beta",
+        genre: "Synthpop",
+      }),
+      makeTrack({
+        id: 4,
+        artist: "Artist B",
+        title: "Gamma",
+        genre: "Synthpop",
+      }),
+      makeTrack({
+        id: 5,
+        artist: "Artist C",
+        title: "Delta",
+        genre: "Electropop",
+      }),
+      makeTrack({
+        id: 6,
+        artist: "Artist D",
+        title: "Epsilon",
+        genre: "Indie Pop",
+      }),
+      makeTrack({
+        id: 7,
+        artist: "Artist E",
+        title: "Zeta",
+        genre: "Dream Pop",
+      }),
     ];
 
     const slots: SmartShuffleQueueSlot[] = tracks.map((t, idx) => ({
@@ -222,7 +262,9 @@ describe("smartShuffle — probabilistic diversity & artist separation", () => {
     // Position 1 (immediately after track 1) should very rarely be Artist A or duplicate track 2
     let immediateSameArtistCount = 0;
     for (let trial = 1; trial <= 30; trial++) {
-      const order = buildSmartShuffleOrder(slots, 0, tracks, { rng: makeRng(trial * 97) });
+      const order = buildSmartShuffleOrder(slots, 0, tracks, {
+        rng: makeRng(trial * 97),
+      });
       const secondQueueIdx = order[1];
       const secondTrack = tracks[secondQueueIdx];
       if (secondTrack.artist === "Artist A") {
@@ -233,10 +275,34 @@ describe("smartShuffle — probabilistic diversity & artist separation", () => {
   });
 
   it("still gives less-popular and never-played tracks a chance to be picked via weighted sampling", () => {
-    const popularTrack = makeTrack({ id: 1, title: "Hit", artist: "A", genre: "Rock", favorite: true, playCount: 25 });
-    const mediumTrack = makeTrack({ id: 2, title: "Mid", artist: "B", genre: "Rock", playCount: 5 });
-    const deepCutTrack = makeTrack({ id: 3, title: "Deep Cut", artist: "C", genre: "Rock", playCount: 0 });
-    const seedTrack = makeTrack({ id: 4, title: "Seed", artist: "D", genre: "Rock" });
+    const popularTrack = makeTrack({
+      id: 1,
+      title: "Hit",
+      artist: "A",
+      genre: "Rock",
+      favorite: true,
+      playCount: 25,
+    });
+    const mediumTrack = makeTrack({
+      id: 2,
+      title: "Mid",
+      artist: "B",
+      genre: "Rock",
+      playCount: 5,
+    });
+    const deepCutTrack = makeTrack({
+      id: 3,
+      title: "Deep Cut",
+      artist: "C",
+      genre: "Rock",
+      playCount: 0,
+    });
+    const seedTrack = makeTrack({
+      id: 4,
+      title: "Seed",
+      artist: "D",
+      genre: "Rock",
+    });
 
     const tracks = [seedTrack, popularTrack, mediumTrack, deepCutTrack];
     const slots: SmartShuffleQueueSlot[] = tracks.map((t, i) => ({
@@ -252,9 +318,14 @@ describe("smartShuffle — probabilistic diversity & artist separation", () => {
     ]);
 
     for (let trial = 1; trial <= 200; trial++) {
-      const order = buildSmartShuffleOrder(slots, 0, tracks, { rng: makeRng(trial * 31) });
+      const order = buildSmartShuffleOrder(slots, 0, tracks, {
+        rng: makeRng(trial * 31),
+      });
       const pickedTrackId = tracks[order[1]].id;
-      firstNextCounts.set(pickedTrackId, (firstNextCounts.get(pickedTrackId) ?? 0) + 1);
+      firstNextCounts.set(
+        pickedTrackId,
+        (firstNextCounts.get(pickedTrackId) ?? 0) + 1,
+      );
     }
 
     // Popular favorite is chosen most often, but Deep Cut is still chosen multiple times (> 0)
@@ -267,12 +338,42 @@ describe("smartShuffle — probabilistic diversity & artist separation", () => {
 describe("smartShuffle — selectAutoPlayTracks", () => {
   it("selects tracks matching the seed genre context while excluding already-queued tracks", () => {
     const library: SmartShuffleTrack[] = [
-      makeTrack({ id: 1, title: "Seed Jazz 1", artist: "Miles", genre: "Cool Jazz" }),
-      makeTrack({ id: 2, title: "Seed Jazz 2", artist: "Coltrane", genre: "Bebop, Jazz" }),
-      makeTrack({ id: 3, title: "Candidate Jazz", artist: "Bill Evans", genre: "Jazz, Piano" }),
-      makeTrack({ id: 4, title: "Candidate Soul Jazz", artist: "Grant Green", genre: "Jazz, Soul" }),
-      makeTrack({ id: 5, title: "Candidate Bossa", artist: "Getz", genre: "Bossa Nova, Jazz" }),
-      makeTrack({ id: 6, title: "Harsh Deathcore", artist: "Brutal Band", genre: "Deathcore, Black Metal" }),
+      makeTrack({
+        id: 1,
+        title: "Seed Jazz 1",
+        artist: "Miles",
+        genre: "Cool Jazz",
+      }),
+      makeTrack({
+        id: 2,
+        title: "Seed Jazz 2",
+        artist: "Coltrane",
+        genre: "Bebop, Jazz",
+      }),
+      makeTrack({
+        id: 3,
+        title: "Candidate Jazz",
+        artist: "Bill Evans",
+        genre: "Jazz, Piano",
+      }),
+      makeTrack({
+        id: 4,
+        title: "Candidate Soul Jazz",
+        artist: "Grant Green",
+        genre: "Jazz, Soul",
+      }),
+      makeTrack({
+        id: 5,
+        title: "Candidate Bossa",
+        artist: "Getz",
+        genre: "Bossa Nova, Jazz",
+      }),
+      makeTrack({
+        id: 6,
+        title: "Harsh Deathcore",
+        artist: "Brutal Band",
+        genre: "Deathcore, Black Metal",
+      }),
     ];
 
     const picked = selectAutoPlayTracks(library, {
@@ -286,7 +387,7 @@ describe("smartShuffle — selectAutoPlayTracks", () => {
     expect(picked).not.toContain(1);
     expect(picked).not.toContain(2);
     // Should strongly prefer the jazz/soul/bossa tracks (3, 4, 5) over Deathcore (6)
-    expect(picked.every(id => [3, 4, 5].includes(id))).toBe(true);
+    expect(picked.every((id) => [3, 4, 5].includes(id))).toBe(true);
   });
 });
 
@@ -417,11 +518,20 @@ describe("smartShuffle & AutoPlay — Genre Relevance Gating & Regression Suite"
   });
 
   it("2. J-Pop -> compatible neighboring genres: allows Anime, J-Rock, City Pop, and Vocaloid via the genre affinity model", () => {
-    for (const neighbor of [animeTrack, jrockTrack, cityPopTrack, vocaloidTrack]) {
+    for (const neighbor of [
+      animeTrack,
+      jrockTrack,
+      cityPopTrack,
+      vocaloidTrack,
+    ]) {
       const diag = diagnoseCandidateRelevance(nagorizakura, neighbor);
       expect(diag.passedRelevanceGate).toBe(true);
-      expect(diag.genreCompatibility).toBeGreaterThanOrEqual(DEFAULT_MIN_GENRE_COMPATIBILITY);
-      expect(["selected-primary-gate", "selected-relaxed-gate"]).toContain(diag.reason);
+      expect(diag.genreCompatibility).toBeGreaterThanOrEqual(
+        DEFAULT_MIN_GENRE_COMPATIBILITY,
+      );
+      expect(["selected-primary-gate", "selected-relaxed-gate"]).toContain(
+        diag.reason,
+      );
     }
 
     const library = [
@@ -433,12 +543,15 @@ describe("smartShuffle & AutoPlay — Genre Relevance Gating & Regression Suite"
       justinBieberPop,
       phonkTrack,
     ];
-    const { trackIds, diagnostics } = selectAutoPlayTracksWithDiagnostics(library, {
-      count: 4,
-      seedTrackIds: [nagorizakura.id],
-      excludeTrackIds: new Set([nagorizakura.id]),
-      rng: makeRng(101),
-    });
+    const { trackIds, diagnostics } = selectAutoPlayTracksWithDiagnostics(
+      library,
+      {
+        count: 4,
+        seedTrackIds: [nagorizakura.id],
+        excludeTrackIds: new Set([nagorizakura.id]),
+        rng: makeRng(101),
+      },
+    );
 
     expect(trackIds.sort((a, b) => a - b)).toEqual([
       animeTrack.id,
@@ -449,7 +562,7 @@ describe("smartShuffle & AutoPlay — Genre Relevance Gating & Regression Suite"
     expect(diagnostics.rejectedIncompatibleCount).toBe(2);
   });
 
-  it("3 & 4. J-Pop -> Phonk and J-Pop -> unrelated mainstream Pop (Justin Bieber) are strictly rejected by the relevance gate", () => {
+  it("3 & 4. an idol/J-Pop seed strictly rejects Phonk and unrelated mainstream Pop/R&B", () => {
     const diagPhonk = diagnoseCandidateRelevance(nagorizakura, phonkTrack);
     expect(diagPhonk.passedRelevanceGate).toBe(false);
     expect(diagPhonk.decision).toBe("rejected");
@@ -457,17 +570,27 @@ describe("smartShuffle & AutoPlay — Genre Relevance Gating & Regression Suite"
     expect(diagPhonk.genreCompatibility).toBeLessThan(0.28);
     expect(diagPhonk.explanation).toContain("Rejected");
 
-    const diagBieberRnb = diagnoseCandidateRelevance(nagorizakura, justinBieberPop);
+    const diagBieberRnb = diagnoseCandidateRelevance(
+      nagorizakura,
+      justinBieberPop,
+    );
     expect(diagBieberRnb.passedRelevanceGate).toBe(false);
     expect(diagBieberRnb.decision).toBe("rejected");
     expect(diagBieberRnb.reason).toBe("rejected-below-genre-threshold");
-    expect(diagBieberRnb.genreCompatibility).toBeLessThan(DEFAULT_RELAXED_GENRE_COMPATIBILITY);
+    expect(diagBieberRnb.genreCompatibility).toBeLessThan(
+      DEFAULT_RELAXED_GENRE_COMPATIBILITY,
+    );
 
-    const diagBieberPop = diagnoseCandidateRelevance(nagorizakura, justinBieberMainstreamPop);
+    const diagBieberPop = diagnoseCandidateRelevance(
+      nagorizakura,
+      justinBieberMainstreamPop,
+    );
     expect(diagBieberPop.passedRelevanceGate).toBe(false);
     expect(diagBieberPop.decision).toBe("rejected");
     expect(diagBieberPop.reason).toBe("rejected-below-genre-threshold");
-    expect(diagBieberPop.genreCompatibility).toBeLessThan(DEFAULT_RELAXED_GENRE_COMPATIBILITY);
+    expect(diagBieberPop.genreCompatibility).toBeLessThan(
+      DEFAULT_RELAXED_GENRE_COMPATIBILITY,
+    );
   });
 
   it("5. Popularity-heavy but genre-incompatible candidates NEVER beat a less popular compatible track", () => {
@@ -504,24 +627,41 @@ describe("smartShuffle & AutoPlay — Genre Relevance Gating & Regression Suite"
       }),
     ]);
 
-    const diagCompatibleLowPop = diagnoseCandidateRelevance(nagorizakura, nogizakaIdol, {
-      intelligenceByKey: intelMap,
-    });
-    const diagBieberMaxPop = diagnoseCandidateRelevance(nagorizakura, justinBieberPop, {
-      intelligenceByKey: intelMap,
-    });
-    const diagPhonkMaxPop = diagnoseCandidateRelevance(nagorizakura, phonkTrack, {
-      intelligenceByKey: intelMap,
-    });
+    const diagCompatibleLowPop = diagnoseCandidateRelevance(
+      nagorizakura,
+      nogizakaIdol,
+      {
+        intelligenceByKey: intelMap,
+      },
+    );
+    const diagBieberMaxPop = diagnoseCandidateRelevance(
+      nagorizakura,
+      justinBieberPop,
+      {
+        intelligenceByKey: intelMap,
+      },
+    );
+    const diagPhonkMaxPop = diagnoseCandidateRelevance(
+      nagorizakura,
+      phonkTrack,
+      {
+        intelligenceByKey: intelMap,
+      },
+    );
 
     // Even in raw finalScore, the low-popularity compatible track beats the 1.0-popularity incompatible tracks
     expect(diagCompatibleLowPop.passedRelevanceGate).toBe(true);
     expect(diagBieberMaxPop.passedRelevanceGate).toBe(false);
     expect(diagPhonkMaxPop.passedRelevanceGate).toBe(false);
-    expect(diagCompatibleLowPop.finalScore).toBeGreaterThan(diagBieberMaxPop.finalScore * 4);
-    expect(diagCompatibleLowPop.finalScore).toBeGreaterThan(diagPhonkMaxPop.finalScore * 4);
+    expect(diagCompatibleLowPop.finalScore).toBeGreaterThan(
+      diagBieberMaxPop.finalScore * 4,
+    );
+    expect(diagCompatibleLowPop.finalScore).toBeGreaterThan(
+      diagPhonkMaxPop.finalScore * 4,
+    );
 
-    // Across 100 trials of AutoPlay and Smart Shuffle, Justin Bieber and Phonk are NEVER picked before compatible tracks
+    // Across 100 trials of AutoPlay and Smart Shuffle, the unrelated Pop/R&B and Phonk fixtures are
+    // NEVER picked before compatible tracks
     const library = [
       nagorizakura,
       nogizakaIdol,
@@ -539,7 +679,10 @@ describe("smartShuffle & AutoPlay — Genre Relevance Gating & Regression Suite"
         intelligenceByKey: intelMap,
         rng: makeRng(trial * 37),
       });
-      expect(picked.sort((a, b) => a - b)).toEqual([nogizakaIdol.id, jrockTrack.id]);
+      expect(picked.sort((a, b) => a - b)).toEqual([
+        nogizakaIdol.id,
+        jrockTrack.id,
+      ]);
 
       const slots: SmartShuffleQueueSlot[] = library.map((t, i) => ({
         queueIndex: i,
@@ -550,9 +693,10 @@ describe("smartShuffle & AutoPlay — Genre Relevance Gating & Regression Suite"
         intelligenceByKey: intelMap,
         rng: makeRng(trial * 41),
       });
-      const firstTwoUpcomingIds = [library[order[1]].id, library[order[2]].id].sort(
-        (a, b) => a - b
-      );
+      const firstTwoUpcomingIds = [
+        library[order[1]].id,
+        library[order[2]].id,
+      ].sort((a, b) => a - b);
       expect(firstTwoUpcomingIds).toEqual([nogizakaIdol.id, jrockTrack.id]);
     }
   });
@@ -573,7 +717,7 @@ describe("smartShuffle & AutoPlay — Genre Relevance Gating & Regression Suite"
 
     const intelMap = new Map<string, TrackIntelligenceRecord>([
       makeIntel(popularJpop, { popularity: 0.95, popularityConfidence: 0.95 }),
-      makeIntel(obscureJpop, { popularity: 0.10, popularityConfidence: 0.95 }),
+      makeIntel(obscureJpop, { popularity: 0.1, popularityConfidence: 0.95 }),
     ]);
 
     const diagPop = diagnoseCandidateRelevance(nagorizakura, popularJpop, {
@@ -614,9 +758,15 @@ describe("smartShuffle & AutoPlay — Genre Relevance Gating & Regression Suite"
       genre: "Country, Bluegrass",
     });
 
-    const diagElec = diagnoseCandidateRelevance(multiGenreSeed, electronicNeighbor);
+    const diagElec = diagnoseCandidateRelevance(
+      multiGenreSeed,
+      electronicNeighbor,
+    );
     const diagRock = diagnoseCandidateRelevance(multiGenreSeed, rockNeighbor);
-    const diagCountry = diagnoseCandidateRelevance(multiGenreSeed, countryOutlier);
+    const diagCountry = diagnoseCandidateRelevance(
+      multiGenreSeed,
+      countryOutlier,
+    );
 
     // Seed track retains all 3 clusters in its diagnostic summary
     expect(diagElec.currentTrack.clusters.length).toBeGreaterThanOrEqual(3);
@@ -636,19 +786,22 @@ describe("smartShuffle & AutoPlay — Genre Relevance Gating & Regression Suite"
     });
 
     const library = [nagorizakura, untaggedTrack, justinBieberPop, phonkTrack];
-    const { trackIds, diagnostics } = selectAutoPlayTracksWithDiagnostics(library, {
-      count: 2,
-      seedTrackIds: [nagorizakura.id],
-      excludeTrackIds: new Set([nagorizakura.id]),
-      rng: makeRng(88),
-    });
+    const { trackIds, diagnostics } = selectAutoPlayTracksWithDiagnostics(
+      library,
+      {
+        count: 2,
+        seedTrackIds: [nagorizakura.id],
+        excludeTrackIds: new Set([nagorizakura.id]),
+        rng: makeRng(88),
+      },
+    );
 
-    // Selects only the incomplete-metadata track and still rejects Justin Bieber & Phonk
+    // Selects only the incomplete-metadata track and still rejects the unrelated Pop & Phonk fixtures
     expect(trackIds).toEqual([untaggedTrack.id]);
     expect(diagnostics.relaxationStage).toBe("incomplete-metadata");
     expect(diagnostics.rejectedIncompatibleCount).toBe(2);
     expect(diagnostics.selectedDiagnostics[0].reason).toBe(
-      "selected-incomplete-metadata-fallback"
+      "selected-incomplete-metadata-fallback",
     );
   });
 
@@ -656,12 +809,15 @@ describe("smartShuffle & AutoPlay — Genre Relevance Gating & Regression Suite"
     const smallLibrary = [nagorizakura, nogizakaIdol, phonkTrack];
     // Even if nogizakaIdol was in excludeTrackIds (e.g. played earlier in the small 3-track library),
     // the small-library fallback re-admits the compatible track rather than picking Phonk!
-    const { trackIds, diagnostics } = selectAutoPlayTracksWithDiagnostics(smallLibrary, {
-      count: 2,
-      seedTrackIds: [nagorizakura.id],
-      excludeTrackIds: new Set([nagorizakura.id, nogizakaIdol.id]),
-      rng: makeRng(19),
-    });
+    const { trackIds, diagnostics } = selectAutoPlayTracksWithDiagnostics(
+      smallLibrary,
+      {
+        count: 2,
+        seedTrackIds: [nagorizakura.id],
+        excludeTrackIds: new Set([nagorizakura.id, nogizakaIdol.id]),
+        rng: makeRng(19),
+      },
+    );
 
     expect(trackIds).toEqual([nogizakaIdol.id]);
     expect(trackIds).not.toContain(phonkTrack.id);
@@ -683,7 +839,7 @@ describe("smartShuffle & AutoPlay — Genre Relevance Gating & Regression Suite"
         seedTrackIds: [nagorizakura.id],
         excludeTrackIds: new Set([nagorizakura.id]),
         rng: makeRng(55),
-      }
+      },
     );
 
     expect(trackIds).toEqual([]);
@@ -691,49 +847,140 @@ describe("smartShuffle & AutoPlay — Genre Relevance Gating & Regression Suite"
     expect(diagnostics.compatibleCandidateCount).toBe(0);
     expect(diagnostics.rejectedIncompatibleCount).toBe(3);
     expect(diagnostics.noCompatibleCandidatesReason).toContain(
-      "No compatible candidates met the minimum genre relevance threshold"
+      "No compatible candidates met the minimum genre relevance threshold",
     );
     expect(diagnostics.rejectedDiagnostics).toHaveLength(3);
     expect(
       diagnostics.rejectedDiagnostics.every(
-        d => d.decision === "rejected" && d.reason === "rejected-below-genre-threshold"
-      )
+        (d) =>
+          d.decision === "rejected" &&
+          d.reason === "rejected-below-genre-threshold",
+      ),
     ).toBe(true);
   });
 
-  it("10. Pop seeds admit Pop and J-Pop neighbours but reject Electronic and Phonk", () => {
-    // Reported case: a LANY (Pop) context recommended Nakama (Electronic) and Scythermane (Phonk).
-    const lany = makeTrack({ id: 300, title: "ILYSB", artist: "LANY", genre: "Pop" });
-    const nakama = makeTrack({ id: 301, title: "Song", artist: "Nakama", genre: "Electronic" });
-    const scythermane = makeTrack({ id: 302, title: "X", artist: "Scythermane", genre: "Phonk" });
-    const jkt48 = makeTrack({ id: 303, title: "Rapsodi", artist: "JKT48", genre: "J-Pop" });
-    const bieber = makeTrack({ id: 304, title: "Peaches", artist: "Justin Bieber", genre: "Pop" });
+  it("10. relevance is a function of the genre vectors only: identical outcomes under renamed artists", () => {
+    // Same genre labels, two unrelated sets of synthetic artist/title/album names: every
+    // compatibility score, gate decision and end-to-end selection must be bit-identical.
+    const nameSets = [
+      {
+        seed: "Alpha",
+        pop: "Beta",
+        jpop: "Gamma",
+        electronic: "Delta",
+        phonk: "Epsilon",
+      },
+      {
+        seed: "Zulu",
+        pop: "Yankee",
+        jpop: "Xray",
+        electronic: "Whiskey",
+        phonk: "Victor",
+      },
+    ];
 
-    const diagElectronic = diagnoseCandidateRelevance(lany, nakama);
-    expect(diagElectronic.passedRelevanceGate).toBe(false);
-    expect(diagElectronic.genreCompatibility).toBeLessThan(DEFAULT_RELAXED_GENRE_COMPATIBILITY);
+    const buildLibrary = (names: (typeof nameSets)[number]) => ({
+      seed: makeTrack({
+        id: 300,
+        title: "Seed Song",
+        artist: names.seed,
+        genre: "Pop",
+      }),
+      pop: makeTrack({
+        id: 301,
+        title: "Pop Song",
+        artist: names.pop,
+        genre: "Pop",
+      }),
+      jpop: makeTrack({
+        id: 302,
+        title: "J-Pop Song",
+        artist: names.jpop,
+        genre: "J-Pop",
+      }),
+      electronic: makeTrack({
+        id: 303,
+        title: "Electronic Song",
+        artist: names.electronic,
+        genre: "Electronic",
+      }),
+      phonk: makeTrack({
+        id: 304,
+        title: "Phonk Song",
+        artist: names.phonk,
+        genre: "Phonk",
+      }),
+    });
 
-    const diagPhonk = diagnoseCandidateRelevance(lany, scythermane);
-    expect(diagPhonk.passedRelevanceGate).toBe(false);
-    expect(diagPhonk.genreCompatibility).toBeLessThan(DEFAULT_RELAXED_GENRE_COMPATIBILITY);
+    const runs = nameSets.map((names) => {
+      const library = buildLibrary(names);
+      const scores = {
+        pop: diagnoseCandidateRelevance(library.seed, library.pop),
+        jpop: diagnoseCandidateRelevance(library.seed, library.jpop),
+        electronic: diagnoseCandidateRelevance(
+          library.seed,
+          library.electronic,
+        ),
+        phonk: diagnoseCandidateRelevance(library.seed, library.phonk),
+      };
+      const selections = [11, 42, 77].map((seed) =>
+        selectAutoPlayTracksWithDiagnostics(Object.values(library), {
+          count: 4,
+          seedTrackIds: [library.seed.id],
+          excludeTrackIds: new Set([library.seed.id]),
+          rng: makeRng(seed),
+        }),
+      );
+      return { scores, selections };
+    });
 
-    // Pop -> Pop stays a primary match, and Pop -> J-Pop stays admissible through its real 0.12
-    // pop share.
-    expect(diagnoseCandidateRelevance(lany, bieber).reason).toBe("selected-primary-gate");
-    expect(diagnoseCandidateRelevance(lany, jkt48).passedRelevanceGate).toBe(true);
+    // Only the derived numbers matter - the diagnostics echo the track metadata, which is exactly
+    // what must not influence them.
+    const summarise = (run: (typeof runs)[number]) => ({
+      scores: Object.fromEntries(
+        Object.entries(run.scores).map(([key, value]) => [
+          key,
+          {
+            genreCompatibility: value.genreCompatibility,
+            passedRelevanceGate: value.passedRelevanceGate,
+            reason: value.reason,
+            candidateClusters: value.candidateTrack.clusters,
+            isUnknownGenre: value.candidateTrack.isUnknownGenre,
+          },
+        ]),
+      ),
+      selections: run.selections.map((selection) => ({
+        trackIds: selection.trackIds,
+        relaxationStage: selection.diagnostics.relaxationStage,
+        compatibleCandidateCount:
+          selection.diagnostics.compatibleCandidateCount,
+        rejectedIncompatibleCount:
+          selection.diagnostics.rejectedIncompatibleCount,
+      })),
+    });
 
-    // End to end: no Electronic or Phonk track survives a Pop seed, at any RNG draw.
-    const library = [lany, nakama, scythermane, jkt48, bieber];
-    for (const seed of [11, 42, 77]) {
-      const { trackIds, diagnostics } = selectAutoPlayTracksWithDiagnostics(library, {
-        count: 4,
-        seedTrackIds: [lany.id],
-        excludeTrackIds: new Set([lany.id]),
-        rng: makeRng(seed),
-      });
-      expect(trackIds).not.toContain(nakama.id);
-      expect(trackIds).not.toContain(scythermane.id);
-      expect(diagnostics.rejectedIncompatibleCount).toBe(2);
+    expect(summarise(runs[0])).toEqual(summarise(runs[1]));
+
+    // Data-driven expectations, keyed by genre label only.
+    const { scores, selections } = runs[0];
+    expect(scores.pop.reason).toBe("selected-primary-gate");
+    for (const rejected of [scores.electronic, scores.phonk]) {
+      expect(rejected.passedRelevanceGate).toBe(false);
+      expect(rejected.genreCompatibility).toBeLessThan(
+        DEFAULT_RELAXED_GENRE_COMPATIBILITY,
+      );
+    }
+
+    // A pure Pop seed shares only its 0.12 pop mass with a pure J-Pop track. Under the shared-mass
+    // model that is not enough to clear the relaxed gate - the same rule that rejects Electronic and
+    // Phonk, with no genre-specific exception. (A J-Pop-dominant manual queue does admit J-Pop
+    // neighbours; see the J-Pop/Idol suites above.)
+    expect(scores.jpop.reason).toBe("rejected-below-genre-threshold");
+
+    for (const { trackIds, diagnostics } of selections) {
+      expect(trackIds).not.toContain(303);
+      expect(trackIds).not.toContain(304);
+      expect(diagnostics.rejectedIncompatibleCount).toBe(3);
     }
   });
 
@@ -748,18 +995,24 @@ describe("smartShuffle & AutoPlay — Genre Relevance Gating & Regression Suite"
       animeTrack,
     ];
 
-    const { trackIds, diagnostics } = selectAutoPlayTracksWithDiagnostics(library, {
-      count: 2,
-      recentPlayedTrackIds: [phonkTrack.id, justinBieberPop.id],
-      seedTrackIds: [justinBieberPop.id, nagorizakura.id],
-      excludeTrackIds: new Set([nagorizakura.id]),
-      rng: makeRng(63),
-    });
+    const { trackIds, diagnostics } = selectAutoPlayTracksWithDiagnostics(
+      library,
+      {
+        count: 2,
+        recentPlayedTrackIds: [phonkTrack.id, justinBieberPop.id],
+        seedTrackIds: [justinBieberPop.id, nagorizakura.id],
+        excludeTrackIds: new Set([nagorizakura.id]),
+        rng: makeRng(63),
+      },
+    );
 
-    expect(trackIds.sort((a, b) => a - b)).toEqual([nogizakaIdol.id, animeTrack.id]);
+    expect(trackIds.sort((a, b) => a - b)).toEqual([
+      nogizakaIdol.id,
+      animeTrack.id,
+    ]);
     expect(diagnostics.rejectedIncompatibleCount).toBe(1);
     expect(diagnostics.rejectedDiagnostics[0].candidateTrack.id).toBe(
-      justinBieberMainstreamPop.id
+      justinBieberMainstreamPop.id,
     );
   });
 });
