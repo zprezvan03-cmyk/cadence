@@ -991,6 +991,14 @@
   flex-shrink: 0;
 }
 
+/* Outcome of the last "Refresh artist pictures" run: how many artists actually got a picture, and
+   the pipeline's reason when none did. */
+.artist-image-refresh-summary {
+  margin: -6px 0 14px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .setting-row {
   display: flex;
   align-items: center;

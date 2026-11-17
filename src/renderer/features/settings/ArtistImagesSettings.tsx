@@ -22,6 +22,7 @@ import {
   normalizeArtistImageProviderOrder,
 } from "../../../shared/artistImageProviders";
 import { addProviderToOrder, moveProviderInOrder, removeProviderFromOrder } from "../../../shared/providerOrder";
+import { artistImageKey } from "../../../shared/artistImageCache";
 import { useArtistImages } from "../../state/artistImageStore";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
@@ -61,7 +62,10 @@ export function ArtistImagesSettings() {
   const [stats, setStats] = useState<ArtistImageStats | null>(null);
   const [clearing, setClearing] = useState(false);
   const [refreshJob, setRefreshJob] = useState<{ total: number; done: number; running: boolean } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);  /** Outcome of the last "Refresh": the difference between "no picture exists" and "we could not ask". */
+  const [lastRefresh, setLastRefresh] = useState<{ total: number; ready: number; reason: string | null } | null>(
+    null
+  );
   const cancelRefresh = useRef(false);
 
   const load = useCallback(async () => {
@@ -155,7 +159,21 @@ export function ArtistImagesSettings() {
       setRefreshJob(job => (job ? { ...job, running: false } : job));
       await load();
       if (!cancelRefresh.current) {
-        showToast(`Refreshed ${names.length} artist picture${names.length === 1 ? "" : "s"}`);
+        // "Refreshed 24 artists" is misleading when nothing was actually found, so report the
+        // outcome and, when every artist missed, the reason the pipeline recorded (an unreachable
+        // API looks very different from artists that genuinely have no portrait).
+        const entries = useArtistImages.getState().entries;
+        const ready = names.filter(name => entries[artistImageKey(name)]?.status === "ready").length;
+        const reasons = names
+          .map(name => entries[artistImageKey(name)]?.reason)
+          .filter((reason): reason is string => Boolean(reason));
+        const reason = ready === 0 && reasons.length > 0 ? (reasons[0] as string) : null;
+        setLastRefresh({ total: names.length, ready, reason });
+        showToast(
+          ready > 0
+            ? `Found pictures for ${ready} of ${names.length} artist${names.length === 1 ? "" : "s"}`
+            : `No picture found for ${names.length} artist${names.length === 1 ? "" : "s"}${reason ? ` (${reason})` : ""}`
+        );
       }
     } catch (cause) {
       setError(describeError(cause));
@@ -382,6 +400,17 @@ export function ArtistImagesSettings() {
             )}
           </span>
         </div>
+
+        {lastRefresh ? (
+          <p
+            className="muted artist-image-refresh-summary"
+            data-testid="artist-images-refresh-summary"
+          >
+            Last refresh: {lastRefresh.ready} of {lastRefresh.total} artist
+            {lastRefresh.total === 1 ? "" : "s"} had a picture
+            {lastRefresh.reason ? ` · ${lastRefresh.reason}` : ""}
+          </p>
+        ) : null}
 
         <div className="setting-row">
           <span>
