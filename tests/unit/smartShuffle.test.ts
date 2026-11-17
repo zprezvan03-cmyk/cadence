@@ -701,6 +701,42 @@ describe("smartShuffle & AutoPlay — Genre Relevance Gating & Regression Suite"
     ).toBe(true);
   });
 
+  it("10. Pop seeds admit Pop and J-Pop neighbours but reject Electronic and Phonk", () => {
+    // Reported case: a LANY (Pop) context recommended Nakama (Electronic) and Scythermane (Phonk).
+    const lany = makeTrack({ id: 300, title: "ILYSB", artist: "LANY", genre: "Pop" });
+    const nakama = makeTrack({ id: 301, title: "Song", artist: "Nakama", genre: "Electronic" });
+    const scythermane = makeTrack({ id: 302, title: "X", artist: "Scythermane", genre: "Phonk" });
+    const jkt48 = makeTrack({ id: 303, title: "Rapsodi", artist: "JKT48", genre: "J-Pop" });
+    const bieber = makeTrack({ id: 304, title: "Peaches", artist: "Justin Bieber", genre: "Pop" });
+
+    const diagElectronic = diagnoseCandidateRelevance(lany, nakama);
+    expect(diagElectronic.passedRelevanceGate).toBe(false);
+    expect(diagElectronic.genreCompatibility).toBeLessThan(DEFAULT_RELAXED_GENRE_COMPATIBILITY);
+
+    const diagPhonk = diagnoseCandidateRelevance(lany, scythermane);
+    expect(diagPhonk.passedRelevanceGate).toBe(false);
+    expect(diagPhonk.genreCompatibility).toBeLessThan(DEFAULT_RELAXED_GENRE_COMPATIBILITY);
+
+    // Pop -> Pop stays a primary match, and Pop -> J-Pop stays admissible through its real 0.12
+    // pop share.
+    expect(diagnoseCandidateRelevance(lany, bieber).reason).toBe("selected-primary-gate");
+    expect(diagnoseCandidateRelevance(lany, jkt48).passedRelevanceGate).toBe(true);
+
+    // End to end: no Electronic or Phonk track survives a Pop seed, at any RNG draw.
+    const library = [lany, nakama, scythermane, jkt48, bieber];
+    for (const seed of [11, 42, 77]) {
+      const { trackIds, diagnostics } = selectAutoPlayTracksWithDiagnostics(library, {
+        count: 4,
+        seedTrackIds: [lany.id],
+        excludeTrackIds: new Set([lany.id]),
+        rng: makeRng(seed),
+      });
+      expect(trackIds).not.toContain(nakama.id);
+      expect(trackIds).not.toContain(scythermane.id);
+      expect(diagnostics.rejectedIncompatibleCount).toBe(2);
+    }
+  });
+
   it("anchors session genre context to the current track when the user manually switches from an unrelated genre", () => {
     // User previously listened to Phonk & Western Pop, then manually clicked Nagorizakura (J-Pop)
     const library = [

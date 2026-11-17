@@ -854,12 +854,37 @@ export function buildLibraryGenreVectors(tracks: readonly GenreTrackInput[]): {
 export const NEUTRAL_UNKNOWN_GENRE_COMPATIBILITY = 0.46;
 
 /**
- * Damping factor applied when the session has a focused dominant cluster (weight >= 0.45)
- * and a candidate has near-zero overlap (< 0.08) with EVERY dominant cluster of the session.
- * Prevents secondary umbrella clusters (e.g. a minor 0.12 "pop" weight on J-Pop) from making
- * pure disjoint genres look highly compatible.
+ * Share of a candidate's genre mass that must sit in the session's **dominant** clusters (those
+ * holding >= 0.25 of the session) before a transition counts as a genuine neighbour instead of a
+ * bridge through the affinity matrix.
+ *
+ * 0.10 is deliberately small: it keeps a J-Pop candidate in a Pop context (its 0.12 "pop" share is
+ * real evidence of musical overlap) while rejecting anything that only shares a *neighbouring*
+ * cluster — a pure Electronic track against a pure Pop session, or Phonk (hip-hop 0.7 +
+ * electronic 0.3) whose overlap with pop is exactly zero.
  */
-const DISJOINT_DOMINANT_CLUSTER_DAMPING = 0.72;
+export const MIN_DOMINANT_CLUSTER_OVERLAP = 0.1;
+
+/**
+ * Compatibility factor for a focused session (dominant cluster >= 0.45) evaluated at **zero**
+ * overlap with every dominant cluster; it eases linearly up to 1.0 once the candidate reaches
+ * {@link MIN_DOMINANT_CLUSTER_OVERLAP}.
+ *
+ * This used to be an all-or-nothing 0.72 for "no overlap at all", which was too generous: the
+ * pop<->electronic affinity is 0.78, so a pure-electronic candidate scored 0.78 * 0.72 = 0.5616
+ * against a pure-pop session and cleared the 0.52 primary gate — an Electronic artist could never
+ * be non-relevant to a Pop seed. At 0.45 the same candidate lands at 0.35 and is rejected, while
+ * cross-cluster candidates that *do* carry dominant-cluster mass are untouched.
+ */
+const DISJOINT_DOMINANT_CLUSTER_DAMPING = 0.45;
+
+/**
+ * 0 when the candidate shares nothing with the session's dominant clusters, 1 once it reaches
+ * {@link MIN_DOMINANT_CLUSTER_OVERLAP}; used to blend between the damping floor and full affinity.
+ */
+function dominantClusterAgreement(dominantOverlap: number): number {
+  return Math.min(1, Math.max(0, dominantOverlap) / MIN_DOMINANT_CLUSTER_OVERLAP);
+}
 
 /**
  * Evaluates multi-cluster bilinear genre compatibility between the current session state
@@ -868,8 +893,8 @@ const DISJOINT_DOMINANT_CLUSTER_DAMPING = 0.72;
  * Includes:
  * 1. Gentle continuous exposure streak damping when staying in an already-saturated cluster
  *    (bounded at >= 0.68 so staying in the user's current genre never drops below incompatible genres).
- * 2. Dominant-cluster disjointness damping (0.72x) when the candidate has zero overlap with any
- *    dominant cluster (>= 0.25) of a focused session.
+ * 2. Dominant-cluster agreement damping (0.45x at zero overlap, easing to 1.0 once the candidate
+ *    carries MIN_DOMINANT_CLUSTER_OVERLAP of its mass in a dominant cluster of a focused session).
  * 3. Bridge bonus (+0.14) when a multi-cluster candidate shares a saturated cluster with the
  *    session AND smoothly pivots into a fresh cluster.
  */
@@ -931,8 +956,10 @@ export function computeGenreCompatibilityFast(
     }
   }
 
-  if (maxSessionWeight >= 0.45 && dominantOverlap < 0.08) {
-    bilinearSum *= DISJOINT_DOMINANT_CLUSTER_DAMPING;
+  if (maxSessionWeight >= 0.45) {
+    const agreement = dominantClusterAgreement(dominantOverlap);
+    bilinearSum *=
+      DISJOINT_DOMINANT_CLUSTER_DAMPING + (1 - DISJOINT_DOMINANT_CLUSTER_DAMPING) * agreement;
   }
 
   const bridgeBonus = saturatedOverlap >= 0.25 && freshOverlap >= 0.20 ? 0.14 : 0;
@@ -1015,8 +1042,10 @@ export function scoreProjectedGenreCompatibility(
     }
   }
 
-  if (dominantMask && sessionIsFocused && dominantOverlap < 0.08) {
-    bilinearSum *= DISJOINT_DOMINANT_CLUSTER_DAMPING;
+  if (dominantMask && sessionIsFocused) {
+    const agreement = dominantClusterAgreement(dominantOverlap);
+    bilinearSum *=
+      DISJOINT_DOMINANT_CLUSTER_DAMPING + (1 - DISJOINT_DOMINANT_CLUSTER_DAMPING) * agreement;
   }
 
   const bridgeBonus = saturatedOverlap >= 0.25 && freshOverlap >= 0.20 ? 0.14 : 0;

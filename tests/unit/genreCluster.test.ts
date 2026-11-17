@@ -11,6 +11,10 @@ import {
   tokenizeGenreString,
   updateGenreSessionState,
 } from "../../src/shared/genreCluster";
+import {
+  DEFAULT_MIN_GENRE_COMPATIBILITY,
+  DEFAULT_RELAXED_GENRE_COMPATIBILITY,
+} from "../../src/shared/smartShuffle";
 
 describe("genreCluster — tokenization and normalization", () => {
   it("normalizes punctuation, casing, and ID3v1 numeric genre codes", () => {
@@ -298,6 +302,33 @@ describe("genreCluster — bilinear compatibility, streak damping, and bridge tr
     expect(compatJpopToWesternPopRnb).toBeLessThan(0.35);
     expect(compatJpopToPhonk).toBeLessThan(0.28);
     expect(compatJpopToDriftPhonk).toBeLessThan(0.28);
+  });
+
+  it("requires dominant-cluster overlap, so Electronic and Phonk never become relevant to a pure Pop session", () => {
+    // Regression: pop<->electronic affinity is 0.78 and the old disjoint damping was an
+    // all-or-nothing 0.72, so a pure-Electronic candidate scored 0.5616 against a pure-Pop seed and
+    // cleared the 0.52 primary gate. Phonk (hip-hop 0.7 + electronic 0.3) reached 0.4306 — a hair
+    // under the relaxed gate — purely through its electronic share.
+    const pop = parseGenreProfile("Pop").vector;
+    const jpop = parseGenreProfile("J-Pop").vector;
+    const phonk = parseGenreProfile("Phonk").vector;
+    const electronic = parseGenreProfile("Electronic").vector;
+    const streaks = new Float32Array(NUM_GENRE_CLUSTERS);
+
+    const score = (candidate: Float32Array) =>
+      computeGenreCompatibilityFast(pop, streaks, true, candidate, 0, false);
+
+    expect(score(electronic)).toBeCloseTo(0.351, 3); // 0.78 * 0.45 damping floor
+    expect(score(phonk)).toBeCloseTo(0.2691, 3); // 0.598 * 0.45
+    expect(score(electronic)).toBeLessThan(DEFAULT_RELAXED_GENRE_COMPATIBILITY);
+    expect(score(phonk)).toBeLessThan(DEFAULT_RELAXED_GENRE_COMPATIBILITY);
+
+    // A J-Pop track keeps a real 0.12 "pop" share, which is genuine overlap rather than a bridge,
+    // so it stays a legitimate (relaxed) neighbour of a Pop seed.
+    expect(score(jpop)).toBeGreaterThan(DEFAULT_RELAXED_GENRE_COMPATIBILITY);
+    expect(score(jpop)).toBeLessThan(DEFAULT_MIN_GENRE_COMPATIBILITY);
+    // And the identical genre of course stays a primary match.
+    expect(score(pop)).toBeCloseTo(1.0, 2);
   });
 
   it("never damps same-genre streaks below unrelated genres", () => {
