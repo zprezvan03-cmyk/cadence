@@ -22,6 +22,7 @@ import type {
   PlayerSnapshot,
   ScanProgress,
   Track,
+  TrackIntelligenceRecord,
   TrackSource,
   WindowChromeState,
 } from "../shared/types";
@@ -840,6 +841,18 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
 
       async clear(): Promise<void> {
         await invoke<void>("cmd_history_clear");
+      },
+    },
+
+    intelligence: {
+      async list(): Promise<TrackIntelligenceRecord[]> {
+        const rows = await invoke<TrackIntelligenceRecord[]>("cmd_intelligence_list");
+        return rows ?? [];
+      },
+
+      async upsert(records: TrackIntelligenceRecord[]): Promise<void> {
+        if (records.length === 0) return;
+        await invoke<void>("cmd_intelligence_upsert", { records });
       },
     },
 

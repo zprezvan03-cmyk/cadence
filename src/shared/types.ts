@@ -5,6 +5,10 @@
  */
 
 import type { GradientSettings } from "./upstream/shaders/gradientSettings";
+import type { TrackIntelligenceRecord } from "./smartShuffle";
+
+export type { TrackIntelligenceRecord };
+export type QueueEntryOrigin = "context" | "manual" | "autoplay";
 
 export type RepeatMode = "off" | "all" | "one";
 export type LyricsSyncType = "richsync" | "synced" | "none";
@@ -141,6 +145,8 @@ export interface MediaItem {
 export interface QueueEntry {
   occurrenceId: string;
   item: MediaItem;
+  /** Where this queue entry came from ("context" | "manual" | "autoplay"). */
+  origin?: QueueEntryOrigin;
 }
 
 export interface Album {
@@ -525,6 +531,7 @@ export interface LyricsSettings {
 }
 
 export type ReplayGainMode = "off" | "track" | "album";
+export type ShuffleMode = "smart" | "classic";
 
 export interface EqualizerSettings {
   enabled: boolean;
@@ -549,6 +556,12 @@ export interface PlaybackSettings {
   replayGainPreampDb: number;
   replayGainPreventClipping: boolean;
   equalizer: EqualizerSettings;
+  /** Smart context-aware shuffle vs classic uniform Fisher-Yates shuffle. */
+  shuffleMode?: ShuffleMode;
+  /** Automatically queue similar library tracks when the queue runs low (repeat === "off"). */
+  autoPlay?: boolean;
+  /** Enrich Smart Shuffle & AutoPlay with online popularity/genre signals (cached locally). */
+  smartShufflePopularity?: boolean;
 }
 
 export interface AppearanceSettings {
@@ -843,6 +856,10 @@ export interface CadenceApi {
     }): Promise<void>;
     list(): Promise<HistoryEntry[]>;
     clear(): Promise<void>;
+  };
+  intelligence?: {
+    list(): Promise<TrackIntelligenceRecord[]>;
+    upsert(records: TrackIntelligenceRecord[]): Promise<void>;
   };
   library: {
     snapshot(): Promise<LibrarySnapshot>;

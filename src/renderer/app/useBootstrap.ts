@@ -23,6 +23,7 @@ import { getTrackById } from "../state/trackRegistry";
 import { useSettings } from "../state/settingsStore";
 import { useUi } from "../state/uiStore";
 import { useHistory } from "../state/historyStore";
+import { useIntelligence } from "../state/intelligenceStore";
 import { mediaItemFromLocalTrack, trackSourceKey } from "../../shared/media";
 import { formatTime } from "../player/queue";
 import {
@@ -57,6 +58,7 @@ export function useBootstrap(): void {
       // Played section reconstruct from SQLite on every launch. Idempotent: safe to call again
       // from view mounts; the store ignores duplicate loads once loaded is true.
       await useHistory.getState().load();
+      await useIntelligence.getState().load();
       if (disposed) return;
 
       const settings = useSettings.getState().settings;

@@ -610,6 +610,38 @@ export function SettingsView() {
             </select>
           </div>
           <Toggle label="Shuffle by default" checked={settings.playback.shuffle} onChange={value => void patchSettings({ playback: { shuffle: value } })} />
+          <div className="setting-row">
+            <span>
+              <strong>Shuffle mode</strong>
+              <em>Smart Shuffle balances genre compatibility, listening history, completion rates, and catalog popularity.</em>
+            </span>
+            <select
+              data-testid="shuffle-mode-select"
+              value={settings.playback.shuffleMode ?? "smart"}
+              onChange={event =>
+                void patchSettings({
+                  playback: {
+                    shuffleMode: event.target.value as AppSettings["playback"]["shuffleMode"],
+                  },
+                })
+              }
+            >
+              <option value="smart">Smart Shuffle (Context &amp; Genre aware)</option>
+              <option value="classic">Classic Shuffle (Uniform random)</option>
+            </select>
+          </div>
+          <Toggle
+            label="AutoPlay similar songs"
+            hint="Automatically queue contextually compatible tracks from your library when the queue runs low and Repeat is off."
+            checked={settings.playback.autoPlay ?? true}
+            onChange={value => void patchSettings({ playback: { autoPlay: value } })}
+          />
+          <Toggle
+            label="Online popularity intelligence"
+            hint="Lazily enrich Smart Shuffle and AutoPlay with multi-provider popularity and genre tags, cached locally in SQLite. Works offline when disabled."
+            checked={settings.playback.smartShufflePopularity ?? true}
+            onChange={value => void patchSettings({ playback: { smartShufflePopularity: value } })}
+          />
 
           <div className="settings-subsection" data-testid="settings-audio">
             <h3>Audio</h3>

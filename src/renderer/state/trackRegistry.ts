@@ -14,3 +14,7 @@ export function setTrackRegistry(next: Map<number, Track>): void {
 export function getTrackById(id: number): Track | null {
   return tracks.get(id) ?? null;
 }
+
+export function getRegisteredTracks(): Track[] {
+  return [...tracks.values()];
+}

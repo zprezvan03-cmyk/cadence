@@ -1,5 +1,15 @@
 import { create } from "zustand";
+import { runtimeFetch } from "../../main/lyrics/http";
+import {
+  PlaybackTelemetryTracker,
+  type TelemetryEndReason,
+} from "../../shared/listeningTelemetry";
 import { mediaItemFromLocalTrack, trackSourceKey } from "../../shared/media";
+import {
+  buildSmartShuffleOrder,
+  selectAutoPlayTracks,
+  type SmartShuffleQueueSlot,
+} from "../../shared/smartShuffle";
 import type {
   MediaItem,
   PlaybackMechanism,
@@ -13,19 +23,24 @@ import { audioEngine } from "../audio/engine";
 import { computeReplayGain } from "../audio/replayGain";
 import {
   advancePosition,
+  appendAutoPlayEntries,
   buildOrder,
+  buildPartitionedUnshuffledOrder,
   localQueueEntry,
   mediaQueueEntry,
   normalizeQueueEntries,
   pruneQueueOrder,
 } from "../player/queue";
 import { decideTransition, TransitionGuard } from "../player/transitions";
-import { getTrackById } from "./trackRegistry";
-import { useLibrary } from "./libraryStore";
+import { getRegisteredTracks, getTrackById } from "./trackRegistry";
 import { useHistory } from "./historyStore";
+import { useIntelligence } from "./intelligenceStore";
+import { useLibrary } from "./libraryStore";
 import { useSettings } from "./settingsStore";
 
 const SESSION_KEY = "cadence.session.v1";
+const AUTOPLAY_LOW_WATER_MARK = 2;
+const AUTOPLAY_BATCH_SIZE = 5;
 
 export interface SessionState {
   queue: QueueEntry[];
@@ -76,6 +91,7 @@ interface PlayerState extends SessionState {
   toggleShuffle: () => void;
   cycleRepeat: () => void;
   setRepeat: (repeat: RepeatMode) => void;
+  replenishAutoPlay: () => number;
   restore: (session: SessionState) => Promise<void>;
   handleEnded: () => Promise<void>;
   /** Called by the local engine bridge on every tick. Ignored while a remote item is current. */
@@ -184,6 +200,28 @@ let loadToken = 0;
 let lastPositionPersistAt = 0;
 let occurrenceCounter = 0;
 const transitionGuard = new TransitionGuard();
+const telemetryTracker = new PlaybackTelemetryTracker();
+let pendingTelemetryReason: TelemetryEndReason = "context-change";
+const recentPlayedTrackIds: number[] = [];
+
+function pushRecentPlayedTrackId(trackId: number): void {
+  const existingIdx = recentPlayedTrackIds.indexOf(trackId);
+  if (existingIdx >= 0) {
+    recentPlayedTrackIds.splice(existingIdx, 1);
+  }
+  recentPlayedTrackIds.push(trackId);
+  if (recentPlayedTrackIds.length > 64) {
+    recentPlayedTrackIds.splice(0, recentPlayedTrackIds.length - 64);
+  }
+}
+
+function getAvailableLibraryTracks(): Track[] {
+  const snapshotTracks = useLibrary.getState().snapshot?.tracks;
+  if (snapshotTracks && snapshotTracks.length > 0) {
+    return snapshotTracks;
+  }
+  return getRegisteredTracks();
+}
 
 function nextOccurrenceId(): string {
   occurrenceCounter += 1;
@@ -218,9 +256,174 @@ function replayGainForTrack(track: Track): number {
 export const usePlayer = create<PlayerState>()((set, get) => {
   const after = () => persist(get());
 
-  const recordStartedTrack = (trackId: number, track: Track): void => {
+  const finalizeCurrentTelemetry = (reason: TelemetryEndReason): void => {
+    const ev = telemetryTracker.finalizeCurrent(reason);
+    if (ev) {
+      useIntelligence.getState().applyTelemetryEvent(ev);
+    }
+  };
+
+  const triggerHorizonPopularityPrefetch = (): void => {
+    const settings = useSettings.getState().settings;
+    const enabled = settings?.playback?.smartShufflePopularity ?? true;
+    if (!enabled) return;
+
+    const state = get();
+    const horizonTracks: Track[] = [];
+    for (
+      let pos = state.orderPosition;
+      pos < Math.min(state.order.length, state.orderPosition + 7);
+      pos++
+    ) {
+      const resolved = trackAtPosition(state, pos);
+      if (resolved) horizonTracks.push(resolved.track);
+    }
+    if (horizonTracks.length === 0) return;
+
+    useIntelligence.getState().prefetchHorizonPopularity(
+      horizonTracks,
+      {
+        enabled: true,
+        lastFmApiKey: settings?.scrobbling?.apiKey || undefined,
+        fetchFn: runtimeFetch,
+      },
+      6
+    );
+  };
+
+  const buildActiveOrder = (
+    queue: readonly QueueEntry[],
+    shuffle: boolean,
+    currentQueueIndex: number,
+    existingOrder?: readonly number[]
+  ): number[] => {
+    if (!shuffle || queue.length <= 1) {
+      return buildOrder(queue.length, false, currentQueueIndex);
+    }
+    const shuffleMode = useSettings.getState().settings?.playback?.shuffleMode ?? "smart";
+    if (shuffleMode === "classic") {
+      return buildOrder(queue.length, true, currentQueueIndex);
+    }
+    const availableTracks = getAvailableLibraryTracks();
+    if (availableTracks.length === 0) {
+      return buildOrder(queue.length, true, currentQueueIndex);
+    }
+    const historyEntries = useHistory.getState().entries;
+    const intelState = useIntelligence.getState();
+    const cachedIndex = intelState.getCachedIndex(availableTracks, historyEntries);
+    const slots: SmartShuffleQueueSlot[] = queue.map((entry, queueIndex) => ({
+      queueIndex,
+      trackId: entry.item.source.kind === "local" ? entry.item.source.trackId : null,
+      origin: entry.origin ?? "context",
+    }));
+    return buildSmartShuffleOrder(slots, currentQueueIndex, availableTracks, {
+      libraryIndex: cachedIndex,
+      intelligenceByKey: intelState.byRecordingKey,
+      historyEntries,
+      recentPlayedTrackIds,
+      existingOrder,
+    });
+  };
+
+  const replenishAutoPlayIfNeeded = (): number => {
+    const state = get();
+    if (state.repeat !== "off") return 0;
+    const autoPlayEnabled = useSettings.getState().settings?.playback?.autoPlay ?? true;
+    if (!autoPlayEnabled) return 0;
+    if (state.queue.length === 0 || state.order.length === 0) return 0;
+
+    const remainingUpcoming = state.order.length - 1 - state.orderPosition;
+    if (remainingUpcoming >= AUTOPLAY_LOW_WATER_MARK) return 0;
+
+    const availableTracks = getAvailableLibraryTracks();
+    if (availableTracks.length === 0) return 0;
+
+    // Collect seed tracks from recent & current queue entries
+    const seedTrackIds: number[] = [];
+    const startSeedPos = Math.max(0, state.orderPosition - 4);
+    for (let pos = startSeedPos; pos < state.order.length; pos++) {
+      const entry = entryAtPosition(state, pos);
+      if (entry?.item.source.kind === "local") {
+        seedTrackIds.push(entry.item.source.trackId);
+      }
+    }
+
+    // Exclude all tracks already in the queue so AutoPlay doesn't duplicate queued songs
+    const queueTrackIds = new Set<number>();
+    for (const entry of state.queue) {
+      if (entry.item.source.kind === "local") {
+        queueTrackIds.add(entry.item.source.trackId);
+      }
+    }
+
+    // If the library has more tracks than the queue, exclude the entire queue;
+    // for tiny libraries where every track is already in the queue, exclude only current + upcoming
+    let excludeIds: Set<number>;
+    if (availableTracks.length > queueTrackIds.size) {
+      excludeIds = queueTrackIds;
+    } else {
+      excludeIds = new Set<number>();
+      for (let pos = state.orderPosition; pos < state.order.length; pos++) {
+        const entry = entryAtPosition(state, pos);
+        if (entry?.item.source.kind === "local") {
+          excludeIds.add(entry.item.source.trackId);
+        }
+      }
+    }
+
+    const historyEntries = useHistory.getState().entries;
+    const intelState = useIntelligence.getState();
+    const cachedIndex = intelState.getCachedIndex(availableTracks, historyEntries);
+
+    const selectedTrackIds = selectAutoPlayTracks(availableTracks, {
+      count: AUTOPLAY_BATCH_SIZE,
+      seedTrackIds,
+      excludeTrackIds: excludeIds,
+      libraryIndex: cachedIndex,
+      intelligenceByKey: intelState.byRecordingKey,
+      historyEntries,
+      recentPlayedTrackIds,
+    });
+
+    if (selectedTrackIds.length === 0) return 0;
+
+    const autoEntries = selectedTrackIds.map(trackId =>
+      localQueueEntry(trackId, nextOccurrenceId(), getTrackById(trackId), "autoplay")
+    );
+    const appended = appendAutoPlayEntries(state.queue, state.order, autoEntries);
+    if (appended.addedCount === 0) return 0;
+
+    set({
+      queue: appended.queue,
+      order: appended.order,
+    });
+    after();
+    return appended.addedCount;
+  };
+
+  const recordStartedTrack = (trackId: number, track: Track, occurrenceId?: string): void => {
+    pushRecentPlayedTrackId(trackId);
+    const prevEvent = telemetryTracker.startSession(
+      `${occurrenceId ?? trackId}:${loadToken}`,
+      {
+        trackId,
+        title: track.title,
+        artist: track.artist,
+        durationSeconds: track.duration,
+      },
+      get().position,
+      Date.now(),
+      pendingTelemetryReason
+    );
+    pendingTelemetryReason = "context-change";
+    if (prevEvent) {
+      useIntelligence.getState().applyTelemetryEvent(prevEvent);
+    }
+
     void useLibrary.getState().recordPlay(trackId).catch(() => undefined);
     void useHistory.getState().add(track).catch(() => undefined);
+    replenishAutoPlayIfNeeded();
+    triggerHorizonPopularityPrefetch();
     // Prepare the successor while this track is running instead of at the transition boundary.
     prewarmNext();
   };
@@ -297,7 +500,7 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       // The engine reports decoder/play() failures through its own state; only a track that really
       // started belongs in Home → Recently played and in listening history.
       if (!audioEngine.paused && !audioEngine.element.error) {
-        recordStartedTrack(trackId, track);
+        recordStartedTrack(trackId, track, entry.occurrenceId);
       }
     }
   };
@@ -351,7 +554,7 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     audioEngine.setMuted(current.muted);
     audioEngine.setRate(current.rate);
     if (!audioEngine.paused && !audioEngine.element.error) {
-      recordStartedTrack(target.trackId, target.track);
+      recordStartedTrack(target.trackId, target.track, target.entry.occurrenceId);
     }
     after();
     return true;
@@ -365,11 +568,13 @@ export const usePlayer = create<PlayerState>()((set, get) => {
 
   const playEntries = async (entries: QueueEntry[], startIndex = 0): Promise<void> => {
     if (entries.length === 0) return;
+    pendingTelemetryReason = "context-change";
     const shuffle = get().shuffle;
     const start = Math.max(0, Math.min(startIndex, entries.length - 1));
-    const order = buildOrder(entries.length, shuffle, start);
+    const taggedEntries = entries.map(e => ({ ...e, origin: e.origin ?? "context" }));
+    const order = buildActiveOrder(taggedEntries, shuffle, start);
     set({
-      queue: entries,
+      queue: taggedEntries,
       order,
       orderPosition: shuffle ? 0 : start,
       position: 0,
@@ -423,10 +628,10 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     for (const entry of requested) {
       const existing = findQueueIndexBySource({ ...state, queue }, entry.item.source);
       if (existing >= 0) {
-        queue[existing] = { ...queue[existing], item: entry.item };
+        queue[existing] = { ...queue[existing], item: entry.item, origin: "manual" };
         inserted.push(existing);
       } else {
-        queue.push(entry);
+        queue.push({ ...entry, origin: "manual" });
         inserted.push(queue.length - 1);
       }
     }
@@ -445,24 +650,79 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       order,
       orderPosition: currentOrderPosition >= 0 ? currentOrderPosition : 0,
     });
+    prewarmNext();
     after();
   };
 
   const appendEntries = (requestedEntries: QueueEntry[]): void => {
     const state = get();
+    if (requestedEntries.length === 0) return;
+    const currentQueueIndex = state.order[state.orderPosition];
+    const currentEntry =
+      currentQueueIndex === undefined ? null : state.queue[currentQueueIndex] ?? null;
+    const currentKey = currentEntry ? trackSourceKey(currentEntry.item.source) : null;
+    const seen = new Set<string>();
+    const requested = requestedEntries.filter(entry => {
+      const key = trackSourceKey(entry.item.source);
+      if (key === currentKey || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (requested.length === 0) return;
+
     const queue = [...state.queue];
-    const insertedIndices: number[] = [];
-    for (const entry of requestedEntries) {
+    const manualOrderSlots: number[] = [];
+    const upgradedSet = new Set<number>();
+
+    for (const entry of requested) {
       const existing = findQueueIndexBySource({ ...state, queue }, entry.item.source);
       if (existing >= 0) {
-        queue[existing] = { ...queue[existing], item: entry.item };
+        const existingPos = state.order.indexOf(existing);
+        const existingOrigin = queue[existing]?.origin ?? "context";
+        queue[existing] = { ...queue[existing], item: entry.item, origin: "manual" };
+        // If this track was sitting in an upcoming AutoPlay or Context slot, move it into the Manual priority block
+        if (existingPos > state.orderPosition || existingOrigin === "autoplay") {
+          manualOrderSlots.push(existing);
+          upgradedSet.add(existing);
+        }
         continue;
       }
-      queue.push(entry);
-      insertedIndices.push(queue.length - 1);
+      queue.push({ ...entry, origin: "manual" });
+      manualOrderSlots.push(queue.length - 1);
     }
-    if (insertedIndices.length === 0 && queue === state.queue) return;
-    set({ queue, order: state.order.concat(insertedIndices) });
+
+    if (manualOrderSlots.length === 0 && queue === state.queue) return;
+
+    const baseOrder =
+      upgradedSet.size > 0
+        ? state.order.filter(idx => !upgradedSet.has(idx))
+        : [...state.order];
+    const currentOrderPosition =
+      currentQueueIndex === undefined ? -1 : baseOrder.indexOf(currentQueueIndex);
+
+    // Insert at the end of the contiguous upcoming "manual" block (strictly before all upcoming "context" and "autoplay" entries)
+    let insertAt = currentOrderPosition >= 0 ? currentOrderPosition + 1 : baseOrder.length;
+    while (insertAt < baseOrder.length) {
+      const slotEntry = queue[baseOrder[insertAt]];
+      if (slotEntry?.origin === "manual") {
+        insertAt += 1;
+      } else {
+        break;
+      }
+    }
+
+    const nextOrder = [
+      ...baseOrder.slice(0, insertAt),
+      ...manualOrderSlots,
+      ...baseOrder.slice(insertAt),
+    ];
+
+    set({
+      queue,
+      order: nextOrder,
+      orderPosition: currentOrderPosition >= 0 ? currentOrderPosition : 0,
+    });
+    prewarmNext();
     after();
   };
 
@@ -598,9 +858,10 @@ export const usePlayer = create<PlayerState>()((set, get) => {
           return;
         }
       }
-      const entry = localQueueEntry(trackId, nextOccurrenceId(), getTrackById(trackId));
+      const entry = localQueueEntry(trackId, nextOccurrenceId(), getTrackById(trackId), "context");
       const queue = [...state.queue, entry];
-      const order = buildOrder(queue.length, state.shuffle, queue.length - 1);
+      const order = buildActiveOrder(queue, state.shuffle, queue.length - 1);
+      pendingTelemetryReason = "manual-skip";
       set({
         queue,
         order,
@@ -617,7 +878,7 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     playNext: trackIds => {
       insertEntriesNext(
         trackIds.map(trackId =>
-          localQueueEntry(trackId, nextOccurrenceId(), getTrackById(trackId))
+          localQueueEntry(trackId, nextOccurrenceId(), getTrackById(trackId), "manual")
         )
       );
     },
@@ -625,7 +886,7 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     addToQueue: trackIds => {
       appendEntries(
         trackIds.map(trackId =>
-          localQueueEntry(trackId, nextOccurrenceId(), getTrackById(trackId))
+          localQueueEntry(trackId, nextOccurrenceId(), getTrackById(trackId), "manual")
         )
       );
     },
@@ -649,6 +910,7 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     },
 
     clearQueue: () => {
+      finalizeCurrentTelemetry("stop");
       audioEngine.pause();
       set({
         queue: [],
@@ -695,8 +957,16 @@ export const usePlayer = create<PlayerState>()((set, get) => {
     },
 
     next: async (auto, fadeSeconds) => {
-      const state = get();
+      let state = get();
       if (state.order.length === 0) return;
+      pendingTelemetryReason = auto ? "natural-end" : "manual-skip";
+
+      // If we are at the tail of the queue with repeat === "off", attempt AutoPlay replenishment before advancing
+      if (state.repeat === "off" && state.orderPosition + 1 >= state.order.length) {
+        replenishAutoPlayIfNeeded();
+        state = get();
+      }
+
       const result = advancePosition(state.orderPosition, state.order.length, state.repeat, 1);
       if (result.restart) {
         transitionGuard.reset();
@@ -712,6 +982,7 @@ export const usePlayer = create<PlayerState>()((set, get) => {
         return;
       }
       if (result.exhausted && auto) {
+        finalizeCurrentTelemetry("natural-end");
         set({ isPlaying: false, ended: true, position: state.duration });
         audioEngine.pause();
         return;
@@ -751,6 +1022,7 @@ export const usePlayer = create<PlayerState>()((set, get) => {
         get().seek(0);
         return;
       }
+      pendingTelemetryReason = "manual-skip";
       const result = advancePosition(state.orderPosition, state.order.length, state.repeat, -1);
       const current = entryAtPosition(state, state.orderPosition);
       const target = entryAtPosition(state, result.position);
@@ -789,6 +1061,7 @@ export const usePlayer = create<PlayerState>()((set, get) => {
         0,
         state.duration > 0 ? Math.min(seconds, state.duration) : seconds
       );
+      telemetryTracker.observeSeek(target, state.duration);
       if (current && current.item.source.kind !== "local") {
         set({ position: target, ended: false });
         after();
@@ -801,6 +1074,7 @@ export const usePlayer = create<PlayerState>()((set, get) => {
 
     jumpTo: async position => {
       if (position < 0 || position >= get().order.length) return;
+      pendingTelemetryReason = "manual-skip";
       await goToPosition(position, true);
     },
 
@@ -833,10 +1107,22 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       const state = get();
       const shuffle = !state.shuffle;
       const current = state.order[state.orderPosition] ?? 0;
-      const order = buildOrder(state.queue.length, shuffle, current);
-      // Shuffled orders put the current queue index first; an unshuffled identity order instead
-      // addresses that same entry at its own index.
-      set({ shuffle, order, orderPosition: shuffle ? 0 : current });
+      if (shuffle) {
+        const order = buildActiveOrder(state.queue, true, current, state.order);
+        set({ shuffle: true, order, orderPosition: 0 });
+      } else {
+        const unshuffled = buildPartitionedUnshuffledOrder(
+          state.queue,
+          state.order,
+          state.orderPosition
+        );
+        set({
+          shuffle: false,
+          order: unshuffled.order,
+          orderPosition: unshuffled.orderPosition,
+        });
+      }
+      prewarmNext();
       after();
     },
 
@@ -844,13 +1130,23 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       const order: RepeatMode[] = ["off", "all", "one"];
       const nextMode = order[(order.indexOf(get().repeat) + 1) % order.length];
       set({ repeat: nextMode });
+      if (nextMode === "off") {
+        replenishAutoPlayIfNeeded();
+      }
+      prewarmNext();
       after();
     },
 
     setRepeat: repeat => {
       set({ repeat });
+      if (repeat === "off") {
+        replenishAutoPlayIfNeeded();
+      }
+      prewarmNext();
       after();
     },
+
+    replenishAutoPlay: () => replenishAutoPlayIfNeeded(),
 
     restore: async session => {
       set({
@@ -885,6 +1181,14 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       transitionGuard.observe(position);
 
       const state = get();
+      const telemetryEvent = telemetryTracker.observeTick(
+        position,
+        duration,
+        state.isPlaying && !audioEngine.paused
+      );
+      if (telemetryEvent) {
+        useIntelligence.getState().applyTelemetryEvent(telemetryEvent);
+      }
       const audio = playbackAudioSettings();
       if ((audio.crossfadeSeconds > 0 || audio.gaplessPlayback) && state.order.length > 0) {
         const advance = advancePosition(state.orderPosition, state.order.length, state.repeat, 1);
@@ -928,6 +1232,11 @@ export const usePlayer = create<PlayerState>()((set, get) => {
       if (!state.playing) after();
     },
 
-    setError: message => set({ error: message }),
+    setError: message => {
+      if (message) {
+        telemetryTracker.markPlaybackError();
+      }
+      set({ error: message });
+    },
   };
 });

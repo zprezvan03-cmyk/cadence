@@ -32,6 +32,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
       bandsDb: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
       presetId: "flat",
     },
+    shuffleMode: "smart",
+    autoPlay: true,
+    smartShufflePopularity: true,
   },
   appearance: {
     accent: "#ff3d71",
@@ -148,6 +151,18 @@ function normalizeSettings(settings: AppSettings): AppSettings {
         ? equalizer.presetId.trim().slice(0, 64)
         : DEFAULT_SETTINGS.playback.equalizer.presetId,
   };
+  playback.shuffleMode =
+    playback.shuffleMode === "classic" || playback.shuffleMode === "smart"
+      ? playback.shuffleMode
+      : (DEFAULT_SETTINGS.playback.shuffleMode ?? "smart");
+  playback.autoPlay =
+    typeof playback.autoPlay === "boolean"
+      ? playback.autoPlay
+      : (DEFAULT_SETTINGS.playback.autoPlay ?? true);
+  playback.smartShufflePopularity =
+    typeof playback.smartShufflePopularity === "boolean"
+      ? playback.smartShufflePopularity
+      : (DEFAULT_SETTINGS.playback.smartShufflePopularity ?? true);
   settings.playback = playback as AppSettings["playback"];
 
   const normalizeAi = (candidate: unknown, fallback: AppSettings["lyrics"]["aiTranslation"]): AppSettings["lyrics"]["aiTranslation"] => {
