@@ -200,6 +200,7 @@ function harnessAppSettings(lyrics?: Partial<LyricsSettings>): AppSettings {
     lyrics: { ...defaultLyricsSettings, ...lyrics },
     nowPlayingProfiles: createDefaultNowPlayingProfilesSettings(),
     shaders: { ...shaderSettings, enabled: false },
+    artistImages: { enabled: false, providerOrder: ["lastfm", "wikidata", "deezer"], refreshAfterDays: 30 },
     advanced: { showLogs: false },
     general: { onboardingCompleted: true, onboardingStep: 0 },
     scrobbling: { enabled: false, apiKey: "", apiSecret: "", sessionKey: "", username: "" },

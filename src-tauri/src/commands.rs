@@ -62,6 +62,8 @@ pub struct BootstrapPayload {
     pub lyrics_cache_json: Option<String>,
     pub lyrics_ai_cache_json: Option<String>,
     pub lyrics_fetch_job_json: Option<String>,
+    /// Cached artist profile-picture index (`artist-images.json`); see `src/shared/artistImageCache.ts`.
+    pub artist_images_json: Option<String>,
     pub db_snapshot: DbSnapshot,
     pub startup_files: Vec<String>,
     /// False when the OS draws no window frame, so the renderer draws its own title bar.
@@ -327,11 +329,13 @@ pub fn cmd_bootstrap(
     let lyrics_cache_path = state.app_data_dir.join("lyrics-cache.json");
     let lyrics_ai_cache_path = state.app_data_dir.join("lyrics-ai-cache.json");
     let lyrics_fetch_job_path = state.app_data_dir.join("lyrics-fetch-job.json");
+    let artist_images_path = state.app_data_dir.join("artist-images.json");
 
     let settings_json = std::fs::read_to_string(&settings_path).ok();
     let lyrics_cache_json = std::fs::read_to_string(&lyrics_cache_path).ok();
     let lyrics_ai_cache_json = std::fs::read_to_string(&lyrics_ai_cache_path).ok();
     let lyrics_fetch_job_json = std::fs::read_to_string(&lyrics_fetch_job_path).ok();
+    let artist_images_json = std::fs::read_to_string(&artist_images_path).ok();
     let db_snapshot = state.db.load_snapshot()?;
 
     state.allowlist.set_roots(db_snapshot.folders.iter().cloned());
@@ -364,6 +368,7 @@ pub fn cmd_bootstrap(
         lyrics_cache_json,
         lyrics_ai_cache_json,
         lyrics_fetch_job_json,
+        artist_images_json,
         db_snapshot,
         startup_files,
         undecorated: read_window_chrome(&window).undecorated,
@@ -513,6 +518,7 @@ pub async fn cmd_write_user_json(
         "lyricsCache" => "lyrics-cache.json",
         "lyricsAiCache" => "lyrics-ai-cache.json",
         "lyricsFetchJob" => "lyrics-fetch-job.json",
+        "artistImages" => "artist-images.json",
         _ => return Err("Unsupported configuration file".to_string()),
     };
     let target = state.app_data_dir.join(file_name);
