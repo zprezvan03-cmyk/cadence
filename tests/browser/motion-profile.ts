@@ -22,6 +22,12 @@ export async function profileMotion(page: Page, directory: string) {
   const metrics = async () => Object.fromEntries((await cdp.send("Performance.getMetrics")).metrics.map(({ name, value }) => [name, value]));
   const tracePath = join(directory, "trace.json");
   const click = (selector: string) => page.$eval(selector, node => (node as HTMLElement).click());
+  const exitNow = async () => {
+    if (await page.$('.lyrics-view.is-fullscreen')) {
+      await click('button.fs-exit');
+      await page.waitForSelector('.player-bar');
+    }
+  };
   const shot = (name: string) => page.screenshot({ path: join(directory, `${name}.png`) as `${string}.png` });
   const audio = () => page.evaluate(() => {
     const element = Array.from(document.querySelectorAll("audio")).find(audio => !audio.paused);
@@ -111,6 +117,7 @@ export async function profileMotion(page: Page, directory: string) {
       await followRoute();
       await followAt();
       await sample("lyric-follow", "media");
+      await exitNow();
       await click(nav("Songs"));
       await wait(320);
       await sample("mini-collapse", toggle);
@@ -118,6 +125,7 @@ export async function profileMotion(page: Page, directory: string) {
       await wait(120);
       await sample("mini-to-now-playing", openNow);
       await page.waitForSelector(".lyrics-view");
+      await exitNow();
       await click(nav("Songs"));
       await wait(320);
       await pickFirst();
@@ -131,7 +139,7 @@ export async function profileMotion(page: Page, directory: string) {
     await page.tracing.stop();
   }
   async function followRoute() {
-    await click(nav("Now Playing"));
+    await click((await page.$('[data-testid="open-now-playing"]')) ? '[data-testid="open-now-playing"]' : nav("Now Playing"));
     await page.waitForSelector(".lyrics-view");
     await wait(400);
   }
@@ -183,7 +191,8 @@ export async function profileMotion(page: Page, directory: string) {
   };
   const finish = () => page.evaluate(() => { for (const a of document.getAnimations()) if (a.playState === "paused") a.finish(); });
   await followRoute();
-  await shot("windowed-settled");
+  await shot((await page.$('.lyrics-view.is-fullscreen')) ? "immersive-settled" : "windowed-settled");
+  await exitNow();
   await enterMini();
   await shot("mini-start");
   console.log("captured mini:", await freeze(openNow, 95, "player-artwork-handoff"));
@@ -191,6 +200,7 @@ export async function profileMotion(page: Page, directory: string) {
   await finish();
   await wait(430);
   await shot("mini-end");
+  await exitNow();
   await click(nav("Songs"));
   await wait(330);
   // Prime both URLs for the visual comparison so a title-only animation cannot be mistaken

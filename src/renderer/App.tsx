@@ -34,12 +34,11 @@ import { StatsView } from "./features/stats/StatsView";
 import { usePlayer } from "./state/playerStore";
 import { useUi, type Route } from "./state/uiStore";
 
-function NowPlayingRoute() {
+function NowPlayingRoute({ fullscreen = false }: { fullscreen?: boolean }) {
   const track = useCurrentTrack();
   const item = useCurrentMediaItem();
   const playing = usePlayer(state => state.isPlaying);
-  const fullscreen = useUi(state => state.fullscreenLyrics);
-  const setFullscreen = useUi(state => state.setFullscreenLyrics);
+  const close = useUi(state => state.closeNowPlaying);
   const navigate = useUi(state => state.navigate);
   return (
     <LyricsView
@@ -47,7 +46,7 @@ function NowPlayingRoute() {
       item={item}
       playing={playing}
       fullscreen={fullscreen}
-      onToggleFullscreen={() => setFullscreen(!fullscreen)}
+      onExit={close}
       onOpenSearch={() => navigate({ name: "settings" })}
     />
   );
@@ -119,7 +118,7 @@ export function App() {
       maybeAutoShowOnboarding(folderCount, trackCount);
     }
   }, [settingsLoaded, folderCount, trackCount, maybeAutoShowOnboarding]);
-  const fullscreenLyrics = useUi(state => state.fullscreenLyrics);
+  const immersive = useUi(state => state.nowPlayingOpen);
   const miniRequested = useUi(state => state.miniPlayer);
   const reducedMotion = useReducedMotion();
   const { mini: miniPlayer, staging } = useMiniWindow(miniRequested, reducedMotion);
@@ -127,12 +126,36 @@ export function App() {
   const error = usePlayer(state => state.error);
   const chrome = useWindowChrome();
 
-  const immersive = fullscreenLyrics && route.name === "lyrics";
+  const wasNativeFullscreen = useRef(chrome.fullscreen);
+  useEffect(() => {
+    const justLeftNativeFullscreen = wasNativeFullscreen.current && !chrome.fullscreen;
+    wasNativeFullscreen.current = chrome.fullscreen;
+    // The OS can also exit fullscreen. Mini's native resize deliberately leaves fullscreen,
+    // but its Restore action should still return to the same app presentation.
+    if (justLeftNativeFullscreen && immersive && !miniRequested && !miniPlayer) {
+      useUi.getState().closeNowPlaying();
+    }
+  }, [chrome.fullscreen, immersive, miniRequested, miniPlayer]);
   // The title bar is only drawn when the OS frame is off (Windows); immersive and native fullscreen
   // hand the whole window to the content.
   const titleBar = chrome.undecorated && !chrome.fullscreen && !immersive;
 
-  const viewKey = route.name === "search" ? "search" : `${route.name}-${JSON.stringify(route)}`;
+  const browseKey = route.name === "search" ? "search" : `${route.name}-${JSON.stringify(route)}`;
+  const viewKey = immersive ? "now-playing-fullscreen" : browseKey;
+  const mainRef = useRef<HTMLElement>(null);
+  const playerReturnKey = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (miniPlayer) return;
+    if (immersive) {
+      playerReturnKey.current = browseKey;
+      mainRef.current?.focus({ preventScroll: true });
+    } else if (playerReturnKey.current !== null) {
+      if (playerReturnKey.current === browseKey) {
+        document.querySelector<HTMLElement>('[data-testid="open-now-playing"]')?.focus({ preventScroll: true });
+      }
+      playerReturnKey.current = null;
+    }
+  }, [browseKey, immersive, miniPlayer]);
   const contentRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const top = scrollMemory.get(viewKey);
@@ -151,7 +174,12 @@ export function App() {
         <div className={`app-shell ${immersive ? "is-immersive" : ""} ${titleBar ? "has-title-bar" : ""}`} data-route={route.name}>
           {titleBar ? <WindowTitleBar chrome={chrome} /> : null}
           {!immersive ? <Sidebar /> : null}
-          <main className="app-main">
+          <main
+            ref={mainRef}
+            className="app-main"
+            tabIndex={immersive ? -1 : undefined}
+            aria-label={immersive ? "Now Playing" : undefined}
+          >
             {error && !immersive ? (
               <div className="error-banner" role="alert">
                 {error}
@@ -166,7 +194,7 @@ export function App() {
               ref={contentRef}
               onScroll={event => scrollMemory.set(viewKey, event.currentTarget.scrollTop)}
             >
-              {renderRoute(route)}
+              {immersive ? <NowPlayingRoute fullscreen /> : renderRoute(route)}
             </div>
           </main>
           {!immersive ? <PlayerBar /> : null}

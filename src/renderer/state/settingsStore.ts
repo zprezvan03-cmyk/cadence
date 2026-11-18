@@ -9,7 +9,7 @@ interface SettingsState {
   loaded: boolean;
   error: string | null;
   load: () => Promise<void>;
-  patch: (patch: DeepPartial<AppSettings>) => Promise<void>;
+  patch: (patch: DeepPartial<AppSettings>, options?: { optimistic?: boolean }) => Promise<void>;
   reset: () => Promise<void>;
 }
 
@@ -25,10 +25,10 @@ export const useSettings = create<SettingsState>()((set, get) => ({
       set({ loaded: true, error: (error as Error).message });
     }
   },
-  patch: async (patch: DeepPartial<AppSettings>) => {
+  patch: async (patch, options) => {
     const revision = ++mutationRevision;
     const current = get().settings;
-    if (current) set({ settings: mergeSettings(current, patch) });
+    if (current && options?.optimistic !== false) set({ settings: mergeSettings(current, patch) });
     const settings = await bridge.settings.patch(patch);
     // IPC responses can arrive out of order. Keep the newest optimistic mutation instead of
     // allowing an older full-settings response to undo a control the user changed afterwards.

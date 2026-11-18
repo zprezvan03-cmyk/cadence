@@ -25,12 +25,12 @@ const GROUPS: Array<{ title: string; shortcuts: Array<[string, string]> }> = [
   {
     title: "Views",
     shortcuts: [
-      ["L", "Now Playing / lyrics"],
+      ["L", "Open Now Playing"],
       ["Q", "Queue"],
-      ["N or F", "Fullscreen lyrics"],
-      ["F11", "Fullscreen lyrics and window"],
+      ["N or F", "Toggle Now Playing"],
+      ["F11", "Now Playing and fullscreen window"],
       ["Ctrl/Cmd + Shift + P", "Mini player"],
-      ["Esc", "Close panel or leave fullscreen"],
+      ["Esc", "Close panel or exit Now Playing"],
     ],
   },
   {

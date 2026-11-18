@@ -112,7 +112,7 @@ export function Onboarding() {
               Cadence can search for lyrics across your entire music library now, in the
               background — recently played songs first. Everything found is cached per provider,
               so lyrics are simply there when a song plays. You can keep using Cadence while it
-              works, and pause or cancel any time from the top bar.
+              works, and pause or cancel any time from the sidebar.
             </p>
             {stats ? (
               <dl className="onboarding-stats" data-testid="onboarding-fetch-stats">
@@ -150,7 +150,7 @@ export function Onboarding() {
               </button>
             </div>
             {jobState === "running" || jobState === "paused" ? (
-              <p className="onboarding-stat">Fetching has started — progress lives in the top bar.</p>
+              <p className="onboarding-stat">Fetching has started — progress appears in the sidebar.</p>
             ) : null}
           </section>
         ) : null}
@@ -225,7 +225,7 @@ export function Onboarding() {
             <p>
               {trackCount > 0
                 ? `Your ${trackCount} tracks are ready. `
-                : "You can add music any time from the top bar. "}
+                : "You can add music any time from the sidebar. "}
               Lyrics fetch automatically as songs play
               {jobState === "running" || jobState === "paused"
                 ? ", and Fetch All keeps working in the background"

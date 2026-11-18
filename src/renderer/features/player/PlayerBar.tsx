@@ -3,7 +3,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { Heart, ListMusic, Maximize2, Mic2, PictureInPicture2 } from "lucide-react";
+import { Heart, ListMusic, Maximize2, PictureInPicture2 } from "lucide-react";
 import { useCurrentMediaItem, useCurrentTrack } from "../../app/hooks";
 import { useLibrary } from "../../state/libraryStore";
 import { usePlayer } from "../../state/playerStore";
@@ -19,10 +19,8 @@ export function PlayerBar() {
   const { cover, text } = usePlaybackPresentation(item);
   const toggleQueue = useUi(state => state.toggleQueue);
   const queueOpen = useUi(state => state.queueOpen);
-  const lyricsOpen = useUi(state => state.route.name === "lyrics");
-  const navigate = useUi(state => state.navigate);
   const setFavorite = useLibrary(state => state.setFavorite);
-  const toggleFullscreenLyrics = useUi(state => state.toggleFullscreenLyrics);
+  const openNowPlaying = useUi(state => state.openNowPlaying);
   const setMiniPlayer = useUi(state => state.setMiniPlayer);
   const buffering = usePlayer(state => state.buffering);
   const isPlaying = usePlayer(state => state.isPlaying);
@@ -51,9 +49,7 @@ export function PlayerBar() {
       style={cover.front.value.src ? { ["--player-artwork" as string]: `url("${cover.front.value.src.replace(/"/g, "%22")}")` } : undefined}
     >
       <div className="player-track">
-        <button type="button" className="player-cover-button" aria-label="Open Now Playing" title="Open Now Playing" onClick={() => navigate({ name: "lyrics" })}>
-          <PlaybackArtwork cover={cover} label={item?.albumLabel ?? item?.title ?? "No track"} />
-        </button>
+        <PlaybackArtwork cover={cover} label={item?.albumLabel ?? item?.title ?? "No track"} />
         <div className="player-track-meta" data-player-part="metadata">
           <PlaybackText text={text}>
             {display => (
@@ -107,13 +103,13 @@ export function PlayerBar() {
         <div className="player-tools" role="group" aria-label="Player views">
           <button
             type="button"
-            className={`icon-button ${lyricsOpen ? "active" : ""}`}
+            className="icon-button"
             aria-label="Now Playing"
-            aria-pressed={lyricsOpen}
             title="Now Playing (L)"
-            onClick={() => navigate({ name: "lyrics" })}
+            data-testid="open-now-playing"
+            onClick={openNowPlaying}
           >
-            <Mic2 size={18} />
+            <Maximize2 size={17} />
           </button>
           <button
             type="button"
@@ -135,15 +131,6 @@ export function PlayerBar() {
             onClick={() => setMiniPlayer(true)}
           >
             <PictureInPicture2 size={17} />
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Fullscreen lyrics"
-            title="Fullscreen lyrics (F)"
-            onClick={() => toggleFullscreenLyrics()}
-          >
-            <Maximize2 size={17} />
           </button>
         </div>
       </div>

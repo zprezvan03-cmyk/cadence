@@ -525,6 +525,7 @@ export interface LyricsSettings {
   showCredits: boolean;
   hideInstrumentalOnly: boolean;
   passiveScroll: boolean;
+  /** Legacy persisted flag; the player-bar action now always opens immersive Now Playing. */
   fullscreenOnOpen: boolean;
   /** Whether the lyrics text is shown in fullscreen Now Playing; playback is unaffected either way. */
   showLyricsInFullscreen: boolean;
@@ -678,7 +679,9 @@ export interface NowPlayingProfileConfig {
 
 }
 
-/** One named Now Playing profile, with distinct windowed and fullscreen proportions. */
+export type NowPlayingLayoutMode = NowPlayingProfileMode | "lyricsOff";
+
+/** A named profile with independent Lyrics On, Lyrics Off and legacy windowed layouts. */
 export interface NowPlayingProfile {
   id: string;
   name: string;
@@ -687,12 +690,14 @@ export interface NowPlayingProfile {
   builtIn: boolean;
   windowed: NowPlayingProfileConfig;
   fullscreen: NowPlayingProfileConfig;
+  lyricsOff: NowPlayingProfileConfig;
 }
 
 /** Persisted profile selection plus user-authored profiles. Built-ins live in code, not settings. */
 export interface NowPlayingProfilesSettings {
   version: 1;
   activeProfileId: string;
+  lyricsOffProfileId: string;
   customProfiles: NowPlayingProfile[];
   /**
    * Optional per-context profile activation (disabled by default): when enabled, the

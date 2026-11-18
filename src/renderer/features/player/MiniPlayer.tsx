@@ -23,14 +23,10 @@ export function MiniPlayer() {
   const item = useCurrentMediaItem();
   const { cover, text } = usePlaybackPresentation(item);
   const setMiniPlayer = useUi(state => state.setMiniPlayer);
-  const navigate = useUi(state => state.navigate);
+  const openNowPlaying = useUi(state => state.openNowPlaying);
   const setFavorite = useLibrary(state => state.setFavorite);
 
   const expand = () => setMiniPlayer(false);
-  const openNowPlaying = () => {
-    setMiniPlayer(false);
-    navigate({ name: "lyrics" });
-  };
 
   return (
     <section className="mini-player" data-testid="mini-player" aria-label="Mini player">

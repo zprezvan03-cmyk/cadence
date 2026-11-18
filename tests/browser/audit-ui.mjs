@@ -1,18 +1,18 @@
 /**
  * Interactive application harness.
  *
- * Electron's binary cannot be downloaded in this environment, so this script boots the *real*
- * production renderer bundle (`out/renderer`) in headless Chromium with:
- *   - a stub `window.cadence` that speaks the same IPC contract as the preload script, backed by a
+ * Boots the production renderer bundle (`dist`) in headless Chromium with:
+ *   - a stub `window.cadence` that speaks the same contract as the Tauri bridge, backed by a
  *     snapshot produced by the real main-process scanner (`tests/browser/build-library.ts`),
  *   - real generated audio files served with HTTP Range support,
  *   - the real audio engine, lyrics renderer and shader engine.
  *
- * The stub replaces only the Electron IPC transport (dialogs, filesystem and SQLite live in the
- * main process, which cannot run without Electron). Playback, artwork decoding, lyric parsing and
+ * Native window actions and dialogs are simulated. Playback, artwork decoding, lyric parsing and
  * shader rendering are the shipped code paths, not stand-ins.
  *
- * Usage: npx vite-node tests/browser/build-library.ts && node tests/browser/run-app.mjs
+ * Usage (after building the renderer and preparing the audio fixtures):
+ *   npx vite-node tests/browser/build-library.ts && node tests/browser/audit-ui.mjs
+ * AUDIT_ONLY accepts a comma-separated list of section names.
  */
 import { createServer } from "node:http";
 import { createReadStream, existsSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
@@ -56,6 +56,7 @@ const RICH_LRC = `[ti:Fixture FLAC]
 /** Track ids from the generated library, resolved by title so the harness never hardcodes ids. */
 const ids = {
   flac: byTitle("Fixture FLAC")?.id,
+  opus: byTitle("Fixture Opus")?.id,
   mp3: byTitle("Fixture MP3")?.id,
   ogg: byTitle("Fixture Ogg Vorbis")?.id,
   aac: byTitle("Fixture AAC")?.id,
@@ -179,7 +180,7 @@ const audioState = () =>
     };
   });
 
-/* Stub bridge: same contract as src/preload/index.ts, backed by real library data. */
+/* Stub bridge: same contract as src/tauri/bridge.ts, backed by real library data. */
 await page.evaluateOnNewDocument(
   data => {
     const { snapshot, lyricsByTrack, fixtureDefaults } = data;
@@ -190,6 +191,8 @@ await page.evaluateOnNewDocument(
     const SETTINGS_KEY = "cadence.harness.settings.v1";
     const defaultSettings = {
       ...fixtureDefaults,
+      // This audit represents an existing install, even after the last folder is removed.
+      general: { ...fixtureDefaults.general, onboardingCompleted: true },
       playback: {
         ...fixtureDefaults.playback, resumeOnLaunch: false, autoPlay: false, smartShufflePopularity: false,
       },
@@ -634,7 +637,26 @@ const clickText = async (selector, wanted, exact = true) => {
   }
   throw new Error(`No ${selector} with text ${JSON.stringify(wanted)}; saw ${JSON.stringify(await page.$$eval(selector, nodes => nodes.map(node => node.textContent?.replace(/\s+/g, " ").trim())))}`);
 };
+const leaveImmersive = async () => {
+  if (await page.$('button.fs-exit')) {
+    await page.click('button.fs-exit');
+    await page.waitForSelector('.sidebar');
+    await page.waitForSelector('[data-player-moving]', { hidden: true, timeout: 3000 });
+  }
+};
+const openLegacyLyrics = async () => {
+  await leaveImmersive();
+  await page.evaluate(() => { location.hash = "#/lyrics"; });
+  await page.waitForSelector('.lyrics-view:not(.is-fullscreen)', { timeout: 5000 });
+  await wait(240);
+};
 const nav = async label => {
+  await leaveImmersive();
+  if (label === "Now Playing") {
+    await page.click('[data-testid="open-now-playing"]');
+    await page.waitForSelector('.lyrics-view.is-fullscreen');
+    return;
+  }
   if (label === "Playlists") {
     const disclosure = await page.$('.nav-section-toggle[title="Playlists"][aria-expanded="false"]');
     if (disclosure) { await disclosure.click(); await wait(210); }
@@ -644,6 +666,10 @@ const nav = async label => {
   await wait(140);
 };
 const settingsTab = async label => { await clickText(".settings-tabs button", label); await wait(80); };
+const resetAllSettings = async () => {
+  await clickText(".settings-view .view-heading button", "Reset all");
+  await page.waitForFunction(() => document.querySelector('[data-testid="app-toast"]')?.textContent?.includes("restored to defaults"), { timeout: 4000 });
+};
 const settingRow = async label => {
   for (const row of await page.$$(".setting-row")) {
     const strong = await row.$("strong");
@@ -682,22 +708,49 @@ const queueState = async () => page.evaluate(() => {
   const rows = [...document.querySelectorAll(".queue-list li")];
   return { titles: rows.map(row => row.querySelector(".queue-track strong")?.textContent?.trim()), current: rows.findIndex(row => row.classList.contains("current")) };
 });
-const revealFullscreenControls = async () => { await page.mouse.move(740, 840); await wait(350); };
+const queuePanel = '[data-testid="queue-panel"]';
 const openQueue = async () => {
-  if (!(await page.$('[data-testid="queue-panel"]'))) {
-    if (await page.$(".lyrics-view.is-fullscreen")) await revealFullscreenControls();
-    const selector = await page.$('.player-bar button[aria-label="Queue"]')
-      ? '.player-bar button[aria-label="Queue"]'
-      : '[data-testid="fullscreen-controls"] button[aria-label="Queue"]';
+  if (await page.$(`${queuePanel}.is-exiting`)) await page.waitForSelector(queuePanel, { hidden: true });
+  if (!(await page.$(queuePanel))) {
+    const immersive = Boolean(await page.$('.lyrics-view.is-fullscreen'));
+    const selector = `${immersive ? '[data-testid="fullscreen-controls"]' : '.player-bar'} button[aria-label="Queue"]`;
+    if (immersive) {
+      const point = await page.$eval(selector, node => {
+        const box = node.getBoundingClientRect();
+        return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      });
+      await page.mouse.move(100, 180);
+      await page.mouse.move(point.x, point.y);
+      await page.waitForFunction(sel => {
+        const node = document.querySelector(sel);
+        const box = node?.getBoundingClientRect();
+        return box && node.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
+      }, { timeout: 4000 }, selector);
+    }
     await page.click(selector);
   }
-  await wait(100);
+  await page.waitForSelector(`${queuePanel}[data-presence="entered"]`);
 };
-const closeQueue = async () => { if (await page.$('[data-testid="queue-panel"]')) await page.click('button[aria-label="Close queue"]'); await wait(80); };
+const closeQueue = async () => {
+  if (await page.$(`${queuePanel}:not(.is-exiting)`)) await page.click('button[aria-label="Close queue"]');
+  await page.waitForSelector(queuePanel, { hidden: true });
+};
+const openLyricsSources = async () => {
+  await clickText(".dock-button", "Source", false);
+  await page.waitForSelector('.dock-sources[data-presence="entered"]', { timeout: 4000 });
+};
+const openManualLyricsSearch = async () => {
+  await openLyricsSources();
+  await clickText(".dock-sources .manual-search-entry", "Search Manually", false);
+  await page.waitForSelector('.dock-search[data-presence="entered"]', { timeout: 4000 });
+};
 const storedSettings = async () => page.evaluate(() => JSON.parse(localStorage.getItem("cadence.harness.settings.v1") || "{}"));
 const storedSession = async () => page.evaluate(() => JSON.parse(localStorage.getItem("cadence.session.v1") || "null"));
+const selectedSections = new Set(process.env.AUDIT_ONLY?.split(",").map(name => name.trim()).filter(Boolean));
+const unmatchedSections = new Set(selectedSections);
 const runSection = async (name, fn) => {
-  if (process.env.AUDIT_ONLY && process.env.AUDIT_ONLY !== name) return;
+  if (selectedSections.size && !selectedSections.has(name)) return;
+  unmatchedSections.delete(name);
   try { await fn(); } catch (error) {
     check(name, false, `${error.message}; route=${await page.evaluate(() => location.hash)}`);
     await auditShot(`error-${name}`);
@@ -777,6 +830,7 @@ await runSection("sidebar-fetch-all-completes", async () => {
   await page.waitForSelector('[data-testid="fetch-all-panel"]', { hidden: true });
   const actions = await page.evaluate(() => window.__audit.state.calls.filter(call => call[0].startsWith("fetch-")).map(call => call[0]));
   check("sidebar-fetch-all-commands", actions.join(",") === "fetch-start,fetch-pause,fetch-resume,fetch-pause,fetch-retryFailed,fetch-cancel", actions.join(","));
+  await page.setViewport({ width: 1480, height: 900 });
 });
 
 await runSection("sidebar-new-playlist-completes", async () => {
@@ -784,6 +838,13 @@ await runSection("sidebar-new-playlist-completes", async () => {
   await page.click('.sidebar button[aria-label="New playlist"]');
   await wait(120);
   check("sidebar-new-playlist-opens-form", Boolean(await page.$(".inline-create input")), "sidebar + should open the playlist-name form");
+  await page.type('.inline-create input[placeholder="Playlist name"]', "Sidebar Mix");
+  await clickText(".inline-create button", "Create");
+  await page.waitForSelector('.detail-view .detail-meta h1');
+  check("sidebar-new-playlist-creates-and-opens-the-real-playlist", await page.evaluate(() =>
+    location.hash.startsWith("#/playlist/") &&
+    document.querySelector('.detail-meta h1')?.textContent === "Sidebar Mix" &&
+    Boolean(document.querySelector('.sidebar-link[aria-current="location"][title="Sidebar Mix"]'))));
 });
 
 await runSection("playback-settings-completes", async () => {
@@ -802,7 +863,7 @@ await runSection("playback-settings-completes", async () => {
   const shownRepeat = await (await settingRow("Repeat")).$eval("select", node => node.value);
   check("transport-repeat-synchronizes-setting", shownRepeat === expectedRepeat, `${repeatBefore} → ${repeatAfter}; settings=${shownRepeat}`);
   await nav("Songs"); await setShuffle(true); await nav("Settings"); await settingsTab("Playback");
-  await page.click(".view-heading button"); await wait(150);
+  await resetAllSettings();
   const resetState = await page.evaluate(() => ({ rate: document.querySelector("audio")?.playbackRate,
     repeat: document.querySelector('.player-bar button[aria-label^="Repeat:"]')?.getAttribute("aria-label"),
     shuffle: document.querySelector('.player-bar button[aria-label="Shuffle"]')?.getAttribute("aria-pressed") }));
@@ -810,13 +871,13 @@ await runSection("playback-settings-completes", async () => {
 });
 
 await runSection("appearance-settings-completes", async () => {
-  await settingsTab("Appearance");
+  await nav("Settings"); await settingsTab("Appearance");
   const before = await page.$eval(".sidebar", node => node.getBoundingClientRect().width);
   await toggleSetting("Compact sidebar");
   const after = await page.$eval(".sidebar", node => node.getBoundingClientRect().width);
   check("compact-sidebar-changes-layout", after < before, `${before}px → ${after}px`);
   await toggleSetting("Compact sidebar");
-  await toggleSetting("Verbose shader logs"); await nav("Now Playing"); await wait(500);
+  await toggleSetting("Verbose shader logs"); await openLegacyLyrics(); await wait(500);
   const verboseLogs = logs.filter(line => /kawarp|shader/i.test(line) && /debug|log/i.test(line));
   check("verbose-shader-logs-produce-diagnostics", verboseLogs.length > 0, JSON.stringify(verboseLogs.slice(-3)));
 });
@@ -845,13 +906,33 @@ await runSection("queue-regressions-completes", async () => {
   await nav("Songs"); await openTrackMenu("broken"); await clickText(".context-menu button", "Play next");
   const shuffledAfter = { title: await playerTitle(), src: (await audioState()).src };
   check("play-next-shuffled-preserves-current-track", shuffledBefore.title === shuffledAfter.title && shuffledBefore.src === shuffledAfter.src, `${shuffledBefore.title} → ${shuffledAfter.title}`);
-  await setShuffle(false); await nav("Songs"); await playTrack("Fixture FLAC"); await openQueue();
-  const originalQueue = await queueState(); const secondTitle = originalQueue.titles[1];
-  const queueTracks = await page.$$(".queue-track"); await queueTracks[1].click(); await wait(400);
-  const firstRemove = await page.$('.queue-list li:first-child button[aria-label^="Remove "]'); await firstRemove.click(); await wait(150);
-  const removedState = { title: await playerTitle(), src: (await audioState()).src, queue: await queueState() };
-  check("remove-earlier-queue-entry-preserves-current", removedState.title === secondTitle && removedState.queue.titles[removedState.queue.current] === secondTitle, `expected ${secondTitle}; ${JSON.stringify(removedState)}`);
-  await closeQueue();
+  await setShuffle(false); await nav("Songs");
+  // Use a known playable track with an earlier row in title order. Queue jumps have their
+  // own check; removing an earlier row should not reload or advance the current occurrence.
+  const currentTitle = "Fixture FLAC";
+  const currentSrc = new URL(byTitle(currentTitle).streamUrl, base).href;
+  const row = await trackRow(currentTitle);
+  await (await row.$(".track-play")).click();
+  await page.waitForFunction(src => {
+    const audio = document.querySelector("audio");
+    return audio?.currentSrc === src && audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+  }, { timeout: 4000 }, currentSrc);
+  await pausePlayback();
+  await openQueue();
+  try {
+    const original = await queueState();
+    if (original.current < 1 || original.titles[original.current] !== currentTitle) {
+      throw new Error(`Expected ${currentTitle} with an earlier queue entry; ${JSON.stringify(original)}`);
+    }
+    await page.click('.queue-list li:first-child button[aria-label^="Remove "]');
+    await page.waitForFunction(count => document.querySelectorAll('.queue-list li').length === count, { timeout: 4000 }, original.titles.length - 1);
+    const removedState = { title: await playerTitle(), src: (await audioState()).src, queue: await queueState() };
+    check("remove-earlier-queue-entry-preserves-current", removedState.title === currentTitle && removedState.src === currentSrc &&
+      removedState.queue.current === original.current - 1 && removedState.queue.titles[removedState.queue.current] === currentTitle,
+    JSON.stringify(removedState));
+  } finally {
+    await closeQueue();
+  }
 });
 
 await runSection("session-position-completes", async () => {
@@ -864,24 +945,31 @@ await runSection("session-position-completes", async () => {
 });
 
 await runSection("instrumental-setting-completes", async () => {
-  await nav("Songs"); await playTrack("Fixture AAC"); await nav("Now Playing");
-  await page.waitForSelector(".blyrics--line", { timeout: 8000 });
+  await nav("Songs"); await playTrack("Fixture AAC"); await pausePlayback(); await openLegacyLyrics();
+  await page.waitForSelector(`.lyrics-view[data-current-source-key="local:${ids.aac}"] .blyrics--line`, { timeout: 8000 });
   const before = await page.$$eval(".blyrics--line", nodes => nodes.length);
-  await nav("Settings"); await settingsTab("Appearance"); await toggleSetting("Hide instrumental-only placeholders"); await nav("Now Playing"); await wait(400);
+  await nav("Settings"); await settingsTab("Appearance"); await toggleSetting("Hide instrumental-only placeholders"); await openLegacyLyrics(); await wait(400);
   const after = await page.$$eval(".blyrics--line", nodes => nodes.length);
   check("hide-instrumental-only-hides-placeholder", before > 0 && after === 0, `${before} → ${after} lines`);
 });
 
 await runSection("lyrics-request-dedup-completes", async () => {
-  await nav("Songs"); await playTrack("Fixture Opus"); await nav("Now Playing");
-  await page.waitForFunction(() => document.querySelector('[data-testid="sync-label"]')?.textContent?.includes("Not found"), { timeout: 8000 });
-  const count = () => page.evaluate(() => window.__audit.state.calls.filter(call => call[0] === "lyrics-resolve" && call[1] === 8).length);
-  const before = await count(); await nav("Songs"); await nav("Now Playing"); await wait(500); const after = await count();
-  check("empty-lyrics-remount-does-not-duplicate-request", before === 1 && after === before, `${before} → ${after} resolve calls`);
+  await nav("Songs");
+  if (await playerTitle() === "Fixture Opus") await playTrack("Fixture FLAC");
+  const count = () => page.evaluate(id => window.__audit.state.calls.filter(call => call[0] === "lyrics-resolve" && call[1] === id).length, ids.opus);
+  const initial = await count();
+  // Online autofetch starts a local fallback and then the full resolve. Neither should
+  // be issued again when the lyrics route remounts.
+  const expected = await page.evaluate(async () => (await window.cadence.settings.get()).lyrics.autoFetch ? 2 : 1);
+  await playTrack("Fixture Opus"); await pausePlayback(); await openLegacyLyrics();
+  await page.waitForSelector(`.lyrics-view[data-current-source-key="local:${ids.opus}"] [data-testid="lyrics-empty-panel"]`, { timeout: 8000 });
+  const before = await count(); await nav("Songs"); await openLegacyLyrics(); await wait(500); const after = await count();
+  check("empty-lyrics-remount-does-not-duplicate-request", before - initial === expected && after === before, `${initial} → ${before} → ${after} resolve calls`);
 });
 
 await runSection("manual-search-clear-completes", async () => {
-  await clickText(".dock-button", "Source", false); await clickText(".manual-search-entry", "Search Manually", false);
+  await closeQueue();
+  await openManualLyricsSearch();
   await page.evaluate(() => { window.__audit.state.delays.youtube = 900; });
   await page.type('input[aria-label="YouTube link (optional)"]', "https://youtu.be/dQw4w9WgXcQ"); await wait(680);
   await page.click('button[aria-label="Clear query and results"]'); await wait(1150);
@@ -895,7 +983,7 @@ await runSection("manual-search-clear-completes", async () => {
 
 await runSection("shader-static-opacity-completes", async () => {
   await nav("Songs"); await playTrack("Fixture FLAC"); await nav("Settings"); await settingsTab("Appearance");
-  await selectSetting("Performance mode", "off"); await rangeSetting("Opacity", "Home"); await nav("Now Playing"); await wait(250);
+  await selectSetting("Performance mode", "off"); await rangeSetting("Opacity", "Home"); await openLegacyLyrics(); await wait(250);
   const opacity = await page.$eval(".kawarp-bg", node => getComputedStyle(node).opacity);
   check("static-shader-opacity-applies", Number(opacity) < 0.05, `computed opacity=${opacity}`);
 });
@@ -921,7 +1009,7 @@ await runSection("blur-artwork-completes", async () => {
 /* --------------------------------------------------- exhaustive UI flow */
 
 await runSection("expanded-navigation-completes", async () => {
-  await nav("Settings"); await clickText(".view-heading button", "Reset all"); await wait(150);
+  await nav("Settings"); await resetAllSettings();
   const destinations = [
     ["Home", "home-view"], ["Songs", "library-view-songs"], ["Albums", "library-view-albums"],
     ["Artists", "library-view-artists"], ["Recently Added", "library-view-recently-added"], ["Playlists", "library-view-playlists"],
@@ -1032,7 +1120,7 @@ await runSection("expanded-playlist-completes", async () => {
 });
 
 await runSection("expanded-settings-completes", async () => {
-  await nav("Settings"); await page.click(".view-heading button"); await wait(150); await settingsTab("Appearance");
+  await nav("Settings"); await resetAllSettings(); await settingsTab("Appearance");
   const expectations = [];
   const remember = async (label, kind = "value") => {
     const row = await settingRow(label); const input = await row.$("input, select, textarea");
@@ -1082,19 +1170,33 @@ await runSection("expanded-settings-completes", async () => {
     expectations.push({ label, kind: "value", value });
   }
 
-  const providerNames = await page.$$eval(".provider-order .provider-name", nodes => nodes.slice(0, 2).map(node => node.textContent.trim()));
-  await page.click('.provider-order li:nth-child(2) button[aria-label="Move up"]'); await wait(80);
-  const movedUp = await page.$$eval(".provider-order .provider-name", nodes => nodes.slice(0, 2).map(node => node.textContent.trim()));
-  check("provider-move-up", movedUp[0] === providerNames[1], `${providerNames[0]} ↔ ${providerNames[1]}`);
-  await page.click('.provider-order li:nth-child(1) button[aria-label="Move down"]'); await wait(80);
-  const movedDown = await page.$$eval(".provider-order .provider-name", nodes => nodes.slice(0, 2).map(node => node.textContent.trim()));
-  check("provider-move-down", movedDown[0] === providerNames[0], "restored original first two");
+  const firstProviders = () => page.$$eval(".provider-order .provider-name", nodes => nodes.slice(0, 2).map(node => node.textContent.trim()));
+  const activateProviderButton = async selector => {
+    // Use native keyboard activation so focusing a control in the long settings pane
+    // cannot shift the list between measuring a pointer target and delivering the click.
+    const button = await page.waitForSelector(selector, { visible: true, timeout: 4000 });
+    await button.press("Enter");
+  };
+  const waitForProviderOrder = expected => page.waitForFunction(names => {
+    const first = [...document.querySelectorAll('.provider-order .provider-name')].slice(0, 2);
+    return names.every((name, i) => first[i]?.textContent.trim() === name);
+  }, { timeout: 4000 }, expected).then(() => true, () => false);
+  const waitForProviderCount = expected => page.waitForFunction(count =>
+    document.querySelectorAll('.provider-order li').length === count, { timeout: 4000 }, expected).then(() => true, () => false);
+  const providerNames = await firstProviders();
+  await activateProviderButton('.provider-order li:nth-child(2) button[aria-label="Move up"]');
+  const swapped = await waitForProviderOrder([providerNames[1], providerNames[0]]);
+  check("provider-move-up", swapped, `${providerNames.join(" / ")} → ${(await firstProviders()).join(" / ")}`);
+  await activateProviderButton('.provider-order li:nth-child(1) button[aria-label="Move down"]');
+  check("provider-move-down", await waitForProviderOrder(providerNames), (await firstProviders()).join(" / "));
   const providerCount = (await page.$$(".provider-order li")).length;
-  await page.click('.provider-order li:first-child button[aria-label="Remove from order"]'); await wait(80);
-  check("provider-remove", (await page.$$(".provider-order li")).length === providerCount - 1 && Boolean(await page.$(".provider-pool-chip")), "removed to pool");
-  await (await page.$(".provider-pool-chip")).click(); await wait(80);
-  check("provider-add", (await page.$$(".provider-order li")).length === providerCount, "added from pool");
-  await page.click(".provider-restore"); await wait(80);
+  await activateProviderButton('.provider-order li:first-child button[aria-label="Remove from order"]');
+  const removed = await waitForProviderCount(providerCount - 1);
+  const pool = await page.$(".provider-pool-chip");
+  check("provider-remove", removed && Boolean(pool), "removed to pool");
+  if (pool) await activateProviderButton(".provider-pool-chip");
+  check("provider-add", Boolean(pool) && await waitForProviderCount(providerCount), "added from pool");
+  await activateProviderButton(".provider-restore");
   check("provider-restore-defaults", (await storedSettings()).lyrics.providerOrder.length === 13, `${(await page.$$(".provider-order li")).length} rows`);
 
   await selectSetting("Performance mode", "off"); await remember("Performance mode");
@@ -1149,13 +1251,13 @@ await runSection("expanded-settings-completes", async () => {
     if (actual !== expected.value) mismatches.push(`${expected.label}: ${expected.value} → ${actual}`);
   }
   check("settings-restart-persistence", mismatches.length === 0, mismatches.join("; ") || `${expectations.length} changed controls restored`);
-  await page.click(".view-heading button"); await wait(150);
+  await resetAllSettings();
   const defaults = await storedSettings();
   check("reset-all-clears-saved-overrides", Object.keys(defaults).length === 0, "harness reset removes the saved override object");
 });
 
 await runSection("expanded-lyrics-completes", async () => {
-  await nav("Songs"); await setShuffle(false); await playTrack("Fixture FLAC"); await nav("Now Playing");
+  await nav("Songs"); await setShuffle(false); await playTrack("Fixture FLAC"); await openLegacyLyrics();
   await page.waitForSelector(".blyrics--line", { timeout: 8000 });
   await pausePlayback();
   check("lyrics-rich-source-ready", (await page.$eval('[data-testid="sync-label"]', node => node.textContent)).includes("Word synced"), "real parsed lyrics");
@@ -1164,24 +1266,30 @@ await runSection("expanded-lyrics-completes", async () => {
   check("lyrics-offset-minus", (await offset()) !== offsetBefore, `${offsetBefore} → ${await offset()}`);
   const offsetMinus = await offset(); await page.click(".dock-offset button:last-child");
   check("lyrics-offset-plus", (await offset()) !== offsetMinus, `${offsetMinus} → ${await offset()}`);
-  await page.click('button[title="Translate lyrics"]'); await clickText(".dock-languages .source-row", "Off");
+  const openTranslationMenu = async () => {
+    await page.click('button[title="Translate lyrics"]');
+    await page.waitForSelector('.dock-languages[data-presence="entered"]', { timeout: 4000 });
+  };
+  await openTranslationMenu(); await clickText(".dock-languages .source-row", "Off");
   check("dock-translate-off", (await storedSettings()).lyrics.translationLanguage === "", "Off selected");
-  await page.click('button[title="Translate lyrics"]'); await clickText(".dock-languages .source-row", "Spanish", false); await wait(350);
+  await openTranslationMenu(); await clickText(".dock-languages .source-row", "Spanish", false); await wait(350);
   check("dock-translate-language", (await storedSettings()).lyrics.translationLanguage === "es" && Boolean(await page.$(".blyrics--translated")), "Spanish translation rendered");
   await page.click('button[title="Romanize lyrics"]'); await wait(300);
   check("dock-romanize", (await storedSettings()).lyrics.romanization === true && Boolean(await page.$(".blyrics--romanized")), "romanized lines rendered");
   await page.click('button[title="Romanize lyrics"]'); await wait(150);
   check("dock-romanize-off-keeps-translation", !(await page.$(".blyrics--romanized")) && Boolean(await page.$(".blyrics--translated")), "decorations independent");
 
-  await clickText(".dock-button", "Source", false);
+  await openLyricsSources();
   await clickText(".dock-sources .source-row", "Audit line source", false); await wait(180);
   check("lyrics-source-selection", (await page.$eval(".lyrics-body", node => node.textContent)).includes("Alternate first line"), "alternate source rendered");
-  await nav("Songs"); await nav("Now Playing");
+  await nav("Songs"); await openLegacyLyrics();
   check("lyrics-source-survives-navigation", (await page.$eval(".lyrics-body", node => node.textContent)).includes("Alternate first line"), "selected source retained");
   const resolveBefore = await page.evaluate(() => window.__audit.state.calls.filter(call => call[0] === "lyrics-resolve").length);
   await page.click('button[title="Reload lyrics"]'); await wait(300);
   check("lyrics-reload", (await page.evaluate(() => window.__audit.state.calls.filter(call => call[0] === "lyrics-resolve").length)) === resolveBefore + 1, "one reload request");
-  await page.click('button[title="Save lyrics next to the track"]'); await wait(100);
+  await page.click('button[title="Save lyrics next to the track"]');
+  await page.waitForSelector(".dock-save-popover .source-row");
+  await clickText(".dock-save-popover .source-row", "LRC", false);
   check("lyrics-save-sidecar", await page.evaluate(() => window.__audit.state.calls.some(call => call[0] === "save-sidecar" && String(call[2]).includes("Alternate"))), "selected text saved");
   await page.evaluate(() => { window.__audit.state.chooseLyricsResult = { canceled: true }; });
   await page.click('button[title="Open a lyrics file"]'); await wait(100);
@@ -1194,10 +1302,10 @@ await runSection("expanded-lyrics-completes", async () => {
 
   await nav("Settings"); await settingsTab("Appearance"); await selectSetting("Theme", "custom");
   await page.type('[data-testid="settings-lyrics"] textarea', ".blyrics-container { --audit-theme: 42; }");
-  await nav("Now Playing"); await wait(200);
+  await openLegacyLyrics(); await wait(200);
   check("custom-theme-applies-to-renderer", (await page.$eval("braccato-lyrics", node => node.theme)).includes("--audit-theme: 42"), "custom CSS handed to Braccato");
   await nav("Settings"); await settingsTab("Appearance"); await toggleSetting("Fetch lyrics online");
-  await nav("Songs"); await playTrack("Fixture Opus"); await nav("Now Playing"); await wait(350); await pausePlayback();
+  await nav("Songs"); await playTrack("Fixture Opus"); await openLegacyLyrics(); await wait(350); await pausePlayback();
   const lastResolve = await page.evaluate(() => window.__audit.state.calls.filter(call => call[0] === "lyrics-resolve").at(-1));
   check("offline-lyrics-resolve", lastResolve?.[2] === true, JSON.stringify(lastResolve));
   check("offline-enable-settings-action", Boolean(await clickText(".empty-actions button", "Enable online lyrics in settings")) && Boolean(await page.$('[data-testid="settings-view"]')), "opens Settings");
@@ -1205,15 +1313,15 @@ await runSection("expanded-lyrics-completes", async () => {
 });
 
 await runSection("expanded-manual-lyrics-completes", async () => {
-  await nav("Songs"); await playTrack("Fixture Opus"); await nav("Now Playing"); await wait(300); await pausePlayback();
+  await nav("Songs"); await playTrack("Fixture Opus"); await openLegacyLyrics(); await wait(300); await pausePlayback();
   if (process.env.AUDIT_DEBUG) console.log("MANUAL PAUSED", await audioState());
   const beforeRetry = await page.evaluate(() => window.__audit.state.calls.filter(call => call[0] === "lyrics-resolve").length);
   if (await page.$(".lyrics-empty-panel button:not(.primary)")) await clickText(".lyrics-empty-panel button", "Try again", false);
   check("empty-lyrics-try-again", (await page.evaluate(() => window.__audit.state.calls.filter(call => call[0] === "lyrics-resolve").length)) === beforeRetry + 1, "retry control operated");
   await page.evaluate(() => { window.__audit.state.chooseLyricsResult = { canceled: false, path: "/empty-chosen.lrc", text: "Chosen empty-state lyrics" }; });
-  if (await page.$(".lyrics-empty-panel .primary")) await clickText(".lyrics-empty-panel .primary", "Choose a lyrics file", false);
+  if (await page.$(".lyrics-empty-panel .empty-actions")) await clickText(".lyrics-empty-panel .empty-actions button", "Choose a lyrics file", false);
   check("empty-lyrics-choose-file", (await page.$eval(".lyrics-body", node => node.textContent)).includes("Chosen empty-state lyrics"), "empty-state file action");
-  await clickText(".dock-button", "Source", false); await clickText(".manual-search-entry", "Search Manually", false);
+  await openManualLyricsSearch();
   const title = await page.$('input[aria-label="Song title"]'); await title.focus();
   await page.keyboard.down("Control"); await page.keyboard.press("A"); await page.keyboard.up("Control"); await page.keyboard.press("Backspace");
   check("manual-search-requires-title", await page.$eval(".search-submit", node => node.disabled), "submit disabled");
@@ -1228,17 +1336,17 @@ await runSection("expanded-manual-lyrics-completes", async () => {
   check("manual-user-fields-win", (await page.$eval(".effective-line .effective-value", node => node.textContent.trim())) === "Manual Song", "YouTube did not overwrite typed title");
   await page.click(".search-submit"); await wait(200); await clickText(".dock-search > .source-row", "Manual Song", false); await wait(150);
   check("manual-search-select-result", (await page.$eval(".lyrics-body", node => node.textContent)).includes("Manual Manual Song"), "manual result promoted");
-  await clickText(".dock-button", "Source", false); await clickText(".manual-search-entry", "Search Manually", false);
+  await openManualLyricsSearch();
   check("manual-draft-survives-panel", (await page.$eval('input[aria-label="Song title"]', node => node.value)) === "Manual Song", "draft restored");
   await nav("Settings"); await settingsTab("Playback");
   const resumeRow = await settingRow("Restore the last session on launch");
   if (!(await resumeRow.$eval('input[type="checkbox"]', node => node.checked))) await toggleSetting("Restore the last session on launch");
-  await nav("Now Playing");
+  await openLegacyLyrics();
   if (process.env.AUDIT_DEBUG) console.log("MANUAL BEFORE RELOAD", await page.evaluate(() => ({ session: localStorage.getItem("cadence.session.v1"), settings: localStorage.getItem("cadence.harness.settings.v1"), title: document.querySelector(".player-title")?.textContent })));
   await page.reload({ waitUntil: "domcontentloaded" });
   await wait(500);
   if (process.env.AUDIT_DEBUG) console.log("MANUAL AFTER RELOAD", await page.evaluate(() => ({ session: localStorage.getItem("cadence.session.v1"), settings: localStorage.getItem("cadence.harness.settings.v1"), title: document.querySelector(".player-title")?.textContent, audit: window.__audit?.state?.tracks?.length }))); await page.waitForSelector('[data-testid="lyrics-dock"]'); await wait(600);
-  await clickText(".dock-button", "Source", false); await clickText(".manual-search-entry", "Search Manually", false);
+  await openManualLyricsSearch();
   check("manual-draft-survives-restart", (await page.$eval('input[aria-label="Song title"]', node => node.value)) === "Manual Song", "localStorage draft restored");
   await page.evaluate(() => { window.__audit.state.failSearch = true; }); await page.click(".search-submit"); await wait(150);
   check("manual-search-error", (await page.$eval(".search-error", node => node.textContent)).includes("Audit search failure"), "inline error");
@@ -1247,12 +1355,13 @@ await runSection("expanded-manual-lyrics-completes", async () => {
   await page.click('button[aria-label="Clear query and results"]');
   check("manual-clear-resets-draft", (await page.$eval('input[aria-label="Song title"]', node => node.value)) === "Fixture Opus", "track defaults restored");
   await page.click('.search-panel-head button[title="Back to sources"]');
-  check("manual-back-to-sources", Boolean(await page.$(".dock-sources")), "source popover restored");
+  await page.waitForSelector('.dock-sources[data-presence="entered"]', { timeout: 4000 });
+  check("manual-back-to-sources", await waitForDismissal('[data-testid="manual-search"]'), "source popover restored and manual panel closed");
 });
 
 await runSection("expanded-fullscreen-completes", async () => {
   await nav("Songs"); await playTrack("Fixture FLAC");
-  await page.click('.player-bar button[aria-label="Fullscreen lyrics"]'); await wait(250);
+  await page.click('[data-testid="open-now-playing"]'); await wait(250);
   check("fullscreen-enter-control", Boolean(await page.$(".lyrics-view.is-fullscreen")), "immersive view");
   await openQueue();
   if (process.env.AUDIT_DEBUG) console.log("ESC BEFORE", await page.evaluate(() => ({ queue: Boolean(document.querySelector('[data-testid="queue-panel"]')), fullscreen: Boolean(document.querySelector('.lyrics-view.is-fullscreen')), active: document.activeElement?.outerHTML.slice(0, 160) })));
@@ -1262,15 +1371,12 @@ await runSection("expanded-fullscreen-completes", async () => {
   if (await page.$('[data-testid="queue-panel"]')) await closeQueue();
   await page.keyboard.press("F11"); await wait(200);
   const f11 = await page.evaluate(() => ({ immersive: Boolean(document.querySelector(".lyrics-view.is-fullscreen")), native: window.__chrome.fullscreen }));
-  check("f11-native-and-immersive-toggle", !f11.immersive && f11.native, JSON.stringify(f11));
-  if (!(await page.$(".lyrics-view.is-fullscreen"))) await page.keyboard.press("F11"); await wait(250);
-  await revealFullscreenControls();
-  await page.click('[data-testid="fullscreen-lyrics-toggle"]'); await wait(150);
+  check("f11-native-and-immersive-toggle", f11.immersive && f11.native, JSON.stringify(f11));
+  await page.click('[data-testid="lyrics-mode-off"]'); await wait(150);
   check("fullscreen-lyrics-off-panel", Boolean(await page.$(".lyrics-view.is-lyrics-off")), "panel layout");
-  await revealFullscreenControls();
-  await page.click('[data-testid="fullscreen-lyrics-toggle"]'); await wait(150);
+  await page.click('[data-testid="lyrics-mode-on"]'); await wait(150);
   check("fullscreen-lyrics-on-panel", !(await page.$(".lyrics-view.is-lyrics-off")), "lyrics restored");
-  await page.click('button[aria-label="Exit fullscreen lyrics"]'); await wait(120);
+  await page.click('button[aria-label="Exit Now Playing"]'); await wait(120);
   check("fullscreen-exit-control", !(await page.$(".lyrics-view.is-fullscreen")), "normal chrome restored");
 });
 
@@ -1282,7 +1388,7 @@ await runSection("expanded-animated-art-completes", async () => {
   await nav("Settings"); await settingsTab("Library"); await clickText(".heading-actions button", "Rescan now");
   await settingsTab("Appearance"); const animatedRow = await settingRow("Animated artwork");
   if (!(await animatedRow.$eval('input[type="checkbox"]', node => node.checked))) await toggleSetting("Animated artwork");
-  await nav("Songs"); await playTrack("Fixture FLAC"); await nav("Now Playing"); await wait(500);
+  await nav("Songs"); await playTrack("Fixture FLAC"); await openLegacyLyrics(); await wait(500);
   const before = await page.evaluate(() => ({ videos: document.querySelectorAll("video").length, paused: document.querySelector("video")?.paused }));
   check("animated-artwork-video-loads", before.videos === 1 && before.paused === false, JSON.stringify(before));
   if (!(await audioState()).paused) await page.click('[data-testid="play-toggle"]'); await wait(150);
@@ -1296,7 +1402,7 @@ await runSection("expanded-queue-and-errors-completes", async () => {
   await page.click('button[aria-label="Clear queue"]'); await wait(100);
   check("queue-clear", (await page.$eval(".queue-header", node => node.textContent)).includes("0 songs") && (await audioState()).paused, "empty and stopped");
   await closeQueue();
-  await nav("Home"); if (await page.$(".quick-track")) await (await page.$(".quick-track")).click(); await wait(350);
+  await nav("Home"); if (await page.$(".home-shelf-track .home-track-card .card-open")) await page.click(".home-shelf-track .home-track-card .card-open"); await wait(350);
   await nav("Songs"); await openTrackMenu("Fixture MP3"); await clickText(".context-menu button", "Add to queue"); await openQueue();
   check("context-add-to-queue", (await queueState()).titles.filter(title => title === "Fixture MP3").length === 1, (await queueState()).titles.join(","));
   await closeQueue(); await nav("Songs"); await playTrack("Fixture FLAC");
@@ -1338,14 +1444,14 @@ await runSection("expanded-shuffle-actions-completes", async () => {
   await openQueue(); check("home-play-library", (await queueState()).titles.length === 8, `${(await queueState()).titles.length} queued`); await closeQueue();
   await setShuffle(false); await clickText(".home-view .heading-actions button", "Shuffle");
   check("home-shuffle-randomizes-order", (await page.$eval('.player-bar button[aria-label="Shuffle"]', node => node.getAttribute("aria-pressed"))) === "true", "transport shuffle enabled");
-  await setShuffle(false); await nav("Albums"); await (await page.$('[data-testid="album-card"]')).click(); await wait(120);
+  await setShuffle(false); await nav("Albums"); await page.click('[data-testid="album-card"] .card-open'); await wait(120);
   await clickText(".detail-hero .heading-actions button", "Shuffle");
   check("album-shuffle-randomizes-order", (await page.$eval('.player-bar button[aria-label="Shuffle"]', node => node.getAttribute("aria-pressed"))) === "true", "transport shuffle enabled");
   await clickText(".detail-hero .heading-actions button", "Play"); await wait(150);
   check("album-play", !(await audioState()).paused, await playerTitle());
   await clickText(".detail-hero .heading-actions button", "Now Playing", false);
   check("album-now-playing", Boolean(await page.$('[data-testid="lyrics-view"]')), "hero action");
-  await setShuffle(false); await nav("Artists"); await (await page.$(".artist-card")).click(); await wait(120);
+  await nav("Artists"); await setShuffle(false); await page.click(".artist-card"); await wait(120);
   await clickText(".detail-hero .heading-actions button", "Shuffle");
   check("artist-shuffle-randomizes-order", (await page.$eval('.player-bar button[aria-label="Shuffle"]', node => node.getAttribute("aria-pressed"))) === "true", "transport shuffle enabled");
   await clickText(".detail-hero .heading-actions button", "Play"); await wait(120);
@@ -1386,6 +1492,7 @@ await runSection("expanded-keyboard-completes", async () => {
   await page.keyboard.press("Q");
   await page.waitForSelector('[data-testid="queue-panel"]', { hidden: true, timeout: 2000 });
   check("shortcut-q-close", !(await page.$('[data-testid="queue-panel"]')), "queue closed after its exit");
+  await page.keyboard.press("Escape"); await page.waitForSelector('.player-bar');
   await page.keyboard.press("N"); await wait(100); check("shortcut-n", Boolean(await page.$(".lyrics-view.is-fullscreen")), "immersive");
   await page.keyboard.press("Escape"); await wait(100); check("shortcut-escape-fullscreen", !(await page.$(".lyrics-view.is-fullscreen")), "normal view");
   await page.keyboard.press("F"); await wait(100); check("shortcut-f", Boolean(await page.$(".lyrics-view.is-fullscreen")), "immersive");
@@ -1396,6 +1503,7 @@ await runSection("expanded-keyboard-completes", async () => {
   const repeatBefore = await page.$eval('.player-bar button[aria-label^="Repeat:"]', node => node.getAttribute("aria-label"));
   await page.keyboard.press("R"); await wait(80);
   check("shortcut-r", (await page.$eval('.player-bar button[aria-label^="Repeat:"]', node => node.getAttribute("aria-label"))) !== repeatBefore, "repeat cycled");
+  await page.evaluate(() => document.activeElement?.blur());
   const pauseBeforeSpace = (await audioState()).paused; await page.keyboard.press("Space"); await wait(100);
   check("shortcut-space-body", (await audioState()).paused !== pauseBeforeSpace, "global play/pause");
   await page.click("#global-search"); await page.keyboard.press("Q"); await wait(80);
@@ -1412,7 +1520,7 @@ await runSection("expanded-window-and-media-completes", async () => {
   await page.evaluate(() => window.__mediaCommandListener?.("next")); await wait(250);
   check("renderer-media-command-next", (await playerTitle()) !== mediaTitleBefore, `${mediaTitleBefore} → ${await playerTitle()}`);
   await page.evaluate(() => window.__menuActionListener?.("toggle-fullscreen-lyrics")); await wait(120);
-  check("renderer-menu-fullscreen", Boolean(await page.$(".lyrics-view.is-fullscreen")), "native menu action path");
+  check("renderer-menu-fullscreen", await page.evaluate(() => window.__chrome.fullscreen && Boolean(document.querySelector(".lyrics-view.is-fullscreen"))), "native menu action path");
   await page.keyboard.press("Escape");
 });
 
@@ -1506,9 +1614,9 @@ await runSection("expanded-player-controls-completes", async () => {
   await nav("Songs"); await openQueue();
   check("player-queue-open", Boolean(await page.$('[data-testid="queue-panel"]')), "queue button");
   await closeQueue();
-  await page.click('.player-bar button[aria-label="Fullscreen lyrics"]'); await wait(150);
+  await page.click('[data-testid="open-now-playing"]'); await wait(150);
   check("player-fullscreen-open", Boolean(await page.$(".lyrics-view.is-fullscreen")), "fullscreen button");
-  await page.click('button[aria-label="Exit fullscreen lyrics"]'); await wait(120);
+  await page.click('button[aria-label="Exit Now Playing"]'); await wait(120);
   check("player-fullscreen-close", !(await page.$(".lyrics-view.is-fullscreen")), "exit button");
   await pausePlayback();
 });
@@ -1532,8 +1640,8 @@ await runSection("expanded-queue-controls-completes", async () => {
   await closeQueue(); await nav("Songs"); await openTrackMenu("Fixture MP3"); await clickText(".context-menu button", "Add to queue"); await openQueue();
   const deduped = await queueState();
   check("queue-add-and-dedupe", two.titles.length === 2 && deduped.titles.length === 2 && deduped.titles.filter(title => title === "Fixture MP3").length === 1, JSON.stringify(deduped));
-  await page.keyboard.press("Escape"); await wait(100);
-  check("queue-escape-close", !(await page.$('[data-testid="queue-panel"]')) && !(await page.$(".lyrics-view.is-fullscreen")), "Escape closes only queue");
+  await page.keyboard.press("Escape");
+  check("queue-escape-close", await waitForDismissal(queuePanel) && !(await page.$(".lyrics-view.is-fullscreen")), "Escape closes only queue");
   await pausePlayback();
 });
 
@@ -1559,7 +1667,7 @@ await runSection("expanded-dialog-and-menu-completes", async () => {
 });
 
 await runSection("expanded-appearance-controls-completes", async () => {
-  await nav("Settings"); await page.click(".view-heading button"); await wait(150); await settingsTab("Appearance");
+  await nav("Settings"); await resetAllSettings(); await settingsTab("Appearance");
   const currentAccent = await page.evaluate(async () => (await window.cadence.settings.get()).appearance.accent);
   check("appearance-accent-display", (await page.$eval('input[type="color"]', node => node.value)) === currentAccent, `native color input reflects applied accent ${currentAccent}`);
   const fontValues = await page.$eval('[data-testid="font-select"]', node => [...node.options].map(option => option.value));
@@ -1606,7 +1714,7 @@ await runSection("expanded-appearance-controls-completes", async () => {
     await selectSetting("Theme", theme);
     check(`appearance-theme-${theme}`, (await storedSettings()).lyrics?.themeId === theme, theme);
   }
-  await page.click(".view-heading button"); await wait(150);
+  await resetAllSettings();
 });
 
 await runSection("expanded-album-fallback-completes", async () => {
@@ -1639,7 +1747,9 @@ await runSection("expanded-empty-library-completes", async () => {
   await page.evaluate(() => { window.__audit.state.folders = ["/fixtures"]; });
   await nav("Settings"); await settingsTab("Library"); await clickText(".heading-actions button", "Rescan now"); await wait(200);
   if (process.env.AUDIT_DEBUG) console.log("EMPTY BEFORE", await page.evaluate(() => ({ folders: window.__audit.state.folders, tracks: window.__audit.state.tracks.length, buttons: [...document.querySelectorAll("button")].map(node => node.getAttribute("aria-label") || node.textContent?.trim()).filter(Boolean) })));
-  if (await page.$('button[aria-label="Remove folder"]')) await page.click('button[aria-label="Remove folder"]'); await wait(400);
+  await page.waitForSelector('button[aria-label="Remove folder"]');
+  await page.click('button[aria-label="Remove folder"]');
+  await page.waitForSelector('button[aria-label="Remove folder"]', { hidden: true });
   if (process.env.AUDIT_DEBUG) console.log("EMPTY AFTER REMOVE", await page.evaluate(() => ({ folders: window.__audit.state.folders, tracks: window.__audit.state.tracks.length, body: document.querySelector('[data-testid="settings-library"]')?.textContent })));
   await nav("Home");
   check("remove-folder-empty-home", Boolean(await page.$('[data-testid="home-empty"]')), "empty-state rendered");
@@ -1660,8 +1770,10 @@ await runSection("expanded-async-settings-completes", async () => {
   if (process.env.AUDIT_DEBUG) console.log("ASYNC SETTINGS", await page.evaluate(() => window.__audit.state.calls.filter(call => call[0].startsWith("settings-patch"))));
   const live = await page.evaluate(() => ({ reduce: document.documentElement.dataset.reduceMotion, compact: document.documentElement.dataset.compactSidebar }));
   check("settings-out-of-order-patches-keep-latest", saved.appearance?.reduceMotion === true && saved.appearance?.compactSidebar === true && live.reduce === "true" && live.compact === "true", JSON.stringify({ saved: saved.appearance, live }));
-  await page.click(".view-heading button"); await wait(180);
+  await resetAllSettings();
 });
+
+for (const name of unmatchedSections) check(name, false, "Unknown AUDIT_ONLY section");
 
 blocked("native-windows-smtc", "No Windows host is available; actual SMTC flyout, AUMID registration, media keys, and native metadata remain unverified.");
 blocked("native-window-and-os-dialogs", "Chromium exercises renderer dispatch and stubbed dialogs only; native Tauri window controls, fullscreen, and filesystem dialogs require Windows.");

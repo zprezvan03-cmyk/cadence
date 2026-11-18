@@ -332,6 +332,10 @@ const clickText = async (selector: string, wanted: string, exact = true) => {
     )}`
   );
 };
+const openLegacyLyrics = async () => {
+  await page.evaluate(() => { location.hash = "#/lyrics"; });
+  await page.waitForSelector('.lyrics-view:not(.is-fullscreen)', { timeout: 5000 });
+};
 const nav = async (label: string) => {
   await clickText(".sidebar .nav-item", label);
   await wait(250);
@@ -350,7 +354,7 @@ const playTrack = async (title: string) => {
 };
 /** Waits for the Now Playing dock to show rendered lyric lines. */
 const lyricLineCount = async () => {
-  await nav("Now Playing");
+  await openLegacyLyrics();
   await wait(600);
   return page.$$eval('[data-testid="braccato-lyrics"] .blyrics--line', nodes => nodes.length).catch(() => 0);
 };

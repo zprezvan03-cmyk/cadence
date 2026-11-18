@@ -75,8 +75,8 @@ const ids = {
     background (and its blur slider) can be verified on the rendered layer;
     every other scenario keeps the art-free library its geometry probes use. */
 let qaArtworkEnabled = false;
-const QA_ARTWORK_URL =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAGklEQVR4nGO4oxGFFWlU3MGKGEY1jGoYvhoAPsJtEINlRLAAAAAASUVORK5CYII=";
+const QA_ARTWORK_URL = "/fixtures/qa-artwork.png";
+const QA_ARTWORK = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAGklEQVR4nGO4oxGFFWlU3MGKGEY1jGoYvhoAPsJtEINlRLAAAAAASUVORK5CYII=", "base64");
 
 const snapshot = () => {
   const tracks = store.getTracks().map(track => ({
@@ -132,6 +132,8 @@ const WORD_TTML = `<?xml version="1.0" encoding="UTF-8"?>
 </div></body></tt>`;
 
 let mode: LyricsMode = "synced";
+let resolveRequests = 0;
+let rejectProfilesSave = false;
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -144,9 +146,13 @@ const server = createServer(async (req, res) => {
     const body = req.method === "POST" ? JSON.parse((await readBody(req)) || "{}") : {};
     if (url.pathname === "/api/library") return sendJson(snapshot());
     if (url.pathname === "/api/settings") return sendJson(settings.get());
-    if (url.pathname === "/api/settings/patch") return sendJson(settings.patch(body));
+    if (url.pathname === "/api/settings/patch") {
+      if (rejectProfilesSave && body.nowPlayingProfiles) return sendJson({ error: "Could not write profiles (fixture)" }, 500);
+      return sendJson(settings.patch(body));
+    }
     if (url.pathname === "/api/settings/reset") return sendJson(settings.reset());
     if (url.pathname === "/api/lyrics/resolve") {
+      resolveRequests++;
       const request = body as LyricsResolveRequest;
       if (mode === "slow") await new Promise(done => setTimeout(done, 1500));
       if (mode === "error") return sendJson({ error: "Lyrics lookup failed (harness)" }, 500);
@@ -203,6 +209,12 @@ const server = createServer(async (req, res) => {
     if (url.pathname === "/api/lyrics/romanize") return sendJson({ romanizations: [], detectedLanguage: "en" });
     if (url.pathname.startsWith("/api/lyrics/")) return sendJson({ entries: [], stats: { entryCount: 0, tracks: 0, searches: 0, bytes: 0 } });
     return sendJson({});
+  }
+
+  if (url.pathname === QA_ARTWORK_URL) {
+    res.writeHead(200, { "content-type": "image/png", "content-length": QA_ARTWORK.byteLength });
+    res.end(QA_ARTWORK);
+    return;
   }
 
   if (url.pathname.startsWith("/audio/")) {
@@ -277,6 +289,27 @@ await page.evaluateOnNewDocument(() => {
     return payload;
   };
   const chrome = { undecorated: false, maximized: false, fullscreen: false, focused: true };
+  const chromeListeners = new Set<(state: typeof chrome) => void>();
+  const windowFixture = {
+    actions: [] as string[],
+    fullscreen: (enabled: boolean) => {
+      chrome.fullscreen = enabled;
+      chromeListeners.forEach(listener => listener({ ...chrome }));
+    },
+    hold: null as "read" | "enter" | null,
+    release: null as (() => void) | null,
+  };
+  const holdWindowAction = (step: "read" | "enter") => {
+    if (windowFixture.hold !== step) return;
+    windowFixture.hold = null;
+    return new Promise<void>(resolve => {
+      windowFixture.release = () => {
+        windowFixture.release = null;
+        resolve();
+      };
+    });
+  };
+  Object.assign(window, { __auditWindow: windowFixture });
   (window as unknown as { cadence: unknown }).cadence = {
     info: async () => ({
       name: "Cadence",
@@ -373,11 +406,21 @@ await page.evaluateOnNewDocument(() => {
       openExternal: async () => undefined,
       openPath: async () => undefined,
       chooseLyricsFile: async () => ({ canceled: true }),
-      window: async () => undefined,
-      isFullScreen: async () => false,
+      window: async (action: string) => {
+        windowFixture.actions.push(action);
+        if (action === "fullscreen") await holdWindowAction("enter");
+        if (action === "fullscreen" || action === "exitFullscreen") windowFixture.fullscreen(action === "fullscreen");
+      },
+      isFullScreen: async () => {
+        await holdWindowAction("read");
+        return chrome.fullscreen;
+      },
       initialWindowChrome: { ...chrome },
       windowChrome: async () => ({ ...chrome }),
-      onWindowChromeChange: () => () => {},
+      onWindowChromeChange: (listener: (state: typeof chrome) => void) => {
+        chromeListeners.add(listener);
+        return () => chromeListeners.delete(listener);
+      },
     },
     player: {
       prepareAlacSource: async () => "/audio/fixture.wav",
@@ -414,14 +457,33 @@ const clickText = async (selector: string, wanted: string, exact = true) => {
   );
 };
 const nav = async (label: string) => {
+  await page.waitForSelector('.sidebar', { timeout: 5000 });
+  await page.waitForSelector('[data-player-moving]', { hidden: true, timeout: 5000 });
   await clickText(".sidebar .nav-item", label);
+  const expected = label === "Settings" ? '[data-testid="settings-view"]' :
+    label === "Songs" ? '[data-testid="library-view-songs"]' : null;
+  if (expected) await page.waitForSelector(expected, { timeout: 5000 });
+  await wait(280);
+};
+const openLegacyLyrics = async () => {
+  if (await page.$('.app-shell.is-immersive button.fs-exit')) await page.click('button.fs-exit');
+  await page.evaluate(() => { location.hash = "#/lyrics"; });
+  await page.waitForSelector('.app-shell:not(.is-immersive) .lyrics-view:not(.is-fullscreen)', { timeout: 15000 }).catch(async error => {
+    console.error("Legacy lyrics did not mount:", await page.evaluate(() => ({
+      hash: location.hash,
+      route: document.querySelector('.app-shell')?.getAttribute('data-route'),
+      surface: document.querySelector('.lyrics-view')?.className,
+      body: document.body.innerText.slice(0, 250),
+    })), [...logs.filter(line => line.startsWith("[pageerror]")).slice(-4), ...logs.slice(-6)].join("\n"));
+    throw error;
+  });
   await wait(280);
 };
 
 const playTrackId = async (trackId: number) => {
   await nav("Songs");
-  const row = await page.$(`[data-testid="track-row"][data-track-id="${trackId}"]`);
-  if (!row) throw new Error(`No track row ${trackId}`);
+  const row = await page.waitForSelector(`[data-testid="track-row"][data-track-id="${trackId}"]`, { visible: true, timeout: 5000 });
+  if (!row) throw new Error(`No track row ${trackId} on ${page.url()}`);
   await row.click();
   await wait(700);
   await page.evaluate(() => document.querySelector("audio")?.pause());
@@ -569,6 +631,8 @@ const profileProbe = () =>
         hasCheck: Boolean(row.querySelector("svg")),
       })),
       lyricFontPx: Math.round(fontSize(".blyrics--line") * 10) / 10,
+      // The windowed viewport no longer loses height to a browsing toolbar.
+      lyricReferencePx: Math.max(30, Math.min(84, (view?.clientHeight ?? 0) * 0.06)),
       titleFontPx: Math.round(fontSize(".lyrics-heading h1") * 10) / 10,
       hostWidth: width("braccato-lyrics"),
       artworkWidth: width(".fs-artwork .artwork-hero"),
@@ -618,7 +682,7 @@ const setViewport = async (width: number, height: number) => {
 };
 const enterFullscreen = async () => {
   if (await page.$(".lyrics-view.is-fullscreen")) return;
-  await page.click('button[aria-label="Fullscreen lyrics"]');
+  await page.click('[data-testid="open-now-playing"]');
   await page.waitForSelector(".lyrics-view.is-fullscreen", { timeout: 10_000 });
   await wait(800);
 };
@@ -628,11 +692,296 @@ const exitFullscreen = async () => {
   await page.waitForSelector(".lyrics-view:not(.is-fullscreen)", { timeout: 10_000 });
   await wait(600);
 };
+// The Studio now lives in Settings. The repeated matrix comparisons return to the
+// previous surface after Save/Cancel; assertions while open probe the scaled live preview.
+let studioReturnFullscreen = false;
+const openStudioFromSettings = async () => {
+  studioReturnFullscreen = Boolean(await page.$('.lyrics-view.is-fullscreen'));
+  if (studioReturnFullscreen) await exitFullscreen();
+  await nav("Settings");
+  await clickText(".settings-tabs button", "Appearance");
+  await page.click('[data-testid="customize-now-playing"]');
+  await page.waitForSelector('[data-testid="customization-studio"]', { timeout: 10_000 });
+  await wait(350);
+  await page.click(`.studio-mode-toggle [data-mode="${studioReturnFullscreen ? "fullscreen" : "windowed"}"]`);
+  await page.waitForSelector('.np-studio-preview .blyrics--line', { timeout: 10_000 });
+};
+const returnAfterStudio = async () => {
+  await page.waitForSelector('[data-testid="customization-studio"]', { hidden: true, timeout: 10_000 });
+  await openLegacyLyrics();
+  if (studioReturnFullscreen) await enterFullscreen();
+  await page.waitForSelector('.blyrics--line', { timeout: 10_000 });
+  await wait(350);
+};
 const between = (value: number, min: number, max: number) => value >= min && value <= max;
 const separatedHorizontally = (
   left: { right: number; width: number } | null,
   right: { x: number; width: number } | null
 ) => Boolean(!left || !right || left.width === 0 || right.width === 0 || left.right <= right.x + 1);
+
+/** Exercises the public entry and mode switching, not the old #/lyrics deep link. */
+async function auditImmersiveNowPlaying() {
+  const surface = '.lyrics-view.is-fullscreen:not(.is-preview)';
+  const entry = '[data-testid="open-now-playing"]';
+  const exit = 'button.fs-exit';
+  const chooseMode = async (mode: "on" | "off") => {
+    await page.click(`[data-testid="lyrics-mode-${mode}"]`);
+    await page.waitForSelector(`${surface}[data-lyrics-mode="${mode}"]`);
+  };
+  const enter = async () => {
+    await page.click(entry);
+    await page.waitForSelector(surface);
+  };
+  const close = async () => {
+    await page.click(exit);
+    await page.waitForSelector(entry);
+    await page.waitForSelector(surface, { hidden: true });
+  };
+  const layoutTab = async (mode: "fullscreen" | "lyricsOff") => {
+    await page.click(`.studio-mode-toggle [data-mode="${mode}"]`);
+    await page.waitForSelector(`.np-studio-preview [data-profile-mode="${mode}"]`);
+  };
+  const showStudio = async () => {
+    await nav("Settings");
+    await clickText(".settings-tabs button", "Appearance");
+    await page.click('[data-testid="customize-now-playing"]');
+    await page.waitForSelector('dialog.np-studio-stage[open]');
+  };
+  const closeStudio = () => page.waitForSelector('dialog.np-studio-stage', { hidden: true });
+  const settingsProbe = () => page.evaluate(async () => (await window.cadence!.settings.get()).nowPlayingProfiles);
+  const previewId = () => page.$eval('.np-studio-preview .lyrics-view', node => (node as HTMLElement).dataset.nowPlayingProfile);
+
+  check("single-player-entry-no-sidebar-duplicate", await page.evaluate(() =>
+    document.querySelectorAll('[data-testid="open-now-playing"]').length === 1 &&
+    !document.querySelector('.sidebar [title="Now Playing"]') && !document.querySelector('[data-testid="customize-now-playing"]')));
+  await enter();
+  check("idle-now-playing-can-exit-and-switch-layouts", Boolean(await page.$(`${surface} .lyrics-empty`)) &&
+    Boolean(await page.$(`${surface} [data-testid="lyrics-mode-off"]`)));
+  await close();
+
+  mode = "synced";
+  await nav("Albums");
+  await playTrackId(ids.synced);
+  await page.type('input[placeholder="Filter songs"]', "FLAC");
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="track-row"]').length === 2);
+  const routeBefore = await page.evaluate(() => ({ hash: location.hash, length: history.length }));
+  await enter();
+  await page.waitForSelector(`${surface} .blyrics--line`);
+  await page.$eval("audio", async audio => {
+    audio.currentTime = 0.65;
+    await audio.play();
+  });
+  await page.evaluate(() => {
+    Object.assign(window, { __auditHost: document.querySelector('braccato-lyrics'), __auditAudio: document.querySelector('audio') });
+  });
+  await chooseMode("off");
+  const panel = await page.evaluate(() => ({
+    art: Boolean(document.querySelector('.fs-panel-art .artwork')),
+    text: document.querySelector('.fs-panel h1')?.textContent,
+    controls: Boolean(document.querySelector('.fs-panel [data-testid="play-toggle"]')),
+    noDock: !document.querySelector('.lyrics-dock'),
+    clock: document.querySelector('audio')?.currentTime ?? 0,
+    visibility: getComputedStyle(document.querySelector('.lyrics-body')!).visibility,
+  }));
+  check("lyrics-off-has-art-track-details-and-transport-not-lyrics", panel.art && Boolean(panel.text) && panel.controls && panel.noDock && panel.visibility === "hidden", JSON.stringify(panel));
+  await wait(380);
+  await chooseMode("on");
+  await page.waitForFunction(() => Boolean(document.querySelector('braccato-lyrics .blyrics--active')));
+  const resumed = await page.evaluate(() => {
+    const audio = document.querySelector('audio');
+    const host = document.querySelector<HTMLElement & { mediaElement: HTMLMediaElement }>('braccato-lyrics');
+    const before = window as unknown as { __auditHost: Element; __auditAudio: HTMLAudioElement };
+    audio?.pause();
+    return { sameHost: host === before.__auditHost, sameAudio: audio === before.__auditAudio && host?.mediaElement === audio,
+      time: audio?.currentTime ?? 0, hosts: document.querySelectorAll('braccato-lyrics').length };
+  });
+  check("switching-layouts-keeps-advancing-audio-and-same-Braccato-host", resumed.sameHost && resumed.sameAudio && resumed.hosts === 1 && resumed.time > panel.clock + 0.12, JSON.stringify(resumed));
+  await page.keyboard.press("q");
+  await page.waitForSelector('.queue-panel');
+  await page.keyboard.press("Escape");
+  await page.waitForSelector('.queue-panel', { hidden: true });
+  check("escape-closes-queue-before-now-playing", Boolean(await page.$(surface)));
+  await page.keyboard.press("Escape");
+  await page.waitForSelector('[data-testid="library-view-songs"]');
+  check("now-playing-no-browse-history-entry", await page.evaluate(before => location.hash === before.hash && history.length === before.length, routeBefore));
+  check("now-playing-restores-library-filter-and-launcher-focus", await page.evaluate(() =>
+    document.querySelector<HTMLInputElement>('input[placeholder="Filter songs"]')?.value === "FLAC" &&
+    document.querySelectorAll('[data-testid="track-row"]').length === 2 &&
+    Boolean(document.activeElement?.matches('[data-testid="open-now-playing"]'))));
+  await page.$eval('input[placeholder="Filter songs"]', node => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(node, "");
+    node.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.evaluate(() => history.back());
+  await page.waitForSelector('[data-testid="library-view-albums"]');
+  await page.evaluate(() => history.forward());
+  await page.waitForSelector('[data-testid="library-view-songs"]');
+  check("back-and-forward-still-traverse-the-library", !(await page.$(surface)));
+
+  await page.keyboard.press("l");
+  await page.waitForSelector(surface);
+  await page.keyboard.press("F11");
+  await page.waitForFunction(async () => await window.cadence!.app.isFullScreen());
+  check("f11-promotes-the-open-view-to-native-fullscreen", Boolean(await page.$(surface)));
+  await close();
+  await page.waitForFunction(async () => !(await window.cadence!.app.isFullScreen()));
+  check("exit-button-also-leaves-native-fullscreen", await page.evaluate(before => location.hash === before, routeBefore.hash));
+
+  type WindowFixture = { fullscreen: (enabled: boolean) => void; hold: "read" | "enter" | null; actions: string[]; release: (() => void) | null };
+  await page.keyboard.press("F11");
+  await page.waitForFunction(async () => await window.cadence!.app.isFullScreen());
+  // Give the renderer a committed fullscreen frame before simulating an OS/window-manager exit.
+  await page.waitForSelector(surface);
+  await wait(90);
+  await page.evaluate(() => (window as unknown as { __auditWindow: WindowFixture }).__auditWindow.fullscreen(false));
+  await page.waitForSelector(entry, { visible: true });
+  check("native-exit-returns-to-browsing", await page.evaluate(before => location.hash === before && !document.querySelector('.app-shell.is-immersive'), routeBefore.hash));
+
+  for (const step of ["read", "enter"] as const) {
+    const callCount = await page.evaluate(stage => {
+      const fixture = (window as unknown as { __auditWindow: WindowFixture }).__auditWindow;
+      fixture.hold = stage;
+      return fixture.actions.length;
+    }, step);
+    await page.keyboard.press("F11");
+    await page.waitForFunction(() => Boolean((window as unknown as { __auditWindow: WindowFixture }).__auditWindow.release));
+    await page.keyboard.press("Escape");
+    await page.waitForSelector(entry, { visible: true });
+    await page.evaluate(() => (window as unknown as { __auditWindow: WindowFixture }).__auditWindow.release?.());
+    if (step === "enter") await page.waitForFunction(count => (window as unknown as { __auditWindow: WindowFixture }).__auditWindow.actions.length === count + 2, {}, callCount);
+    await wait(90);
+    const final = await page.evaluate(async count => ({
+      fullscreen: await window.cadence!.app.isFullScreen(),
+      immersive: Boolean(document.querySelector('.app-shell.is-immersive')),
+      actions: (window as unknown as { __auditWindow: WindowFixture }).__auditWindow.actions.slice(count),
+    }), callCount);
+    check(`escape-cancels-native-entry-during-${step}`, !final.fullscreen && !final.immersive &&
+      JSON.stringify(final.actions) === JSON.stringify(step === "read" ? [] : ["fullscreen", "exitFullscreen"]), JSON.stringify(final));
+  }
+
+  await page.keyboard.press("n");
+  await page.waitForSelector(surface);
+  await page.keyboard.press("f");
+  await page.waitForSelector(entry);
+  check("n-and-f-toggle-the-same-now-playing", !(await page.$(surface)));
+
+  await showStudio();
+  const original = await settingsProbe();
+  await layoutTab("fullscreen");
+  await page.click('[data-testid="studio-duplicate"]');
+  const onId = await previewId();
+  await page.select('[data-testid="studio-background-mode"]', "gradient");
+  await layoutTab("lyricsOff");
+  check("off-editor-opens-with-its-own-selection", await previewId() === original.lyricsOffProfileId && onId !== original.lyricsOffProfileId);
+  await page.click('[data-testid="studio-duplicate"]');
+  const offId = await previewId();
+  await page.select('[data-testid="studio-background-mode"]', "solid");
+  for (const name of ["Show artwork", "Show title & artist", "Show playback controls"]) {
+    const input = `.np-studio input[aria-label="${name}"]`;
+    await page.$eval(input, node => node.scrollIntoView({ block: "center", behavior: "instant" }));
+    await page.focus(input);
+    await page.keyboard.press("Space");
+    await page.waitForFunction(sel => !document.querySelector<HTMLInputElement>(sel)?.checked, { timeout: 3000 }, input);
+  }
+  const hiddenInPreview = await page.$eval('.np-studio-preview .lyrics-view', node => !node.querySelector('.fs-panel-art, .lyrics-heading, .fs-controls'));
+  await layoutTab("fullscreen");
+  const studioOn = await page.$eval('.np-studio-preview .lyrics-view', node => ({ id: (node as HTMLElement).dataset.nowPlayingProfile,
+    background: (node as HTMLElement).dataset.profileBackground, intact: Boolean(node.querySelector('.fs-artwork, .lyrics-heading')) }));
+  check("draft-previews-dont-change-the-other-layout-or-persist", hiddenInPreview && studioOn.id === onId && studioOn.background === "gradient" && studioOn.intact &&
+    JSON.stringify(await settingsProbe()) === JSON.stringify(original), JSON.stringify({ hiddenInPreview, studioOn, draftIsUnpersisted: JSON.stringify(await settingsProbe()) === JSON.stringify(original) }));
+  await layoutTab("lyricsOff");
+  await page.click('[data-testid="studio-save"]');
+  await closeStudio();
+  const saved = await settingsProbe();
+  check("studio-saves-both-mode-choices-from-one-session", saved.activeProfileId === onId && saved.lyricsOffProfileId === offId &&
+    saved.customProfiles.find(p => p.id === onId)?.fullscreen.backgroundMode === "gradient" &&
+    saved.customProfiles.find(p => p.id === offId)?.lyricsOff.backgroundMode === "solid");
+  check("studio-returns-focus-to-settings", await page.evaluate(() => (document.activeElement as HTMLElement)?.dataset.testid === "customize-now-playing"));
+  await showStudio();
+  const contextToggle = 'input[aria-label="Use different profiles for windowed and fullscreen"]';
+  await page.focus(contextToggle);
+  await page.keyboard.press("Space");
+  await page.select('select[aria-label="Fullscreen profile"]', "minimal");
+  await layoutTab("fullscreen");
+  const onContext = await previewId();
+  await layoutTab("lyricsOff");
+  check("legacy-context-choice-does-not-change-lyrics-off", onContext === "minimal" && await previewId() === offId);
+  await page.click('[data-testid="studio-duplicate"]');
+  const unsavedId = await previewId();
+  rejectProfilesSave = true;
+  await page.click('[data-testid="studio-save"]');
+  await page.waitForFunction(() => document.querySelector('.studio-message')?.textContent?.includes("Could not save"));
+  rejectProfilesSave = false;
+  check("studio-keeps-the-draft-on-save-rejection", await previewId() === unsavedId &&
+    JSON.stringify(await settingsProbe()) === JSON.stringify(saved));
+  check("studio-returns-focus-to-save-on-rejection", await page.evaluate(() =>
+    document.activeElement?.getAttribute("data-testid") === "studio-save"));
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => document.querySelector('.studio-footer')?.textContent?.includes("Discard changes"));
+  check("studio-dirty-dismiss-asks-before-discarding", Boolean(await page.$('dialog.np-studio-stage[open]')));
+  await page.keyboard.press("Escape");
+  await closeStudio();
+  check("studio-discard-leaves-both-mode-settings-unchanged", JSON.stringify(await settingsProbe()) === JSON.stringify(saved));
+  await enter();
+  await chooseMode("off");
+  check("off-profile-visibility-cannot-hide-mode-switcher-or-exit", await page.$eval(surface, node =>
+    !node.querySelector('.fs-panel-layout, .lyrics-heading, .fs-controls') &&
+    Boolean(node.querySelector('.fs-page-actions button.fs-exit'))));
+  await page.reload();
+  await page.waitForSelector(entry);
+  await enter();
+  await page.waitForSelector(`${surface}[data-lyrics-mode="off"]`);
+  check("off-mode-and-its-profile-persist-after-reload", await page.$eval(surface, (node, id) =>
+    (node as HTMLElement).dataset.nowPlayingProfile === id && (node as HTMLElement).dataset.profileBackground === "solid", offId));
+  await chooseMode("on");
+  check("on-profile-survives-off-edits", await page.$eval(surface, (node, id) =>
+    (node as HTMLElement).dataset.nowPlayingProfile === id && (node as HTMLElement).dataset.profileBackground === "gradient", onId));
+  await close();
+
+  // The fixture exercises the real UI branches without live providers.
+  mode = "error";
+  await playTrackId(ids.plain);
+  await enter();
+  const errorPanel = '[data-testid="lyrics-error-panel"]';
+  await page.waitForSelector(errorPanel, { visible: true });
+  const beforeErrorToggle = resolveRequests;
+  await chooseMode("off");
+  await chooseMode("on");
+  await page.waitForSelector(errorPanel, { visible: true });
+  check("mode-controls-remain-available-after-a-resolve-error", resolveRequests === beforeErrorToggle &&
+    Boolean(await page.$(`${surface} .fs-page-actions`)), `lookup requests ${beforeErrorToggle} → ${resolveRequests}`);
+  await close();
+  mode = "slow";
+  await playTrackId(ids.empty);
+  await enter();
+  await page.waitForSelector('[data-testid="lyrics-loading-panel"]');
+  check("slow-resolve-keeps-mode-and-exit-actions", Boolean(await page.$(`${surface} .fs-page-actions`)));
+  await page.waitForSelector('[data-testid="lyrics-empty-panel"]', { timeout: 7000 });
+  const empty = await page.$eval('[data-testid="lyrics-empty-panel"]', node => ({
+    quiet: getComputedStyle(node).boxShadow === "none" && getComputedStyle(node).backgroundColor === "rgba(0, 0, 0, 0)",
+    actions: node.querySelectorAll('button').length, count: document.querySelectorAll("braccato-lyrics .blyrics--line").length,
+  }));
+  check("empty-lyrics-is-quiet-but-still-actionable", empty.quiet && empty.actions >= 2 && empty.count === 0, JSON.stringify(empty));
+  await shot("immersive-empty-lyrics");
+  await close();
+  check("no-immersive-renderer-errors", !logs.some(line => line.startsWith("[pageerror]")), logs.filter(line => line.startsWith("[pageerror]")).join(" | "));
+}
+
+async function report() {
+  const failures = Object.entries(results).filter(([, entry]) => !entry.value);
+  console.log(`\n${Object.keys(results).length - failures.length}/${Object.keys(results).length} checks passed`);
+  if (failures.length) {
+    console.log("Failures:");
+    for (const [name, entry] of failures) console.log(`  ${name}: ${entry.detail}`);
+  }
+  console.log("Console log tail:", logs.slice(-6).join("\n"));
+  console.log(`Screenshots: ${shotDir}`);
+
+  await browser.close();
+  server.close();
+  rmSync(stateDir, { recursive: true, force: true });
+  process.exit(failures.length ? 1 : 0);
+}
 
 /* ------------------------------------------------------------------- script */
 
@@ -640,10 +989,21 @@ await page.goto(`${base}/index.html`, { waitUntil: "domcontentloaded" });
 await page.waitForSelector(".sidebar", { timeout: 60_000 });
 await wait(900);
 
+await auditImmersiveNowPlaying();
+if (process.env.CADENCE_NOW_PLAYING_ONLY === "immersive") await report();
+// The remaining matrix exercises legacy deep links as well as the immersive layout.
+settings.reset();
+// Still mount the real shader in the profile matrix, without starving layout assertions on
+// SwiftShader as repeated 4K stages are opened and closed. Shader motion has its own audit.
+settings.patch({ shaders: { performanceMode: "low", kawarpBlurPasses: 2, audioResponsive: false } });
+await page.goto(`${base}/index.html`, { waitUntil: "domcontentloaded" });
+await page.waitForSelector(".sidebar", { timeout: 60_000 });
+await wait(600);
+
 /* 1. Synchronized lyrics: the reference layout. */
 mode = "synced";
 await playTrackId(ids.synced);
-await nav("Now Playing");
+await openLegacyLyrics();
 await page.waitForSelector(".blyrics--line", { timeout: 20_000 });
 await wait(600);
 await shot("01-synced-lyrics");
@@ -653,7 +1013,7 @@ check("synced-shows-lines", synced.lineCount > 0, `${synced.lineCount} lines`);
 /* 2. Unsynced (plain) lyrics: same container, no timing. */
 mode = "plain";
 await playTrackId(ids.plain);
-await nav("Now Playing");
+await openLegacyLyrics();
 await page.waitForSelector(".blyrics--line", { timeout: 20_000 });
 await wait(500);
 await shot("02-unsynced-lyrics");
@@ -668,7 +1028,7 @@ check(
 /* 3. No lyrics: the empty state must fill the lyrics area deliberately. */
 mode = "empty";
 await playTrackId(ids.empty);
-await nav("Now Playing");
+await openLegacyLyrics();
 await page.waitForSelector(".lyrics-empty-panel", { timeout: 20_000 });
 await wait(700);
 await shot("03-no-lyrics");
@@ -680,7 +1040,7 @@ check("no-lyrics-has-no-lines", empty.lineCount === 0, `${empty.lineCount} lines
 mode = "slow";
 await nav("Songs");
 await page.click(`[data-testid="track-row"][data-track-id="${ids.synced}"]`);
-await nav("Now Playing");
+await openLegacyLyrics();
 const loadingShown = await page
   .waitForSelector('[data-testid="lyrics-loading-panel"]', { timeout: 8_000 })
   .then(() => true)
@@ -701,7 +1061,7 @@ mode = "empty";
 mode = "error";
 await nav("Songs");
 await page.click(`[data-testid="track-row"][data-track-id="${ids.plain}"]`);
-await nav("Now Playing");
+await openLegacyLyrics();
 await page.waitForSelector(".lyrics-empty-panel.error", { timeout: 20_000 });
 await wait(600);
 await shot("05-error");
@@ -711,9 +1071,9 @@ const error = await geometry();
 mode = "empty";
 await nav("Songs");
 await page.click(`[data-testid="track-row"][data-track-id="${ids.empty}"]`);
-await nav("Now Playing");
+await openLegacyLyrics();
 await page.waitForSelector(".lyrics-empty-panel", { timeout: 20_000 });
-await page.click('button[aria-label="Fullscreen lyrics"]');
+await page.click('[data-testid="open-now-playing"]');
 await page.waitForSelector(".lyrics-view.is-fullscreen", { timeout: 10_000 });
 await wait(900);
 await shot("06-fullscreen-no-lyrics");
@@ -727,7 +1087,7 @@ await wait(600);
    transitions do not replace the track or rewind the shared audio element. */
 mode = "synced";
 await playTrackId(ids.synced);
-await nav("Now Playing");
+await openLegacyLyrics();
 await page.waitForSelector(".blyrics--line", { timeout: 20_000 });
 await wait(600);
 const playbackBeforeResponsive = await page.evaluate(() => {
@@ -809,8 +1169,7 @@ const setControlValue = async (selector: string, value: string) => {
 };
 
 const studioBefore = await profileProbe();
-await page.click('[data-testid="customize-now-playing"]');
-await page.waitForSelector('[data-testid="customization-studio"]', { timeout: 10_000 });
+await openStudioFromSettings();
 await wait(450);
 await shot("17-studio-builtin-readonly");
 const studioBuiltIn = await page.evaluate(() => ({
@@ -838,10 +1197,7 @@ await shot("18-studio-custom-preview");
 const studioCustomPreview = await profileProbe();
 
 await page.click('[data-testid="studio-save"]');
-await page.waitForFunction(
-  () => !document.querySelector('[data-testid="customization-studio"]'),
-  { timeout: 10_000 }
-);
+await returnAfterStudio();
 await wait(700);
 const studioSaved = await profileProbe();
 const studioSavedSettings = await page.evaluate(async () => {
@@ -888,18 +1244,14 @@ await wait(600);
 await shot("20-fullscreen-visualizer-background");
 const fullscreenVisualizer = await profileProbe();
 
-await page.click('[data-testid="customize-now-playing"]');
-await page.waitForSelector('[data-testid="customization-studio"]', { timeout: 10_000 });
+await openStudioFromSettings();
 await wait(450);
 await shot("21-fullscreen-studio");
 const fullscreenStudioOpen = await page.evaluate(
   () => Boolean(document.querySelector('[data-testid="customization-studio"]'))
 );
 await page.mouse.click(30, 30);
-await page.waitForFunction(
-  () => !document.querySelector('[data-testid="customization-studio"]'),
-  { timeout: 10_000 }
-);
+await returnAfterStudio();
 await selectNowPlayingProfile("balanced");
 await exitFullscreen();
 const fullscreenEffectsRestored = await profileProbe();
@@ -909,17 +1261,10 @@ const fullscreenEffectsRestored = await profileProbe();
    verified against computed styles / geometry on the live tree — not just unit-tested.
    Runs windowed at 1920x1080 unless a step explicitly enters fullscreen. */
 
-const mxOpenStudio = async () => {
-  await page.click('[data-testid="customize-now-playing"]');
-  await page.waitForSelector('[data-testid="customization-studio"]', { timeout: 10_000 });
-  await wait(450);
-};
+const mxOpenStudio = openStudioFromSettings;
 const mxCloseStudioBySave = async () => {
   await page.click('[data-testid="studio-save"]');
-  await page.waitForFunction(
-    () => !document.querySelector('[data-testid="customization-studio"]'),
-    { timeout: 10_000 }
-  );
+  await returnAfterStudio();
   await wait(500);
 };
 const mxSetControl = async (sectionTitle: string | null, label: string, value: string) => {
@@ -1216,8 +1561,7 @@ await mxToggle("Show playback controls");
 await mxToggle("Show artwork");
 await mxToggle("Show title & artist");
 
-// Mode separation: fullscreen lyrics 130% while this surface shows it live, then
-// windowed 80% edited from the same fullscreen session without affecting the surface.
+// Mode separation: preview both layouts and prove the edits persist independently.
 await mxSetControl("Typography", "Main lyrics size", "1.3");
 const mxFullscreenScaled = await profileProbe();
 await page.evaluate(() => {
@@ -1251,10 +1595,7 @@ const mxResetFont = await profileProbe();
 await mxClickStudioButton("Cancel");
 const mxDiscardPrompt = await mxMessage();
 await mxClickStudioButton("Discard changes");
-await page.waitForFunction(
-  () => !document.querySelector('[data-testid="customization-studio"]'),
-  { timeout: 10_000 }
-);
+await returnAfterStudio();
 await wait(400);
 const mxAfterDiscardSettings = await mxProfilesSettings();
 const mxMatrixAfterDiscard = mxAfterDiscardSettings.customProfiles.find(
@@ -1445,7 +1786,7 @@ const kxFreezeAt = async (target: number) => {
 await setViewport(1920, 1080);
 await selectNowPlayingProfile("balanced");
 await playTrackId(ids.plain);
-await nav("Now Playing");
+await openLegacyLyrics();
 await page.evaluate(() => {
   const audio = document.querySelector("audio")!;
   audio.currentTime = 0;
@@ -1489,7 +1830,7 @@ const kxSummary = { sweep: kxSweep, solid: kxSolid };
 await setViewport(1920, 1080);
 mode = "synced";
 await playTrackId(ids.synced);
-await nav("Now Playing");
+await openLegacyLyrics();
 await page.waitForSelector("braccato-lyrics .blyrics--line", { timeout: 15_000 });
 // Secondary lines on (flag-gated echo in the bridge) so translation/romanization
 // typography has rendered elements to measure.
@@ -1595,7 +1936,7 @@ const qaProbe = () =>
       romanizedFont: romanized ? getComputedStyle(romanized).fontFamily : "",
       titleSize: h1 ? Number.parseFloat(getComputedStyle(h1).fontSize) : 0,
       metaSize: meta ? Number.parseFloat(getComputedStyle(meta).fontSize) : 0,
-      containerWidth: container ? Math.round(container.getBoundingClientRect().width) : 0,
+      containerWidth: container?.offsetWidth ?? 0,
       swipe: cs?.getPropertyValue("--blyrics-animate-highlight-swipe").trim() ?? "",
       glow: cs?.getPropertyValue("--blyrics-animate-highlight-glow").trim() ?? "",
       fade: cs?.getPropertyValue("--blyrics-animate-highlight-fade").trim() ?? "",
@@ -1640,7 +1981,12 @@ const qaControlRect = (sectionTitle: string, label: string) =>
       if (!el) throw new Error(`qa control "${args.label}" not found in ${args.sectionTitle}`);
       el.scrollIntoView({ block: "center" });
       const r = el.getBoundingClientRect();
-      return { x: r.x, y: r.y, w: r.width, h: r.height };
+      const style = getComputedStyle(el);
+      return {
+        left: r.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft),
+        right: r.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight),
+        y: r.y + r.height / 2,
+      };
     },
     { sectionTitle, label }
   );
@@ -1667,14 +2013,16 @@ const qaDragSlider = async (sectionTitle: string, label: string, fraction: numbe
   await qaControlRect(sectionTitle, label);
   await wait(250);
   const rect = await qaControlRect(sectionTitle, label);
-  const y = rect.y + rect.h / 2;
-  const x0 = rect.x + 3;
-  const x1 = rect.x + rect.w - 3;
-  const target = x0 + (x1 - x0) * fraction;
-  await page.mouse.move(x0 + (x1 - x0) * 0.5, y);
+  // Chromium's native range thumb travels inside the content box, not the
+  // input's outer padding and borders. At the ends we can simply drag past it.
+  const thumbRadius = 8;
+  const start = rect.left + 1;
+  const end = rect.right - 1;
+  const target = fraction === 0 ? start : fraction === 1 ? end
+    : rect.left + thumbRadius + (rect.right - rect.left - 2 * thumbRadius) * fraction;
+  await page.mouse.move(start, rect.y);
   await page.mouse.down();
-  await page.mouse.move(x0 + (target - x0) * 0.5, y, { steps: 4 });
-  await page.mouse.move(target, y, { steps: 4 });
+  await page.mouse.move(target, rect.y, { steps: 8 });
   await page.mouse.up();
   await wait(300);
   return qaReadControl(sectionTitle, label);
@@ -1687,7 +2035,7 @@ const qaSeekPause = async (seconds: number) => {
   }, seconds);
   await wait(450);
 };
-const qaModeTab = async (text: "Windowed" | "Fullscreen") => {
+const qaModeTab = async (text: "Windowed" | "Lyrics On") => {
   await page.evaluate((wanted: string) => {
     const btn = [...document.querySelectorAll<HTMLButtonElement>(".studio-mode-toggle button")].find(
       b => b.textContent?.trim() === wanted
@@ -1968,7 +2316,7 @@ const qaWindowedNote = await page.evaluate(
   () =>
     document.querySelector('[data-testid="studio-windowed-layout-note"]')?.textContent?.trim() ?? ""
 );
-await qaModeTab("Fullscreen");
+await qaModeTab("Lyrics On");
 const qaFullscreenNote = await page.evaluate(
   () =>
     document.querySelector('[data-testid="studio-windowed-layout-note"]')?.textContent?.trim() ?? ""
@@ -2045,13 +2393,13 @@ await mxSetControl("Typography", "Main lyrics size", "1.21");
 await mxSetControl("Layout", "Lyrics alignment", "center");
 await mxCloseStudioBySave();
 await nav("Songs");
-await nav("Now Playing");
+await openLegacyLyrics();
 await page.waitForSelector("braccato-lyrics .blyrics--line", { timeout: 15_000 });
 const qaPersistNav = await qaProbe();
 await page.reload({ waitUntil: "networkidle0" });
 await page.waitForSelector(".sidebar", { timeout: 15_000 });
 await playTrackId(ids.synced);
-await nav("Now Playing");
+await openLegacyLyrics();
 await page.waitForSelector("braccato-lyrics .blyrics--line", { timeout: 15_000 });
 await qaSeekPause(1.0);
 const qaPersistReload = await qaProbe();
@@ -2062,7 +2410,7 @@ qaArtworkEnabled = true;
 await page.reload({ waitUntil: "networkidle0" });
 await page.waitForSelector(".sidebar", { timeout: 15_000 });
 await playTrackId(ids.synced);
-await nav("Now Playing");
+await openLegacyLyrics();
 await page.waitForSelector("braccato-lyrics .blyrics--line", { timeout: 15_000 });
 await qaSeekPause(1.0);
 await mxOpenStudio();
@@ -2080,7 +2428,7 @@ qaArtworkEnabled = false;
 await page.reload({ waitUntil: "networkidle0" });
 await page.waitForSelector(".sidebar", { timeout: 15_000 });
 await playTrackId(ids.synced);
-await nav("Now Playing");
+await openLegacyLyrics();
 await page.waitForSelector("braccato-lyrics .blyrics--line", { timeout: 15_000 });
 await qaSeekPause(1.0);
 
@@ -2221,9 +2569,7 @@ const qaDiscardArmed = await page.evaluate(() => ({
   ),
 }));
 await mxClickStudioButton("Discard changes");
-await page.waitForFunction(() => !document.querySelector('[data-testid="customization-studio"]'), {
-  timeout: 10_000,
-});
+await returnAfterStudio();
 await mxOpenStudio();
 const qaDiscardValue = await qaReadControl("Typography", "Main lyrics size");
 
@@ -2281,9 +2627,9 @@ const qaSoakMs = await page.evaluate(async () => {
 await wait(500);
 const qaSoakValue = await qaReadControl("Typography", "Main lyrics size");
 const qaSoakProbe = await qaProbe();
-// Reset all returns the draft to base everywhere; close WITHOUT saving to keep
+// Reset the current layout; close WITHOUT saving to keep
 // the saved QA Sweep state intact for the report probes above.
-await mxClickStudioButton("Reset all");
+await mxClickStudioButton("Reset layout");
 const qaAfterResetAllSize = await qaReadControl("Typography", "Main lyrics size");
 const qaAfterResetAllBg = await qaReadControl("Background", "Mode");
 const qaResponsive: { size: string; inside: boolean; value: string }[] = [];
@@ -2308,11 +2654,7 @@ for (const [w, h] of [
 await setViewport(1920, 1080);
 await mxClickStudioButton("Cancel");
 await mxClickStudioButton("Discard changes").catch(() => null);
-await page
-  .waitForFunction(() => !document.querySelector('[data-testid="customization-studio"]'), {
-    timeout: 10_000,
-  })
-  .catch(() => null);
+await returnAfterStudio();
 await page.evaluate(() => {
   (window as unknown as { __qaSecondary?: boolean }).__qaSecondary = false;
 });
@@ -2847,18 +3189,19 @@ check(
 check(
   "mx-windowed-fullscreen-configs-independent",
   Boolean(
-    Math.abs(mxFullscreenScaled.lyricFontPx - 84.2) <= 2.5 &&
-      Math.abs(mxWindowedEditFromFullscreen.lyricFontPx - mxFullscreenScaled.lyricFontPx) <= 0.2 &&
-      Math.abs(mxWindowedSeparated.lyricFontPx - 44.2) <= 2 &&
-      Math.abs(mxFullscreenSeparated.lyricFontPx - 84.2) <= 2.5
+    mxFullscreenScaled.profileMode === "fullscreen" && mxWindowedEditFromFullscreen.profileMode === "windowed" &&
+      Math.abs(mxFullscreenScaled.lyricFontPx - mxFullscreenScaled.lyricReferencePx * 1.3) <= 0.2 &&
+      Math.abs(mxWindowedEditFromFullscreen.lyricFontPx - mxWindowedSeparated.lyricFontPx) <= 0.2 &&
+      Math.abs(mxWindowedSeparated.lyricFontPx - mxWindowedSeparated.lyricReferencePx * 0.8) <= 0.2 &&
+      Math.abs(mxFullscreenSeparated.lyricFontPx - mxFullscreenScaled.lyricFontPx) <= 0.2
   ),
-  `fs ${mxFullscreenScaled.lyricFontPx}/${mxFullscreenSeparated.lyricFontPx} win ${mxWindowedSeparated.lyricFontPx} (edit-from-fs surface ${mxWindowedEditFromFullscreen.lyricFontPx})`
+  `fs ${mxFullscreenScaled.lyricFontPx}/${mxFullscreenSeparated.lyricFontPx} win ${mxWindowedSeparated.lyricFontPx} (windowed preview ${mxWindowedEditFromFullscreen.lyricFontPx})`
 );
 check(
   "mx-section-reset-reverts-typography",
   Boolean(
     !/Georgia/i.test(mxAfterSectionReset.lineFont) &&
-      Math.abs(mxResetFont.lyricFontPx - 55.2) <= 1.5
+      Math.abs(mxResetFont.lyricFontPx - mxResetFont.lyricReferencePx) <= 0.2
   ),
   `font ${mxAfterSectionReset.lineFont} px ${mxResetFont.lyricFontPx}`
 );
@@ -3313,16 +3656,4 @@ check(
   qaResponsive.every(r => r.inside && Math.abs(Number(r.value) - 0.8625) <= 0.05),
   JSON.stringify(qaResponsive)
 );
-const failures = Object.entries(results).filter(([, entry]) => !entry.value);
-console.log(`\n${Object.keys(results).length - failures.length}/${Object.keys(results).length} checks passed`);
-if (failures.length) {
-  console.log("Failures:");
-  for (const [name, entry] of failures) console.log(`  ${name}: ${entry.detail}`);
-}
-console.log("Console log tail:", logs.slice(-6).join("\n"));
-console.log(`Screenshots: ${shotDir}`);
-
-await browser.close();
-server.close();
-rmSync(stateDir, { recursive: true, force: true });
-process.exit(failures.length ? 1 : 0);
+await report();

@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_SETTINGS, SettingsStore } from "../../src/main/settings";
+import { SettingsCore } from "../../src/main/settingsCore";
 import {
   DEFAULT_ARTIST_IMAGE_PROVIDER_ORDER,
   activeArtistImageProviders,
@@ -137,6 +138,29 @@ describe("Now Playing profile settings", () => {
     const reopened = new SettingsStore(file).get();
     expect(reopened.nowPlayingProfiles.activeProfileId).toBe("saved-layout");
     expect(reopened.nowPlayingProfiles.customProfiles[0].fullscreen.artworkVisible).toBe(false);
+  });
+
+  it("migrates the old effective fullscreen layout and saves Off choices independently", () => {
+    const file = join(workDir, "legacy-lyrics-off.json");
+    writeFileSync(file, JSON.stringify({
+      lyrics: { showLyricsInFullscreen: false },
+      nowPlayingProfiles: {
+        version: 1,
+        activeProfileId: "artwork-focus",
+        contextSwitching: { enabled: true, windowedProfileId: "minimal", fullscreenProfileId: "custom-stage" },
+        customProfiles: [{ id: "custom-stage", fullscreen: { artworkSlot: "right", backgroundMode: "gradient" } }],
+      },
+    }));
+    const store = new SettingsStore(file);
+    expect(store.get().lyrics.showLyricsInFullscreen).toBe(false);
+    const migrated = store.get().nowPlayingProfiles;
+    expect(migrated.lyricsOffProfileId).toBe("custom-stage");
+    expect(migrated.customProfiles[0].lyricsOff).toEqual(migrated.customProfiles[0].fullscreen);
+    store.patch({ nowPlayingProfiles: { lyricsOffProfileId: "balanced" } });
+    const reopened = new SettingsStore(file).get().nowPlayingProfiles;
+    expect(reopened.lyricsOffProfileId).toBe("balanced");
+    expect(reopened.activeProfileId).toBe("artwork-focus");
+    expect(reopened.contextSwitching.fullscreenProfileId).toBe("custom-stage");
   });
 
   it("repairs an invalid active profile id instead of persisting a broken selection", () => {
@@ -281,5 +305,46 @@ describe("artist picture settings", () => {
       "wikidata",
       "deezer",
     ]);
+  });
+});
+
+
+describe("desktop settings writes", () => {
+  it("keeps the saved profiles unchanged when persistence rejects and allows retry", async () => {
+    let fail = true;
+    let disk: string | undefined;
+    const settings = new SettingsCore({ persist: async json => {
+      if (fail) throw new Error("fixture write failed");
+      disk = json;
+    } });
+    const patch = { nowPlayingProfiles: { lyricsOffProfileId: "minimal" } };
+    await expect(settings.patchAndPersist(patch)).rejects.toThrow("fixture write failed");
+    expect(settings.get().nowPlayingProfiles.lyricsOffProfileId).toBe("balanced");
+    expect(disk).toBeUndefined();
+    fail = false;
+    await expect(settings.patchAndPersist(patch)).resolves.toMatchObject(patch);
+    expect(new SettingsCore({ initialJson: disk }).get().nowPlayingProfiles.lyricsOffProfileId).toBe("minimal");
+  });
+
+  it("serializes a profile save and a subsequent playback patch without losing either", async () => {
+    const writes: string[] = [];
+    let release = () => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const settings = new SettingsCore({ persist: async json => {
+      writes.push(json);
+      if (writes.length === 1) await gate;
+    } });
+    const profiles = settings.patchAndPersist({ nowPlayingProfiles: { lyricsOffProfileId: "artwork-focus" } });
+    const transport = settings.patchAndPersist({ playback: { volume: 0.25 } });
+    await Promise.resolve();
+    expect(writes).toHaveLength(1);
+    expect(settings.get().nowPlayingProfiles.lyricsOffProfileId).toBe("balanced");
+    release();
+    await Promise.all([profiles, transport]);
+    expect(writes).toHaveLength(2);
+    expect(JSON.parse(writes[1])).toMatchObject({
+      nowPlayingProfiles: { lyricsOffProfileId: "artwork-focus", activeProfileId: "balanced" },
+      playback: { volume: 0.25 },
+    });
   });
 });

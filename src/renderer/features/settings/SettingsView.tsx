@@ -30,6 +30,7 @@ import { LastFmSettings } from "./LastFmSettings";
 import { LyricsCachePanel } from "./LyricsCachePanel";
 import { ArtistImagesSettings } from "./ArtistImagesSettings";
 import { FetchAllSettings } from "../lyrics-fetch/FetchAllSettings";
+import { NowPlayingAppearance } from "./NowPlayingAppearance";
 import { useOnboarding } from "../../state/onboardingStore";
 import {
   EQ_BAND_LABELS,
@@ -291,6 +292,7 @@ export function SettingsView() {
               </button>
             </div>
           </div>
+          <NowPlayingAppearance />
           <div className="settings-subsection" data-testid="settings-lyrics">
             <h3>Lyrics</h3>
             <Toggle

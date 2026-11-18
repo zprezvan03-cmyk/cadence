@@ -38,30 +38,36 @@ npm run build:desktop  # Full Tauri production build (frontend + Rust host + pla
 
 ## Using it
 
-1. **Add music** — top-right button, or <kbd>Ctrl/Cmd</kbd>+<kbd>O</kbd>. Folders are scanned recursively;
-   hidden directories and common system folders are skipped.
+1. **Add music** — use **Add music** in the sidebar, or <kbd>Ctrl/Cmd</kbd>+<kbd>O</kbd>. Folders are
+   scanned recursively; hidden directories and common system folders are skipped. Expand **Library**
+   for Recently Added, Artists, Albums, and Songs. Home's discovery shelves scroll horizontally.
 2. **Play** — click a row. <kbd>Space</kbd> toggles, <kbd>←</kbd>/<kbd>→</kbd> seek 5 s
    (<kbd>Shift</kbd> or <kbd>Ctrl/Cmd</kbd> = previous/next), <kbd>↑</kbd>/<kbd>↓</kbd> volume,
-   <kbd>M</kbd> mute, <kbd>S</kbd> shuffle, <kbd>R</kbd> repeat, <kbd>Q</kbd> queue, <kbd>N</kbd> / <kbd>L</kbd>
-   Now Playing, <kbd>F</kbd> / <kbd>F11</kbd> fullscreen Now Playing, <kbd>Ctrl/Cmd</kbd>+<kbd>K</kbd> search,
+   <kbd>M</kbd> mute, <kbd>S</kbd> shuffle, <kbd>R</kbd> repeat, <kbd>Q</kbd> queue,
+   <kbd>Ctrl/Cmd</kbd>+<kbd>K</kbd> search,
    <kbd>Ctrl/Cmd</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> rescan library. Hardware media keys and Windows System
    Media Transport Controls (SMTC) work through global shortcuts and the WebView2 Media Session API.
-3. **Now Playing** — open the Now Playing tab (sidebar, or the mic button in the player bar). Providers
-   run in exact priority order: local `.ttml`/`.qrc` → Better Lyrics API / Unison / Binimum rich-synced →
-   Better Lyrics word-synced → local `.lrc` → Unison / Better Lyrics / LRCLIB line-synced → LRCLIB plain →
+3. **Now Playing** — open it from the player bar or press <kbd>L</kbd>. <kbd>N</kbd> and <kbd>F</kbd> toggle
+   the view; <kbd>F11</kbd> toggles native fullscreen. <kbd>Esc</kbd> closes the queue first, then returns to
+   browsing. Switch between **Lyrics On** and **Lyrics Off** without interrupting playback. The Mini
+   Player's artwork opens Now Playing; its Restore button returns to the previous view.
+   **Settings → Appearance → Now Playing** opens the Customization Studio, where you can preview and
+   save each layout independently. See [Desktop UI restructuring](docs/desktop-restructuring.md) for
+   layout and profile compatibility details. Lyrics providers run in priority order: local `.ttml`/`.qrc` →
+   Better Lyrics API / Unison / Binimum rich-synced → Better Lyrics word-synced → local `.lrc` →
+   Unison / Better Lyrics / LRCLIB line-synced → LRCLIB plain →
    embedded tag (USLT/SYLT/`©lyr`/Vorbis `LYRICS`). Use the dock or Lyrics Selector to change source, run a
-   manual search (including keyless YouTube link metadata fill), adjust typography, offset (±0.05 s steps),
-   translation, romanization, reload, load a file, or save what is on screen as a sidecar `.lrc`.
-4. **Shaders** — Settings → Shaders. Opacity, warp, blur passes, animation speed, transition
-   duration, saturation, dithering, auto-dim of bright artwork, audio reactivity (beat threshold,
-   speed multiplier, scale boost), pause when idle, and a performance mode
-   (`high`/`balanced`/`low`/`off`). `off` swaps in the artwork-blur fallback.
-5. **Settings → Playback → Appearance** picks the **font** used by the app and the lyrics view from
-   system families (sans, serif and monospace stacks). Choices apply immediately, persist across
-   restarts, and each stack falls back to a similar system font when the named one is not installed.
+   manual search (including keyless YouTube link metadata fill), adjust timing (±0.1 s steps),
+   translate or romanize lyrics, reload, open a file, or save lyrics as a `.ttml` or `.lrc` sidecar.
+4. **Settings → Appearance → Shader background** controls opacity, warp, blur passes, animation speed,
+   transition duration, saturation, dithering, auto-dim, audio reactivity, and pause when idle.
+   Performance mode `off` uses the static artwork fallback.
+5. **Settings → Appearance → General Appearance** picks the **font** used by the app and the lyrics
+   view. Choices apply immediately, persist across restarts, and fall back to similar system fonts
+   when the selected family is not installed.
 6. **Settings → Library** shows folders, rescan, the SQLite engine in use and scan errors;
    **About** lists versions and runtime information.
-7. **Decode Tester** (sidebar, or Settings → Library) health-checks your library by really decoding
+7. **Decode Tester** (Settings → Library) health-checks your library by really decoding
    every file — beginning, middle and end — through the same playback path. Chromium decodes the
    normal formats from the `cadence-media` Range protocol; ALAC is first decoded by native Symphonia
    into a disposable PCM WAV cache, then sampled by Chromium. The cache is kept under app data and
@@ -121,10 +127,10 @@ src/shared          cross-runtime contract and ported upstream data
 
 Windows builds run without native decorations (`src-tauri/tauri.windows.conf.json`) so no OS-coloured
 caption strip can sit above the app. `src/renderer/app/WindowTitleBar.tsx` draws the replacement title
-bar as the first row of the app shell: it continues the sidebar and top-bar surfaces, carries the drag
-region (`data-tauri-drag-region` plus the `core:window:allow-start-dragging` capability), and puts
-minimize / maximize-restore / close flush in the top-right corner. macOS and Linux keep their native
-frames — the Rust side reports `undecorated: false`, so the custom bar is never rendered twice. The bar
+bar in its own row. It carries the drag region (`data-tauri-drag-region` plus the
+`core:window:allow-start-dragging` capability) and puts minimize / maximize-restore / close flush in the
+top-right corner. macOS and Linux keep their native frames — the Rust side reports
+`undecorated: false`, so the custom bar is never rendered twice. The bar
 covers the first `--titlebar-height` pixels for any view that sizes itself against the viewport
 (`--window-chrome-top`), and it steps aside in immersive Now Playing and native fullscreen.
 
@@ -135,11 +141,13 @@ seek, pause, rate changes and track switches move the highlight with no second c
 
 ```bash
 npm run typecheck    # tsc --noEmit for Node/Tauri bridge and renderer
-npm test             # 201 Vitest assertions (library, protocol, providers, search, YouTube, Tauri bridge)
+npm test -- --exclude tests/unit/_matasaburo_full.test.ts # offline unit suite
 npm run smoke        # fixtures + tests + Vite production build + Tauri config/capability checks
-npm run test:renderer # 25 headless Chromium audio/Braccato/Kawarp engine checks
-npm run test:lyrics-ui # real Now Playing page: translation / romanization decorations through the dock
+npm run test:renderer # headless Chromium audio/Braccato/Kawarp engine checks
+npm run test:lyrics-ui # translation / romanization decorations through the dock
 npm run test:ui      # production renderer in headless Chromium: interactive UI suite
+npm run test:now-playing # immersive layout and Customization Studio
+npm run test:animation   # playback motion and Braccato effects
 ```
 
 `npm run test:ui` needs `python3` with `av`, `soundfile`, `numpy`, `mutagen` for the first fixture

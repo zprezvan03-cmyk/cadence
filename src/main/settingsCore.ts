@@ -129,13 +129,14 @@ export function mergeSettings<T>(base: T, patch: unknown): T {
 }
 
 /** Clamps bounded settings fields; applied on load and on every patch. */
-function normalizeSettings(settings: AppSettings): AppSettings {
+function normalizeSettings(settings: AppSettings, rawProfiles: unknown = settings.nowPlayingProfiles): AppSettings {
   const clampNumber = (value: unknown, fallback: number, min: number, max: number): number => {
     const number = Number(value);
     return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
   };
+  // Patches may share unchanged subtrees with the last committed snapshot.
   const playback = isPlainObject(settings.playback)
-    ? settings.playback
+    ? { ...settings.playback }
     : structuredClone(DEFAULT_SETTINGS.playback);
   const equalizer = isPlainObject(playback.equalizer)
     ? playback.equalizer
@@ -192,6 +193,7 @@ function normalizeSettings(settings: AppSettings): AppSettings {
       ...(fallback.romanizationStandard !== undefined ? { romanizationStandard: text(source.romanizationStandard, fallback.romanizationStandard, 80) } : {}),
     };
   };
+  settings.lyrics = { ...settings.lyrics };
   settings.lyrics.aiTranslation = normalizeAi(settings.lyrics.aiTranslation, DEFAULT_SETTINGS.lyrics.aiTranslation);
   settings.lyrics.aiRomanization = normalizeAi(settings.lyrics.aiRomanization, DEFAULT_SETTINGS.lyrics.aiRomanization);
   settings.lyrics.providerOrder = migrateProviderOrder(settings.lyrics.providerOrder);
@@ -208,7 +210,7 @@ function normalizeSettings(settings: AppSettings): AppSettings {
     onboardingCompleted: Boolean(settings.general?.onboardingCompleted),
     onboardingStep: Number.isFinite(step) ? Math.min(4, Math.max(0, Math.round(step))) : 0,
   };
-  settings.nowPlayingProfiles = normalizeNowPlayingProfilesSettings(settings.nowPlayingProfiles);
+  settings.nowPlayingProfiles = normalizeNowPlayingProfilesSettings(rawProfiles);
   const artistImageSource: AnyRecord = isPlainObject(settings.artistImages) ? settings.artistImages : {};
   settings.artistImages = {
     enabled:
@@ -246,18 +248,21 @@ function normalizeSettings(settings: AppSettings): AppSettings {
 
 export function parseSettingsJson(rawJson: string | null | undefined): AppSettings {
   let settings: AppSettings;
+  let rawProfiles: unknown;
   if (!rawJson) {
     settings = structuredClone(DEFAULT_SETTINGS);
   } else {
     try {
       const parsed = JSON.parse(rawJson);
       settings = mergeSettings(structuredClone(DEFAULT_SETTINGS), parsed);
+      // Normalize the raw profile subtree so a default id cannot mask a missing legacy field.
+      rawProfiles = parsed?.nowPlayingProfiles;
     } catch (error) {
       console.warn("[Cadence] Settings file is unreadable, using defaults:", error);
       return structuredClone(DEFAULT_SETTINGS);
     }
   }
-  return normalizeSettings(settings);
+  return normalizeSettings(settings, rawProfiles);
 }
 
 export interface SettingsPersistence {
@@ -267,6 +272,7 @@ export interface SettingsPersistence {
 
 export class SettingsCore {
   private settings: AppSettings;
+  private pendingWrite = Promise.resolve();
 
   constructor(private readonly persistence: SettingsPersistence = {}) {
     this.settings = parseSettingsJson(persistence.initialJson);
@@ -286,6 +292,27 @@ export class SettingsCore {
     this.settings = structuredClone(DEFAULT_SETTINGS);
     this.save();
     return this.settings;
+  }
+
+  /** The desktop bridge confirms a change only after its atomic write succeeds. Queue writes
+   * so a concurrent transport update cannot overwrite a Studio save with an older snapshot. */
+  patchAndPersist(patch: DeepPartial<AppSettings>): Promise<AppSettings> {
+    return this.commit(() => normalizeSettings(mergeSettings(this.settings, patch)));
+  }
+
+  resetAndPersist(): Promise<AppSettings> {
+    return this.commit(() => structuredClone(DEFAULT_SETTINGS));
+  }
+
+  private commit(update: () => AppSettings): Promise<AppSettings> {
+    const write = this.pendingWrite.then(async () => {
+      const next = update();
+      await this.persistence.persist?.(JSON.stringify(next, null, 2));
+      this.settings = next;
+      return next;
+    });
+    this.pendingWrite = write.then(() => undefined, () => undefined);
+    return write;
   }
 
   save(): void {

@@ -5,7 +5,9 @@ type Shot = (name: string) => Promise<unknown>;
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const click = (page: Page, selector: string) => page.evaluate(sel => document.querySelector<HTMLElement>(sel)!.click(), selector);
 const getBox = (page: Page, selector: string) => page.$eval(selector, el => el.getBoundingClientRect().toJSON() as { x: number; y: number; width: number; height: number });
-const visibleTransport = '.player-bar [data-testid="play-toggle"], .mini-player [data-testid="play-toggle"]';
+const visibleTransport = '[data-testid="play-toggle"]';
+const fsCover = ".lyrics-view.is-fullscreen .playback-cover";
+const exitNow = "button.fs-exit";
 const next = '.player-bar button[aria-label="Next track"]';
 const barCover = ".player-bar .playback-cover";
 const mini = '[data-testid="mini-player"]';
@@ -61,7 +63,7 @@ export async function auditArtworkResilience(page: Page, check: Check, shot: Sho
   const compactCover = await page.$eval('.mini-player [data-cover-layer="current"]', el => el.querySelector("img")?.src);
   await click(page, openNow);
   await page.waitForSelector(".lyrics-view");
-  const restoredCover = await page.$eval(currentCover, el => el.querySelector("img")?.src);
+  const restoredCover = await page.$eval(`${fsCover} [data-cover-layer="current"]`, el => el.querySelector("img")?.src);
   const slowDecodes = await page.evaluate(() => {
     document.dispatchEvent(new Event("cadence-count-slow-cover-decodes"));
     const count = document.documentElement.dataset.slowDecodes;
@@ -69,6 +71,8 @@ export async function auditArtworkResilience(page: Page, check: Check, shot: Sho
     return count;
   });
   check("layout-switch-keeps-held-art-and-shares-pending-decode", Boolean(pending && compactCover === pending && restoredCover === pending && slowDecodes === "1"), JSON.stringify({ compactCover, restoredCover, slowDecodes }));
+  await click(page, exitNow);
+  await page.waitForSelector(".sidebar");
   await click(page, '.nav-item[title="Songs"]');
   await page.waitForSelector(".library-view");
 
@@ -268,51 +272,50 @@ export async function auditMiniHandoff(page: Page, check: Check, shot: Shot) {
     const animations = document.getAnimations().filter(animation => animation.id.endsWith("-handoff"));
     for (const animation of animations) { animation.pause(); animation.currentTime = 73; }
     const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect().toJSON();
-    const art = document.querySelector(".player-bar .playback-cover")!;
+    const art = document.querySelector(".fs-artwork .playback-cover")!;
     const r = art.getBoundingClientRect();
     const surfaces = [...document.querySelectorAll('.lyrics-view, .lyrics-body, .np-bg, .kawarp-bg')];
     return {
       art: r.toJSON(),
+      finalArt: box('.fs-artwork'),
       backdropStill: surfaces.length === 3 && surfaces.every(el => el.getAnimations().length === 0),
       artworkUnobscured: art.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)),
-      title: box('.player-bar [data-track-layer="current"] .player-title'),
-      transport: box('.player-bar [data-testid="play-toggle"]'),
+      title: box('.fs-side [data-track-layer="current"] h1'),
+      transport: box('.fs-controls [data-testid="play-toggle"]'),
       names: animations.map(animation => animation.id),
       duplicate: Boolean(document.querySelector(".player-flight, .lyrics-header .artwork, .np-kicker")),
       playTargets: document.querySelectorAll('[data-testid="play-toggle"]').length,
-      nowPlaying: Boolean(document.querySelector('.lyrics-view:not(.is-fullscreen)')),
-      seekTime: Number(document.querySelector<HTMLInputElement>(".player-bar .seek")!.value),
+      nowPlaying: Boolean(document.querySelector('.lyrics-view.is-fullscreen') && !document.querySelector('.player-bar')),
+      seekTime: Number(document.querySelector<HTMLInputElement>(".fs-controls .seek")!.value),
     };
   });
-  // The redesigned Mini displays a larger sleeve. Check the same live cover interpolates
-  // between the two measured slots in both position and scale (rather than snapping its size).
-  const minWidth = Math.min(full.width, compact.width);
-  const maxWidth = Math.max(full.width, compact.width);
-  const interpolatedWidth = maxWidth - minWidth < 1
-    ? Math.abs(handoff.art.width - full.width) < 1
-    : handoff.art.width > minWidth && handoff.art.width < maxWidth;
+  // The moving element is the real destination cover, partway between the Mini and
+  // immersive slots (the outer artwork box gives the settled, untransformed geometry).
+  const between = (value: number, a: number, b: number) => value > Math.min(a, b) && value < Math.max(a, b);
   check("mini-moves-existing-cover-title-and-live-transport", handoff.nowPlaying && !handoff.duplicate && handoff.artworkUnobscured && handoff.playTargets === 1 &&
     ["artwork", "metadata", "transport"].every(part => handoff.names.includes(`player-${part}-handoff`)) &&
-    Math.abs(handoff.seekTime - before) < 0.08 && handoff.art.y > compact.y + 15 && handoff.art.y < full.y - 15 &&
-    interpolatedWidth && Math.abs(handoff.title.y - handoff.art.y) < handoff.art.height &&
-    handoff.transport.y > miniTransport.y + 15, JSON.stringify(handoff));
+    Math.abs(handoff.seekTime - before) < 0.08 && between(handoff.art.y, compact.y, handoff.finalArt.y) &&
+    between(handoff.art.width, compact.width, handoff.finalArt.width) && handoff.transport.y > miniTransport.y + 15, JSON.stringify(handoff));
   check("mini-expansion-does-not-animate-the-large-lyrics-surfaces", handoff.backdropStill, JSON.stringify(handoff));
   await shot("11-mini-expand-mid");
   await page.mouse.click(handoff.transport.x + handoff.transport.width / 2, handoff.transport.y + handoff.transport.height / 2);
-  const played = await page.waitForFunction(() => document.querySelector('.player-bar [data-testid="play-toggle"]')?.getAttribute("aria-label") === "Pause", { timeout: 2500 }).then(() => true).catch(() => false);
+  const played = await page.waitForFunction(() => document.querySelector('.fs-controls [data-testid="play-toggle"]')?.getAttribute("aria-label") === "Pause", { timeout: 2500 }).then(() => true).catch(() => false);
   check("mini-live-transport-works-in-flight", played);
   if (played) await click(page, visibleTransport);
   await page.keyboard.press("q");
   await page.waitForSelector(".queue-panel");
   const above = await page.evaluate(() => Number(getComputedStyle(document.querySelector(".queue-panel")!).zIndex) >
-    Number(getComputedStyle(document.querySelector(".player-bar")!).zIndex));
+    Number(getComputedStyle(document.querySelector(".lyrics-view.is-fullscreen")!).zIndex));
   check("queue-can-open-above-a-live-handoff", above);
   await click(page, '.queue-panel button[aria-label="Close queue"]');
   await finish(page, "player-");
   await wait(360);
-  const landed = await getBox(page, barCover);
-  check("mini-handoff-lands-in-existing-player-bar", Math.abs(landed.y - full.y) < 1 && !(await page.$(".player-flight, [data-player-moving]")), JSON.stringify(landed));
+  const landed = await getBox(page, fsCover);
+  check("mini-handoff-lands-in-immersive-artwork-slot", Math.abs(landed.y - handoff.finalArt.y) < 1 && Math.abs(landed.width - handoff.finalArt.width) < 1 && !(await page.$(".player-flight, [data-player-moving]")), JSON.stringify(landed));
   await shot("11-mini-expand-settled");
+  await click(page, exitNow);
+  await page.waitForSelector(barCover);
+  await wait(330);
 
   // A rapid reversal starts from the displayed geometry of the real, moving artwork.
   await click(page, toggle);
@@ -334,9 +337,12 @@ export async function auditMiniHandoff(page: Page, check: Check, shot: Shot) {
     Math.abs(reversal.before.y - reversal.after.y) < 40 && Math.abs(reversal.before.width - reversal.after.width) < 2, JSON.stringify(reversal));
   await page.setViewport({ width: 1050, height: 700 });
   await page.waitForFunction(() => !document.querySelector("[data-player-moving]"), { timeout: 1500 });
-  const resized = await getBox(page, barCover);
-  check("mini-resize-cancels-stale-flight", resized.width === full.width && resized.y + resized.height < 700, JSON.stringify(resized));
+  const resized = await getBox(page, fsCover);
+  const resizedSlot = await getBox(page, '.fs-artwork');
+  check("mini-resize-cancels-stale-flight", resized.width === resizedSlot.width && resized.y === resizedSlot.y && resized.y + resized.height < 700, JSON.stringify(resized));
   await page.setViewport({ width: 1440, height: 900 });
+  await click(page, exitNow);
+  await page.waitForSelector(barCover);
 
   // Mock only native window geometry. Before a pending shrink no restore call is needed.
   const nativeCalls: boolean[] = [];
@@ -384,18 +390,23 @@ export async function auditMiniHandoff(page: Page, check: Check, shot: Shot) {
 }
 
 export async function auditHiddenArtwork(page: Page, check: Check) {
-  // Edit the existing fullscreen mode in Studio; windowed Now Playing has no art slot.
+  await click(page, exitNow);
+  await page.waitForSelector('.sidebar');
+  await click(page, '.sidebar button[title="Settings"]');
+  await page.waitForSelector('.settings-tabs button');
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('.settings-tabs button')]
+    .find(button => button.textContent?.trim() === "Appearance")!.click());
+  await page.waitForSelector('[data-testid="customize-now-playing"]');
+  // Edit Lyrics On in Settings, then test the real Mini artwork entry.
   await click(page, '[data-testid="customize-now-playing"]');
   await page.waitForSelector('[data-testid="studio-duplicate"]');
   await click(page, '[data-testid="studio-duplicate"]');
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".studio-mode-toggle button")]
-    .find(node => node.textContent === "Fullscreen")!.click());
   await page.$eval('.np-studio input[aria-label="Show artwork"]', input => {
     if ((input as HTMLInputElement).checked) (input as HTMLInputElement).click();
   });
   await click(page, '[data-testid="studio-save"]');
   await page.waitForSelector(".np-studio", { hidden: true, timeout: 3000 });
-  await click(page, '.player-bar button[aria-label="Fullscreen lyrics"]');
+  await click(page, '[data-testid="open-now-playing"]');
   const hidden = '.lyrics-view.is-fullscreen[data-profile-artwork="hidden"]';
   await page.waitForSelector(hidden, { timeout: 3000 });
   await page.keyboard.down("Control");

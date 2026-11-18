@@ -14,7 +14,7 @@ type Part = typeof parts[number];
 type Box = { node: HTMLElement; rect: DOMRect; anchor: DOMRect };
 type Scene = Partial<Record<Part, Box>>;
 
-function measure(root: HTMLElement, layout: PlayerLayout): Scene {
+function measure(root: HTMLElement, layout: PlayerLayout, arriving = false): Scene {
   // Windowed Now Playing has no header artwork. Its existing player bar is the destination,
   // not an artwork slot invented for this transition. Fullscreen already has its own slots.
   const surface = root.querySelector(layout === "mini" ? ".mini-player" :
@@ -22,7 +22,7 @@ function measure(root: HTMLElement, layout: PlayerLayout): Scene {
   const scene: Scene = {};
   for (const part of parts) {
     const node = surface?.querySelector<HTMLElement>(`[data-player-part="${part}"]`);
-    if (!node || node.closest(".is-concealed")) continue;
+    if (!node || (!arriving && node.closest(".is-concealed") && !surface?.hasAttribute("data-player-moving"))) continue;
     const rect = node.getBoundingClientRect();
     if (!rect.width || !rect.height) continue;
     const anchor = part === "metadata" ? node.querySelector('[data-track-layer="current"] :is(h1, .player-title, .mini-player-title)') :
@@ -74,7 +74,7 @@ export class PlayerLayoutMotion extends Component<Props> {
     for (const animation of lyrics?.getAnimations() ?? []) {
       if (["view-in", "fs-in"].includes((animation as CSSAnimation).animationName)) animation.cancel();
     }
-    const to = measure(root, this.props.layout);
+    const to = measure(root, this.props.layout, true);
     const miniHandoff = previous.layout === "mini" || this.props.layout === "mini";
     const animations: Animation[] = [];
     const sharedHeadingAndCover = from.artwork && to.artwork && from.metadata && to.metadata;
@@ -109,9 +109,10 @@ export class PlayerLayoutMotion extends Component<Props> {
         easing: MOTION_EASING.out, fill: "backwards",
       }));
     }
-    if (bar) bar.dataset.playerMoving = "true";
+    const movingSurface = bar ?? (this.props.layout === "fullscreen" ? lyrics as HTMLElement | null : null);
+    if (movingSurface) movingSurface.dataset.playerMoving = "true";
     this.cancelFlight = finishMotion(animations, () => {
-      if (bar) delete bar.dataset.playerMoving;
+      if (movingSurface) delete movingSurface.dataset.playerMoving;
       this.cancelFlight = undefined;
     });
   }

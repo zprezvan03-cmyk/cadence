@@ -14,7 +14,6 @@ import {
   AudioLines,
   Library,
   ListMusic,
-  Mic2,
   Music2,
   Plus,
   Settings,
@@ -28,7 +27,6 @@ import { useSessionState } from "./useSessionState";
 type Destination = { label: string; icon: ReactNode; route: Route };
 const LISTEN: Destination[] = [
   { label: "Home", icon: <Home size={18} />, route: { name: "home" } },
-  { label: "Now Playing", icon: <Mic2 size={18} />, route: { name: "lyrics" } },
   { label: "History", icon: <History size={18} />, route: { name: "history" } },
   { label: "Stats", icon: <ChartColumn size={18} />, route: { name: "stats" } },
 ];

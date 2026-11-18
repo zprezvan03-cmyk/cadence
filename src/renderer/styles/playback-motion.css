@@ -53,3 +53,7 @@
   overflow: visible;
   z-index: 35; /* above the sidebar, below the queue and dialogs */
 }
+
+.player-bar[data-player-moving] :is([data-player-part="artwork"], [data-player-part="metadata"]) {
+  pointer-events: none;
+}

@@ -3,7 +3,7 @@
  *
  * On Windows the main window is created undecorated (see `src-tauri/tauri.windows.conf.json`) so the
  * OS frame cannot paint a differently coloured caption strip over the app. This bar takes its place:
- * it continues the sidebar and top bar surfaces, keeps the drag region, and draws the minimize,
+ * it keeps the drag region on a separate strip and draws the minimize,
  * maximize/restore and close controls at the top-right corner. Platforms that keep their native
  * decorations never see it, because the window reports `undecorated: false`.
  */

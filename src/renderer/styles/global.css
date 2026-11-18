@@ -246,6 +246,8 @@ a {
   min-height: 0;
 }
 
+.app-shell.is-immersive .app-main:focus { outline: none; }
+
 .content-scroll {
   flex: 1;
   min-height: 0;
@@ -1090,13 +1092,9 @@ a {
 
 .player-track > .heart { flex: none; }
 
-.player-cover-button {
-  flex: none;
-  padding: 0;
-  border-radius: 7px;
-}
+.player-track > .playback-cover { flex: none; }
 
-:is(.player-cover-button, .mini-player-artwork):hover .artwork {
+.mini-player-artwork:hover .artwork {
   outline: 1px solid var(--border-strong);
   outline-offset: 2px;
 }
@@ -1436,9 +1434,12 @@ input[type="range"].volume:active::-webkit-slider-thumb {
 }
 
 .app-shell.is-immersive .queue-panel {
-  top: 0;
+  /* The drawer overlays the lyrics, not the mode picker and exit button. */
+  top: calc(clamp(18px, 3vh, 36px) + 50px);
   bottom: 0;
   z-index: 56;
+  border-top: 1px solid var(--border);
+  border-top-left-radius: var(--radius);
 }
 
 @keyframes slide-in {

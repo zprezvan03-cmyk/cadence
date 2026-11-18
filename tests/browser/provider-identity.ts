@@ -387,6 +387,10 @@ const clickText = async (selector: string, wanted: string, exact = true) => {
     )}`
   );
 };
+const openLegacyLyrics = async () => {
+  await page.evaluate(() => { location.hash = "#/lyrics"; });
+  await page.waitForSelector('.lyrics-view:not(.is-fullscreen)', { timeout: 5000 });
+};
 const nav = async (label: string) => {
   await clickText(".sidebar .nav-item", label);
   await wait(200);
@@ -406,7 +410,7 @@ const playTrack = async (title: string) => {
 
 /** Opens the Now Playing dock's "Lyrics source" popover and reads what the user sees. */
 const openSources = async () => {
-  await nav("Now Playing");
+  await openLegacyLyrics();
   await wait(400);
   if (!(await page.$(".dock-sources"))) {
     await page.click('.lyrics-dock button[title="Lyrics source"]');
@@ -428,7 +432,7 @@ const openSources = async () => {
 };
 /** Same read, but tolerates a dock with no lyrics (the popover button may be the only control). */
 const readSourcesIfAny = async () => {
-  await nav("Now Playing");
+  await openLegacyLyrics();
   await wait(400);
   const trigger = await page.$('.lyrics-dock button[title="Lyrics source"]');
   if (!trigger) return { sources: [], providers: [], syncLabel: "", dock: false, empty: true };
@@ -457,7 +461,7 @@ const closeSources = async () => {
 
 /** Clicks a candidate row in the dock's source popover (a real manual selection). */
 const selectSourceRow = async (name: string) => {
-  await nav("Now Playing");
+  await openLegacyLyrics();
   await wait(300);
   if (!(await page.$(".dock-sources"))) {
     await page.click('.lyrics-dock button[title="Lyrics source"]');
@@ -660,7 +664,7 @@ check(
 );
 
 await nav("Songs");
-await nav("Now Playing");
+await openLegacyLyrics();
 const afterNavigation = await providerOrderUi();
 check(
   "order-survives-navigation",

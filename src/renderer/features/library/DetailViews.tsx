@@ -79,7 +79,7 @@ function Hero({
                 <Shuffle size={16} /> Shuffle
               </button>
             ) : null}
-            <button type="button" onClick={() => navigate({ name: "lyrics" })}>
+            <button type="button" onClick={() => useUi.getState().openNowPlaying()}>
               <Mic2 size={16} /> Now Playing
             </button>
             {children}

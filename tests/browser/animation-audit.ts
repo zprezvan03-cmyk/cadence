@@ -165,7 +165,8 @@ const server = createServer(async (req, res) => {
           {
             source: "local-lrc",
             provider: "Local LRC",
-            text: "[00:00.30]First line of the alpha song\n[00:01.60]Second line arrives later\n[00:03.20]Third line keeps the pace\n[00:04.60]Fourth line carries the motion",
+            // Wrapped lines make the follow jump measurable even on a full-window scrollport.
+            text: "[00:00.30]First line of the alpha song, where the city meets the ocean and the lights spill out across the water\n[00:01.60]Second line arrives later, while the sun goes down across the rooftops and the shadows fill the streets\n[00:03.20]Third line keeps the pace\n[00:04.60]Fourth line carries the motion",
             syncHint: "synced",
             language: "en",
             songwriters: ["Harness Artist"],
@@ -934,7 +935,7 @@ check(
 /* --------------------------------------------------------- 5. fullscreen */
 
 await page.evaluate(() => {
-  document.querySelector<HTMLButtonElement>('.player-bar button[aria-label="Fullscreen lyrics"]')!.click();
+  document.querySelector<HTMLButtonElement>('[data-testid="open-now-playing"]')!.click();
 });
 const fsHeld = await freezeAt(120);
 await shot("05-fullscreen-mid");
@@ -1060,6 +1061,7 @@ const fsArtworkSwap = await page.waitForFunction(() => {
 }, { timeout: 2000 }).then(() => true).catch(() => false);
 check("fullscreen-artwork-track-swap", fsArtworkSwap);
 await wait(410);
+await auditLyricFollow(page, check, shot);
 await page.keyboard.press("Escape");
 await page.waitForSelector(".player-bar", { timeout: 3000 });
 const exitState = await page.evaluate(() => ({
@@ -1071,7 +1073,6 @@ check("fullscreen-exits", !exitState.fullscreen && exitState.sidebar, JSON.strin
 check("fullscreen-artwork-returns", exitState.artReturns, JSON.stringify(exitState));
 await wait(400);
 await shot("05-fullscreen-exit-settled");
-await auditLyricFollow(page, check, shot);
 await auditMiniHandoff(page, check, shot);
 await auditHiddenArtwork(page, check);
 

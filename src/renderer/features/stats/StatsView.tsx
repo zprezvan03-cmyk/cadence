@@ -135,7 +135,7 @@ export function StatsView() {
         return;
       }
       void playMediaItem(ranked.mediaItem);
-      navigate({ name: "lyrics" });
+      useUi.getState().openNowPlaying();
       return;
     }
     if (!ranked.track) {
