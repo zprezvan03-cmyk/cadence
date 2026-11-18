@@ -267,6 +267,43 @@ const seekPreview = async seconds => {
   await wait(500);
   return result;
 };
+// Inspect the actual Web Animations created by the installed Braccato engine against the media
+// clock. These are not CSS entrance animations on the surrounding Cadence view.
+const sampleBraccatoMotion = async (from, until) => {
+  await seekPreview(from);
+  return page.evaluate(async until => {
+    const host = document.querySelector("braccato-lyrics");
+    const media = host.mediaElement;
+    const found = { scale: false, wobble: false, letterWave: false, sweep: false, glow: false, instrumental: false };
+    const container = host.querySelector(".blyrics-container");
+    const style = getComputedStyle(container);
+    const fades = ["in", "out"].map(side => {
+      const duration = style.getPropertyValue(`--blyrics-lyric-highlight-fade-${side}-duration`).trim();
+      return parseFloat(duration) * (duration.endsWith("ms") ? 1 : 1000);
+    });
+    const start = media.currentTime;
+    await media.play();
+    const deadline = performance.now() + 2400;
+    try {
+      do {
+        await new Promise(requestAnimationFrame);
+        for (const { effect } of host.getAnimations({ subtree: true })) {
+          const frames = effect.getKeyframes();
+          const duration = effect.getTiming().duration;
+          found.scale ||= duration === 166 && frames.some(frame => frame.transform?.includes("scale(0.95)"));
+          found.wobble ||= duration === 1000 && frames.some(frame => frame.transform?.includes("scaleX(1.025)"));
+          found.letterWave ||= frames.some(frame => frame.transform?.includes("translateY(-0.05em)"));
+          found.sweep ||= frames.some(frame => "maskPosition" in frame);
+          found.glow ||= frames.some(frame => "textShadow" in frame || "filter" in frame);
+          found.instrumental ||= duration === 1250 && frames.some(frame => "d" in frame) && effect.getTiming().iterations === Infinity;
+        }
+      } while (media.currentTime < until && !media.paused && performance.now() < deadline);
+      return { ...found, fades, start, end: media.currentTime, skew: Math.abs(host.currentTime - media.currentTime) };
+    } finally {
+      media.pause();
+    }
+  }, until);
+};
 const activeLine = () =>
   page.evaluate(() => {
     const node = document.querySelector("braccato-lyrics .blyrics--active");
@@ -295,6 +332,10 @@ try {
   let current = await dom();
   check("romanization-off-hides-embedded", current.romanized.every(text => text === null), JSON.stringify(current.romanized));
   check("translation-off-hides-embedded", current.translated.every(text => text === null), JSON.stringify(current.translated));
+
+  const richMotion = await sampleBraccatoMotion(0.26, 0.98);
+  check("braccato-word-and-letter-motion-is-restored", richMotion.scale && richMotion.wobble && richMotion.letterWave && richMotion.skew < 0.08, JSON.stringify(richMotion));
+  check("braccato-retains-karaoke-sweep-and-original-fades", richMotion.sweep && richMotion.glow && richMotion.fades.join() === "330,500", JSON.stringify(richMotion));
 
   await clickTitle("Romanize lyrics");
   current = await dom();
@@ -591,6 +632,9 @@ try {
       ...pipeline.calls.romanize.slice(callsBeforeInstrumental.romanize.length),
     ])}`
   );
+
+  const interlude = await sampleBraccatoMotion(3.05, 3.55);
+  check("braccato-keeps-the-timed-instrumental-wave", interlude.instrumental && interlude.skew < 0.08, JSON.stringify(interlude));
 
   // A file that needs generated text must be decorated even when the previous chosen file was
   // fully embedded: the "already decorated" guard is keyed on the parse, not shared by every file.

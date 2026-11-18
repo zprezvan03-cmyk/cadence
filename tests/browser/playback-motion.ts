@@ -219,7 +219,7 @@ export async function auditLyricFollow(page: Page, check: Check, shot: Shot) {
     media.pause();
     return { start, end: line.getBoundingClientRect().y, positions: targets.size, durations: [...durations], thirdWasActive, time: media.currentTime };
   });
-  check("lyric-follow-travels-and-uses-240ms-compensation", follow.positions >= 3 && follow.end < follow.start - 15 && follow.durations.includes(240) && follow.thirdWasActive, JSON.stringify(follow));
+  check("lyric-follow-travels-with-Braccato-line-timing", follow.positions >= 3 && follow.end < follow.start - 15 && follow.durations.some(duration => duration >= 750) && follow.thirdWasActive, JSON.stringify(follow));
   await shot("06-lyric-follow-end");
   await seekLyric(page, 0.65, "First line");
   await wait(260);

@@ -93,18 +93,17 @@ describe("buildThemeCss opacity derivations", () => {
 
 
 describe("buildThemeCss lyric motion", () => {
-  it("sets the compensated scroll transition without changing the lyric clock", () => {
-    const css = buildThemeCss(settings());
-    expect(css).toContain("/* blyrics-line-scroll-duration = 240ms; */");
-    expect(css).toContain("/* blyrics-line-scroll-active-duration = 240ms; */");
-    expect(css).toContain("--blyrics-lyric-scroll-timing-function: var(--ease-out);");
-    expect(css).toContain("--blyrics-lyric-highlight-fade-out-duration: var(--dur-2);");
+  it.each(["default", "hdr", "midnight", "neon", "minimal"])("lets Braccato own timing and motion for %s", themeId => {
+    const css = buildThemeCss(settings({ themeId }));
+    expect(css).not.toMatch(/blyrics-line-scroll(?:-above|-below|-active)?-duration\s*=/);
+    expect(css).not.toMatch(/--blyrics-(?:animate-word-wobble|scale-transition-duration|lyric-highlight-fade-(?:in|out)-duration|line-(?:enter|exit)-easing):/);
     expect(css).not.toContain("blyrics-early-scroll-consider-s =");
   });
 
-  it("does not replace explicitly authored custom scroll motion", () => {
-    const css = buildThemeCss(settings({ themeId: "custom", customThemeCss: "/* blyrics-line-scroll-duration = 560ms; */" }));
-    expect(css).toContain("/* blyrics-line-scroll-duration = 560ms; */");
-    expect(css).not.toContain("/* blyrics-line-scroll-duration = 240ms; */");
+  it("keeps explicitly authored Custom motion", () => {
+    const customThemeCss = "/* blyrics-line-scroll-duration = 560ms; */\n.blyrics-container { --blyrics-animate-word-wobble: 0; }";
+    const css = buildThemeCss(settings({ themeId: "custom", customThemeCss }));
+    expect(css).toContain(customThemeCss);
+    expect(css.match(/blyrics-line-scroll-duration\s*=/g)).toHaveLength(1);
   });
 });
