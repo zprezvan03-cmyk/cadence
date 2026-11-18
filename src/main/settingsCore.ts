@@ -11,6 +11,10 @@ import {
   createDefaultNowPlayingProfilesSettings,
   normalizeNowPlayingProfilesSettings,
 } from "../shared/nowPlayingProfiles";
+import {
+  DEFAULT_ARTIST_IMAGE_PROVIDER_ORDER,
+  normalizeArtistImageProviderOrder,
+} from "../shared/artistImageProviders";
 
 export const DEFAULT_SETTINGS: AppSettings = {
   version: 1,
@@ -32,6 +36,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
       bandsDb: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
       presetId: "flat",
     },
+    shuffleMode: "smart",
+    autoPlay: true,
+    smartShufflePopularity: true,
   },
   appearance: {
     accent: "#ff3d71",
@@ -80,6 +87,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   shaders: {
     ...DEFAULT_GRADIENT_SETTINGS,
     performanceMode: "balanced",
+  },
+  artistImages: {
+    enabled: true,
+    autoFetch: true,
+    providerOrder: [...DEFAULT_ARTIST_IMAGE_PROVIDER_ORDER],
+    refreshAfterDays: 30,
   },
   advanced: {
     showLogs: false,
@@ -148,6 +161,18 @@ function normalizeSettings(settings: AppSettings): AppSettings {
         ? equalizer.presetId.trim().slice(0, 64)
         : DEFAULT_SETTINGS.playback.equalizer.presetId,
   };
+  playback.shuffleMode =
+    playback.shuffleMode === "classic" || playback.shuffleMode === "smart"
+      ? playback.shuffleMode
+      : (DEFAULT_SETTINGS.playback.shuffleMode ?? "smart");
+  playback.autoPlay =
+    typeof playback.autoPlay === "boolean"
+      ? playback.autoPlay
+      : (DEFAULT_SETTINGS.playback.autoPlay ?? true);
+  playback.smartShufflePopularity =
+    typeof playback.smartShufflePopularity === "boolean"
+      ? playback.smartShufflePopularity
+      : (DEFAULT_SETTINGS.playback.smartShufflePopularity ?? true);
   settings.playback = playback as AppSettings["playback"];
 
   const normalizeAi = (candidate: unknown, fallback: AppSettings["lyrics"]["aiTranslation"]): AppSettings["lyrics"]["aiTranslation"] => {
@@ -184,6 +209,25 @@ function normalizeSettings(settings: AppSettings): AppSettings {
     onboardingStep: Number.isFinite(step) ? Math.min(4, Math.max(0, Math.round(step))) : 0,
   };
   settings.nowPlayingProfiles = normalizeNowPlayingProfilesSettings(settings.nowPlayingProfiles);
+  const artistImageSource: AnyRecord = isPlainObject(settings.artistImages) ? settings.artistImages : {};
+  settings.artistImages = {
+    enabled:
+      typeof artistImageSource.enabled === "boolean"
+        ? artistImageSource.enabled
+        : DEFAULT_SETTINGS.artistImages.enabled,
+    autoFetch:
+      typeof artistImageSource.autoFetch === "boolean"
+        ? artistImageSource.autoFetch
+        : DEFAULT_SETTINGS.artistImages.autoFetch,
+    providerOrder: normalizeArtistImageProviderOrder(
+      Array.isArray(artistImageSource.providerOrder)
+        ? artistImageSource.providerOrder.filter((entry): entry is string => typeof entry === "string")
+        : undefined
+    ),
+    refreshAfterDays: Math.round(
+      clampNumber(artistImageSource.refreshAfterDays, DEFAULT_SETTINGS.artistImages.refreshAfterDays, 0, 365)
+    ),
+  };
   const scrobblingSource: AnyRecord = isPlainObject(settings.scrobbling) ? settings.scrobbling : {};
   const credential = (value: unknown): string =>
     typeof value === "string" ? value.trim().slice(0, 256) : "";

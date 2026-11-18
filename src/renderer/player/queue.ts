@@ -3,7 +3,14 @@
  */
 
 import { mediaItemFromLocalTrack, trackSourceKey, youtubeCanonicalUrl } from "../../shared/media";
-import type { MediaItem, QueueEntry, RepeatMode, Track, TrackSource } from "../../shared/types";
+import type {
+  MediaItem,
+  QueueEntry,
+  QueueEntryOrigin,
+  RepeatMode,
+  Track,
+  TrackSource,
+} from "../../shared/types";
 
 export type Rng = () => number;
 
@@ -97,15 +104,25 @@ function localStubItem(trackId: number): MediaItem {
   };
 }
 
-export function localQueueEntry(trackId: number, occurrenceId: string, track?: Track | null): QueueEntry {
+export function localQueueEntry(
+  trackId: number,
+  occurrenceId: string,
+  track?: Track | null,
+  origin: QueueEntryOrigin = "context"
+): QueueEntry {
   return {
     occurrenceId,
     item: track ? mediaItemFromLocalTrack(track) : localStubItem(trackId),
+    origin,
   };
 }
 
-export function mediaQueueEntry(item: MediaItem, occurrenceId: string): QueueEntry {
-  return { occurrenceId, item: { ...item, source: { ...item.source } } };
+export function mediaQueueEntry(
+  item: MediaItem,
+  occurrenceId: string,
+  origin: QueueEntryOrigin = "context"
+): QueueEntry {
+  return { occurrenceId, item: { ...item, source: { ...item.source } }, origin };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -191,7 +208,11 @@ export function normalizeQueueEntry(value: unknown, fallbackOccurrenceId: string
   const item = normalizeMediaItem(record.item ?? record);
   if (!item) return null;
   const occurrenceId = cleanNullableString(record.occurrenceId) ?? fallbackOccurrenceId;
-  return { occurrenceId, item };
+  const origin: QueueEntryOrigin =
+    record.origin === "manual" || record.origin === "autoplay" || record.origin === "context"
+      ? record.origin
+      : "context";
+  return { occurrenceId, item, origin };
 }
 
 export function normalizeQueueEntries(values: readonly unknown[]): QueueEntry[] {
@@ -256,6 +277,220 @@ export function pruneQueueOrder(
 
 export function queueEntrySourceKey(entry: QueueEntry): string {
   return trackSourceKey(entry.item.source);
+}
+
+/**
+ * Inserts manually queued entries ("Play Next") immediately after `orderPosition`,
+ * at the front of the `[Manual]` queue partition.
+ * If any requested item already exists as an upcoming `"autoplay"` entry, that entry
+ * is removed from the AutoPlay tail so manual queue items always take strict priority.
+ */
+export function insertManualEntriesNext(
+  queue: readonly QueueEntry[],
+  order: readonly number[],
+  orderPosition: number,
+  requestedEntries: readonly QueueEntry[]
+): { queue: QueueEntry[]; order: number[]; orderPosition: number } {
+  if (requestedEntries.length === 0) {
+    return { queue: [...queue], order: [...order], orderPosition };
+  }
+  const manualTagged = requestedEntries.map(e => ({ ...e, origin: "manual" as const }));
+  if (queue.length === 0 || order.length === 0) {
+    return {
+      queue: manualTagged,
+      order: manualTagged.map((_, idx) => idx),
+      orderPosition: 0,
+    };
+  }
+
+  const requestedKeys = new Set(manualTagged.map(queueEntrySourceKey));
+  // Drop any upcoming autoplay slots that match the newly requested manual items
+  const prunedOrder: number[] = [];
+  for (let pos = 0; pos < order.length; pos++) {
+    const qIdx = order[pos];
+    const entry = queue[qIdx];
+    if (
+      pos > orderPosition &&
+      entry?.origin === "autoplay" &&
+      requestedKeys.has(queueEntrySourceKey(entry))
+    ) {
+      continue;
+    }
+    prunedOrder.push(qIdx);
+  }
+
+  const startIndex = queue.length;
+  const nextQueue = [...queue, ...manualTagged];
+  const addedIndices = manualTagged.map((_, idx) => startIndex + idx);
+  const insertAt = Math.min(prunedOrder.length, Math.max(0, orderPosition + 1));
+  const nextOrder = [...prunedOrder];
+  nextOrder.splice(insertAt, 0, ...addedIndices);
+
+  return { queue: nextQueue, order: nextOrder, orderPosition };
+}
+
+/**
+ * Inserts manually queued entries ("Add to Queue") into the queue with strict priority
+ * over all `"autoplay"` entries.
+ *
+ * - Manual entries are placed after any already-queued upcoming `"manual"` and `"context"`
+ *   entries, and strictly BEFORE the first upcoming `"autoplay"` entry (`[Current] -> [Manual] -> [Context] -> [AutoPlay]`
+ *   when context precedes or `[Current] -> [Manual] -> [AutoPlay]` when playing through manual/autoplay).
+ * - More specifically, to satisfy the invariant `[Current] -> [Manual] -> [Context] -> [AutoPlay]`
+ *   everywhere (including across subsequent shuffle toggles), `addToQueue` inserts at the end of
+ *   the upcoming `"manual"` block (immediately after `orderPosition` + any existing upcoming `"manual"`
+ *   entries, ahead of `"context"` and `"autoplay"` entries).
+ */
+export function appendManualEntriesBeforeAutoPlay(
+  queue: readonly QueueEntry[],
+  order: readonly number[],
+  orderPosition: number,
+  requestedEntries: readonly QueueEntry[]
+): { queue: QueueEntry[]; order: number[]; orderPosition: number } {
+  if (requestedEntries.length === 0) {
+    return { queue: [...queue], order: [...order], orderPosition };
+  }
+  const manualTagged = requestedEntries.map(e => ({ ...e, origin: "manual" as const }));
+  if (queue.length === 0 || order.length === 0) {
+    return {
+      queue: manualTagged,
+      order: manualTagged.map((_, idx) => idx),
+      orderPosition: 0,
+    };
+  }
+
+  const requestedKeys = new Set(manualTagged.map(queueEntrySourceKey));
+  // Remove any duplicate upcoming autoplay occurrences of the same track so the manual entry supersedes it
+  const prunedOrder: number[] = [];
+  for (let pos = 0; pos < order.length; pos++) {
+    const qIdx = order[pos];
+    const entry = queue[qIdx];
+    if (
+      pos > orderPosition &&
+      entry?.origin === "autoplay" &&
+      requestedKeys.has(queueEntrySourceKey(entry))
+    ) {
+      continue;
+    }
+    prunedOrder.push(qIdx);
+  }
+
+  const startIndex = queue.length;
+  const nextQueue = [...queue, ...manualTagged];
+  const addedIndices = manualTagged.map((_, idx) => startIndex + idx);
+
+  // Find insertion point at the end of the contiguous upcoming "manual" block after orderPosition
+  // (which is always strictly before any upcoming "context" or "autoplay" entry).
+  let insertAt = Math.min(prunedOrder.length, Math.max(0, orderPosition + 1));
+  while (insertAt < prunedOrder.length) {
+    const entry = nextQueue[prunedOrder[insertAt]];
+    if (entry?.origin === "manual") {
+      insertAt += 1;
+    } else {
+      break;
+    }
+  }
+
+  const nextOrder = [...prunedOrder];
+  nextOrder.splice(insertAt, 0, ...addedIndices);
+
+  return { queue: nextQueue, order: nextOrder, orderPosition };
+}
+
+/**
+ * Appends AutoPlay entries (`origin: "autoplay"`) to the very tail of the queue order,
+ * skipping any track already present in `queue`.
+ */
+export function appendAutoPlayEntries(
+  queue: readonly QueueEntry[],
+  order: readonly number[],
+  autoPlayEntries: readonly QueueEntry[]
+): { queue: QueueEntry[]; order: number[]; addedCount: number } {
+  if (autoPlayEntries.length === 0) {
+    return { queue: [...queue], order: [...order], addedCount: 0 };
+  }
+  const existingKeys = new Set(queue.map(queueEntrySourceKey));
+  const filtered: QueueEntry[] = [];
+  for (const entry of autoPlayEntries) {
+    const key = queueEntrySourceKey(entry);
+    if (existingKeys.has(key)) continue;
+    existingKeys.add(key);
+    filtered.push({ ...entry, origin: "autoplay" });
+  }
+  if (filtered.length === 0) {
+    return { queue: [...queue], order: [...order], addedCount: 0 };
+  }
+  const startIndex = queue.length;
+  const nextQueue = [...queue, ...filtered];
+  const nextOrder = [...order, ...filtered.map((_, idx) => startIndex + idx)];
+  return { queue: nextQueue, order: nextOrder, addedCount: filtered.length };
+}
+
+/**
+ * Restores an unshuffled order while preserving the strict priority of upcoming `"manual"`
+ * entries ahead of `"context"` entries and `"autoplay"` entries at the tail.
+ * When all entries are `"context"`, returns the exact identity order `[0, 1, ..., n-1]`.
+ */
+export function buildPartitionedUnshuffledOrder(
+  queue: readonly QueueEntry[],
+  order: readonly number[],
+  orderPosition: number
+): { order: number[]; orderPosition: number } {
+  if (queue.length === 0) return { order: [], orderPosition: 0 };
+  const currentIdx = Math.max(0, Math.min(order[orderPosition] ?? 0, queue.length - 1));
+  const hasNonContext = queue.some(e => e.origin === "manual" || e.origin === "autoplay");
+  if (!hasNonContext) {
+    const identity = Array.from({ length: queue.length }, (_, idx) => idx);
+    return { order: identity, orderPosition: currentIdx };
+  }
+
+  const upcomingManual: number[] = [];
+  const upcomingAutoPlay: number[] = [];
+  const upcomingManualSet = new Set<number>();
+  const upcomingAutoPlaySet = new Set<number>();
+
+  for (let pos = orderPosition + 1; pos < order.length; pos++) {
+    const qIdx = order[pos];
+    if (qIdx === currentIdx) continue;
+    const origin = queue[qIdx]?.origin ?? "context";
+    if (origin === "manual" && !upcomingManualSet.has(qIdx)) {
+      upcomingManual.push(qIdx);
+      upcomingManualSet.add(qIdx);
+    } else if (origin === "autoplay" && !upcomingAutoPlaySet.has(qIdx)) {
+      upcomingAutoPlay.push(qIdx);
+      upcomingAutoPlaySet.add(qIdx);
+    }
+  }
+
+  const beforeContext: number[] = [];
+  const afterContext: number[] = [];
+  for (let idx = 0; idx < queue.length; idx++) {
+    if (idx === currentIdx) continue;
+    if (upcomingManualSet.has(idx) || upcomingAutoPlaySet.has(idx)) continue;
+    const origin = queue[idx]?.origin ?? "context";
+    if (origin === "autoplay") {
+      upcomingAutoPlay.push(idx);
+      upcomingAutoPlaySet.add(idx);
+      continue;
+    }
+    if (idx < currentIdx) {
+      beforeContext.push(idx);
+    } else {
+      afterContext.push(idx);
+    }
+  }
+
+  const nextOrder = [
+    ...beforeContext,
+    currentIdx,
+    ...upcomingManual,
+    ...afterContext,
+    ...upcomingAutoPlay,
+  ];
+  return {
+    order: nextOrder,
+    orderPosition: beforeContext.length,
+  };
 }
 
 export function formatTime(seconds: number): string {

@@ -17,11 +17,13 @@ use tauri::{State, WebviewWindow};
 use tokio::sync::oneshot;
 
 use crate::allowlist::MediaAllowlist;
-use crate::db::{DbMutation, DbSnapshot, LibraryDb};
+use crate::db::{DbMutation, DbSnapshot, LibraryDb, TrackIntelligenceRow};
 
 const MAX_CHUNK_READ_BYTES: usize = 4 * 1024 * 1024;
 const MAX_SIDECAR_TEXT_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_SCAN_DEPTH: usize = 32;
+/// Ceiling for one artist picture download; some CDNs serve original uploads of several MB.
+const MAX_IMAGE_DOWNLOAD_BYTES: usize = 8 * 1024 * 1024;
 
 const AUDIO_EXTENSIONS: &[&str] = &[
     "flac", "mp3", "m4a", "aac", "wav", "ogg", "oga", "opus", "mp4", "m4b", "aiff", "aif", "webm",
@@ -62,6 +64,8 @@ pub struct BootstrapPayload {
     pub lyrics_cache_json: Option<String>,
     pub lyrics_ai_cache_json: Option<String>,
     pub lyrics_fetch_job_json: Option<String>,
+    /// Cached artist profile-picture index (`artist-images.json`); see `src/shared/artistImageCache.ts`.
+    pub artist_images_json: Option<String>,
     pub db_snapshot: DbSnapshot,
     pub startup_files: Vec<String>,
     /// False when the OS draws no window frame, so the renderer draws its own title bar.
@@ -327,11 +331,13 @@ pub fn cmd_bootstrap(
     let lyrics_cache_path = state.app_data_dir.join("lyrics-cache.json");
     let lyrics_ai_cache_path = state.app_data_dir.join("lyrics-ai-cache.json");
     let lyrics_fetch_job_path = state.app_data_dir.join("lyrics-fetch-job.json");
+    let artist_images_path = state.app_data_dir.join("artist-images.json");
 
     let settings_json = std::fs::read_to_string(&settings_path).ok();
     let lyrics_cache_json = std::fs::read_to_string(&lyrics_cache_path).ok();
     let lyrics_ai_cache_json = std::fs::read_to_string(&lyrics_ai_cache_path).ok();
     let lyrics_fetch_job_json = std::fs::read_to_string(&lyrics_fetch_job_path).ok();
+    let artist_images_json = std::fs::read_to_string(&artist_images_path).ok();
     let db_snapshot = state.db.load_snapshot()?;
 
     state.allowlist.set_roots(db_snapshot.folders.iter().cloned());
@@ -364,6 +370,7 @@ pub fn cmd_bootstrap(
         lyrics_cache_json,
         lyrics_ai_cache_json,
         lyrics_fetch_job_json,
+        artist_images_json,
         db_snapshot,
         startup_files,
         undecorated: read_window_chrome(&window).undecorated,
@@ -468,6 +475,29 @@ pub async fn cmd_history_clear(state: State<'_, AppState>) -> Result<(), String>
         .map_err(|e| e.to_string())?
 }
 
+/// Returns all cached track intelligence rows (popularity estimates and skip/completion counts).
+#[tauri::command]
+pub async fn cmd_intelligence_list(
+    state: State<'_, AppState>,
+) -> Result<Vec<TrackIntelligenceRow>, String> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || db.list_intelligence())
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Upserts a batch of track intelligence rows (popularity cache + behavioral counters).
+#[tauri::command]
+pub async fn cmd_intelligence_upsert(
+    records: Vec<TrackIntelligenceRow>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || db.upsert_intelligence(&records))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn cmd_load_lyrics(
     track_id: i64,
@@ -490,6 +520,7 @@ pub async fn cmd_write_user_json(
         "lyricsCache" => "lyrics-cache.json",
         "lyricsAiCache" => "lyrics-ai-cache.json",
         "lyricsFetchJob" => "lyrics-fetch-job.json",
+        "artistImages" => "artist-images.json",
         _ => return Err("Unsupported configuration file".to_string()),
     };
     let target = state.app_data_dir.join(file_name);
@@ -945,6 +976,68 @@ pub async fn cmd_http_fetch(
         guard.remove(&args.request_id);
     }
     outcome
+}
+
+/// Downloads an image (artist profile picture) as raw bytes.
+///
+/// `cmd_http_fetch` returns the body as a UTF-8 `String`, which is right for JSON APIs but corrupts
+/// binary payloads: invalid UTF-8 decodes to U+FFFD, so a downloaded JPEG no longer starts with
+/// `FF D8` and the image validator correctly rejects it. Images therefore travel over the binary IPC
+/// channel instead — the body is returned unchanged and the HTTP status is reported through the
+/// error string, keeping the same `TIMEOUT` / `NETWORK:` / `ABORTED` vocabulary as `cmd_http_fetch`.
+#[tauri::command]
+pub async fn cmd_http_fetch_image(
+    args: HttpFetchArgs,
+    state: State<'_, AppState>,
+) -> Result<IpcResponse, String> {
+    let parsed = url::Url::parse(&args.url).map_err(|_| "Invalid URL".to_string())?;
+    if parsed.scheme() != "https" && parsed.scheme() != "http" {
+        return Err("Refusing non-http(s) URL".to_string());
+    }
+
+    let (abort_tx, abort_rx) = oneshot::channel::<()>();
+    if let Ok(mut guard) = state.active_http_aborts.lock() {
+        guard.insert(args.request_id.clone(), abort_tx);
+    }
+
+    let timeout_ms = args.timeout_ms.clamp(500, 300_000);
+    let mut req = state
+        .http_client
+        .get(parsed)
+        .timeout(Duration::from_millis(timeout_ms));
+    for (k, v) in &args.headers {
+        req = req.header(k.as_str(), v.as_str());
+    }
+
+    let outcome = tokio::select! {
+        _ = abort_rx => Err("ABORTED".to_string()),
+        res = async {
+            let response = req.send().await.map_err(|e| {
+                if e.is_timeout() {
+                    "TIMEOUT".to_string()
+                } else {
+                    format!("NETWORK: {e}")
+                }
+            })?;
+            let status = response.status();
+            // The caller sniffs the magic bytes itself, so a non-image body is rejected there; a
+            // non-2xx status is reported here so the caller can distinguish it from a transport
+            // failure.
+            if !status.is_success() {
+                return Err(format!("HTTP:{}", status.as_u16()));
+            }
+            let bytes = response.bytes().await.map_err(|e| format!("NETWORK: {e}"))?;
+            if bytes.len() > MAX_IMAGE_DOWNLOAD_BYTES {
+                return Err("IMAGE_TOO_LARGE".to_string());
+            }
+            Ok(bytes.to_vec())
+        } => res,
+    };
+
+    if let Ok(mut guard) = state.active_http_aborts.lock() {
+        guard.remove(&args.request_id);
+    }
+    Ok(IpcResponse::new(outcome?))
 }
 
 #[tauri::command]

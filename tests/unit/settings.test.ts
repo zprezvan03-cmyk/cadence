@@ -3,6 +3,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_SETTINGS, SettingsStore } from "../../src/main/settings";
+import {
+  DEFAULT_ARTIST_IMAGE_PROVIDER_ORDER,
+  activeArtistImageProviders,
+} from "../../src/shared/artistImageProviders";
+import { addProviderToOrder, removeProviderFromOrder } from "../../src/shared/providerOrder";
 import { createDefaultNowPlayingProfilesSettings } from "../../src/shared/nowPlayingProfiles";
 
 const workDir = mkdtempSync(join(tmpdir(), "cadence-settings-"));
@@ -175,5 +180,106 @@ describe("legacy YouTube catalog settings", () => {
     expect(store.get()).not.toHaveProperty("youtubeCatalog");
     expect(JSON.parse(readFileSync(file, "utf8"))).not.toHaveProperty("youtubeCatalog");
     expect(new SettingsStore(file).get()).not.toHaveProperty("youtubeCatalog");
+  });
+});
+
+describe("artist picture settings", () => {
+  it("ships artist pictures enabled with automatic fetching and the verified provider order", () => {
+    expect(DEFAULT_SETTINGS.artistImages.enabled).toBe(true);
+    expect(DEFAULT_SETTINGS.artistImages.autoFetch).toBe(true);
+    expect(DEFAULT_SETTINGS.artistImages.providerOrder).toEqual([...DEFAULT_ARTIST_IMAGE_PROVIDER_ORDER]);
+    expect(DEFAULT_SETTINGS.artistImages.refreshAfterDays).toBe(30);
+  });
+
+  it("adds the section to settings files written before it existed", () => {
+    const file = join(workDir, "legacy-artist-images.json");
+    writeFileSync(file, JSON.stringify({ playback: { volume: 0.5 } }), "utf8");
+    const settings = new SettingsStore(file).get();
+    expect(settings.playback.volume).toBe(0.5);
+    expect(settings.artistImages).toEqual({
+      enabled: true,
+      autoFetch: true,
+      providerOrder: [...DEFAULT_ARTIST_IMAGE_PROVIDER_ORDER],
+      refreshAfterDays: 30,
+    });
+  });
+
+  it("keeps a stored order, drops unknown ids and appends providers added by an update", () => {
+    const file = join(workDir, "artist-images-order.json");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        artistImages: { providerOrder: ["deezer", "fanart-tv", "deezer"], refreshAfterDays: 900 },
+      }),
+      "utf8"
+    );
+    const settings = new SettingsStore(file).get();
+    expect(settings.artistImages.providerOrder).toEqual(["deezer", "lastfm", "wikidata"]);
+    // Out-of-range windows are clamped rather than trusted.
+    expect(settings.artistImages.refreshAfterDays).toBe(365);
+  });
+
+  it("persists the switch and the priority order across a restart", () => {
+    const file = join(workDir, "artist-images-patch.json");
+    const first = new SettingsStore(file);
+    first.patch({ artistImages: { enabled: false, providerOrder: ["wikidata", "lastfm", "deezer"] } });
+
+    const onDisk = JSON.parse(readFileSync(file, "utf8"));
+    expect(onDisk.artistImages.enabled).toBe(false);
+    expect(onDisk.artistImages.providerOrder).toEqual(["wikidata", "lastfm", "deezer"]);
+
+    const reloaded = new SettingsStore(file).get();
+    expect(reloaded.artistImages.enabled).toBe(false);
+    expect(reloaded.artistImages.providerOrder).toEqual(["wikidata", "lastfm", "deezer"]);
+  });
+
+  it("persists automatic fetching separately from the master switch", () => {
+    const file = join(workDir, "artist-images-autofetch.json");
+    const first = new SettingsStore(file);
+    first.patch({ artistImages: { autoFetch: false } });
+
+    // Turning automatic fetching off must not touch the master switch or the cache semantics.
+    const afterDisable = new SettingsStore(file).get();
+    expect(afterDisable.artistImages.autoFetch).toBe(false);
+    expect(afterDisable.artistImages.enabled).toBe(true);
+
+    first.patch({ artistImages: { autoFetch: true } });
+    expect(new SettingsStore(file).get().artistImages.autoFetch).toBe(true);
+  });
+
+  it("keeps switched-off providers off across a restart instead of re-enabling them", () => {
+    const file = join(workDir, "artist-images-disabled.json");
+    const first = new SettingsStore(file);
+    // `d_` is the stored representation of "known, but switched off" (the lyrics convention).
+    first.patch({ artistImages: { providerOrder: ["lastfm", "d_wikidata", "deezer"] } });
+
+    expect(new SettingsStore(file).get().artistImages.providerOrder).toEqual([
+      "lastfm",
+      "d_wikidata",
+      "deezer",
+    ]);
+    expect(activeArtistImageProviders(new SettingsStore(file).get().artistImages.providerOrder)).toEqual([
+      "lastfm",
+      "deezer",
+    ]);
+  });
+
+  it("accepts a disable toggle authored through the shared provider-order helpers", () => {
+    const file = join(workDir, "artist-images-order-helpers.json");
+    const first = new SettingsStore(file);
+    const order = removeProviderFromOrder(first.get().artistImages.providerOrder, "deezer");
+    first.patch({ artistImages: { providerOrder: order } });
+
+    const reloaded = new SettingsStore(file).get();
+    expect(reloaded.artistImages.providerOrder).toEqual(["lastfm", "wikidata", "d_deezer"]);
+
+    // Re-enabling restores the same priority slot rather than appending to the end.
+    const readded = addProviderToOrder(reloaded.artistImages.providerOrder, "deezer");
+    first.patch({ artistImages: { providerOrder: readded } });
+    expect(new SettingsStore(file).get().artistImages.providerOrder).toEqual([
+      "lastfm",
+      "wikidata",
+      "deezer",
+    ]);
   });
 });

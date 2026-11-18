@@ -5,6 +5,10 @@
  */
 
 import type { GradientSettings } from "./upstream/shaders/gradientSettings";
+import type { TrackIntelligenceRecord } from "./smartShuffle";
+
+export type { TrackIntelligenceRecord };
+export type QueueEntryOrigin = "context" | "manual" | "autoplay";
 
 export type RepeatMode = "off" | "all" | "one";
 export type LyricsSyncType = "richsync" | "synced" | "none";
@@ -141,6 +145,8 @@ export interface MediaItem {
 export interface QueueEntry {
   occurrenceId: string;
   item: MediaItem;
+  /** Where this queue entry came from ("context" | "manual" | "autoplay"). */
+  origin?: QueueEntryOrigin;
 }
 
 export interface Album {
@@ -525,6 +531,7 @@ export interface LyricsSettings {
 }
 
 export type ReplayGainMode = "off" | "track" | "album";
+export type ShuffleMode = "smart" | "classic";
 
 export interface EqualizerSettings {
   enabled: boolean;
@@ -549,6 +556,12 @@ export interface PlaybackSettings {
   replayGainPreampDb: number;
   replayGainPreventClipping: boolean;
   equalizer: EqualizerSettings;
+  /** Smart context-aware shuffle vs classic uniform Fisher-Yates shuffle. */
+  shuffleMode?: ShuffleMode;
+  /** Automatically queue similar library tracks when the queue runs low (repeat === "off"). */
+  autoPlay?: boolean;
+  /** Enrich Smart Shuffle & AutoPlay with online popularity/genre signals (cached locally). */
+  smartShufflePopularity?: boolean;
 }
 
 export interface AppearanceSettings {
@@ -700,6 +713,7 @@ export interface AppSettings {
   lyrics: LyricsSettings;
   nowPlayingProfiles: NowPlayingProfilesSettings;
   shaders: ShaderSettings;
+  artistImages: ArtistImageSettings;
   advanced: { showLogs: boolean };
   general: {
     /** True once the first-launch onboarding has been finished or skipped. */
@@ -708,6 +722,27 @@ export interface AppSettings {
     onboardingStep: number;
   };
   scrobbling: LastFmSettings;
+}
+
+/**
+ * Artist profile pictures. Provider ids stay plain strings so a settings file written by a build
+ * with a newer provider list still loads; `normalizeArtistImageProviderOrder` reconciles it.
+ */
+export interface ArtistImageSettings {
+  /** Master switch: when off, pictures are neither shown nor fetched. */
+  enabled: boolean;
+  /**
+   * Fetch pictures that are not cached yet. Off = "cached pictures only": existing pictures keep
+   * displaying and nothing is deleted, but no provider is queried until a manual refresh.
+   */
+  autoFetch: boolean;
+  /**
+   * Provider priority. A switched-off provider keeps its slot with a `d_` prefix (the same
+   * convention as `settings.lyrics.providerOrder`), so "off" survives a reload.
+   */
+  providerOrder: string[];
+  /** Days after which a cached picture may be refreshed in the background (0 = never). */
+  refreshAfterDays: number;
 }
 
 /** last.fm scrobbling credentials and session, stored locally in settings. */
@@ -832,6 +867,78 @@ export interface AppInfo {
   mediaProtocol: string;
 }
 
+/** One provider consulted while resolving an artist picture, for diagnostics. */
+export interface ArtistImageProviderAttempt {
+  provider: string;
+  status: string;
+  detail?: string;
+}
+
+/** A cached artist profile picture plus the credit its source requires. */
+export interface ArtistImageInfo {
+  artistName: string;
+  /** Stable cache key (`name:<normalized>`). */
+  artistKey: string;
+  /** Renderer-ready media URL for the cached file; null when no picture is available. */
+  url: string | null;
+  fileName: string | null;
+  provider: string | null;
+  /** Original remote image URL, kept for diagnostics. */
+  sourceUrl: string | null;
+  /** Attribution page (Commons file page, Last.fm/Deezer artist page). */
+  pageUrl: string | null;
+  /** Credit line the provider's terms require, when any. */
+  attribution: string | null;
+  license: string | null;
+  licenseUrl: string | null;
+  author: string | null;
+  width: number;
+  height: number;
+  confidence: number;
+  savedAt: number;
+  status: "ok" | "unavailable" | "disabled";
+  reason?: string;
+  providers: ArtistImageProviderAttempt[];
+}
+
+/** Capability report for one investigated artist-image source (Settings → Artist pictures). */
+export interface ArtistImageProviderReport {
+  provider: string;
+  name: string;
+  /** True when this build ships a working implementation. */
+  implemented: boolean;
+  /** True when the source can return an artist portrait at all. */
+  feasible: boolean;
+  requiresCredentials: boolean;
+  attributionRequired: boolean;
+  license: string | null;
+  /** True when the provider is switched on in the artist-image provider order. */
+  enabled: boolean;
+  /** True when the provider is usable with the current settings (e.g. an API key is present). */
+  available: boolean;
+  statusReason: string;
+  strengths: string[];
+  limitations: string[];
+}
+
+export interface ArtistImageStats {
+  artists: number;
+  misses: number;
+  bytes: number;
+}
+
+export interface ArtistImageClearResult {
+  removedImages: number;
+  removedMisses: number;
+}
+
+/** Artists the picture index knows about, for the Settings "refresh all pictures" action. */
+export interface ArtistImageIndex {
+  withImage: string[];
+  /** Artists remembered as having no usable picture (refreshing retries them). */
+  withoutImage: string[];
+}
+
 /** The API exposed on `window.cadence` by the desktop runtime bridge. */
 export interface CadenceApi {
   info(): Promise<AppInfo>;
@@ -843,6 +950,29 @@ export interface CadenceApi {
     }): Promise<void>;
     list(): Promise<HistoryEntry[]>;
     clear(): Promise<void>;
+  };
+  intelligence?: {
+    list(): Promise<TrackIntelligenceRecord[]>;
+    upsert(records: TrackIntelligenceRecord[]): Promise<void>;
+  };
+  /**
+   * Multi-source artist profile pictures. Always resolves: when every provider fails the payload
+   * has `status: "unavailable"` and `url: null`, so the UI draws its default avatar.
+   */
+  artistImages?: {
+    /** Cache-only lookup, no network: instant first paint. */
+    cached(artistName: string): Promise<ArtistImageInfo | null>;
+    /** Cache first, then providers in priority order. */
+    resolve(request: { artistName: string; mbid?: string | null }): Promise<ArtistImageInfo>;
+    /** Forgets the cached picture/negative answer for one artist, then resolves again. */
+    refresh(request: { artistName: string; mbid?: string | null }): Promise<ArtistImageInfo>;
+    /** Capability report for every investigated source, including unimplemented ones. */
+    providers(): Promise<ArtistImageProviderReport[]>;
+    /** Artists in the picture index, split by outcome. */
+    indexed(): Promise<ArtistImageIndex>;
+    stats(): Promise<ArtistImageStats>;
+    /** Empties the artist picture index so pictures are fetched again on demand. */
+    clearCache(): Promise<ArtistImageClearResult>;
   };
   library: {
     snapshot(): Promise<LibrarySnapshot>;

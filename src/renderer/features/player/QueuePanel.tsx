@@ -3,12 +3,13 @@
  */
 
 import { useEffect } from "react";
-import { ListMusic, Trash2, X } from "lucide-react";
+import { Infinity as InfinityIcon, ListMusic, Trash2, X } from "lucide-react";
 import { mediaItemFromLocalTrack } from "../../../shared/media";
 import type { MediaItem, QueueEntry } from "../../../shared/types";
 import { usePresence } from "../../app/usePresence";
 import { useLibrary } from "../../state/libraryStore";
 import { usePlayer } from "../../state/playerStore";
+import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
 import { Artwork } from "../../components/Artwork";
 import { SourceBadge } from "../../components/SourceBadge";
@@ -23,6 +24,9 @@ export function QueuePanel() {
   const jumpTo = usePlayer(state => state.jumpTo);
   const removeQueueEntry = usePlayer(state => state.removeQueueEntry);
   const clearQueue = usePlayer(state => state.clearQueue);
+  const replenishAutoPlay = usePlayer(state => state.replenishAutoPlay);
+  const autoPlay = useSettings(state => state.settings?.playback.autoPlay ?? true);
+  const patchSettings = useSettings(state => state.patch);
   const tracksById = useLibrary(state => state.tracksById);
   // Closing flips `open` immediately; presence keeps the drawer mounted for its fast
   // slide-out (and it keeps owning Escape until it is actually gone).
@@ -69,6 +73,22 @@ export function QueuePanel() {
           <p className="muted">{queue.length} songs</p>
         </div>
         <div className="queue-actions">
+          <button
+            type="button"
+            className={`icon-button ${autoPlay ? "active" : ""}`}
+            onClick={() => {
+              const nextAutoPlay = !autoPlay;
+              void patchSettings({ playback: { autoPlay: nextAutoPlay } }).then(() => {
+                if (nextAutoPlay) replenishAutoPlay();
+              });
+            }}
+            aria-label={`AutoPlay: ${autoPlay ? "On" : "Off"}`}
+            aria-pressed={autoPlay}
+            title={`AutoPlay similar songs: ${autoPlay ? "On" : "Off"}`}
+            data-testid="queue-autoplay-toggle"
+          >
+            <InfinityIcon size={16} />
+          </button>
           <button type="button" className="icon-button" onClick={clearQueue} aria-label="Clear queue" title="Clear queue">
             <Trash2 size={16} />
           </button>
@@ -91,6 +111,7 @@ export function QueuePanel() {
               className={position === orderPosition ? "current" : undefined}
               data-testid="queue-entry"
               data-source-kind={item.source.kind}
+              data-origin={entry.origin ?? "context"}
               data-occurrence-id={entry.occurrenceId}
             >
               <button type="button" className="queue-track" onClick={() => handleJump(position)}>
@@ -99,6 +120,11 @@ export function QueuePanel() {
                   <strong>{item.title}</strong>
                   <em>{item.artistLabel}</em>
                 </span>
+                {entry.origin === "autoplay" ? (
+                  <span className="pill subtle" data-testid="queue-origin-badge">AutoPlay</span>
+                ) : entry.origin === "manual" ? (
+                  <span className="pill subtle" data-testid="queue-origin-badge">Queued</span>
+                ) : null}
                 <SourceBadge source={item.source} compact />
                 <span className="muted">{item.durationSeconds ? formatTime(item.durationSeconds) : "--:--"}</span>
               </button>

@@ -48,6 +48,10 @@ interface ArtworkProps {
   rounded?: "sm" | "md" | "full";
   className?: string;
   accentVar?: boolean;
+  /** Replaces the default disc glyph while a cover is missing or has failed to load. */
+  fallbackIcon?: React.ReactNode;
+  /** Native tooltip on the frame (used to surface image credits). */
+  title?: string;
 }
 
 const FALLBACK_GRADIENTS = [
@@ -58,7 +62,16 @@ const FALLBACK_GRADIENTS = [
   "linear-gradient(135deg, #3d1b2c 0%, #180b12 100%)",
 ];
 
-export function Artwork({ src, alt, size = "md", rounded = "md", className = "", accentVar }: ArtworkProps) {
+export function Artwork({
+  src,
+  alt,
+  size = "md",
+  rounded = "md",
+  className = "",
+  accentVar,
+  fallbackIcon,
+  title,
+}: ArtworkProps) {
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const imgRef = useRef<HTMLImageElement | null>(null);
@@ -105,6 +118,7 @@ export function Artwork({ src, alt, size = "md", rounded = "md", className = "",
   return (
     <div
       className={`artwork artwork-${size} rounded-${rounded} ${className}`}
+      title={title}
       style={{
         background: showFallback ? gradient : undefined,
         ...(accentVar && accent ? ({ "--artwork-accent": accent } as React.CSSProperties) : {}),
@@ -124,7 +138,7 @@ export function Artwork({ src, alt, size = "md", rounded = "md", className = "",
           draggable={false}
         />
       ) : (
-        <Disc3 className="artwork-fallback-icon" aria-hidden="true" />
+        (fallbackIcon ?? <Disc3 className="artwork-fallback-icon" aria-hidden="true" />)
       )}
     </div>
   );

@@ -11,6 +11,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, TauriEvent, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppInfo,
+  ArtistImageInfo,
+  ArtistImageProviderReport,
   CadenceApi,
   DecodeDeleteOutcome,
   HistoryEntry,
@@ -22,18 +24,33 @@ import type {
   PlayerSnapshot,
   ScanProgress,
   Track,
+  TrackIntelligenceRecord,
   TrackSource,
   WindowChromeState,
 } from "../shared/types";
 import { isPathInside, type PathPlatform } from "../main/media/allowlist";
 import { toTauriMediaUrl } from "../main/media/protocolHandler";
+import { createArtistImageFetch } from "../main/media/imageFetch";
 import { SettingsCore } from "../main/settingsCore";
 import { LyricsCacheCore } from "../main/lyrics/cacheCore";
+import { ArtistImageCacheCore } from "../shared/artistImageCache";
+import {
+  ArtistImageService,
+  type ArtistImageResolution,
+} from "../shared/artistImageService";
+import {
+  ARTIST_IMAGE_PROVIDER_LABELS,
+  activeArtistImageProviders,
+  createArtistImageProviderConfig,
+  INVESTIGATED_ARTIST_IMAGE_SOURCES,
+  normalizeArtistImageProviderOrder,
+  DEFAULT_ARTIST_IMAGE_USER_AGENT,
+} from "../shared/artistImageProviders";
 import { createLocalLyricsReader } from "../main/lyrics/localLyricsCore";
 import { LyricsServiceCore } from "../main/lyrics/serviceCore";
 import { LyricsFetchAllCore, type FetchTrackInfo } from "../main/lyrics/fetchAllCore";
 import { FETCH_CONCURRENCY_PRESETS } from "../main/lyrics/http";
-import { setRuntimeFetch, type RuntimeFetch } from "../main/lyrics/http";
+import { runtimeFetch, setRuntimeFetch, type RuntimeFetch } from "../main/lyrics/http";
 import { fetchYouTubeMetadata } from "../main/lyrics/youtube";
 import {
   clearCache as clearTranslationCache,
@@ -45,6 +62,7 @@ import { clearAiCache, initializeAiCache, listModels, testConnection, transformL
 import { analyzeLyrics } from "../main/lyrics/languageIntelligence";
 import {
   artworkExtensionForMime,
+  pathJoin,
   readTrackMetadataCore,
   sha1Hex,
 } from "../main/library/metadataCore";
@@ -72,6 +90,7 @@ export interface BootstrapPayload {
   lyricsCacheJson: string | null;
   lyricsAiCacheJson?: string | null;
   lyricsFetchJobJson: string | null;
+  artistImagesJson: string | null;
   dbSnapshot: DatabaseShape;
   startupFiles: string[];
   undecorated: boolean;
@@ -360,6 +379,101 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
     initialJson: bootstrap.lyricsCacheJson,
     persist: json => invoke("cmd_write_user_json", { kind: "lyricsCache", content: json }),
   });
+
+  /**
+   * Artist profile pictures reuse the existing artwork cache (content-addressed files under
+   * `artworkDir`, already an allowlisted media root) and a small JSON index written through the same
+   * `cmd_write_user_json` path as the lyrics caches — no second database, no new Rust command.
+   */
+  const artistImageCache = new ArtistImageCacheCore({
+    initialJson: bootstrap.artistImagesJson,
+    persist: json => invoke("cmd_write_user_json", { kind: "artistImages", content: json }),
+  });
+
+  const artistImageInfoFrom = (resolution: ArtistImageResolution): ArtistImageInfo => {
+    const record = resolution.record;
+    const logEnabled = settings.get().advanced.showLogs;
+    if (logEnabled && resolution.status !== "cached") {
+      console.info("[Cadence] artist picture", {
+        artist: resolution.artistName,
+        status: resolution.status,
+        provider: record?.provider ?? null,
+        confidence: record?.confidence ?? null,
+        elapsedMs: resolution.elapsedMs ?? null,
+        providers: resolution.providers,
+        reason: resolution.reason ?? null,
+      });
+    }
+    return {
+      artistName: resolution.artistName,
+      artistKey: resolution.artistKey,
+      url: record ? mediaUrl(pathJoin(bootstrap.artworkDir, record.fileName), true) : null,
+      fileName: record?.fileName ?? null,
+      provider: record?.provider ?? null,
+      sourceUrl: record?.sourceUrl ?? null,
+      pageUrl: record?.pageUrl ?? null,
+      attribution: record?.attribution ?? null,
+      license: record?.license ?? null,
+      licenseUrl: record?.licenseUrl ?? null,
+      author: record?.author ?? null,
+      width: record?.width ?? 0,
+      height: record?.height ?? 0,
+      confidence: record?.confidence ?? 0,
+      savedAt: record?.savedAt ?? 0,
+      status: resolution.status === "disabled" ? "disabled" : record ? "ok" : "unavailable",
+      reason: resolution.reason,
+      providers: resolution.providers,
+    };
+  };
+
+  /**
+   * Artist pictures are the one thing downloaded as raw bytes, so they bypass the text-based runtime
+   * transport (which would mangle them) and use the binary IPC command instead.
+   */
+  const fetchArtistImage = createArtistImageFetch((command, payload) => invoke(command, payload));
+
+  /**
+   * The service snapshots provider priority and credentials, so it is rebuilt only when one of those
+   * settings actually changes. The cache instance is shared, so rebuilding never loses entries and
+   * in-flight requests finish on the instance that started them.
+   */
+  let artistImageService: ArtistImageService | null = null;
+  let artistImageServiceSignature = "";
+  const getArtistImageService = (): ArtistImageService => {
+    const current = settings.get();
+    const signature = JSON.stringify([
+      current.artistImages.enabled,
+      current.artistImages.autoFetch,
+      current.artistImages.providerOrder,
+      current.artistImages.refreshAfterDays,
+      current.scrobbling.apiKey,
+      current.advanced.showLogs,
+    ]);
+    if (artistImageService && signature === artistImageServiceSignature) return artistImageService;
+    artistImageServiceSignature = signature;
+    artistImageService = new ArtistImageService({
+      cache: artistImageCache,
+      config: createArtistImageProviderConfig({
+        enabled: current.artistImages.enabled,
+        providerOrder: current.artistImages.providerOrder,
+        lastFmApiKey: current.scrobbling.apiKey,
+        userAgent: DEFAULT_ARTIST_IMAGE_USER_AGENT,
+        fetchFn: (...args) => runtimeFetch(...args),
+      }),
+      // 0 days means "never refresh in the background", not "refresh immediately".
+      staleAfterMs:
+        current.artistImages.refreshAfterDays > 0
+          ? current.artistImages.refreshAfterDays * 24 * 60 * 60 * 1000
+          : Number.POSITIVE_INFINITY,
+      autoFetch: current.artistImages.autoFetch,
+      saveImage: (bytes, mimeType) => saveArtworkBytes(bytes, mimeType),
+      fetchImage: fetchArtistImage,
+      onDiagnostic: event => {
+        if (settings.get().advanced.showLogs) console.info("[Cadence] artist picture", event);
+      },
+    });
+    return artistImageService;
+  };
 
   const localLyricsReader = createLocalLyricsReader(
     {
@@ -840,6 +954,85 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
 
       async clear(): Promise<void> {
         await invoke<void>("cmd_history_clear");
+      },
+    },
+
+    intelligence: {
+      async list(): Promise<TrackIntelligenceRecord[]> {
+        const rows = await invoke<TrackIntelligenceRecord[]>("cmd_intelligence_list");
+        return rows ?? [];
+      },
+
+      async upsert(records: TrackIntelligenceRecord[]): Promise<void> {
+        if (records.length === 0) return;
+        await invoke<void>("cmd_intelligence_upsert", { records });
+      },
+    },
+
+    artistImages: {
+      async cached(artistName: string): Promise<ArtistImageInfo | null> {
+        if (!artistName.trim()) return null;
+        const resolution = getArtistImageService().cached(artistName);
+        return resolution.record ? artistImageInfoFrom(resolution) : null;
+      },
+
+      async resolve(request: { artistName: string; mbid?: string | null }): Promise<ArtistImageInfo> {
+        const resolution = await getArtistImageService().resolve({
+          name: request.artistName,
+          mbid: request.mbid ?? null,
+        });
+        return artistImageInfoFrom(resolution);
+      },
+
+      async refresh(request: { artistName: string; mbid?: string | null }): Promise<ArtistImageInfo> {
+        const resolution = await getArtistImageService().refresh({
+          name: request.artistName,
+          mbid: request.mbid ?? null,
+        });
+        return artistImageInfoFrom(resolution);
+      },
+
+      async providers(): Promise<ArtistImageProviderReport[]> {
+        const current = settings.get();
+        const lastFmConfigured = Boolean(current.scrobbling.apiKey.trim());
+        const enabledSlots = new Set(
+          activeArtistImageProviders(normalizeArtistImageProviderOrder(current.artistImages.providerOrder))
+        );
+        return INVESTIGATED_ARTIST_IMAGE_SOURCES.map(report => {
+          const credentialsSatisfied = !report.requiresCredentials || lastFmConfigured;
+          const enabled = enabledSlots.has(report.provider as never);
+          const available = enabled && report.implemented && report.feasible && credentialsSatisfied;
+          return {
+            provider: report.provider,
+            name: ARTIST_IMAGE_PROVIDER_LABELS[report.provider] ?? report.name,
+            implemented: report.implemented,
+            feasible: report.feasible,
+            requiresCredentials: report.requiresCredentials,
+            attributionRequired: report.attributionRequired,
+            license: report.license,
+            enabled,
+            available,
+            statusReason:
+              report.feasible && report.implemented && !credentialsSatisfied
+                ? "Configure a Last.fm API key in Settings → Scrobbling to enable this source"
+                : report.statusReason,
+            strengths: [...report.strengths],
+            limitations: [...report.limitations],
+          };
+        });
+      },
+
+      async indexed() {
+        return artistImageCache.indexedArtists();
+      },
+
+      async stats() {
+        return artistImageCache.stats();
+      },
+
+      async clearCache() {
+        const result = getArtistImageService().clearCache();
+        return { removedImages: result.removedImages, removedMisses: result.removedMisses };
       },
     },
 
