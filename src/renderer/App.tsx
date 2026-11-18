@@ -2,7 +2,7 @@
  * Application shell. Written for Cadence.
  */
 
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useCurrentMediaItem, useCurrentTrack } from "./app/hooks";
 import { useAutofetchLyrics } from "./features/lyrics/useAutofetch";
 import { useLastFmScrobbler } from "./features/scrobble/useLastFmScrobbler";
@@ -13,8 +13,10 @@ import { useSettings } from "./state/settingsStore";
 import { PlaylistPicker } from "./app/PlaylistPicker";
 import { ShortcutsHelp } from "./app/ShortcutsHelp";
 import { TrackEditor } from "./features/library/TrackEditor";
+import { RouteViewport } from "./app/RouteViewport";
 import { Sidebar } from "./app/Sidebar";
 import { TopBar } from "./app/TopBar";
+import { useReducedMotion } from "./app/useMotionPreference";
 import { useWindowChrome, WindowTitleBar } from "./app/WindowTitleBar";
 import { useBootstrap } from "./app/useBootstrap";
 import { useLastNonNull, usePresence } from "./app/usePresence";
@@ -26,21 +28,34 @@ import { HistoryView } from "./features/history/HistoryView";
 import { LyricsView } from "./features/lyrics/LyricsView";
 import { MiniPlayer } from "./features/player/MiniPlayer";
 import { PlayerBar } from "./features/player/PlayerBar";
+import { PlayerLayoutMotion, type PlayerLayout } from "./features/player/PlayerLayoutMotion";
+import { useMiniWindow } from "./features/player/useMiniWindow";
 import { QueuePanel } from "./features/player/QueuePanel";
 import { SettingsView } from "./features/settings/SettingsView";
 import { StatsView } from "./features/stats/StatsView";
 import { usePlayer } from "./state/playerStore";
-import { useUi } from "./state/uiStore";
+import { useUi, type Route } from "./state/uiStore";
 
-function RouteContent() {
-  const route = useUi(state => state.route);
+function NowPlayingRoute() {
   const track = useCurrentTrack();
   const item = useCurrentMediaItem();
-  const isPlaying = usePlayer(state => state.isPlaying);
-  const fullscreenLyrics = useUi(state => state.fullscreenLyrics);
-  const setFullscreenLyrics = useUi(state => state.setFullscreenLyrics);
+  const playing = usePlayer(state => state.isPlaying);
+  const fullscreen = useUi(state => state.fullscreenLyrics);
+  const setFullscreen = useUi(state => state.setFullscreenLyrics);
   const navigate = useUi(state => state.navigate);
+  return (
+    <LyricsView
+      track={track}
+      item={item}
+      playing={playing}
+      fullscreen={fullscreen}
+      onToggleFullscreen={() => setFullscreen(!fullscreen)}
+      onOpenSearch={() => navigate({ name: "settings" })}
+    />
+  );
+}
 
+function renderRoute(route: Route) {
   switch (route.name) {
     case "home":
       return <HomeView />;
@@ -59,16 +74,7 @@ function RouteContent() {
     case "playlist":
       return <PlaylistView playlistId={route.playlistId} />;
     case "lyrics":
-      return (
-        <LyricsView
-          track={track}
-          item={item}
-          playing={isPlaying}
-          fullscreen={fullscreenLyrics}
-          onToggleFullscreen={() => setFullscreenLyrics(!fullscreenLyrics)}
-          onOpenSearch={() => navigate({ name: "settings" })}
-        />
-      );
+      return <NowPlayingRoute />;
     case "decode-tester":
       return <DecodeTesterView />;
     case "settings":
@@ -97,13 +103,6 @@ function AppToast() {
   );
 }
 
-/**
- * Scroll offsets per view, kept for the session. Views remount on navigation (that is what gives
- * each one its entering animation), so without this the list you were halfway down would throw you
- * back to the top every time you looked at an album and came back.
- */
-const scrollMemory = new Map<string, number>();
-
 export function App() {
   useBootstrap();
   // Autofetch: lyrics lookup begins on every track change, whichever tab is open.
@@ -121,90 +120,51 @@ export function App() {
     }
   }, [settingsLoaded, folderCount, trackCount, maybeAutoShowOnboarding]);
   const fullscreenLyrics = useUi(state => state.fullscreenLyrics);
-  const miniPlayer = useUi(state => state.miniPlayer);
+  const miniRequested = useUi(state => state.miniPlayer);
+  const reducedMotion = useReducedMotion();
+  const miniPlayer = useMiniWindow(miniRequested, reducedMotion);
   const route = useUi(state => state.route);
   const error = usePlayer(state => state.error);
   const chrome = useWindowChrome();
-
-  // One key per view instance. The search query is deliberately not part of it: typing in the
-  // global search is not a page change, and remounting the results on every keystroke made them
-  // flicker. Library tabs keep separate keys so switching Songs → Albums still animates.
-  const viewKey = route.name === "search" ? "search" : `${route.name}-${JSON.stringify(route)}`;
-  const contentRef = useRef<HTMLDivElement | null>(null);
-  const miniWindowSyncStarted = useRef(false);
-
-  // The renderer state owns mini mode; the native layer only follows it to
-  // resize/pin the OS window. Skip the initial `false` so a normal launch
-  // never issues a redundant restore-size command.
-  useEffect(() => {
-    if (!miniWindowSyncStarted.current) {
-      miniWindowSyncStarted.current = true;
-      return;
-    }
-    void (async () => {
-      try {
-        await window.cadence?.app?.setMiniPlayer?.(miniPlayer);
-      } catch {
-        /* Browser tests and older bridges render mini mode without resizing. */
-      }
-    })();
-  }, [miniPlayer]);
-
-  useLayoutEffect(() => {
-    const node = contentRef.current;
-    if (!node) return;
-    const saved = scrollMemory.get(viewKey) ?? 0;
-    if (!saved) return;
-    // `scroll-behavior: smooth` is for user scrolling; a restored position must be immediate.
-    node.style.scrollBehavior = "auto";
-    node.scrollTop = saved;
-    node.style.scrollBehavior = "";
-  }, [viewKey]);
 
   const immersive = fullscreenLyrics && route.name === "lyrics";
   // The title bar is only drawn when the OS frame is off (Windows); immersive and native fullscreen
   // hand the whole window to the content.
   const titleBar = chrome.undecorated && !chrome.fullscreen && !immersive;
 
-  if (miniPlayer) {
-    return (
-      <div className="mini-shell">
-        <MiniPlayer />
-        <AppToast />
-      </div>
-    );
-  }
-
+  const layout: PlayerLayout = miniPlayer ? "mini" : immersive ? "fullscreen" : route.name === "lyrics" ? "now-playing" : "library";
   return (
-    <div className={`app-shell ${immersive ? "is-immersive" : ""} ${titleBar ? "has-title-bar" : ""}`}>
-      {titleBar ? <WindowTitleBar chrome={chrome} /> : null}
-      {!immersive ? <Sidebar /> : null}
-      <main className="app-main">
-        {!immersive ? <TopBar /> : null}
-        {error && !immersive ? (
-          <div className="error-banner" role="alert">
-            {error}
-            <button type="button" onClick={() => usePlayer.getState().setError(null)}>
-              Dismiss
-            </button>
-          </div>
-        ) : null}
-        <div
-          className="content-scroll"
-          key={viewKey}
-          ref={contentRef}
-          onScroll={event => scrollMemory.set(viewKey, event.currentTarget.scrollTop)}
-        >
-          <RouteContent />
+    <PlayerLayoutMotion layout={layout} reducedMotion={reducedMotion}>
+      {miniPlayer ? (
+        <div className="mini-shell">
+          <MiniPlayer />
+          <AppToast />
         </div>
-        {!immersive ? <PlayerBar /> : null}
-      </main>
-      <QueuePanel />
-      <PlaylistPicker />
-      <TrackEditor />
-      <ShortcutsHelp />
-      <AppToast />
-      <Onboarding />
-    </div>
+      ) : (
+        <div className={`app-shell ${immersive ? "is-immersive" : ""} ${titleBar ? "has-title-bar" : ""}`}>
+          {titleBar ? <WindowTitleBar chrome={chrome} /> : null}
+          {!immersive ? <Sidebar /> : null}
+          <main className="app-main">
+            {!immersive ? <TopBar /> : null}
+            {error && !immersive ? (
+              <div className="error-banner" role="alert">
+                {error}
+                <button type="button" onClick={() => usePlayer.getState().setError(null)}>
+                  Dismiss
+                </button>
+              </div>
+            ) : null}
+            <RouteViewport route={route} reducedMotion={reducedMotion} renderRoute={renderRoute} />
+            {!immersive ? <PlayerBar /> : null}
+          </main>
+          <QueuePanel />
+          <PlaylistPicker />
+          <TrackEditor />
+          <ShortcutsHelp />
+          <AppToast />
+          <Onboarding />
+        </div>
+      )}
+    </PlayerLayoutMotion>
   );
 }

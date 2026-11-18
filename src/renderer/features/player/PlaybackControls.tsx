@@ -5,19 +5,23 @@
  */
 
 import type { ReactNode } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from "lucide-react";
 import { formatTime } from "../../player/queue";
 import { usePlayer } from "../../state/playerStore";
 
 /** `trailing` is placed after the repeat button, in the same row (used by the fullscreen panel). */
 export function TransportButtons({ trailing }: { trailing?: ReactNode } = {}) {
-  const { isPlaying, shuffle, repeat, toggle, next, previous, toggleShuffle, cycleRepeat } = usePlayer();
+  const { isPlaying, shuffle, repeat, toggle, next, previous, toggleShuffle, cycleRepeat } = usePlayer(useShallow(state => ({
+    isPlaying: state.isPlaying, shuffle: state.shuffle, repeat: state.repeat, toggle: state.toggle,
+    next: state.next, previous: state.previous, toggleShuffle: state.toggleShuffle, cycleRepeat: state.cycleRepeat,
+  })));
   const handleToggle = () => {
     void toggle();
   };
 
   return (
-    <div className="transport">
+    <div className="transport" data-player-part="transport">
       <button
         type="button"
         className={`icon-button ${shuffle ? "active" : ""}`}
@@ -59,7 +63,9 @@ export function TransportButtons({ trailing }: { trailing?: ReactNode } = {}) {
 }
 
 export function SeekRow() {
-  const { position, duration, buffered, seek } = usePlayer();
+  const { position, duration, buffered, seek } = usePlayer(useShallow(state => ({
+    position: state.position, duration: state.duration, buffered: state.buffered, seek: state.seek,
+  })));
 
   return (
     <div className="seek-row">
@@ -91,7 +97,9 @@ export function SeekRow() {
 }
 
 export function VolumeControl() {
-  const { volume, muted, setVolume, setMuted } = usePlayer();
+  const { volume, muted, setVolume, setMuted } = usePlayer(useShallow(state => ({
+    volume: state.volume, muted: state.muted, setVolume: state.setVolume, setMuted: state.setMuted,
+  })));
   const effectiveVolume = muted ? 0 : volume;
 
   return (

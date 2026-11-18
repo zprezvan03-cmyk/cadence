@@ -256,9 +256,15 @@ a {
   min-height: 0;
 }
 
-.content-scroll {
+.route-stage {
+  position: relative;
   flex: 1;
   min-height: 0;
+}
+
+.content-scroll {
+  position: absolute;
+  inset: 0;
   overflow-y: auto;
   scroll-behavior: smooth;
   /* The route viewport is the responsive reference for Now Playing. In windowed mode this
@@ -266,6 +272,13 @@ a {
      expands to the whole window, so one set of container rules serves both. */
   container-type: size;
   container-name: app-content;
+}
+
+.content-scroll[data-route-exit="true"] {
+  z-index: 1;
+  pointer-events: none;
+  overflow: hidden;
+  animation: fade-out var(--dur-1) var(--ease-out) both;
 }
 
 .view {
@@ -411,8 +424,7 @@ a {
   pointer-events: none;
   opacity: 0;
   transition:
-    transform var(--dur-3) var(--ease-out),
-    height var(--dur-3) var(--ease-out),
+    transform var(--dur-3) var(--ease-settle),
     opacity var(--dur-2) var(--ease-out);
 }
 
@@ -441,6 +453,7 @@ a {
   transition:
     background var(--dur-1) var(--ease-out),
     color var(--dur-1) var(--ease-out),
+    scale var(--dur-0) var(--ease-out),
     gap var(--dur-3) var(--ease-in-out),
     padding-inline var(--dur-3) var(--ease-in-out);
   text-align: left;
@@ -468,6 +481,8 @@ a {
   background: var(--surface-2);
   color: var(--text);
 }
+
+.nav-item:active { scale: 0.98; }
 
 .nav-item.active {
   background: var(--accent-soft);
@@ -530,6 +545,7 @@ a {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
 }
 
 .sidebar-link:hover {
@@ -642,7 +658,7 @@ a {
   justify-content: flex-start;
   gap: 12px;
   padding-inline: 12px;
-  transition-delay: 0s, 0s, var(--dur-0), var(--dur-0);
+  transition-delay: 0s, 0s, 0s, var(--dur-0), var(--dur-0);
 }
 
 [data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .sidebar-heading {
@@ -1407,7 +1423,7 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   background: rgba(15, 15, 21, 0.97);
   border-left: 1px solid var(--border);
   backdrop-filter: blur(24px);
-  z-index: 40;
+  z-index: 57;
   display: flex;
   flex-direction: column;
   animation: slide-in var(--dur-3) var(--ease-out);
@@ -1419,7 +1435,6 @@ input[type="range"].volume:active::-webkit-slider-thumb {
 .app-shell.is-immersive .queue-panel {
   top: 0;
   bottom: 0;
-  z-index: 56;
   background: rgba(14, 14, 22, 0.26);
   border-left: 1px solid rgba(255, 255, 255, 0.14);
   backdrop-filter: blur(26px) saturate(1.35);
@@ -1467,6 +1482,7 @@ input[type="range"].volume:active::-webkit-slider-thumb {
 }
 
 .queue-list {
+  position: relative;
   list-style: none;
   margin: 0;
   padding: 8px;
@@ -1476,7 +1492,15 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   gap: 2px;
 }
 
-.queue-list li {
+.queue-list:empty { display: none; }
+
+.queue-motion-exits {
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+:is(.queue-list, .queue-motion-exits) li {
   display: flex;
   align-items: center;
   border-radius: 10px;
@@ -1484,7 +1508,7 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   transition: background var(--dur-2) var(--ease-out);
 }
 
-.queue-list li.current {
+:is(.queue-list, .queue-motion-exits) li.current {
   background: var(--accent-soft);
 }
 

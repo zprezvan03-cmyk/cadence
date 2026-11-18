@@ -64,12 +64,19 @@ export function Sidebar() {
       pill.classList.remove("is-visible");
       return;
     }
-    if (instant) pill.dataset.instant = "true";
-    pill.style.height = `${button.offsetHeight}px`;
-    pill.style.transform = `translateY(${button.offsetTop}px)`;
+    const height = `${button.offsetHeight}px`;
+    const transform = `translateY(${button.offsetTop}px)`;
+    // Compact hover can resize the rail on every interpolated frame without changing the pill's
+    // vertical geometry. Don't restart (or snap) a navigation move for those notifications.
+    const moved = pill.style.height !== height || pill.style.transform !== transform;
+    if (instant && moved) pill.dataset.instant = "true";
+    if (moved) {
+      pill.style.height = height;
+      pill.style.transform = transform;
+    }
     pill.classList.add("is-visible");
     nav.dataset.pill = "ready";
-    if (instant) {
+    if (instant && moved) {
       // Flush the measured position with transitions off, then let later moves animate.
       void pill.offsetHeight;
       delete pill.dataset.instant;
@@ -129,6 +136,7 @@ export function Sidebar() {
             onClick={() => navigate(item.route)}
             title={item.label}
             aria-label={item.label}
+            aria-current={isActive(item.route) ? "page" : undefined}
           >
             {item.icon}
             <span>{item.label}</span>
@@ -151,6 +159,7 @@ export function Sidebar() {
               className={`sidebar-link ${route.name === "playlist" && route.playlistId === playlist.id ? "active" : ""}`}
               onClick={() => navigate({ name: "playlist", playlistId: playlist.id })}
               title={playlist.name}
+              aria-current={route.name === "playlist" && route.playlistId === playlist.id ? "page" : undefined}
             >
               {playlist.name}
             </button>
@@ -169,6 +178,7 @@ export function Sidebar() {
           onClick={() => navigate({ name: "settings" })}
           title="Settings"
           aria-label="Settings"
+          aria-current={route.name === "settings" ? "page" : undefined}
         >
           <Settings size={18} />
           <span>Settings</span>
