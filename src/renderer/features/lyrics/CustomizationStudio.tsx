@@ -542,8 +542,8 @@ export function CustomizationStudio({
           <Section title="Layout" onReset={() => resetKeys(LAYOUT_KEYS)}>
             {editMode === "windowed" ? (
               <p className="studio-note" data-testid="studio-windowed-layout-note">
-                The windowed layout has no artwork column or inline playback controls, so
-                artwork, placement and playback-control settings are set in the Fullscreen tab.
+                Windowed Now Playing keeps artwork and metadata in the header and uses the player bar.
+                Column placement and inline playback controls apply in Fullscreen.
               </p>
             ) : null}
             <div className="studio-layout-editor" aria-label="Layout slots">

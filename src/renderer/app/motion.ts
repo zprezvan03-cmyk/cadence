@@ -18,8 +18,10 @@ export const MOTION_DURATION_MS = {
   surface: 180,
   /** Views, panels, the sidebar indicator. CSS `--dur-3`. */
   view: 240,
-  /** Major layout: sidebar width, buffered-fill catch-up. CSS `--dur-4`. */
+  /** Artwork dissolves, sidebar width, buffered-fill catch-up. CSS `--dur-4`. */
   layout: 320,
+  /** Shared player layout changes. CSS `--dur-scene`. */
+  scene: 380,
 } as const;
 
 export type MotionDurationName = keyof typeof MOTION_DURATION_MS;
@@ -46,6 +48,8 @@ export const MOTION_EASING = {
   inOut: "cubic-bezier(0.45, 0.05, 0.55, 0.95)",
   /** Restrained confirmation moments only. CSS `--ease-spring`. */
   spring: "cubic-bezier(0.34, 1.3, 0.64, 1)",
+  /** A critically damped, spring-like settle without overshoot. CSS `--ease-settle`. */
+  settle: "cubic-bezier(0.22, 0.8, 0.3, 1)",
 } as const;
 
 /**

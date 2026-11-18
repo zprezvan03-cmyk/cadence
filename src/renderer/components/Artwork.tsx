@@ -62,6 +62,12 @@ const FALLBACK_GRADIENTS = [
   "linear-gradient(135deg, #3d1b2c 0%, #180b12 100%)",
 ];
 
+export function artworkFallbackGradient(label: string): string {
+  let hash = 0;
+  for (let i = 0; i < label.length; i++) hash = (hash * 31 + label.charCodeAt(i)) >>> 0;
+  return FALLBACK_GRADIENTS[hash % FALLBACK_GRADIENTS.length];
+}
+
 export function Artwork({
   src,
   alt,
@@ -107,11 +113,7 @@ export function Artwork({
     if (img?.complete && img.naturalWidth > 0) setLoaded(true);
   }, [src]);
 
-  const gradient = useMemo(() => {
-    let hash = 0;
-    for (let i = 0; i < alt.length; i++) hash = (hash * 31 + alt.charCodeAt(i)) >>> 0;
-    return FALLBACK_GRADIENTS[hash % FALLBACK_GRADIENTS.length];
-  }, [alt]);
+  const gradient = useMemo(() => artworkFallbackGradient(alt), [alt]);
 
   const showFallback = !src || failed;
 

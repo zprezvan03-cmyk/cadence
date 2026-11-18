@@ -450,8 +450,29 @@
 }
 
 .lyrics-heading {
-  /* Keyed by track in LyricsView, so the title and artist settle in when the song changes. */
-  animation: meta-in var(--dur-2) var(--ease-out);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.lyrics-view:not(.is-fullscreen) .lyrics-header {
+  align-items: center;
+  justify-content: flex-start;
+  padding-bottom: clamp(10px, 2cqh, 20px);
+}
+
+.np-window-cover .artwork {
+  --np-window-cover-size: calc(clamp(72px, min(16cqi, 19cqh), 178px) * var(--np-profile-artwork-scale, 1));
+  width: var(--np-window-cover-size);
+  height: var(--np-window-cover-size);
+  border-radius: clamp(12px, 1.4cqi, 20px);
+}
+
+.np-kicker { color: rgba(255, 255, 255, 0.54); }
+
+.lyrics-view:not(.is-fullscreen) .np-customize-button {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-inline-start: auto;
 }
 
 .lyrics-heading h1 {
@@ -564,12 +585,6 @@ braccato-lyrics[data-upgrading="true"] {
   100% {
     opacity: 1;
   }
-}
-
-/* Track changes restart the existing artwork entrance on the wrapper only. */
-.fs-artwork.is-swapping,
-.fs-panel-art.is-swapping {
-  animation: artwork-in var(--dur-3) var(--ease-out);
 }
 
 .braccato-lyrics-host {

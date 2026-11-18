@@ -2,24 +2,22 @@
  * Persistent bottom playback bar. Written for Cadence.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Heart, ListMusic, Maximize2, Mic2, PictureInPicture2 } from "lucide-react";
-import { trackSourceKey } from "../../../shared/media";
 import { useCurrentMediaItem, useCurrentTrack } from "../../app/hooks";
 import { useLibrary } from "../../state/libraryStore";
 import { usePlayer } from "../../state/playerStore";
 import { useUi } from "../../state/uiStore";
-import { Artwork } from "../../components/Artwork";
 import { ArtistAvatar } from "../../components/ArtistAvatar";
 import { SourceBadge } from "../../components/SourceBadge";
 import { SeekRow, TransportButtons, VolumeControl } from "./PlaybackControls";
+import { ArtworkAtmosphere, PlaybackArtwork, PlaybackText } from "./PlaybackVisuals";
+import { usePlaybackPresentation } from "./usePlaybackPresentation";
 
 export function PlayerBar() {
   const track = useCurrentTrack();
   const item = useCurrentMediaItem();
-  const artRef = useRef<HTMLDivElement | null>(null);
-  const metaRef = useRef<HTMLDivElement | null>(null);
-  const itemKey = item ? trackSourceKey(item.source) : null;
+  const { cover, text } = usePlaybackPresentation(item, track?.accentColor);
   const toggleQueue = useUi(state => state.toggleQueue);
   const queueOpen = useUi(state => state.queueOpen);
   const navigate = useUi(state => state.navigate);
@@ -33,19 +31,6 @@ export function PlayerBar() {
   // Apple Lossless is decoded before it can play, which can take a moment. Show that work only
   // once it is clearly not instant, so ordinary formats never flash a label.
   const [slowStart, setSlowStart] = useState(false);
-
-  // The cover and the title block settle in when the song changes. This restarts a CSS animation
-  // on the existing nodes rather than remounting them: remounting the artwork made React stack
-  // duplicate covers in the player bar, and a class toggle touches nothing else.
-  useLayoutEffect(() => {
-    if (itemKey === null) return;
-    for (const node of [artRef.current, metaRef.current]) {
-      if (!node) continue;
-      node.classList.remove("is-swapping");
-      void node.offsetWidth; // flush the removed class so the animation can start again
-      node.classList.add("is-swapping");
-    }
-  }, [itemKey]);
 
   useEffect(() => {
     if (!buffering || isPlaying) {
@@ -62,27 +47,31 @@ export function PlayerBar() {
       data-testid="player-bar"
       data-playback-mechanism={playbackMechanism}
       data-source-kind={item?.source.kind ?? "none"}
-      style={item?.artworkUrl ? { ["--player-artwork" as string]: `url("${item.artworkUrl}")` } : undefined}
     >
+      <ArtworkAtmosphere cover={cover} intensity={0.48} />
       <div className="player-track">
-        <div className="player-artwork-swap" ref={artRef}>
-          <Artwork src={item?.artworkUrl} alt={item?.albumLabel ?? item?.title ?? "No track"} size="sm" />
-        </div>
-        <div className="player-track-meta" ref={metaRef}>
-          <div className="player-title" title={item?.title}>
-            {item?.title ?? "Nothing playing"}
-          </div>
-          <div className="player-artist" title={item?.artistLabel}>
-            {item?.artistLabel ? (
-              <ArtistAvatar name={item.artistLabel} size="xs" className="artist-avatar-inline" />
-            ) : null}
-            <span className="player-artist-name">{item?.artistLabel ?? "Choose a song to begin"}</span>
-          </div>
-          {item ? (
-            <div className="player-source-line">
-              <SourceBadge source={item.source} compact />
-            </div>
-          ) : null}
+        <PlaybackArtwork cover={cover} label={item?.albumLabel ?? item?.title ?? "No track"} />
+        <div className="player-track-meta">
+          <PlaybackText text={text}>
+            {display => (
+              <>
+                <div className="player-title" title={display?.title}>
+                  {display?.title ?? "Nothing playing"}
+                </div>
+                <div className="player-artist" title={display?.artistLabel}>
+                  {display?.artistLabel ? (
+                    <ArtistAvatar name={display.artistLabel} size="xs" className="artist-avatar-inline" />
+                  ) : null}
+                  <span className="player-artist-name">{display?.artistLabel ?? "Choose a song to begin"}</span>
+                </div>
+                {display ? (
+                  <div className="player-source-line">
+                    <SourceBadge source={display.source} compact />
+                  </div>
+                ) : null}
+              </>
+            )}
+          </PlaybackText>
           {remoteError && item?.source.kind !== "local" ? (
             <div
               className="player-remote-error"

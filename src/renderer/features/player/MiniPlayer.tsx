@@ -7,11 +7,12 @@
 import { Heart, Maximize2, Minus, X } from "lucide-react";
 import type { WindowAction } from "../../../shared/types";
 import { useCurrentMediaItem, useCurrentTrack } from "../../app/hooks";
-import { Artwork } from "../../components/Artwork";
 import { SourceBadge } from "../../components/SourceBadge";
 import { useLibrary } from "../../state/libraryStore";
 import { useUi } from "../../state/uiStore";
 import { SeekRow, TransportButtons } from "./PlaybackControls";
+import { ArtworkAtmosphere, PlaybackArtwork, PlaybackText } from "./PlaybackVisuals";
+import { usePlaybackPresentation } from "./usePlaybackPresentation";
 
 function windowAction(action: WindowAction): void {
   void window.cadence?.app.window(action).catch(() => undefined);
@@ -20,18 +21,22 @@ function windowAction(action: WindowAction): void {
 export function MiniPlayer() {
   const track = useCurrentTrack();
   const item = useCurrentMediaItem();
+  const { cover, text } = usePlaybackPresentation(item, track?.accentColor);
   const setMiniPlayer = useUi(state => state.setMiniPlayer);
   const navigate = useUi(state => state.navigate);
+  const setFullscreenLyrics = useUi(state => state.setFullscreenLyrics);
   const setFavorite = useLibrary(state => state.setFavorite);
 
   const expand = () => setMiniPlayer(false);
   const openNowPlaying = () => {
-    setMiniPlayer(false);
     navigate({ name: "lyrics" });
+    setFullscreenLyrics(false);
+    setMiniPlayer(false);
   };
 
   return (
     <section className="mini-player" data-testid="mini-player" aria-label="Mini player">
+      <ArtworkAtmosphere cover={cover} intensity={0.6} />
       <div className="mini-player-chrome">
         <div className="mini-player-drag" data-tauri-drag-region>
           <span data-tauri-drag-region>Cadence</span>
@@ -77,17 +82,21 @@ export function MiniPlayer() {
           title="Open Now Playing"
           onClick={openNowPlaying}
         >
-          <Artwork src={item?.artworkUrl} alt={item?.albumLabel ?? item?.title ?? "No track"} size="sm" />
+          <PlaybackArtwork cover={cover} label={item?.albumLabel ?? item?.title ?? "No track"} />
         </button>
-        <div className="mini-player-meta" data-tauri-drag-region>
-          <div className="mini-player-title" title={item?.title} data-tauri-drag-region>
-            {item?.title ?? "Nothing playing"}
-          </div>
-          <div className="mini-player-artist" title={item?.artistLabel} data-tauri-drag-region>
-            {item?.artistLabel ?? "Choose a song in the full player"}
-          </div>
-          {item ? <SourceBadge source={item.source} compact /> : null}
-        </div>
+        <PlaybackText text={text} className="mini-player-meta" draggable>
+          {display => (
+            <>
+              <div className="mini-player-title" title={display?.title} data-tauri-drag-region>
+                {display?.title ?? "Nothing playing"}
+              </div>
+              <div className="mini-player-artist" title={display?.artistLabel} data-tauri-drag-region>
+                {display?.artistLabel ?? "Choose a song in the full player"}
+              </div>
+              {display ? <SourceBadge source={display.source} compact /> : null}
+            </>
+          )}
+        </PlaybackText>
         {track ? (
           <button
             type="button"

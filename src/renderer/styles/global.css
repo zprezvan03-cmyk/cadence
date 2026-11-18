@@ -51,12 +51,14 @@
   --dur-1: 120ms; /* hover, press and exit feedback */
   --dur-2: 180ms; /* small surfaces: menus, toasts, toggles */
   --dur-3: 240ms; /* views, panels, the sidebar indicator */
-  --dur-4: 320ms; /* major layout: sidebar width, buffered-fill catch-up */
+  --dur-4: 320ms; /* artwork dissolves, sidebar width, buffered-fill catch-up */
+  --dur-scene: 380ms; /* shared player layouts */
   --stagger-step: 24ms; /* per-item delay for capped grid entrances */
   --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
   --ease-in: cubic-bezier(0.55, 0.06, 0.68, 0.19);
   --ease-in-out: cubic-bezier(0.45, 0.05, 0.55, 0.95);
   --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+  --ease-settle: cubic-bezier(0.22, 0.8, 0.3, 1);
 }
 
 /* Enabled after first paint by useBootstrap, so a restored compact sidebar does not animate on
@@ -1047,23 +1049,18 @@ a {
   display: block;
 }
 
-/* Covers fade in where they are large enough to be looked at (album grids, detail headers, the
-   player, fullscreen). Song-row thumbnails deliberately do not: a 500-row list must not start 500
-   transitions when it opens. The fade is keyed to the image actually loading (`data-loaded`,
+/* Library covers fade in on album grids and detail headers. Song-row thumbnails deliberately
+   do not: a 500-row list must not start 500 transitions when it opens. The fade is keyed to the image actually loading (`data-loaded`,
    set by Artwork on load / when already complete), not to mount, so a slow cover cannot pop in
    after a mount-keyed animation already finished. */
 .media-card .artwork img,
-.detail-hero .artwork img,
-.fs-artwork .artwork img,
-.fs-panel-art .artwork img {
+.detail-hero .artwork img {
   opacity: 0;
   transition: opacity var(--dur-3) var(--ease-out);
 }
 
 .media-card .artwork img[data-loaded="true"],
-.detail-hero .artwork img[data-loaded="true"],
-.fs-artwork .artwork img[data-loaded="true"],
-.fs-panel-art .artwork img[data-loaded="true"] {
+.detail-hero .artwork img[data-loaded="true"] {
   opacity: 1;
 }
 
@@ -1097,29 +1094,16 @@ a {
   backdrop-filter: blur(20px);
   position: relative;
   isolation: isolate;
-  animation: chrome-in var(--dur-2) var(--ease-out);
   overflow: hidden;
+  animation: chrome-in var(--dur-2) var(--ease-out);
 }
 
-.player-bar::before {
-  content: "";
-  position: absolute;
-  inset: -32px;
-  z-index: 0;
-  background-image: var(--player-artwork, none);
-  background-position: center;
-  background-size: cover;
-  filter: blur(26px) saturate(1.2);
-  opacity: 0.24;
-  pointer-events: none;
-}
-
-.player-bar > * {
+.player-bar > :not(.artwork-atmosphere) {
   position: relative;
   z-index: 1;
 }
 
-[data-blur-artwork="false"] .player-bar::before {
+[data-blur-artwork="false"] :is(.player-bar, .mini-player) > .artwork-atmosphere {
   display: none;
 }
 
@@ -1130,40 +1114,9 @@ a {
   min-width: 0;
 }
 
-/* PlayerBar restarts these two animations when the song changes (a class toggle, not a remount).
-   Only the player bar does this — a 500-row list fades nothing in, because animating hundreds of
-   images at once is exactly what makes a UI feel slow. */
-.player-artwork-swap.is-swapping {
-  animation: artwork-in var(--dur-3) var(--ease-out);
-}
-
 .player-track-meta {
   min-width: 0;
   overflow: hidden;
-}
-
-.player-track-meta.is-swapping {
-  animation: meta-in var(--dur-2) var(--ease-out);
-}
-
-@keyframes artwork-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes meta-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
 }
 
 .player-title {
@@ -1847,20 +1800,24 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background: #0c0c11;
+  background: var(--bg);
 }
 
 .mini-player {
-  height: 100%;
+  position: relative;
+  isolation: isolate;
+  /* Match the desktop window geometry even during the brief handoff before/after an OS resize. */
+  width: min(100%, 460px);
+  height: min(100%, 160px);
   display: flex;
   flex-direction: column;
   gap: 5px;
   padding: 7px 12px 10px;
-  background:
-    radial-gradient(circle at 18% 0%, rgba(255, 61, 113, 0.16), transparent 44%),
-    rgba(12, 12, 17, 0.97);
+  background: #101016;
   user-select: none;
 }
+
+.mini-player > :not(.artwork-atmosphere) { position: relative; }
 
 .mini-player-chrome {
   display: flex;
@@ -2060,6 +2017,7 @@ kbd {
   --dur-2: 0.01ms;
   --dur-3: 0.01ms;
   --dur-4: 0.01ms;
+  --dur-scene: 0.01ms;
 }
 
 [data-reduce-motion="true"],
@@ -2082,6 +2040,7 @@ kbd {
     --dur-2: 0.01ms;
     --dur-3: 0.01ms;
     --dur-4: 0.01ms;
+    --dur-scene: 0.01ms;
   }
 
   *,

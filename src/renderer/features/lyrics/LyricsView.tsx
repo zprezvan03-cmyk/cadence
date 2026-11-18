@@ -25,7 +25,8 @@ import { SourceBadge } from "../../components/SourceBadge";
 import { BraccatoLyrics } from "./BraccatoLyrics";
 import { LyricsDock } from "./LyricsDock";
 import { FullscreenControls } from "./FullscreenControls";
-import { Artwork } from "../../components/Artwork";
+import { PlaybackArtwork, PlaybackText } from "../player/PlaybackVisuals";
+import { usePlaybackPresentation } from "../player/usePlaybackPresentation";
 import { useControlsHover } from "./useControlsHover";
 import { NowPlayingBackground } from "./NowPlayingBackground";
 import { CustomizationStudio, type StudioSavePayload } from "./CustomizationStudio";
@@ -63,8 +64,7 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
   const itemIdentity = item ? trackSourceKey(item.source) : null;
   const viewRef = useRef<HTMLDivElement | null>(null);
   const footerRef = useRef<HTMLDivElement | null>(null);
-  const fsArtworkRef = useRef<HTMLDivElement | null>(null);
-  const fsPanelArtRef = useRef<HTMLDivElement | null>(null);
+  const { cover, text } = usePlaybackPresentation(item, track?.accentColor);
   // Fullscreen only: the controls show while the pointer is over them and fade out when it leaves,
   // unless a popover or the queue is open.
   // Fullscreen with lyrics on: the footer (controls and dock) is shown over the lyrics. Fullscreen with
@@ -91,18 +91,6 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
       view.style.removeProperty("--fs-footer-height");
     };
   }, [footerPresent]);
-
-  // Restart only the artwork wrapper's entrance on a real track change. The Artwork component
-  // itself stays mounted, so its decode/fallback state and layout do not jump.
-  useLayoutEffect(() => {
-    if (!itemIdentity) return;
-    for (const node of [fsArtworkRef.current, fsPanelArtRef.current]) {
-      if (!node) continue;
-      node.classList.remove("is-swapping");
-      void node.offsetWidth;
-      node.classList.add("is-swapping");
-    }
-  }, [itemIdentity]);
 
   const lyricsSettings = settings?.lyrics;
   const shaderSettings = settings?.shaders;
@@ -342,22 +330,26 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
 
   if (!settings) return <div className="view-loading">Loading…</div>;
 
-  // The title block: in fullscreen it sits under the artwork in the left column; on the normal page it
-  // is the header's heading.
+  const artwork = <PlaybackArtwork cover={cover} label={item?.albumLabel ?? item?.title ?? "Artwork"} size="hero" />;
   const heading = (
-    <div className="lyrics-heading" key={itemIdentity ?? "none"}>
-      <h1>{item?.title ?? "Nothing playing"}</h1>
-      <p>
-        {item
-          ? [item.artistLabel, item.albumLabel].filter(Boolean).join(" · ")
-          : "Pick a song from your library"}
-      </p>
-      {item ? (
-        <div className="lyrics-heading-source">
-          <SourceBadge source={item} />
-        </div>
-      ) : null}
-    </div>
+    <PlaybackText text={text} className="lyrics-heading">
+      {display => (
+        <>
+          {!fullscreen ? <div className="eyebrow np-kicker">Now playing</div> : null}
+          <h1>{display?.title ?? "Nothing playing"}</h1>
+          <p>
+            {display
+              ? [display.artistLabel, display.albumLabel].filter(Boolean).join(" · ")
+              : "Pick a song from your library"}
+          </p>
+          {display ? (
+            <div className="lyrics-heading-source">
+              <SourceBadge source={display} />
+            </div>
+          ) : null}
+        </>
+      )}
+    </PlaybackText>
   );
 
   // "Loading", "no lyrics" and "could not load" all replace the lyric lines, so the body centres
@@ -405,7 +397,7 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
     >
       <NowPlayingBackground
         mode={profileConfig.backgroundMode}
-        artworkUrl={item?.artworkUrl ?? null}
+        cover={cover}
         animatedArtUrl={track?.animatedArtUrl ?? null}
         shaderSettings={shaderSettings ?? settings.shaders}
         playing={playing}
@@ -414,20 +406,18 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
         blurPx={profileConfig.backgroundBlurPx}
         speed={profileConfig.effectSpeed}
         density={profileConfig.effectDensity}
-        accentColor={track?.accentColor ?? null}
         fallbackAccent={settings.appearance.accent}
       />
 
       {showSide ? (
         <div className="fs-side">
-          <div className="fs-artwork" ref={fsArtworkRef}>
-            <Artwork src={item?.artworkUrl} alt={item?.albumLabel ?? item?.title ?? "Artwork"} size="hero" />
-          </div>
+          {profileConfig.artworkVisible ? <div className="fs-artwork">{artwork}</div> : null}
           {headingInSide ? heading : null}
         </div>
       ) : null}
 
       <div className="lyrics-header">
+        {!fullscreen && item && profileConfig.artworkVisible ? <div className="np-window-cover">{artwork}</div> : null}
         {headingInHeader ? heading : null}
         <button
           type="button"
@@ -456,9 +446,7 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
 
       {panelMode ? (
         <div className="fs-panel-layout">
-          <div className="fs-panel-art" ref={fsPanelArtRef}>
-            <Artwork src={item?.artworkUrl} alt={item?.albumLabel ?? item?.title ?? "Artwork"} size="hero" />
-          </div>
+          {profileConfig.artworkVisible ? <div className="fs-panel-art">{artwork}</div> : null}
           <div className="fs-panel">
             {profileConfig.metadataVisible ? heading : null}
             <FullscreenControls

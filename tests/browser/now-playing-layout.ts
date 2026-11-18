@@ -1612,7 +1612,7 @@ const qaProbe = () =>
       headingSide: Boolean(document.querySelector(".fs-side .lyrics-heading")),
       headingVisible: Boolean(h1 && h1.getBoundingClientRect().width > 0),
       fillBg: fill ? getComputedStyle(fill).backgroundImage : "",
-      fillOpacity: fill ? getComputedStyle(fill).opacity : "",
+      fillOpacity: fill ? getComputedStyle(fill.closest(".artwork-atmosphere") ?? fill).opacity : "",
       fillFilter: fill ? getComputedStyle(fill).filter : "",
       kawarp: (() => {
         const c = document.querySelector(".kawarp-canvas");
@@ -3301,7 +3301,7 @@ check(
 );
 check(
   "qa-windowed-layout-note",
-  qaWindowedNote.includes("no artwork column") && qaFullscreenNote === "",
+  qaWindowedNote.includes("artwork and metadata in the header") && qaFullscreenNote === "",
   `windowed="${qaWindowedNote}" fullscreen="${qaFullscreenNote}"`
 );
 check(

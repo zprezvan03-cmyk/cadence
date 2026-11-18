@@ -1,8 +1,9 @@
 /**
  * Profile-selected Now Playing backgrounds.
  *
- * "fluid" is the existing Kawarp shader, unchanged. The other modes are deliberately
- * cheap: two are plain CSS layers, and the two canvas effects (particles, visualizer)
+ * The selected shader keeps its own artwork transitions. Static and reduced-motion modes
+ * use the same decoded cover as the foreground, with opacity-only colour dissolves.
+ * The two optional canvas effects (particles, visualizer)
  * exist only while selected, animate only while playing and visible, honor
  * reduced-motion with a single static frame, and cap their resolution at 1.5× DPR.
  * When the profile changes away from a canvas mode the component unmounts and its
@@ -12,11 +13,15 @@
 import { useEffect, useRef } from "react";
 import type { NowPlayingBackgroundMode, ShaderSettings } from "../../../shared/types";
 import { audioEngine } from "../../audio/engine";
+import type { Dissolve } from "../../app/useDissolve";
+import { useReducedMotion } from "../../app/useMotionPreference";
+import { ArtworkAtmosphere } from "../player/PlaybackVisuals";
+import type { Cover } from "../player/usePlaybackPresentation";
 import { KawarpBackground } from "../shaders/KawarpBackground";
 
 export interface NowPlayingBackgroundProps {
   mode: NowPlayingBackgroundMode;
-  artworkUrl: string | null;
+  cover: Dissolve<Cover>;
   animatedArtUrl?: string | null;
   shaderSettings: ShaderSettings;
   playing: boolean;
@@ -25,8 +30,6 @@ export interface NowPlayingBackgroundProps {
   blurPx: number;
   speed: number;
   density: number;
-  /** Dominant artwork colour when the library computed one. */
-  accentColor?: string | null;
   /** App accent, used when the track has no artwork colour. */
   fallbackAccent: string;
 }
@@ -37,7 +40,7 @@ function safeAccent(value: string | null | undefined, fallback: string): string 
 
 export function NowPlayingBackground({
   mode,
-  artworkUrl,
+  cover,
   animatedArtUrl,
   shaderSettings,
   playing,
@@ -46,69 +49,40 @@ export function NowPlayingBackground({
   blurPx,
   speed,
   density,
-  accentColor,
   fallbackAccent,
 }: NowPlayingBackgroundProps) {
-  const accent = safeAccent(accentColor, safeAccent(fallbackAccent, "#ff3d71"));
-
-  if (mode === "fluid") {
-    return (
-      <KawarpBackground
-        artworkUrl={artworkUrl}
-        animatedArtUrl={animatedArtUrl}
-        settings={{
-          ...shaderSettings,
-          kawarpOpacity: Math.min(1, Math.max(0, shaderSettings.kawarpOpacity * intensity)),
-        }}
-        playing={playing}
-        verbose={verbose}
-      />
-    );
-  }
+  const reduced = useReducedMotion();
+  const accent = safeAccent(cover.front.value.accent, safeAccent(fallbackAccent, "#ff3d71"));
+  const fluid = mode === "fluid" && shaderSettings.enabled && shaderSettings.performanceMode !== "off" && !reduced;
+  const canvas = mode === "particles" || mode === "visualizer" ? mode : null;
 
   return (
     <div className="np-bg" data-testid="now-playing-background" data-mode={mode} aria-hidden="true">
       {mode === "solid" ? <div className="np-bg-fill np-bg-solid" /> : null}
-      {mode === "gradient" ? (
-        <div
-          className="np-bg-fill"
-          style={{
-            background: `linear-gradient(160deg, ${accent} 0%, #0a0a12 68%, #05050a 100%)`,
-            opacity: intensity,
-          }}
-        />
-      ) : null}
-      {mode === "blurred-artwork" ? (
-        artworkUrl ? (
-          <div
-            className="np-bg-fill np-bg-blurred"
-            style={{
-              backgroundImage: `url("${artworkUrl.replace(/"/g, "%22")}")`,
-              filter: `blur(${blurPx}px) saturate(1.25) brightness(0.75)`,
-              opacity: intensity,
-            }}
-          />
-        ) : (
-          <div
-            className="np-bg-fill"
-            style={{
-              background: `radial-gradient(120% 90% at 30% 20%, ${accent} 0%, #07070c 70%)`,
-              opacity: intensity,
-            }}
-          />
-        )
-      ) : null}
-      {mode === "particles" || mode === "visualizer" ? (
-        <EffectCanvas
-          kind={mode}
-          playing={playing}
-          speed={speed}
-          density={density}
+      {!canvas && mode !== "solid" ? (
+        <ArtworkAtmosphere
+          cover={cover}
           intensity={intensity}
-          accent={accent}
+          blurPx={mode === "blurred-artwork" ? blurPx : undefined}
+          fallback={fallbackAccent}
         />
       ) : null}
-      <div className="kawarp-scrim" />
+      {fluid ? (
+        <KawarpBackground
+          artworkUrl={cover.front.value.src}
+          animatedArtUrl={animatedArtUrl}
+          settings={{
+            ...shaderSettings,
+            kawarpOpacity: Math.min(1, Math.max(0, shaderSettings.kawarpOpacity * intensity)),
+          }}
+          playing={playing}
+          verbose={verbose}
+        />
+      ) : null}
+      {canvas ? (
+        <EffectCanvas kind={canvas} playing={playing && !reduced} speed={speed} density={density} intensity={intensity} accent={accent} />
+      ) : null}
+      {!fluid ? <div className="kawarp-scrim" /> : null}
     </div>
   );
 }
@@ -144,7 +118,6 @@ function EffectCanvas({
     const context = canvas?.getContext("2d");
     if (!canvas || !context) return;
 
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     let frame = 0;
     let width = 0;
     let height = 0;
@@ -261,7 +234,7 @@ function EffectCanvas({
 
     const start = () => {
       cancel();
-      if (reducedMotion || !playing || document.hidden) {
+      if (!playing || document.hidden) {
         draw(performance.now(), false);
         return;
       }
