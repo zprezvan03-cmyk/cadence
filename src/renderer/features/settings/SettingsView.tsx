@@ -855,7 +855,7 @@ export function SettingsView() {
             </span>
             <button
               type="button"
-              className="ghost-button danger"
+              className="ghost-button danger setting-action"
               data-testid="settings-reset-all"
               disabled={resettingSettings}
               onClick={async () => {

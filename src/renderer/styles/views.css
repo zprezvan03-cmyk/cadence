@@ -1093,6 +1093,11 @@
   font-weight: 600;
 }
 
+.setting-row > .setting-action {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 /* A control that depends on a switch above it: readable, but clearly inactive. */
 .setting-row.is-disabled strong,
 .setting-row.is-disabled em {

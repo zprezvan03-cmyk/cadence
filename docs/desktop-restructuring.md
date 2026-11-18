@@ -23,19 +23,27 @@ Existing preferences keep the same keys and values. In particular, AI configurat
 
 ## Verification
 
-The production renderer passed the following checks with real local audio and a simulated Tauri bridge:
+Type checking and the production renderer build passed. Browser checks use real local audio and the production UI with a simulated Tauri bridge.
 
 | Check | Result |
 | --- | ---: |
 | Offline unit tests | 621/621 |
+| Extended renderer audit | 285 passed, 0 failed, 4 blocked, 3 not tested |
 | Now Playing and Customization Studio | 150/150 |
-| Production UI | 150/150 |
-| Braccato and playback motion | 113/113 |
+| Braccato and playback motion | 116/116 |
+| Lyrics decorations | 43/43 |
+| History, Stats and library persistence | 27/27 |
+| Lyrics cache and settings reset | 15/15 |
+| Audio engine | 11/11 |
 
-The Now Playing suite covers mode changes without a playback restart, browse history and focus, simulated native exits and pending F11 requests, independent drafts, a rejected save and retry, and legacy layouts. Eight visual checks covered the two modes and their editor previews at 1440×900 and 1040×680, with no layout issues observed. Type checking and the production web build also passed.
+The extended audit covers sidebar destinations, playlist actions, playback settings, queue behavior, offline recovery, provider priority during playback, and the separate AI Translation and Romanization controls. The cache suite confirmed **Reset all** writes the default preferences while leaving a populated `lyrics-cache.json` byte-for-byte unchanged. **Clear lyrics cache** still removes the entries and reports a failed write without changing the on-disk cache.
 
-During the Settings split, the extended audit reproduced two earlier provider-order failures. Its Fetch All fixture was missing the `promote` bridge method called by Autofetch during playback, which aborted the first settings write. The fixture now supplies the method and the audit fails on unhandled renderer errors. Provider moves, removal and re-addition are also tested with a real settings file.
+Visual checks at **1440×900** and **1040×680** covered the sidebar disclosures, one-row Home shelves, Lyrics and About settings, both Now Playing modes, and both editor previews. They also checked that closing Now Playing reveals the same browse route and scroll position, and that Settings actions fit on one line at the minimum window size.
 
-See the [test commands in the README](../README.md#tests). After `npm run test:ui` builds the bundle and library fixtures, run `node tests/browser/audit-ui.mjs` for the extended interaction audit. The offline suite excludes `_matasaburo_full.test.ts`, which needs a private local fixture and live AI access.
+During the Settings split, the audit reproduced two earlier provider-order failures. The Fetch All fixture lacked the `promote` bridge method called by Autofetch during playback, which aborted the first settings write. The fixture now supplies the method and the audit fails on unhandled renderer errors. Provider moves, removal and re-addition are also tested with a real settings file.
 
-The audit harness stubs the native bridge. On a desktop host, verify F11 and the OS fullscreen exit, Mini window resizing and restore, and a profile save followed by a fresh launch. Actual window chrome, dialogs, physical media keys and GPU performance are not covered by the Chromium runs.
+See the [test commands in the README](../README.md#tests). After `npm run test:ui` builds the bundle and library fixtures, run `node tests/browser/audit-ui.mjs` for the extended interaction audit. Run `npm run test:cache:clear` for the disk-backed cache checks. The offline unit suite excludes `_matasaburo_full.test.ts`, which needs a private local fixture and live AI access.
+
+### Native verification still needed
+
+`npm run build:desktop -- --no-bundle` stopped before compilation because `cargo` was not installed in the verification environment. On Windows, verify F11 and the OS fullscreen exit, Mini window resizing and restore, a profile save followed by a fresh launch, the native filesystem dialogs, and SMTC and physical media-key delivery from an installed build. Chromium's simulated bridge and software WebGL do not verify those behaviors, live lyrics/AI provider connections, the installer and its shortcut registration, or hardware GPU/RAM and long-running performance.

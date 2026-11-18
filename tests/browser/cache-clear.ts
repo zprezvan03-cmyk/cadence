@@ -9,7 +9,8 @@
  *
  * It covers the complete flow a user reports as "delete cache is not working":
  *   populate -> click the button -> see feedback -> file emptied -> restart -> lyrics re-fetched,
- * plus the two ways the old code lied: a cancelled confirm and a failing disk write.
+ * plus cancellation, a failing disk write, and a confirmed settings reset that must not
+ * touch the populated lyrics cache.
  *
  * Usage: npm run build:web && npx vite-node tests/browser/build-library.ts
  *        && npx vite-node tests/browser/cache-clear.ts
@@ -23,7 +24,7 @@ import puppeteer from "puppeteer-core";
 import chromium, { inflate, setupLambdaEnvironment } from "@sparticuz/chromium";
 import { LyricsCacheCore } from "../../src/main/lyrics/cacheCore";
 import { LyricsService } from "../../src/main/lyrics/service";
-import { SettingsStore } from "../../src/main/settings";
+import { DEFAULT_SETTINGS, SettingsStore } from "../../src/main/settings";
 import type { LibraryStore } from "../../src/main/library/store";
 import type { LyricsResolveRequest, LyricsSearchRequest } from "../../src/shared/types";
 
@@ -380,6 +381,8 @@ const clickClearCache = async (accept: boolean) => {
 
 /* ------------------------------------------------------------------- script */
 
+const overriddenAccent = "#e83677";
+settings.patch({ appearance: { accent: overriddenAccent } });
 await page.goto(base, { waitUntil: "domcontentloaded" });
 await page.waitForSelector(".sidebar", { timeout: 60_000 });
 await wait(900);
@@ -410,6 +413,31 @@ check(
   cancelToast === "" && cacheFileEntries().length === populated.length,
   `toast=${JSON.stringify(cancelToast)} entries=${cacheFileEntries().length}`
 );
+
+/* Reset all settings is a separate action, even when the lyrics cache is populated. */
+await lyricsCache.persistNow();
+const cacheBeforeReset = existsSync(cacheFile) ? readFileSync(cacheFile, "utf8") : null;
+const writesBeforeReset = writes;
+const savedAccent = () => JSON.parse(readFileSync(settingsFile, "utf8")).appearance.accent;
+const accentBeforeReset = savedAccent();
+page.once("dialog", dialog => dialog.accept());
+await page.click('[data-testid="settings-reset-all"]');
+await page.waitForFunction(() =>
+  document.querySelector('[data-testid="app-toast"]')?.textContent?.trim() === "Settings restored to defaults"
+);
+const accentAfterReset = savedAccent();
+check(
+  "reset-restores-persisted-settings",
+  accentBeforeReset === overriddenAccent && accentAfterReset === DEFAULT_SETTINGS.appearance.accent,
+  `${accentBeforeReset} -> ${accentAfterReset}`
+);
+const cacheAfterReset = existsSync(cacheFile) ? readFileSync(cacheFile, "utf8") : null;
+check(
+  "reset-preserves-populated-cache",
+  populated.length >= 2 && cacheBeforeReset !== null && cacheAfterReset === cacheBeforeReset && writes === writesBeforeReset,
+  `${cacheFileEntries().length} entries, ${writes - writesBeforeReset} writes during reset`
+);
+await page.waitForSelector('[data-testid="app-toast"]', { hidden: true });
 
 /* 3. Confirming shows feedback that names what was removed… */
 const clearToast = await clickClearCache(true);

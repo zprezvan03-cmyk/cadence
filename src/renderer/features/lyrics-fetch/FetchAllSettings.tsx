@@ -42,7 +42,7 @@ export function FetchAllSettings() {
         </span>
         <button
           type="button"
-          className="primary"
+          className="primary setting-action"
           data-testid="fetch-all-start"
           disabled={running}
           onClick={() => void start()}

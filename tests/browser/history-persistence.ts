@@ -1091,10 +1091,18 @@ try {
     JSON.stringify(titlesAfterRescan),
   );
 
-  await page.click('.sidebar button[title="Playlists"][aria-expanded="false"]');
-  await wait(240);
-  await clickNav(page, "All playlists");
-  await page.click('[data-testid="new-smart-playlist"]');
+  await page.locator('.sidebar button[title="Playlists"][aria-expanded="false"]').click();
+  const allPlaylists = '#sidebar-playlists[data-open="true"] button[title="All playlists"]';
+  // A button inside the expanding disclosure exists before the clipped row is clickable.
+  await page.waitForFunction(selector => {
+    const button = document.querySelector(selector);
+    if (!button) return false;
+    const { left, top, width, height } = button.getBoundingClientRect();
+    return button.contains(document.elementFromPoint(left + width / 2, top + height / 2));
+  }, { timeout: 10_000 }, allPlaylists);
+  await page.locator(allPlaylists).click();
+  await page.waitForSelector('[data-testid="library-view-playlists"]', { timeout: 10_000 });
+  await page.locator('[data-testid="new-smart-playlist"]').click();
   await page.waitForSelector('[data-testid="smart-playlist-form"]', { timeout: 10_000 });
   const smartPreviewText = await page.$eval(
     '[data-testid="smart-playlist-preview"]',

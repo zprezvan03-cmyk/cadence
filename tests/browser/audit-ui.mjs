@@ -1017,7 +1017,8 @@ await runSection("blur-artwork-completes", async () => {
 await runSection("expanded-navigation-completes", async () => {
   await nav("Settings"); await resetAllSettings();
   const destinations = [
-    ["Home", "home-view"], ["Songs", "library-view-songs"], ["Albums", "library-view-albums"],
+    ["Home", "home-view"], ["History", "history-view"], ["Stats", "stats-view"],
+    ["Songs", "library-view-songs"], ["Albums", "library-view-albums"],
     ["Artists", "library-view-artists"], ["Recently Added", "library-view-recently-added"], ["Playlists", "library-view-playlists"],
     ["Liked songs", "library-view-favorites"], ["Now Playing", "lyrics-view"], ["Settings", "settings-view"],
   ];
@@ -1279,6 +1280,30 @@ await runSection("expanded-settings-completes", async () => {
   await resetAllSettings();
   const defaults = await storedSettings();
   check("reset-all-clears-saved-overrides", Object.keys(defaults).length === 0, "harness reset removes the saved override object");
+});
+
+await runSection("expanded-ai-settings-completes", async () => {
+  await nav("Settings"); await settingsTab("Lyrics");
+  await page.evaluate(() => {
+    window.cadence.lyrics.aiModels = async kind => [{ id: `fixture-${kind}`, name: `Fixture ${kind}` }];
+    window.cadence.lyrics.aiTestConnection = async kind => `Fixture ${kind} connected`;
+  });
+  await toggleSetting("Enable AI translation");
+  const afterTranslation = (await storedSettings()).lyrics;
+  await toggleSetting("Enable AI romanization");
+  const afterRomanization = (await storedSettings()).lyrics;
+  check("ai-enablement-is-independent", afterTranslation.aiTranslation.enabled && !afterTranslation.aiRomanization.enabled &&
+    afterRomanization.aiTranslation.enabled && afterRomanization.aiRomanization.enabled);
+  for (const kind of ["translation", "romanization"]) {
+    const panel = `.lyrics-ai-section:has(input[list="ai-models-${kind}"])`;
+    await clickText(`${panel} button`, "Models");
+    await page.waitForSelector(`#ai-models-${kind} option[value="fixture-${kind}"]`, { timeout: 4000 });
+    await clickText(`${panel} button`, "Test connection");
+    const result = await page.waitForFunction((selector, value) =>
+      document.querySelector(selector)?.textContent.includes(value), { timeout: 4000 }, panel, `Fixture ${kind} connected`);
+    check(`ai-${kind}-dispatches-to-its-own-provider`, Boolean(result), "model discovery and connection check used the correct profile");
+  }
+  await resetAllSettings();
 });
 
 await runSection("expanded-lyrics-completes", async () => {
