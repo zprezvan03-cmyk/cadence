@@ -1203,10 +1203,10 @@ check(
 await shot("08-albums-grid");
 await navItem("Home");
 await wait(40);
-// The fixture library has a single album card, so the stagger itself is probed on
-// Home's quick grids, which hold several tracks.
+// The fixture library has a single album card. The ranked shelf holds several tracks and
+// must still use the existing capped card entrance in its new horizontal layout.
 const gridStagger = await page.evaluate(() => {
-  const grid = document.querySelector(".quick-grid");
+  const grid = document.querySelector('[data-testid="home-top-tracks"] .home-shelf-track');
   return [...(grid?.children ?? [])].slice(0, 4).map(card => {
     const style = getComputedStyle(card);
     return { name: style.animationName, delay: style.animationDelay, duration: style.animationDuration };

@@ -940,13 +940,9 @@ await runSection("expanded-navigation-completes", async () => {
   check("brand-enter-home", Boolean(await page.$('[data-testid="home-view"]')), "Enter");
   await nav("Songs"); await brand.focus(); await page.keyboard.press("Space"); await wait(120);
   check("brand-space-home", Boolean(await page.$('[data-testid="home-view"]')), "Space");
-  await clickText(".quick-card", "Liked songs", false);
-  check("home-quick-liked", Boolean(await page.$('[data-testid="library-view-favorites"]')), "quick card");
-  await nav("Home"); await clickText(".quick-card", "Now Playing", false);
-  check("home-quick-now-playing", Boolean(await page.$('[data-testid="lyrics-view"]')), "quick card");
-  await nav("Home"); await clickText(".quick-card", "Playlists", false);
-  check("home-quick-playlists", Boolean(await page.$('[data-testid="library-view-playlists"]')), "quick card");
   await nav("Home");
+  check("home-no-shortcut-row-or-recently-added", !(await page.$(".quick-row")) &&
+    !(await page.$$eval(".home-view h2", headings => headings.some(node => node.textContent?.toLowerCase().includes("recently added")))));
   const recents = '[data-testid="home-recently-played"]';
   if (!(await page.$(recents))) {
     await nav("Songs"); await playTrack("Fixture FLAC"); await nav("Home");

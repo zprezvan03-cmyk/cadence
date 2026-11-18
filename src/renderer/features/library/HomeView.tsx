@@ -1,22 +1,22 @@
 /**
- * Home: recent activity, quick access and library shortcuts. Written for Cadence.
+ * Home: featured albums, listening history and discovery shelves. Written for Cadence.
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, ChevronRight, FolderPlus, Heart, ListMusic, Mic2, Play, Shuffle } from "lucide-react";
+import { ArrowRight, ChevronRight, FolderPlus, Play, Shuffle } from "lucide-react";
 import { trackSourceKey } from "../../../shared/media";
 import type { HistoryPayload } from "../../../shared/types";
 import { useLibrary } from "../../state/libraryStore";
 import { useHistory } from "../../state/historyStore";
 import { usePlayer } from "../../state/playerStore";
 import { useUi } from "../../state/uiStore";
-import { formatTime } from "../../player/queue";
-import { TrackList } from "../../components/TrackList";
 import { AlbumCard } from "../../components/Cards";
 import { Artwork } from "../../components/Artwork";
 import { SourceBadge } from "../../components/SourceBadge";
 import { shuffle } from "../../player/queue";
 import { onRepeatTracks, rediscoverTracks, topLibraryTracks } from "../stats/listeningStats";
+import { HomeShelf, HomeTrackShelf } from "./HomeShelves";
+
 function greeting(): string {
   const hour = new Date().getHours();
   if (hour < 5) return "Still up?";
@@ -68,11 +68,6 @@ export function HomeView() {
     return result;
   }, [historyEntries]);
 
-  const recentlyAdded = useMemo(
-    () => [...(snapshot?.tracks ?? [])].sort((a, b) => b.addedAt - a.addedAt).slice(0, 10),
-    [snapshot?.tracks],
-  );
-
   const albums = useMemo(() => {
     const list = snapshot?.albums ?? [];
     const seen = new Set<string>();
@@ -86,8 +81,6 @@ export function HomeView() {
     // the library snapshot changes or the view is (re)mounted.
     return shuffle(unique).slice(0, 10);
   }, [snapshot?.albums]);
-
-  const favorites = useMemo(() => (snapshot?.tracks ?? []).filter(track => track.favorite), [snapshot?.tracks]);
 
   const topTracks = useMemo(
     () => topLibraryTracks(snapshot?.tracks ?? [], historyEntries, { now, limit: 10 }),
@@ -137,41 +130,6 @@ export function HomeView() {
       .sort((a, b) => (a.discNo ?? 0) - (b.discNo ?? 0) || (a.trackNo ?? 0) - (b.trackNo ?? 0));
     void playQueue(tracks.map(track => track.id), 0);
   };
-
-  const shortcuts = (
-    <section className="quick-row" aria-label="Library shortcuts">
-      <button type="button" className="quick-card" onClick={() => navigate({ name: "library", tab: "favorites" })}>
-        <span className="quick-icon liked">
-          <Heart size={20} fill="currentColor" />
-        </span>
-        <span>
-          <strong>Liked songs</strong>
-          <em>{favorites.length} songs</em>
-        </span>
-        <ChevronRight size={16} className="quick-arrow" aria-hidden="true" />
-      </button>
-      <button type="button" className="quick-card" onClick={() => navigate({ name: "lyrics" })}>
-        <span className="quick-icon lyrics">
-          <Mic2 size={20} />
-        </span>
-        <span>
-          <strong>Now Playing</strong>
-          <em>Lyrics and artwork</em>
-        </span>
-        <ChevronRight size={16} className="quick-arrow" aria-hidden="true" />
-      </button>
-      <button type="button" className="quick-card" onClick={() => navigate({ name: "library", tab: "playlists" })}>
-        <span className="quick-icon playlists">
-          <ListMusic size={20} />
-        </span>
-        <span>
-          <strong>Playlists</strong>
-          <em>{snapshot.playlists.length} playlists</em>
-        </span>
-        <ChevronRight size={16} className="quick-arrow" aria-hidden="true" />
-      </button>
-    </section>
-  );
 
   return (
     <div className="home-view view" data-testid="home-view">
@@ -251,69 +209,42 @@ export function HomeView() {
                     <em>{track.artist}</em>
                   </span>
                   <SourceBadge source={track.source} compact />
-                  <Play size={15} className="quick-arrow recent-play" aria-hidden="true" />
+                  <Play size={15} className="recent-play" aria-hidden="true" />
                 </button>
               ))}
             </div>
           </section>
-        ) : (
-          <section className="home-recents">
-            <div className="shelf-heading"><h2>Quick access</h2></div>
-            {shortcuts}
-          </section>
-        )}
+        ) : null}
       </div>
 
       {albums.length > 0 ? (
-        <section className="shelf home-albums">
-          <div className="shelf-heading">
-            <h2>Explore your albums</h2>
-            <button type="button" className="link" onClick={() => navigate({ name: "library", tab: "albums" })}>All albums <ChevronRight size={15} /></button>
-          </div>
-          <div className="card-grid">
-            {albums.map(album => (
-              <AlbumCard key={album.id} album={album} />
-            ))}
-          </div>
-        </section>
+        <HomeShelf
+          className="home-albums"
+          testId="home-albums"
+          title="Explore your albums"
+          aside={<button type="button" className="link" onClick={() => navigate({ name: "library", tab: "albums" })}>All albums <ChevronRight size={15} /></button>}
+        >
+          {albums.map(album => <AlbumCard key={album.id} album={album} />)}
+        </HomeShelf>
       ) : null}
 
-      {recentlyPlayed.length > 0 ? shortcuts : null}
-
       {topTracks.length > 0 ? (
-        <section className="shelf" data-testid="home-top-tracks">
-          <div className="shelf-heading">
-            <h2>Your top tracks</h2>
-            <button type="button" className="link" onClick={() => navigate({ name: "stats" })}>See stats</button>
-          </div>
-          <TrackList tracks={topTracks.map(item => item.track)} compact testId="top-tracks" />
-        </section>
+        <HomeTrackShelf
+          title="Your top tracks"
+          testId="home-top-tracks"
+          items={topTracks}
+          rankedQueue
+          aside={<button type="button" className="link" onClick={() => navigate({ name: "stats" })}>See stats</button>}
+        />
       ) : null}
 
       {onRepeat.length > 0 ? (
-        <section className="shelf" data-testid="home-on-repeat">
-          <div className="shelf-heading">
-            <h2>On repeat</h2>
-            <span className="muted">What you have been looping lately</span>
-          </div>
-          <div className="quick-grid">
-            {onRepeat.map(item => (
-              <button
-                type="button"
-                key={item.track.id}
-                className="quick-track"
-                data-testid="on-repeat-item"
-                onClick={() => void playTrack(item.track.id)}
-              >
-                <Artwork src={item.track.artworkUrl ?? null} alt={item.track.album || item.track.title} size="xs" />
-                <span>
-                  <strong>{item.track.title}</strong>
-                  <em>{item.track.artist} · {item.recentPlayCount} plays in 14 days</em>
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
+        <HomeTrackShelf
+          title="On repeat"
+          testId="home-on-repeat"
+          items={onRepeat}
+          aside={<span className="muted">Past 14 days</span>}
+        />
       ) : null}
 
       {rediscover.length > 0 ? (
@@ -341,14 +272,6 @@ export function HomeView() {
           </div>
         </section>
       ) : null}
-
-      <section className="shelf">
-        <div className="shelf-heading">
-          <h2>Recently added</h2>
-          <span className="muted">{formatTime(snapshot.counts.duration)} of music</span>
-        </div>
-        <TrackList tracks={recentlyAdded} compact testId="recently-added" />
-      </section>
     </div>
   );
 }
