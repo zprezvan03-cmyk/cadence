@@ -40,6 +40,7 @@ import { findDuplicateGroups, formatFileSize } from "./duplicates";
 type SortKey = "title" | "artist" | "album" | "added" | "duration";
 
 const TITLES: Record<LibraryTab, string> = {
+  "recently-added": "Recently Added",
   songs: "Songs",
   albums: "Albums",
   artists: "Artists",
@@ -63,7 +64,10 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
   // Sort and filter belong to the list, not to the mount: coming back to Songs should show the
   // list the user left, not the default order.
   const [sort, setSort] = useSessionState<SortKey>("library.sort", "title");
-  const [filter, setFilter] = useSessionState("library.filter", "");
+  const [libraryFilter, setLibraryFilter] = useSessionState("library.filter", "");
+  const [recentFilter, setRecentFilter] = useSessionState("library.recent-filter", "");
+  const recentlyAdded = tab === "recently-added";
+  const [filter, setFilter] = recentlyAdded ? [recentFilter, setRecentFilter] : [libraryFilter, setLibraryFilter];
   const deferredFilter = useDeferredValue(filter);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -92,7 +96,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
         [track.title, track.artist, track.album].some(value => value.toLocaleLowerCase().includes(needle))
       );
     }
-    switch (sort) {
+    switch (recentlyAdded ? "added" : sort) {
       case "artist":
         list.sort((a, b) => a.artist.localeCompare(b.artist) || a.album.localeCompare(b.album));
         break;
@@ -109,7 +113,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
         list.sort((a, b) => a.title.localeCompare(b.title));
     }
     return list;
-  }, [snapshot?.tracks, tab, sort, deferredFilter]);
+  }, [snapshot?.tracks, tab, sort, deferredFilter, recentlyAdded]);
 
   const smartPresetInfo = SMART_PLAYLIST_PRESETS[smartPreset];
   const normalizedSmartRule = useMemo(() => {
@@ -230,7 +234,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
         </div>
       </header>
 
-      {tab === "songs" || tab === "favorites" ? (
+      {tab === "songs" || tab === "favorites" || recentlyAdded ? (
         <>
           <div className="list-toolbar">
             <label className="inline-search">
@@ -242,7 +246,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
                 onChange={event => setFilter(event.target.value)}
               />
             </label>
-            <label className="sort-select">
+            {!recentlyAdded ? <label className="sort-select">
               Sort
               <select value={sort} onChange={event => setSort(event.target.value as SortKey)}>
                 <option value="title">Title</option>
@@ -251,7 +255,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
                 <option value="added">Recently added</option>
                 <option value="duration">Duration</option>
               </select>
-            </label>
+            </label> : null}
             <button
               type="button"
               data-testid="find-duplicates"

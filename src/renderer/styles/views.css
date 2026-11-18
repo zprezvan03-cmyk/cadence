@@ -908,7 +908,6 @@
 /* --------------------------------------------------------------- settings */
 
 .settings-view {
-  max-width: 1240px;
   display: grid;
   grid-template-columns: minmax(132px, 166px) minmax(0, 1fr);
   column-gap: clamp(20px, 3cqi, 38px);
@@ -1573,10 +1572,6 @@
 
 /* ---------------------------------------------------------- decode tester */
 
-.decode-view {
-  max-width: 1080px;
-}
-
 .decode-intro {
   max-width: 72ch;
   line-height: 1.6;
@@ -1856,10 +1851,6 @@
 }
 
 /* ------------------------------------------------------- settings → cache */
-
-.cache-section {
-  max-width: 900px;
-}
 
 .cache-toolbar {
   display: flex;
@@ -2219,7 +2210,7 @@
   white-space: pre-wrap;
 }
 
-/* --------------------------------------------------- Fetch All (top bar) */
+/* --------------------------------------------------- Fetch All status */
 
 .fetch-indicator-wrap {
   position: relative;
@@ -2297,9 +2288,7 @@
 }
 
 .fetch-panel {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 8px);
+  position: fixed;
   z-index: 60;
   width: min(320px, 86vw);
   padding: 14px;
@@ -2310,9 +2299,8 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  /* Opens from the top-bar indicator it is anchored to: subtle scale + fade,
-     and the matching fast pop-out while presence exits. */
-  transform-origin: top right;
+  overflow-y: auto;
+  transform-origin: top left;
   animation: pop-in var(--dur-2) var(--ease-out);
 }
 

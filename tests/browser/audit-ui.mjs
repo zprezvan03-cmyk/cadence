@@ -531,7 +531,11 @@ async function installAuditBridge() {
     const track = state.tracks.find(entry => entry.id === id);
     if (track) { track.lastPlayedAt = Date.now(); track.playCount += 1; persist(); }
   };
-  window.cadence.library.addFolder = async () => { state.calls.push(["add-folder"]); return { canceled: true, folders: [...state.folders] }; };
+  window.cadence.library.addFolder = async () => {
+    state.calls.push(["add-folder"]);
+    if (state.holdAddFolder) await new Promise(resolve => { state.finishAddFolder = resolve; });
+    return { canceled: true, folders: [...state.folders] };
+  };
   window.cadence.library.removeFolder = async path => {
     state.calls.push(["remove-folder", path]);
     state.folders = state.folders.filter(folder => folder !== path); state.tracks = []; state.playlists = []; persist();
@@ -630,7 +634,15 @@ const clickText = async (selector, wanted, exact = true) => {
   }
   throw new Error(`No ${selector} with text ${JSON.stringify(wanted)}; saw ${JSON.stringify(await page.$$eval(selector, nodes => nodes.map(node => node.textContent?.replace(/\s+/g, " ").trim())))}`);
 };
-const nav = async label => { await clickText(".sidebar .nav-item", label); await wait(140); };
+const nav = async label => {
+  if (label === "Playlists") {
+    const disclosure = await page.$('.nav-section-toggle[title="Playlists"][aria-expanded="false"]');
+    if (disclosure) { await disclosure.click(); await wait(210); }
+    label = "All playlists";
+  }
+  await clickText(".sidebar .nav-item", label);
+  await wait(140);
+};
 const settingsTab = async label => { await clickText(".settings-tabs button", label); await wait(80); };
 const settingRow = async label => {
   for (const row of await page.$$(".setting-row")) {
@@ -691,6 +703,81 @@ const runSection = async (name, fn) => {
     await auditShot(`error-${name}`);
   }
 };
+
+await runSection("sidebar-disclosures-complete", async () => {
+  await page.evaluate(async () => {
+    const { state } = window.__audit;
+    state.tracks.forEach((track, i) => { track.addedAt = 10_000 + i; });
+    for (let i = 1; i <= 10; i++) await window.cadence.playlists.create(`Disclosure fixture ${i}`);
+  });
+  await page.reload({ waitUntil: "networkidle0" });
+  await nav("Recently Added");
+  const newestFirst = await page.evaluate(() => {
+    const expected = [...window.__audit.state.tracks].sort((a, b) => b.addedAt - a.addedAt).map(track => track.title);
+    const rendered = [...document.querySelectorAll('.library-view .track-row .title-text')].map(node => node.textContent.trim());
+    return rendered.length > 0 && rendered.every((title, i) => title === expected[i]);
+  });
+  check("sidebar-recently-added-is-newest-first", newestFirst);
+  await nav("Playlists");
+  const inventory = await page.evaluate(() => ({
+    linked: [...document.querySelectorAll('#sidebar-playlists .sidebar-link')].map(node => node.title),
+    expected: window.__audit.state.playlists.map(playlist => playlist.name),
+  }));
+  check("sidebar-lists-all-playlists", inventory.linked.length >= 10 && JSON.stringify(inventory.linked) === JSON.stringify(inventory.expected), JSON.stringify(inventory));
+  await page.click('.nav-section-toggle[title="Playlists"]');
+  await wait(230);
+  check("collapsed-playlists-keeps-route-and-hides-links", await page.evaluate(() => document.getElementById("sidebar-playlists").inert && location.hash.endsWith("/playlists")));
+  const target = await page.evaluate(() => window.__audit.state.playlists.at(-1));
+  await page.setViewport({ width: 1040, height: 680 });
+  await page.evaluate(id => { location.hash = `#/playlist/${id}`; }, target.id);
+  await page.waitForSelector('#sidebar-playlists .sidebar-link[aria-current="location"]', { timeout: 3000 });
+  const visibleTarget = await page.$eval('#sidebar-playlists .sidebar-link[aria-current="location"]', node => {
+    node.scrollIntoView({ block: "nearest" });
+    return node.title === "Disclosure fixture 1" && node.getBoundingClientRect().bottom <= document.querySelector(".sidebar-scroll").getBoundingClientRect().bottom + 1;
+  });
+  check("playlist-deep-link-expands-section-and-is-reachable-by-scroll", visibleTarget, target.name);
+  await page.setViewport({ width: 1440, height: 900 });
+  await nav("Home");
+});
+
+await runSection("sidebar-fetch-all-completes", async () => {
+  await page.evaluate(() => {
+    const build = state => ({ jobId: "sidebar-audit", state, total: 10, processed: 5, found: 3, notFound: 1, failed: 1, skipped: 0,
+      currentTrack: { id: 3, title: "Fixture MP3", artist: "Harness Artist" }, startedAt: Date.now(), finishedAt: null });
+    window.cadence.lyrics.fetchAll = { stats: async () => ({ totalTracks: 10, withLyrics: 3, needsSearch: 7, fullyProcessed: 5 }) };
+    for (const [action, state] of Object.entries({ start: "running", pause: "paused", resume: "running", retryFailed: "running", cancel: "canceled" })) {
+      window.cadence.lyrics.fetchAll[action] = async () => {
+        window.__audit.state.calls.push([`fetch-${action}`]);
+        return build(state);
+      };
+    }
+  });
+  await page.setViewport({ width: 1040, height: 680 });
+  await nav("Settings"); await settingsTab("Appearance");
+  await page.click('[data-testid="fetch-all-start"]');
+  await page.waitForSelector('.sidebar-tools [data-testid="fetch-all-indicator"][data-state="running"]');
+  await nav("Home");
+  await page.click('[data-testid="fetch-all-indicator"]');
+  await page.waitForSelector('.fetch-panel:not([inert])'); await wait(210);
+  const bounds = await page.$eval(".fetch-panel", node => {
+    const { left, right, top, bottom } = node.getBoundingClientRect();
+    return { left, right, top, bottom, room: left >= 0 && right <= innerWidth && top >= 0 && bottom < innerHeight };
+  });
+  check("sidebar-fetch-all-popover-not-clipped", bounds.room && Boolean(await page.$('[data-testid="fetch-count-found"]')), JSON.stringify(bounds));
+  await page.keyboard.press("Escape");
+  await page.waitForSelector('[data-testid="fetch-all-panel"]', { hidden: true });
+  check("sidebar-fetch-all-keyboard-focus-returns", await page.evaluate(() => document.activeElement?.matches('[data-testid="fetch-all-indicator"]')));
+  await page.keyboard.press("Enter");
+  await page.waitForSelector('.fetch-panel:not([inert])');
+  await clickText(".fetch-panel button", "Pause");
+  await clickText(".fetch-panel button", "Resume");
+  await clickText(".fetch-panel button", "Pause");
+  await page.click('[data-testid="fetch-retry-failed"]');
+  await page.click('[data-testid="fetch-cancel"]');
+  await page.waitForSelector('[data-testid="fetch-all-panel"]', { hidden: true });
+  const actions = await page.evaluate(() => window.__audit.state.calls.filter(call => call[0].startsWith("fetch-")).map(call => call[0]));
+  check("sidebar-fetch-all-commands", actions.join(",") === "fetch-start,fetch-pause,fetch-resume,fetch-pause,fetch-retryFailed,fetch-cancel", actions.join(","));
+});
 
 await runSection("sidebar-new-playlist-completes", async () => {
   await nav("Playlists");
@@ -837,7 +924,7 @@ await runSection("expanded-navigation-completes", async () => {
   await nav("Settings"); await clickText(".view-heading button", "Reset all"); await wait(150);
   const destinations = [
     ["Home", "home-view"], ["Songs", "library-view-songs"], ["Albums", "library-view-albums"],
-    ["Artists", "library-view-artists"], ["Playlists", "library-view-playlists"],
+    ["Artists", "library-view-artists"], ["Recently Added", "library-view-recently-added"], ["Playlists", "library-view-playlists"],
     ["Liked songs", "library-view-favorites"], ["Now Playing", "lyrics-view"], ["Settings", "settings-view"],
   ];
   for (const [label, testId] of destinations) {
@@ -845,10 +932,10 @@ await runSection("expanded-navigation-completes", async () => {
     check(`nav-${testId}`, Boolean(await page.$(`[data-testid="${testId}"]`)), label);
   }
   await nav("Albums"); await nav("Artists");
-  await page.click('.top-bar button[aria-label="Back"]'); await wait(150);
-  check("topbar-back", Boolean(await page.$('[data-testid="library-view-albums"]')), await page.evaluate(() => location.hash));
-  await page.click('.top-bar button[aria-label="Forward"]'); await wait(150);
-  check("topbar-forward", Boolean(await page.$('[data-testid="library-view-artists"]')), await page.evaluate(() => location.hash));
+  await page.click('.sidebar-tools button[aria-label="Back"]'); await wait(150);
+  check("sidebar-back", Boolean(await page.$('[data-testid="library-view-albums"]')), await page.evaluate(() => location.hash));
+  await page.click('.sidebar-tools button[aria-label="Forward"]'); await wait(150);
+  check("sidebar-forward", Boolean(await page.$('[data-testid="library-view-artists"]')), await page.evaluate(() => location.hash));
   const brand = await page.$(".brand"); await brand.focus(); await page.keyboard.press("Enter"); await wait(120);
   check("brand-enter-home", Boolean(await page.$('[data-testid="home-view"]')), "Enter");
   await nav("Songs"); await brand.focus(); await page.keyboard.press("Space"); await wait(120);
@@ -895,7 +982,7 @@ await runSection("expanded-library-completes", async () => {
   check("favourite-removes-from-liked", (await page.$$('[data-testid="library-track-list"] [data-testid="track-row"]')).length === 0, "empty liked list");
   await nav("Songs"); await openTrackMenu("Fixture FLAC"); await clickText(".context-menu button", "Go to album");
   check("context-go-to-album", (await page.$eval(".detail-meta h1", node => node.textContent.trim())) === "Test Bench", await page.evaluate(() => location.hash));
-  await page.click('.top-bar button[aria-label="Back"]'); await wait(500);
+  await page.click('.sidebar-tools button[aria-label="Back"]'); await wait(500);
   check("detail-back", Boolean(await page.$('[data-testid="library-view-songs"]')), await page.evaluate(() => location.hash));
   await nav("Albums");
   const albumCard = await page.$('[data-testid="album-card"] .card-open'); await albumCard.focus(); await page.keyboard.press("Enter"); await wait(150);
@@ -1300,7 +1387,9 @@ await runSection("expanded-keyboard-completes", async () => {
   check("shortcut-shift-previous", (await playerTitle()) !== titleNext, `${titleNext} → ${await playerTitle()}`);
   await page.keyboard.press("L"); await wait(100); check("shortcut-l", Boolean(await page.$('[data-testid="lyrics-view"]')), "Now Playing");
   await page.keyboard.press("Q"); await wait(80); check("shortcut-q-open", Boolean(await page.$('[data-testid="queue-panel"]')), "queue open");
-  await page.keyboard.press("Q"); await wait(80); check("shortcut-q-close", !(await page.$('[data-testid="queue-panel"]')), "queue closed");
+  await page.keyboard.press("Q");
+  await page.waitForSelector('[data-testid="queue-panel"]', { hidden: true, timeout: 2000 });
+  check("shortcut-q-close", !(await page.$('[data-testid="queue-panel"]')), "queue closed after its exit");
   await page.keyboard.press("N"); await wait(100); check("shortcut-n", Boolean(await page.$(".lyrics-view.is-fullscreen")), "immersive");
   await page.keyboard.press("Escape"); await wait(100); check("shortcut-escape-fullscreen", !(await page.$(".lyrics-view.is-fullscreen")), "normal view");
   await page.keyboard.press("F"); await wait(100); check("shortcut-f", Boolean(await page.$(".lyrics-view.is-fullscreen")), "immersive");
@@ -1331,7 +1420,7 @@ await runSection("expanded-window-and-media-completes", async () => {
   await page.keyboard.press("Escape");
 });
 
-await runSection("expanded-search-and-topbar-completes", async () => {
+await runSection("expanded-sidebar-search-completes", async () => {
   await nav("Songs");
   const searchFor = async value => {
     const input = await page.$("#global-search");
@@ -1356,9 +1445,34 @@ await runSection("expanded-search-and-topbar-completes", async () => {
   await nav("Songs"); await searchFor("zzzz-no-match");
   check("search-no-results", (await page.$eval(".search-view", node => node.textContent)).includes("No matches"), "empty result message");
   await page.click('button[aria-label="Clear search"]'); await wait(120);
-  const addsBefore = await page.evaluate(() => window.__audit.state.calls.filter(call => call[0] === "add-folder").length);
-  await clickText(".top-bar .ghost-button", "Add music"); await wait(100);
-  check("topbar-add-music", (await page.evaluate(() => window.__audit.state.calls.filter(call => call[0] === "add-folder").length)) === addsBefore + 1, "folder picker request");
+  const addsBefore = await page.evaluate(() => {
+    window.__audit.state.holdAddFolder = true;
+    return window.__audit.state.calls.filter(call => call[0] === "add-folder").length;
+  });
+  await clickText(".sidebar-tools .ghost-button", "Add music");
+  await page.waitForSelector(".sidebar-tools .scan-indicator");
+  check("sidebar-add-music", (await page.evaluate(() => window.__audit.state.calls.filter(call => call[0] === "add-folder").length)) === addsBefore + 1, "folder picker request");
+  check("sidebar-shows-pending-scan", await page.$eval(".sidebar-add", node => node.disabled));
+  await page.evaluate(() => window.__audit.state.finishAddFolder());
+  await page.waitForSelector(".sidebar-tools .scan-indicator", { hidden: true });
+  await nav("Settings"); await settingsTab("Appearance");
+  await toggleSetting("Compact sidebar");
+  await toggleSetting("Expand compact sidebar on hover");
+  await page.mouse.move(700, 400);
+  await page.evaluate(() => document.activeElement?.blur());
+  await wait(400);
+  const collapsedWidth = await page.$eval(".sidebar", node => node.getBoundingClientRect().width);
+  await page.keyboard.down("Control"); await page.keyboard.press("K"); await page.keyboard.up("Control");
+  await page.waitForFunction(() => document.activeElement?.id === "global-search" && document.querySelector(".sidebar").getBoundingClientRect().width > 215);
+  await page.keyboard.type("Fixture");
+  await page.waitForSelector(".search-view");
+  const compactSearch = await page.evaluate(() => ({ rail: document.querySelector(".sidebar").getBoundingClientRect().width,
+    main: document.querySelector(".app-main").getBoundingClientRect().left, value: document.querySelector("#global-search").value }));
+  check("compact-search-expands-without-hover-or-content-reflow", collapsedWidth === 68 && compactSearch.main === 68 &&
+    compactSearch.rail > compactSearch.main && compactSearch.value === "Fixture", JSON.stringify({ collapsedWidth, ...compactSearch }));
+  await nav("Settings"); await settingsTab("Appearance");
+  await toggleSetting("Expand compact sidebar on hover");
+  await toggleSetting("Compact sidebar");
 });
 
 await runSection("expanded-player-controls-completes", async () => {

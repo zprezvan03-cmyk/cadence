@@ -99,7 +99,7 @@
   /* A definite height, not min-height: the flex column must bound the scrolling lyric body so the
      dock stays pinned above the player bar instead of being pushed below the fold. The legacy
      viewport calculation remains the fallback; container height is the exact route area. */
-  height: calc(100vh - var(--window-chrome-top) - var(--player-height) - var(--topbar-height));
+  height: calc(100vh - var(--window-chrome-top) - var(--player-height));
   height: 100cqh;
   display: flex;
   flex-direction: column;

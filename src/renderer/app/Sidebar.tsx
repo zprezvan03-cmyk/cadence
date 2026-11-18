@@ -2,14 +2,17 @@
  * Navigation sidebar. Written for Cadence.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import {
   Album as AlbumIcon,
   ChartColumn,
+  ChevronDown,
+  Clock3,
   Heart,
   Home,
   History,
   AudioLines,
+  Library,
   ListMusic,
   Mic2,
   Music2,
@@ -18,19 +21,25 @@ import {
   Users,
 } from "lucide-react";
 import { EMPTY_PLAYLISTS, useLibrary } from "../state/libraryStore";
-import { useUi, type LibraryTab } from "../state/uiStore";
+import { useUi, type Route } from "../state/uiStore";
+import { SidebarTools } from "./SidebarTools";
+import { useSessionState } from "./useSessionState";
 
-const NAV: { label: string; icon: React.ReactNode; route: Parameters<ReturnType<typeof useUi.getState>["navigate"]>[0]; group?: string }[] = [
-  { label: "Home", group: "Listen", icon: <Home size={18} />, route: { name: "home" } },
+type Destination = { label: string; icon: ReactNode; route: Route };
+const LISTEN: Destination[] = [
+  { label: "Home", icon: <Home size={18} />, route: { name: "home" } },
   { label: "Now Playing", icon: <Mic2 size={18} />, route: { name: "lyrics" } },
   { label: "History", icon: <History size={18} />, route: { name: "history" } },
   { label: "Stats", icon: <ChartColumn size={18} />, route: { name: "stats" } },
-  { label: "Songs", group: "Library", icon: <Music2 size={18} />, route: { name: "library", tab: "songs" } },
-  { label: "Albums", icon: <AlbumIcon size={18} />, route: { name: "library", tab: "albums" } },
-  { label: "Artists", icon: <Users size={18} />, route: { name: "library", tab: "artists" } },
-  { label: "Playlists", icon: <ListMusic size={18} />, route: { name: "library", tab: "playlists" } },
-  { label: "Liked songs", icon: <Heart size={18} />, route: { name: "library", tab: "favorites" } },
 ];
+const LIBRARY: Destination[] = [
+  { label: "Recently Added", icon: <Clock3 size={16} />, route: { name: "library", tab: "recently-added" } },
+  { label: "Artists", icon: <Users size={16} />, route: { name: "library", tab: "artists" } },
+  { label: "Albums", icon: <AlbumIcon size={16} />, route: { name: "library", tab: "albums" } },
+  { label: "Songs", icon: <Music2 size={16} />, route: { name: "library", tab: "songs" } },
+];
+const LIKED: Destination = { label: "Liked songs", icon: <Heart size={18} />, route: { name: "library", tab: "favorites" } };
+const ALL_PLAYLISTS: Destination = { label: "All playlists", icon: <ListMusic size={16} />, route: { name: "library", tab: "playlists" } };
 
 export function Sidebar() {
   const route = useUi(state => state.route);
@@ -39,19 +48,31 @@ export function Sidebar() {
   const playlists = useLibrary(state => state.snapshot?.playlists ?? EMPTY_PLAYLISTS);
   const counts = useLibrary(state => state.snapshot?.counts);
 
-  const isActive = (candidate: (typeof NAV)[number]["route"]) => {
+  const isActive = (candidate: Route) => {
     // Keep the parent collection identifiable while browsing its detail page.
     if (candidate.name === "library") {
       if (route.name === "album") return candidate.tab === "albums";
       if (route.name === "artist") return candidate.tab === "artists";
-      if (route.name === "playlist") return candidate.tab === "playlists";
     }
     if (candidate.name !== route.name) return false;
     if (candidate.name === "library" && route.name === "library") {
       return candidate.tab === route.tab;
     }
+    if (candidate.name === "playlist" && route.name === "playlist") return candidate.playlistId === route.playlistId;
     return true;
   };
+
+  const inLibrary = LIBRARY.some(item => isActive(item.route));
+  const inPlaylists = route.name === "playlist" || isActive(ALL_PLAYLISTS.route);
+  const [libraryOpen, setLibraryOpen] = useSessionState("sidebar.library-open", true);
+  const [playlistsOpen, setPlaylistsOpen] = useSessionState("sidebar.playlists-open", false);
+  // Deep links and browser history reveal the destination. The disclosure is still free to
+  // collapse while looking at that same page; it does not change the route.
+  const routeKey = route.name === "library" ? route.tab : route.name === "playlist" ? route.playlistId : route.name;
+  useLayoutEffect(() => {
+    if (inLibrary) setLibraryOpen(true);
+    if (inPlaylists) setPlaylistsOpen(true);
+  }, [routeKey, inLibrary, inPlaylists, setLibraryOpen, setPlaylistsOpen]);
 
   const navRef = useRef<HTMLElement | null>(null);
   const pillRef = useRef<HTMLSpanElement | null>(null);
@@ -87,6 +108,7 @@ export function Sidebar() {
     // vertical geometry. Don't restart (or snap) a navigation move for those notifications.
     const moved = pill.style.height !== height || pill.style.transform !== transform;
     if (instant && moved) pill.dataset.instant = "true";
+    pill.dataset.nested = String(Boolean(button.closest(".nav-section-content")));
     if (moved) {
       pill.style.height = height;
       pill.style.transform = transform;
@@ -102,10 +124,10 @@ export function Sidebar() {
     // callback immediately and cancel the very transition it was about to animate.
   }, []);
 
-  useLayoutEffect(measureSlots, [measureSlots]);
+  useLayoutEffect(measureSlots, [measureSlots, libraryOpen, playlistsOpen, playlists]);
   useLayoutEffect(() => {
     placePill(navRef.current?.dataset.pill !== "ready");
-  }, [placePill, route]);
+  }, [placePill, route, libraryOpen, playlistsOpen, playlists]);
 
   // The nav can move under the pill without a route change: a resized window, a compact sidebar, or
   // playlists appearing above the footer. Re-place instantly instead of sliding from a stale spot.
@@ -138,39 +160,28 @@ export function Sidebar() {
         <span className="brand-text"><strong>Cadence</strong></span>
       </button>
 
-      <nav className="nav" aria-label="Music navigation" ref={navRef}>
-        <span className="nav-pill" ref={pillRef} aria-hidden="true" />
-        {NAV.map(item => {
-          const active = isActive(item.route);
-          return (
-            <NavEntry key={item.label} item={item} active={active} navigate={navigate} />
-          );
-        })}
-      </nav>
+      <SidebarTools />
 
-      <div className="sidebar-section">
-        <div className="sidebar-heading">
-          <span>My playlists</span>
-          <button type="button" className="icon-button" onClick={requestPlaylistCreate} aria-label="New playlist">
-            <Plus size={15} />
-          </button>
-        </div>
-        <div className="sidebar-playlists">
-          {playlists.slice(0, 8).map(playlist => (
-            <button
-              type="button"
-              key={playlist.id}
-              className={`sidebar-link ${route.name === "playlist" && route.playlistId === playlist.id ? "active" : ""}`}
-              onClick={() => navigate({ name: "playlist", playlistId: playlist.id })}
-              title={playlist.name}
-              aria-current={route.name === "playlist" && route.playlistId === playlist.id ? "page" : undefined}
-            >
-              <ListMusic size={15} aria-hidden="true" />
-              <span>{playlist.name}</span>
+      <div className="sidebar-scroll">
+        <nav className="nav" aria-label="Music navigation" ref={navRef}>
+          <span className="nav-pill" ref={pillRef} aria-hidden="true" />
+          <p className="nav-group" aria-hidden="true">Listen</p>
+          {LISTEN.map(item => <NavEntry key={item.label} item={item} active={isActive(item.route)} navigate={navigate} />)}
+          <NavSection id="library" icon={<Library size={18} />} label="Library" current={inLibrary} open={libraryOpen} onToggle={() => setLibraryOpen(!libraryOpen)}>
+            {LIBRARY.map(item => <NavEntry key={item.label} item={item} active={libraryOpen && isActive(item.route)} navigate={navigate} />)}
+          </NavSection>
+          <NavEntry item={LIKED} active={isActive(LIKED.route)} navigate={navigate} />
+          <NavSection id="playlists" icon={<ListMusic size={18} />} label="Playlists" current={inPlaylists} open={playlistsOpen} onToggle={() => setPlaylistsOpen(!playlistsOpen)}>
+            <NavEntry item={ALL_PLAYLISTS} active={playlistsOpen && isActive(ALL_PLAYLISTS.route)} navigate={navigate} />
+            {playlists.map(playlist => {
+              const item: Destination = { label: playlist.name, icon: <ListMusic size={16} />, route: { name: "playlist", playlistId: playlist.id } };
+              return <NavEntry key={playlist.id} item={item} active={playlistsOpen && isActive(item.route)} navigate={navigate} className="sidebar-link" />;
+            })}
+            <button type="button" className="nav-item" onClick={requestPlaylistCreate} aria-label="New playlist" title="New playlist">
+              <Plus size={16} /> <span>New playlist</span>
             </button>
-          ))}
-          {playlists.length === 0 ? <p className="sidebar-hint">Playlists you create appear here.</p> : null}
-        </div>
+          </NavSection>
+        </nav>
       </div>
 
       <div className="sidebar-footer">
@@ -193,27 +204,52 @@ export function Sidebar() {
   );
 }
 
-function NavEntry({ item, active, navigate }: {
-  item: (typeof NAV)[number];
-  active: boolean;
-  navigate: ReturnType<typeof useUi.getState>["navigate"];
+function NavSection({ id, label, icon, current, open, onToggle, children }: {
+  id: string;
+  label: string;
+  icon: ReactNode;
+  current: boolean;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
 }) {
   return (
-    <>
-      {item.group ? <p className="nav-group" aria-hidden="true">{item.group}</p> : null}
+    <div className="nav-section">
       <button
         type="button"
-        className={`nav-item ${active ? "active" : ""}`}
-        onClick={() => navigate(item.route)}
-        title={item.label}
-        aria-label={item.label}
-        aria-current={active ? "location" : undefined}
+        className={`nav-item nav-section-toggle ${current && !open ? "active" : ""}`}
+        aria-expanded={open}
+        aria-controls={`sidebar-${id}`}
+        aria-label={label}
+        title={label}
+        onClick={onToggle}
       >
-        {item.icon}
-        <span>{item.label}</span>
+        {icon}<span>{label}</span><ChevronDown size={14} className="nav-chevron" aria-hidden="true" />
       </button>
-    </>
+      <div className="nav-section-content" id={`sidebar-${id}`} data-open={open} inert={!open} aria-hidden={!open}>
+        <div className="nav-section-inner">{children}</div>
+      </div>
+    </div>
   );
 }
 
-export type { LibraryTab };
+function NavEntry({ item, active, navigate, className = "" }: {
+  item: Destination;
+  active: boolean;
+  navigate: ReturnType<typeof useUi.getState>["navigate"];
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      className={`nav-item ${active ? "active" : ""} ${className}`}
+      onClick={() => navigate(item.route)}
+      title={item.label}
+      aria-label={item.label}
+      aria-current={active ? "location" : undefined}
+    >
+      {item.icon}
+      <span>{item.label}</span>
+    </button>
+  );
+}

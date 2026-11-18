@@ -548,7 +548,7 @@ const layout = await page.evaluate(() => {
     bar: box(".window-title-bar"),
     brand: box(".title-bar-brand"),
     sidebar: box(".sidebar"),
-    topBar: box(".top-bar"),
+    content: box(".content-scroll"),
     controls: [...document.querySelectorAll(".window-control")].map(node => {
       const rect = node.getBoundingClientRect();
       return {
@@ -572,8 +572,8 @@ check(
 );
 check(
   "titlebar-no-overlap",
-  layout.sidebar.top >= layout.bar.bottom - 1 && layout.topBar.top >= layout.bar.bottom - 1,
-  `sidebar ${layout.sidebar.top}, top bar ${layout.topBar.top}, bar bottom ${layout.bar.bottom}`
+  layout.sidebar.top >= layout.bar.bottom - 1 && layout.content.top >= layout.bar.bottom - 1,
+  `sidebar ${layout.sidebar.top}, content ${layout.content.top}, bar bottom ${layout.bar.bottom}`
 );
 check("titlebar-drag-region", layout.barDragRegion, "title bar is a Tauri drag region");
 check(
@@ -622,7 +622,7 @@ check(
   (await page.evaluate(() => document.querySelectorAll(".window-control")[1].getAttribute("aria-label"))) === "Maximize",
   "restore returns the maximize label"
 );
-await page.hover(".top-bar");
+await page.hover(".app-main");
 await page.screenshot({ path: join(shotDir, "00-title-bar.png"), clip: { x: 0, y: 0, width: 1480, height: 140 } });
 await page.screenshot({ path: join(shotDir, "01-home.png") });
 

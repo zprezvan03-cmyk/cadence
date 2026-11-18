@@ -1,6 +1,6 @@
 /**
  * Renderer mirror of the persistent Fetch All Lyrics job that lives in the bridge.
- * The store only caches the latest snapshot (plus library coverage stats) so the top bar,
+ * The store only caches the latest snapshot (plus library coverage stats) so the sidebar,
  * Settings and onboarding render from one place; all work happens bridge-side and keeps
  * running regardless of navigation.
  */

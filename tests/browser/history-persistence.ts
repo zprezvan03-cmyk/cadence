@@ -1051,7 +1051,9 @@ try {
     JSON.stringify(titlesAfterRescan),
   );
 
-  await clickNav(page, "Playlists");
+  await page.click('.sidebar button[title="Playlists"][aria-expanded="false"]');
+  await wait(240);
+  await clickNav(page, "All playlists");
   await page.click('[data-testid="new-smart-playlist"]');
   await page.waitForSelector('[data-testid="smart-playlist-form"]', { timeout: 10_000 });
   const smartPreviewText = await page.$eval(

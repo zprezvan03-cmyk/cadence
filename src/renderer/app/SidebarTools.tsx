@@ -1,5 +1,5 @@
 /**
- * Top bar with navigation history, global search and library actions. Written for Cadence.
+ * Global search and library actions in the sidebar. Written for Cadence.
  */
 
 import { useEffect, useState } from "react";
@@ -8,7 +8,7 @@ import { useLibrary } from "../state/libraryStore";
 import { useUi } from "../state/uiStore";
 import { FetchAllIndicator } from "../features/lyrics-fetch/FetchAllIndicator";
 
-export function TopBar() {
+export function SidebarTools() {
   const navigate = useUi(state => state.navigate);
   const goBack = useUi(state => state.goBack);
   const goForward = useUi(state => state.goForward);
@@ -23,16 +23,7 @@ export function TopBar() {
   }, [route]);
 
   return (
-    <header className="top-bar">
-      <div className="history-buttons">
-        <button type="button" className="icon-button" onClick={goBack} aria-label="Back">
-          <ArrowLeft size={18} />
-        </button>
-        <button type="button" className="icon-button" onClick={goForward} aria-label="Forward">
-          <ArrowRight size={18} />
-        </button>
-      </div>
-
+    <div className="sidebar-tools">
       <form
         className="global-search"
         onSubmit={event => {
@@ -70,18 +61,26 @@ export function TopBar() {
         ) : <kbd className="search-shortcut" aria-hidden="true">Ctrl K</kbd>}
       </form>
 
-      <div className="top-actions">
-        <FetchAllIndicator />
-        {scanning || scan?.running ? (
-          <span className="scan-indicator" title={scan?.message}>
-            <Loader2 size={15} className="spin" />
-            {scan ? `${scan.filesProcessed}/${scan.filesSeen || "?"}` : "Scanning"}
-          </span>
-        ) : null}
-        <button type="button" className="ghost-button top-add" aria-label="Add music" onClick={() => void addFolder()} disabled={scanning}>
-          <FolderPlus size={16} /> <span>Add music</span>
+      <div className="sidebar-actions">
+        <div className="history-buttons">
+          <button type="button" className="icon-button" onClick={goBack} aria-label="Back" title="Back">
+            <ArrowLeft size={16} />
+          </button>
+          <button type="button" className="icon-button" onClick={goForward} aria-label="Forward" title="Forward">
+            <ArrowRight size={16} />
+          </button>
+        </div>
+        <button type="button" className="ghost-button sidebar-add" aria-label="Add music" title="Add music" onClick={() => void addFolder()} disabled={scanning}>
+          <FolderPlus size={15} /> <span>Add music</span>
         </button>
       </div>
-    </header>
+      <FetchAllIndicator />
+      {scanning || scan?.running ? (
+        <span className="scan-indicator" role="status" title={scan?.message ?? "Scanning library"}>
+          <Loader2 size={15} className="spin" />
+          <span>{scan ? `${scan.filesProcessed}/${scan.filesSeen || "?"}` : "Scanning"}</span>
+        </span>
+      ) : null}
+    </div>
   );
 }

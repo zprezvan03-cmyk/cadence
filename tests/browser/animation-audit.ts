@@ -602,11 +602,11 @@ await wait(320);
 const resizedPill = await page.evaluate(() => {
   const pill = document.querySelector(".nav-pill")!.getBoundingClientRect();
   const active = document.querySelector(".nav .nav-item.active")!.getBoundingClientRect();
-  return { deltaTop: Math.abs(pill.top - active.top), deltaHeight: Math.abs(pill.height - active.height), left: Math.round(active.left) };
+  return { deltaTop: Math.abs(pill.top - active.top), deltaHeight: Math.abs(pill.height - active.height), deltaLeft: Math.abs(pill.left - active.left) };
 });
 await page.setViewport({ width: 1440, height: 900 });
 await wait(320);
-check("nav-pill-follows-resize", resizedPill.deltaTop < 1 && resizedPill.deltaHeight < 1 && resizedPill.left === 14, JSON.stringify(resizedPill));
+check("nav-pill-follows-resize", resizedPill.deltaTop < 1 && resizedPill.deltaHeight < 1 && resizedPill.deltaLeft < 1, JSON.stringify(resizedPill));
 
 /* ------------------------------------------------ 2. page state preservation */
 
@@ -1117,9 +1117,11 @@ check("toast-dismisses-on-its-own", await waitForGone(".toast"), "toast removed 
 
 /* --------------------------------------------------- 7. rapid interaction */
 
+await page.click('.nav-section-toggle[title="Playlists"][aria-expanded="false"]');
+await wait(240);
 const rapid = await page.evaluate(async () => {
   const buttons = [...document.querySelectorAll(".nav .nav-item")] as HTMLButtonElement[];
-  const order = ["Songs", "Albums", "Artists", "Playlists", "Liked songs", "Home", "Songs", "Albums", "Home", "Songs", "Artists", "Home"];
+  const order = ["Songs", "Albums", "Artists", "All playlists", "Liked songs", "Home", "Songs", "Albums", "Home", "Songs", "Artists", "Home"];
   for (const label of order) {
     buttons.find(button => button.title === label)!.click();
     await new Promise(done => setTimeout(done, 45));
@@ -1148,10 +1150,39 @@ check("rapid-nav-no-stuck-overlays", rapidState.overlays === 0, `${rapidState.ov
 const geometry = await page.evaluate(() => {
   const player = document.querySelector(".player-bar")!.getBoundingClientRect();
   const content = document.querySelector(".content-scroll")!.getBoundingClientRect();
+  const view = getComputedStyle(document.querySelector(".view")!);
   return { playerHeight: Math.round(player.height), contentHeight: Math.round(content.height), contentTop: Math.round(content.top),
-    playerFullWidth: player.x === 0 && player.width === innerWidth, contentAbovePlayer: Math.abs(player.y - content.bottom) <= 1 };
+    playerFullWidth: player.x === 0 && player.width === innerWidth, contentAbovePlayer: Math.abs(player.y - content.bottom) <= 1,
+    sidebarWidth: document.querySelector(".sidebar")!.getBoundingClientRect().width,
+    noTopBar: !document.querySelector(".top-bar"), viewInsets: [view.paddingLeft, view.paddingRight] };
 });
-check("layout-stable", geometry.playerHeight === 80 && geometry.contentHeight === 752 && geometry.playerFullWidth && geometry.contentAbovePlayer, JSON.stringify(geometry));
+check("layout-stable", geometry.playerHeight === 80 && geometry.contentTop === 0 && geometry.contentHeight === 820 && geometry.sidebarWidth === 256 &&
+  geometry.playerFullWidth && geometry.contentAbovePlayer && geometry.noTopBar && geometry.viewInsets.every(value => value === "10px"), JSON.stringify(geometry));
+
+// Keep the layout mounted as the disclosure moves. Hidden destinations must immediately stop
+// receiving focus, and a collapsed subtree must not change the current page.
+await navItem("Recently Added");
+await wait(240);
+const libraryDisclosure = await page.evaluate(async () => {
+  const toggle = document.querySelector<HTMLButtonElement>('.nav-section-toggle[title="Library"]')!;
+  const section = document.getElementById("sidebar-library")!;
+  const sizes = new Set<number>([Math.round(section.getBoundingClientRect().height)]);
+  const before = location.hash;
+  toggle.click();
+  await new Promise(requestAnimationFrame);
+  const inertWhileClosing = section.inert && section.getBoundingClientRect().height > 0;
+  const end = performance.now() + 240;
+  do {
+    await new Promise(requestAnimationFrame);
+    sizes.add(Math.round(section.getBoundingClientRect().height));
+  } while (performance.now() < end);
+  return { sizes: [...sizes], stillOnRoute: before === location.hash && before.endsWith("/recently-added"), inertWhileClosing,
+    collapsed: toggle.getAttribute("aria-expanded") === "false", endedAt: section.getBoundingClientRect().height };
+});
+check("sidebar-library-disclosure-animates-and-is-inert-when-closed", libraryDisclosure.sizes.length > 3 && libraryDisclosure.collapsed &&
+  libraryDisclosure.endedAt === 0 && libraryDisclosure.inertWhileClosing && libraryDisclosure.stillOnRoute, JSON.stringify(libraryDisclosure));
+await page.click('.nav-section-toggle[title="Library"]');
+await wait(240);
 await shot("07-after-rapid-nav");
 
 await navItem("Albums");

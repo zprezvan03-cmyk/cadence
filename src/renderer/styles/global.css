@@ -29,12 +29,11 @@
   --radius: 10px;
   --radius-sm: 7px;
   --cover-radius: 8px;
-  --workspace-gutter: clamp(24px, 2.75vw, 44px);
-  --sidebar-expanded-width: 222px;
+  --workspace-gutter: 10px;
+  --sidebar-expanded-width: 256px;
   --sidebar-compact-width: 68px;
   --sidebar-width: var(--sidebar-expanded-width);
   --player-height: 80px;
-  --topbar-height: 68px;
   --titlebar-height: 36px;
   --queue-width: 336px;
   --chrome-surface: var(--bg-elevated);
@@ -253,16 +252,14 @@ a {
   overflow: hidden auto;
   scroll-behavior: smooth;
   /* The route viewport is the responsive reference for Now Playing. In windowed mode this
-     is exactly the area between the sidebar/top bar/player; in immersive mode the same box
+     is exactly the area between the sidebar and player; in immersive mode the same box
      expands to the whole window, so one set of container rules serves both. */
   container-type: size;
   container-name: app-content;
 }
 
 .view {
-  padding: 30px var(--workspace-gutter) 48px;
-  max-width: 1500px;
-  margin: 0 auto;
+  padding: 24px var(--workspace-gutter) 48px;
   /* A transformed route re-lays out the sticky song table during navigation. Reveal only
      its opacity so scroll restoration and fixed overlays keep their real geometry. */
   animation: view-in var(--dur-3) var(--ease-out);
@@ -380,7 +377,16 @@ a {
   letter-spacing: -0.04em;
 }
 
+.sidebar-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden auto;
+  /* Leave room for an inset focus outline without changing the sidebar's horizontal gutter. */
+  scrollbar-width: thin;
+}
+
 .nav {
+  --nav-indent: 12px;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -388,8 +394,7 @@ a {
   flex: none;
 }
 
-.nav-group,
-.sidebar-heading {
+.nav-group {
   color: var(--text-faint);
   font-size: 10.5px;
   font-weight: 650;
@@ -403,8 +408,6 @@ a {
   white-space: nowrap;
   transition: opacity var(--dur-2) var(--ease-out);
 }
-
-.nav-group:not(:first-of-type) { margin-top: 9px; }
 
 /* The active pill is one element that slides between items instead of each item fading its own
    background in. It is measured from the DOM (see Sidebar.tsx) and only becomes the active
@@ -425,6 +428,8 @@ a {
     transform var(--dur-3) var(--ease-settle),
     opacity var(--dur-2) var(--ease-out);
 }
+
+.nav-pill[data-nested="true"] { inset-inline-start: var(--nav-indent); }
 
 .nav-pill.is-visible {
   opacity: 1;
@@ -490,77 +495,23 @@ a {
   color: var(--accent);
 }
 
-.sidebar-section {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  flex: 1;
-  padding-top: 6px;
-  border-top: 1px solid var(--border);
+.nav-section-content {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--dur-2) var(--ease-out);
 }
 
-.sidebar-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex: none;
-  padding: 0 3px 3px 12px;
-}
-
-.sidebar-heading > span {
-  min-width: 0;
-  max-width: 140px;
-  overflow: hidden;
-  white-space: nowrap;
-  transition:
-    max-width var(--dur-3) var(--ease-in-out),
-    opacity var(--dur-2) var(--ease-out),
-    transform var(--dur-2) var(--ease-out),
-    visibility var(--dur-2) var(--ease-out);
-}
-
-.sidebar-playlists {
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-height: 0;
-  transition:
-    opacity var(--dur-2) var(--ease-out),
-    visibility var(--dur-2) var(--ease-out);
-}
-
-.sidebar-link {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: none;
-  text-align: left;
-  padding: 7px 12px;
-  border-radius: var(--radius-sm);
-  color: var(--text-dim);
-  font-size: 13px;
-}
-
-.sidebar-link svg { flex: none; color: var(--text-faint); }
-.sidebar-link span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-.sidebar-link:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-
-.sidebar-link.active {
-  color: var(--accent-strong);
-  background: var(--accent-soft);
-}
-
-.sidebar-hint {
-  padding: 4px 12px;
+.nav-section-content[data-open="true"] { grid-template-rows: 1fr; }
+.nav-section-inner { min-height: 0; overflow: hidden; padding-inline-start: var(--nav-indent); }
+.nav-section-inner .nav-item { margin-block: 2px; font-size: 13px; font-weight: 500; }
+.nav-section-inner .nav-item:focus-visible { outline-offset: -2px; }
+.nav-section-toggle .nav-chevron {
+  margin-inline-start: auto;
   color: var(--text-faint);
-  font-size: 12px;
-  line-height: 1.5;
+  transition: transform var(--dur-2) var(--ease-out);
 }
+.nav-section-toggle[aria-expanded="true"] .nav-chevron { transform: rotate(180deg); }
+.nav-item span { text-overflow: ellipsis; }
 
 .sidebar-footer {
   margin-top: auto;
@@ -582,19 +533,14 @@ a {
     visibility var(--dur-2) var(--ease-out);
 }
 
-/* Compact mode keeps every destination and the playlist-create action available as icon buttons.
-   Labels no longer pop out with `display: none`: they collapse horizontally and fade as the
-   registered --sidebar-width interpolates, so icons glide to centre instead of jumping. The
-   vertical rhythm is preserved (playlists/footer keep their space) to avoid a sideways-plus-
-   vertical double jump during the toggle. */
+/* Compact mode preserves access to every destination. Focusing search always expands its rail
+   as an overlay, including when the separate hover-expand preference is off. */
 [data-compact-sidebar="true"] {
   --sidebar-width: var(--sidebar-compact-width);
 }
 
 [data-compact-sidebar="true"] .nav-group { opacity: 0; }
-[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .nav-group { opacity: 1; }
-
-[data-compact-sidebar="true"] .sidebar-heading { padding-inline: 0; }
+[data-compact-sidebar="true"] .sidebar:is(:has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .nav-group { opacity: 1; }
 
 [data-compact-sidebar="true"] .sidebar {
   padding-inline: 10px;
@@ -602,7 +548,6 @@ a {
 
 [data-compact-sidebar="true"] .brand,
 [data-compact-sidebar="true"] .nav-item,
-[data-compact-sidebar="true"] .sidebar-heading,
 [data-compact-sidebar="true"] .title-bar-brand {
   justify-content: center;
 }
@@ -624,7 +569,6 @@ a {
 
 [data-compact-sidebar="true"] .brand-text,
 [data-compact-sidebar="true"] .nav-item span,
-[data-compact-sidebar="true"] .sidebar-heading > span,
 [data-compact-sidebar="true"] .title-bar-text {
   max-width: 0;
   opacity: 0;
@@ -632,8 +576,7 @@ a {
   visibility: hidden;
 }
 
-[data-compact-sidebar="true"] .sidebar-stats,
-[data-compact-sidebar="true"] .sidebar-playlists {
+[data-compact-sidebar="true"] .sidebar-stats {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -643,34 +586,29 @@ a {
    column stays at its compact width and the content never reflows while the sidebar itself widens above it.
    The dur-0 delay is hover intent — a pointer merely crossing the rail does not expand it,
    while collapse on leave is immediate. Keyboard focus expands it the same way. */
-[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) {
+[data-compact-sidebar="true"] .sidebar:is(:has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) {
   --sidebar-width: var(--sidebar-expanded-width);
   padding-inline: 14px;
   box-shadow: 24px 0 60px rgba(0, 0, 0, 0.38);
   transition-delay: var(--dur-0);
 }
 
-[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .brand {
+[data-compact-sidebar="true"] .sidebar:is(:has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .brand {
   justify-content: flex-start;
   gap: 11px;
   padding-inline: 8px;
   transition-delay: var(--dur-0);
 }
 
-[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .nav-item {
+[data-compact-sidebar="true"] .sidebar:is(:has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .nav-item {
   justify-content: flex-start;
   gap: 12px;
   padding-inline: 12px;
   transition-delay: 0s, 0s, var(--dur-0), var(--dur-0);
 }
 
-[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .sidebar-heading {
-  justify-content: space-between;
-  padding-inline: 12px 3px;
-}
-
-[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .brand-text,
-[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .nav-item span {
+[data-compact-sidebar="true"] .sidebar:is(:has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .brand-text,
+[data-compact-sidebar="true"] .sidebar:is(:has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .nav-item span {
   max-width: 180px;
   opacity: 1;
   transform: none;
@@ -678,16 +616,7 @@ a {
   transition-delay: var(--dur-0);
 }
 
-[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .sidebar-heading > span {
-  max-width: 140px;
-  opacity: 1;
-  transform: none;
-  visibility: visible;
-  transition-delay: var(--dur-0);
-}
-
-[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .sidebar-stats,
-[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .sidebar-playlists {
+[data-compact-sidebar="true"] .sidebar:is(:has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .sidebar-stats {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
@@ -699,11 +628,7 @@ a {
   .brand { padding-bottom: 1px; }
   .nav { gap: 1px; }
   .nav-group { height: 19px; padding-top: 2px; }
-  .nav-group:not(:first-of-type) { margin-top: 4px; }
   .nav-item { min-height: 29px; padding-block: 5px; }
-  .sidebar-section { padding-top: 2px; }
-  .sidebar-heading { padding-bottom: 0; }
-  .sidebar-link { padding-block: 5px; }
   .sidebar-footer { padding-top: 4px; }
   .sidebar-stats { display: none; }
 }
@@ -828,33 +753,29 @@ a {
   color: #ffffff;
 }
 
-/* ---------------------------------------------------------------- top bar */
+/* ------------------------------------------------------------ sidebar tools */
 
-.top-bar {
-  height: var(--topbar-height);
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 0 var(--workspace-gutter);
-  border-bottom: 1px solid var(--border);
-  background: var(--bg);
-  flex-shrink: 0;
+.sidebar-tools {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  flex: none;
 }
 
-.history-buttons {
-  display: flex;
-  gap: 4px;
-}
+.sidebar-actions { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.history-buttons { display: flex; }
+.sidebar-tools .history-buttons .icon-button { width: 28px; height: 30px; }
+.sidebar-tools .sidebar-add { padding: 5px 8px; white-space: nowrap; font-size: 12px; }
 
 .global-search {
-  flex: 1;
-  max-width: 384px;
-  min-width: 100px;
+  position: relative;
+  min-width: 0;
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 12px;
-  height: 37px;
+  gap: 8px;
+  padding: 0 10px;
+  height: 36px;
   background: var(--surface);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -883,17 +804,20 @@ a {
 .global-search input::placeholder { color: var(--text-faint); }
 .global-search .icon-button { width: 22px; height: 26px; margin-right: -5px; }
 .global-search .search-shortcut { color: var(--text-faint); white-space: nowrap; }
-.top-add { white-space: nowrap; }
 
 .global-search input::-webkit-search-cancel-button {
   display: none;
 }
 
-.top-actions {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 12px;
+/* The compact search input is still a focus target. It expands into the ordinary field when
+   clicked or focused with Ctrl/Cmd+K, without reflowing the page. */
+[data-compact-sidebar="true"] .sidebar:not(:has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) {
+  .global-search { justify-content: center; padding-inline: 0; }
+  .global-search input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
+  :is(.search-shortcut, .global-search .icon-button, .sidebar-add span, .scan-indicator span, .nav-chevron, .fetch-indicator-count, .fetch-indicator-bar) { display: none; }
+  .sidebar-actions { flex-direction: column; align-items: stretch; }
+  .history-buttons .icon-button { width: 50%; }
+  .sidebar-add { justify-content: center; }
 }
 
 .scan-indicator {
@@ -1489,7 +1413,7 @@ input[type="range"].volume:active::-webkit-slider-thumb {
 
 .queue-panel {
   position: fixed;
-  top: calc(var(--window-chrome-top) + var(--topbar-height));
+  top: var(--window-chrome-top);
   right: 0;
   bottom: var(--player-height);
   width: min(var(--queue-width), 100vw);
@@ -2003,8 +1927,8 @@ input[type="range"].volume:active::-webkit-slider-thumb {
 .mini-player .time { width: 34px; font-size: 10px; }
 
 @media (max-width: 830px) {
-  :root { --sidebar-expanded-width: 188px; }
-  .top-bar { gap: 8px; }
+  :root { --sidebar-expanded-width: 216px; }
+  .global-search .search-shortcut { display: none; }
   .player-bar { grid-template-columns: minmax(0, 1fr) minmax(188px, 1.2fr) minmax(212px, 1fr); gap: 10px; }
   .player-right .volume-group { width: 68px; }
   .player-tools .icon-button { width: 28px; }
@@ -2012,7 +1936,6 @@ input[type="range"].volume:active::-webkit-slider-thumb {
 }
 
 @media (max-width: 650px) {
-  .top-add span, .global-search .search-shortcut { display: none; }
   .player-bar { grid-template-columns: minmax(0, 1fr) minmax(178px, 1.3fr); grid-template-rows: minmax(0, 1fr) 30px; gap: 0 10px; }
   .player-right { grid-column: 1 / -1; justify-content: space-between; }
   .player-track .artwork-sm { width: 40px; height: 40px; }

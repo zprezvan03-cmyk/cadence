@@ -14,7 +14,6 @@ import { PlaylistPicker } from "./app/PlaylistPicker";
 import { ShortcutsHelp } from "./app/ShortcutsHelp";
 import { TrackEditor } from "./features/library/TrackEditor";
 import { Sidebar } from "./app/Sidebar";
-import { TopBar } from "./app/TopBar";
 import { useReducedMotion } from "./app/useMotionPreference";
 import { useWindowChrome, WindowTitleBar } from "./app/WindowTitleBar";
 import { useBootstrap } from "./app/useBootstrap";
@@ -153,7 +152,6 @@ export function App() {
           {titleBar ? <WindowTitleBar chrome={chrome} /> : null}
           {!immersive ? <Sidebar /> : null}
           <main className="app-main">
-            {!immersive ? <TopBar /> : null}
             {error && !immersive ? (
               <div className="error-banner" role="alert">
                 {error}
