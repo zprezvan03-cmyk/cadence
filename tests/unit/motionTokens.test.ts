@@ -25,6 +25,7 @@ describe("motion tokens", () => {
     expect(globalCss).toContain(`--dur-2: ${MOTION_DURATION_MS.surface}ms`);
     expect(globalCss).toContain(`--dur-3: ${MOTION_DURATION_MS.view}ms`);
     expect(globalCss).toContain(`--dur-4: ${MOTION_DURATION_MS.layout}ms`);
+    expect(globalCss).toContain(`--dur-scene: ${MOTION_DURATION_MS.scene}ms`);
     expect(globalCss).toContain(`--stagger-step: ${STAGGER_STEP_MS}ms`);
   });
 
@@ -33,6 +34,7 @@ describe("motion tokens", () => {
     expect(globalCss).toContain(`--ease-in: ${MOTION_EASING.in}`);
     expect(globalCss).toContain(`--ease-in-out: ${MOTION_EASING.inOut}`);
     expect(globalCss).toContain(`--ease-spring: ${MOTION_EASING.spring}`);
+    expect(globalCss).toContain(`--ease-settle: ${MOTION_EASING.settle}`);
   });
 
   it("keeps exits inside the strictest dismissal budget", () => {
@@ -62,7 +64,7 @@ describe("motion tokens", () => {
     // shorthand is intentionally not scanned.
     const allowed = new Set(["0s", "0ms", "0.001ms"]);
     const offenders: string[] = [];
-    for (const file of ["global.css", "views.css", "lyrics.css"]) {
+    for (const file of ["global.css", "views.css", "lyrics.css", "playback-motion.css"]) {
       const css = readFileSync(new URL(`../../src/renderer/styles/${file}`, import.meta.url), "utf8");
       for (const match of css.matchAll(/(transition(?:-duration|-delay)?)\s*:\s*([^;}]+);/g)) {
         const declaration = match[2].replace(/\s+/g, " ").trim();
@@ -100,7 +102,7 @@ describe("motion tokens", () => {
 
   it("collapses reduced-motion layout layers but preserves the fast feedback layer", () => {
     const reducedCss = globalCss.slice(globalCss.indexOf('[data-reduce-motion="true"] {'));
-    for (const token of ["--dur-0", "--dur-2", "--dur-3", "--dur-4"]) {
+    for (const token of ["--dur-0", "--dur-2", "--dur-3", "--dur-4", "--dur-scene"]) {
       expect(reducedCss).toContain(`${token}: 0.01ms`);
     }
     // --dur-1 (120ms hover/press colour + opacity feedback) is deliberately not collapsed.

@@ -23,6 +23,7 @@ import { PNG } from "pngjs";
 import { LibraryStore } from "../../src/main/library/store";
 import { scanLibrary } from "../../src/main/library/scanner";
 import { SettingsStore } from "../../src/main/settings";
+import { auditArtworkResilience, auditMiniHandoff, auditLyricFollow, auditQueueRows } from "./playback-motion";
 
 const root = resolve(import.meta.dirname, "../..");
 const outDir = join(root, "dist");
@@ -58,12 +59,45 @@ const store = new LibraryStore(join(stateDir, "library.db"), artworkDir, path =>
 const scan = await scanLibrary(store, { folders: [musicDir] });
 if (scan.errors.length) console.log("scan errors:", scan.errors);
 
+// Distinct, deterministic covers and metadata for the first few occurrences. The rest of the
+// fixture still exercises many tracks sharing *one* immutable artwork URL.
+const special = [
+  ["Aurora", "Aerials", "amber"],
+  ["Blue Hour", "Blue Lines", "blue"],
+  ["Canopy", "Cloud Study", "slow"],
+  ["Dusk", "Daymark", "broken"],
+  ["Evening", "Echolands", "blue"],
+] as const;
+for (const [name, palette] of [
+  ["amber", [212, 94, 46]], ["blue", [40, 106, 224]], ["slow", [38, 172, 113]],
+] as const) {
+  const image = { width: 256, height: 256, data: Buffer.alloc(256 * 256 * 4) };
+  for (let y = 0; y < image.height; y++) {
+    for (let x = 0; x < image.width; x++) {
+      const radius = Math.hypot(x - 101, y - 98);
+      const ripple = 0.11 * Math.sin(radius / 6) + (radius < 71 ? 0.27 : -0.18);
+      const light = 0.72 + ripple + 0.28 * (1 - y / 255);
+      const at = (y * image.width + x) * 4;
+      for (let c = 0; c < 3; c++) image.data[at + c] = Math.min(255, palette[c] * light);
+      image.data[at + 3] = 255;
+    }
+  }
+  writeFileSync(join(artworkDir, `${name}.png`), PNG.sync.write(image));
+}
+writeFileSync(join(artworkDir, "broken.png"), "not a decodable image");
+
 const snapshot = () => {
-  const tracks = store.getTracks().map(track => ({
-    ...store.toTrack(track),
-    streamUrl: `/audio/${track.id}`,
-    artworkUrl: track.artworkFile ? `/artwork/${encodeURIComponent(track.artworkFile)}` : null,
-  }));
+  const tracks = store.getTracks().map(track => {
+    const number = Number(/Alpha Song (\d+)/.exec(basename(track.path))?.[1]);
+    const sample = special[number - 1];
+    return {
+      ...store.toTrack(track),
+      streamUrl: `/audio/${track.id}`,
+      title: sample ? `Fixture ${number} · ${sample[0]}` : track.title,
+      artist: sample?.[1] ?? track.artist,
+      artworkUrl: sample ? `/artwork/${sample[2]}.png` : track.artworkFile ? `/artwork/${encodeURIComponent(track.artworkFile)}` : null,
+    };
+  });
   return {
     tracks,
     albums: store.getAlbums(),
@@ -76,9 +110,10 @@ const snapshot = () => {
 };
 
 const settings = new SettingsStore(join(stateDir, "settings.json"));
-const tracks = snapshot().tracks;
-const firstId = tracks.find(track => track.title === "Alpha Song 01")?.id ?? tracks[0].id;
-const secondId = tracks[1]?.id ?? firstId;
+// The artwork wash is deterministic under software rendering. test:now-playing separately
+// verifies the production shader and canvas modes.
+settings.patch({ shaders: { enabled: false }, playback: { autoPlay: false, crossfadeSeconds: 0 } });
+const firstId = store.getTrackByPath(join(musicDir, "Alpha Song 01.flac"))!.id;
 
 /* ------------------------------------------------------------------ server */
 
@@ -173,7 +208,7 @@ const server = createServer(async (req, res) => {
       res.writeHead(404).end();
       return;
     }
-    res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream", "cache-control": "no-store" });
+    res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream", "cache-control": "public, max-age=31536000, immutable" });
     createReadStream(file).pipe(res);
     return;
   }
@@ -209,7 +244,7 @@ const logs: string[] = [];
 page.on("console", message => logs.push(`[${message.type()}] ${message.text()}`));
 page.on("pageerror", (error: unknown) => logs.push(`[pageerror] ${String(error)}`));
 
-await page.evaluateOnNewDocument((ids: { first: number; second: number }) => {
+await page.evaluateOnNewDocument((startId: number) => {
   const call = async (path: string, body?: unknown) => {
     const response = await fetch(
       path,
@@ -284,14 +319,15 @@ await page.evaluateOnNewDocument((ids: { first: number; second: number }) => {
       windowChrome: async () => ({ ...chromeInfo }),
       onWindowChromeChange: () => () => {},
     },
+    history: { list: async () => [], add: async () => undefined },
     player: {
-      prepareAlacSource: async () => `/audio/${ids.first}`,
+      prepareAlacSource: async () => `/audio/${startId}`,
       reportState: async () => undefined,
       onCommand: () => () => {},
     },
     decodeTester: { deleteFiles: async () => [], exportFileList: async () => ({ canceled: true }) },
   };
-}, { first: firstId, second: secondId });
+}, firstId);
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -358,7 +394,7 @@ const freezeAt = (at = 110) =>
     }
     return {
       count: held.length,
-      names: held.map(animation => (animation as CSSAnimation).animationName ?? (animation as CSSTransition).transitionProperty ?? "?"),
+      names: held.map(animation => (animation as CSSAnimation).animationName ?? (animation as CSSTransition).transitionProperty ?? animation.id),
     };
   }, at);
 
@@ -423,6 +459,7 @@ const motionTokens = await page.evaluate(() => {
     dur2: timeToMs(token("--dur-2")),
     dur3: timeToMs(token("--dur-3")),
     dur4: timeToMs(token("--dur-4")),
+    scene: timeToMs(token("--dur-scene")),
     stagger: timeToMs(token("--stagger-step")),
     easeOut: token("--ease-out"),
     easeIn: token("--ease-in"),
@@ -437,7 +474,7 @@ check(
     motionTokens.dur1 === 120 &&
     motionTokens.dur2 === 180 &&
     motionTokens.dur3 === 240 &&
-    motionTokens.dur4 === 320 &&
+    motionTokens.dur4 === 320 && motionTokens.scene === 380 &&
     motionTokens.stagger === 24,
   JSON.stringify(motionTokens)
 );
@@ -510,7 +547,12 @@ check("view-enters-with-fade", Number(viewAnimation?.duration) === 240, JSON.str
 // Mid-transition frame: navigate again, hold the real animation at 110 ms, shoot, resume, then shoot
 // the settled frame. The two images prove an intermediate state exists.
 await navItem("Songs");
-const held = await freezeAt(110);
+const routeExit = await page.evaluate(() => {
+  const pane = document.querySelector<HTMLElement>("[data-route-exit]");
+  return { inert: pane?.inert, hidden: pane?.getAttribute("aria-hidden"), animation: pane && getComputedStyle(pane).animationName };
+});
+check("browse-exit-is-brief-and-inert", routeExit.inert === true && routeExit.hidden === "true" && routeExit.animation === "fade-out", JSON.stringify(routeExit));
+const held = await freezeAt(100);
 await shot("01-nav-albums-mid");
 await resumeAll();
 await wait(340);
@@ -620,8 +662,10 @@ await shot("06-settings-playback");
 await navItem("Songs");
 await page.waitForSelector(".track-row", { timeout: 10_000 });
 await wait(200);
-await page.evaluate(() => (document.querySelector(".track-row") as HTMLElement).click());
-await wait(600);
+await page.select(".sort-select select", "title");
+await page.evaluate((id: number) => document.querySelector<HTMLElement>(`.track-row[data-track-id="${id}"]`)?.click(), firstId);
+await page.waitForSelector('.player-track [data-cover-layer="current"] img[src$="amber.png"]', { timeout: 3000 });
+await wait(400);
 await page.evaluate(() => document.querySelector("audio")?.play());
 await wait(400);
 
@@ -647,44 +691,31 @@ check(
   JSON.stringify(iconToggle)
 );
 
-const swap = await page.evaluate(async () => {
-  const before = document.querySelector(".player-artwork-swap");
-  (document.querySelector('button[aria-label="Next track"]') as HTMLButtonElement).click();
-  await new Promise(done => requestAnimationFrame(() => done(null)));
-  const artwork = document.querySelector(".player-artwork-swap");
-  const meta = document.querySelector(".player-track-meta");
-  const names = (node: Element | null) =>
-    node?.getAnimations().map(animation => (animation as CSSAnimation).animationName ?? "") ?? [];
+await page.evaluate(() => document.querySelector<HTMLButtonElement>('.player-bar button[aria-label="Next track"]')!.click());
+await page.waitForSelector('.player-track [data-cover-layer="current"] img[src$="blue.png"]', { timeout: 3000 });
+const heldMeta = await freezeAt(78);
+const swap = await page.evaluate(() => {
+  const layers = (selector: string) => [...document.querySelectorAll<HTMLElement>(selector)].map(node => ({
+    opacity: Number(getComputedStyle(node).opacity),
+    img: node.querySelector("img")?.getAttribute("src"),
+    text: node.textContent,
+    hidden: node.getAttribute("aria-hidden"),
+  }));
   return {
-    artworkAnimations: names(artwork),
-    metaAnimations: names(meta),
-    // The same nodes are reused; the fade must not duplicate the cover in the bar.
-    sameArtworkNode: artwork === before,
-    artworkCount: document.querySelectorAll(".player-track .artwork").length,
-    metaCount: document.querySelectorAll(".player-track-meta").length,
-    artworkLoaded: Boolean(document.querySelector(".player-track .artwork img")),
+    art: layers(".player-track [data-cover-layer]"),
+    text: layers(".player-track [data-track-layer]"),
+    tints: [...document.querySelectorAll<HTMLElement>(".player-bar [data-atmosphere-layer]")].map(node => node.style.getPropertyValue("--cover-tint")),
   };
 });
-check(
-  "artwork-fades-on-track-change",
-  swap.artworkAnimations.includes("artwork-in") && swap.artworkCount === 1,
-  JSON.stringify(swap)
-);
-check(
-  "player-meta-fades-on-track-change",
-  swap.metaAnimations.includes("meta-in") && swap.metaCount === 1,
-  JSON.stringify(swap)
-);
-check("player-artwork-not-duplicated", swap.artworkCount === 1 && swap.metaCount === 1 && swap.sameArtworkNode, JSON.stringify(swap));
-check("player-artwork-has-image", swap.artworkLoaded, "cover image rendered");
-
-await wait(80);
-const heldMeta = await freezeAt(90);
+check("track-change-holds-decoded-outgoing-cover", swap.art.length === 2 && swap.art[0]?.img?.endsWith("amber.png") === true && swap.art[0].opacity === 1 && swap.art[1].opacity > 0 && swap.art[1].opacity < 1, JSON.stringify(swap.art));
+check("track-change-coordinates-text-and-tint", swap.text.length === 2 && swap.text[0].text?.includes("Blue Hour") === true && swap.text[1].text?.includes("Aurora") === true && swap.text[1].hidden === "true" && swap.tints.length === 2 && swap.tints[0] !== swap.tints[1], JSON.stringify(swap));
 await shot("02-player-track-change-mid");
 await resumeAll();
-await wait(300);
+await wait(370);
 await shot("02-player-track-change-settled");
 check("player-mid-frame-differs", heldMeta.count > 0 && frameDelta("02-player-track-change-mid", "02-player-track-change-settled") > 0.0005, `${heldMeta.count} held`);
+check("track-change-cleans-up", await waitForGone(".player-bar [data-cover-layer=outgoing], .player-bar [data-track-layer=outgoing], .player-bar [data-atmosphere-layer=outgoing]"));
+await auditArtworkResilience(page, check, shot);
 
 // Seek fill: painted from the audio clock, never transitioned, so the bar cannot lag the song.
 const seekTiming = await page.evaluate(() => {
@@ -752,6 +783,7 @@ await resumeAll();
 await wait(260);
 await shot("03-queue-settled");
 check("queue-mid-frame-differs", heldQueue.count > 0 && frameDelta("03-queue-mid", "03-queue-settled") > 0.002, `${heldQueue.count} held`);
+await auditQueueRows(page, check, shot);
 await page.keyboard.press("q");
 const queueExit = await waitForExit('[data-testid="queue-panel"]');
 check(
@@ -843,7 +875,7 @@ const fsState = await page.evaluate(() => {
     controls: Boolean(document.querySelector('[data-testid="fullscreen-controls"]')),
   };
 });
-check("fullscreen-enters-with-fade", fsHeld.names.includes("fs-in"), JSON.stringify(fsHeld));
+check("fullscreen-enters-with-shared-artwork", fsHeld.names.includes("player-artwork-handoff"), JSON.stringify(fsHeld));
 check("fullscreen-covers-window", fsState.rect?.width === 1440 && fsState.rect?.height === 900, JSON.stringify(fsState.rect));
 check("fullscreen-mid-frame-differs", fsHeld.count > 0 && frameDelta("05-fullscreen-mid", "05-fullscreen-settled") > 0.001, `${fsHeld.count} held, ${(frameDelta("05-fullscreen-mid", "05-fullscreen-settled") * 100).toFixed(2)}% changed`);
 
@@ -936,47 +968,37 @@ check(
   `opacity ${lyricsUpgradeOpacity}`
 );
 
-// A real Next action restarts only the fullscreen artwork entrance.
-await page.evaluate(() => document.querySelector<HTMLButtonElement>('button[aria-label="Next track"]')?.click());
-const fsArtworkSwap = await page
-  .waitForFunction(
-    () => {
-      const art = document.querySelector(".fs-artwork");
-      const animation = art
-        ?.getAnimations()
-        .find(candidate => (candidate as CSSAnimation).animationName === "artwork-in");
-      return animation
-        ? {
-            duration: animation.effect?.getTiming().duration ?? null,
-            currentTime: animation.currentTime,
-            swapping: art?.classList.contains("is-swapping") ?? false,
-          }
-        : false;
-    },
-    { timeout: 3000 }
-  )
-  .then(handle => handle?.jsonValue() as Promise<{ duration: number | string | null; currentTime: number | null; swapping: boolean } | null>)
-  .catch(() => null);
-check(
-  "fullscreen-artwork-track-swap",
-  Boolean(fsArtworkSwap?.swapping && Number(fsArtworkSwap.duration) === 240),
-  JSON.stringify(fsArtworkSwap)
-);
-await wait(300);
-
+// Jump to a known different cover in the queue while fullscreen. Only one Braccato view may exist.
+await page.keyboard.press("q");
+await page.waitForSelector(".queue-list li", { timeout: 3000 });
+await page.evaluate(() => {
+  const src = document.querySelector('.fs-artwork [data-cover-layer="current"] img')?.getAttribute("src");
+  const row = [...document.querySelectorAll<HTMLElement>(".queue-list li:not(.current) .queue-track")].find(row => {
+    const target = row.querySelector("img")?.getAttribute("src");
+    return target && target !== src;
+  });
+  row?.click();
+  document.querySelector<HTMLButtonElement>('button[aria-label="Close queue"]')?.click();
+});
+const fsArtworkSwap = await page.waitForFunction(() => {
+  const cover = document.querySelector('.fs-artwork [data-cover-layer="current"]');
+  return cover?.getAnimations().some(animation => (animation as CSSAnimation).animationName === "cover-dissolve");
+}, { timeout: 2000 }).then(() => true).catch(() => false);
+check("fullscreen-artwork-track-swap", fsArtworkSwap);
+await wait(410);
 await page.keyboard.press("Escape");
-await wait(120);
+await page.waitForSelector(".player-bar", { timeout: 3000 });
 const exitState = await page.evaluate(() => ({
   fullscreen: Boolean(document.querySelector(".lyrics-view.is-fullscreen")),
-  shell: document.querySelector(".player-bar")?.getAnimations().map(animation => (animation as CSSAnimation).animationName ?? "") ?? [],
+  artReturns: Boolean(document.querySelector('[data-player-flight="artwork"]')),
   sidebar: Boolean(document.querySelector(".sidebar")),
 }));
-check("fullscreen-exits", !exitState.fullscreen, "left fullscreen");
-check("shell-fades-back", exitState.shell.includes("chrome-in") && exitState.sidebar, JSON.stringify(exitState));
-await wait(300);
+check("fullscreen-exits", !exitState.fullscreen && exitState.sidebar, JSON.stringify(exitState));
+check("fullscreen-artwork-returns", exitState.artReturns, JSON.stringify(exitState));
+await wait(400);
 await shot("05-fullscreen-exit-settled");
-
-/* ------------------------------------------------------------- 6. toasts */
+await auditLyricFollow(page, check, shot);
+await auditMiniHandoff(page, check, shot);
 
 await sidebarItem("Settings");
 await wait(300);
@@ -1363,6 +1385,7 @@ check("motion-restored-after-preference", restoredMotion !== "0.001ms", restored
 
 /* ------------------------------------------------------------------ summary */
 
+check("no-unhandled-renderer-errors", !logs.some(line => line.startsWith("[pageerror]")), logs.filter(line => line.startsWith("[pageerror]")).join(" | "));
 const failed = Object.entries(results).filter(([, result]) => !result.value);
 writeFileSync(
   join(shotDir, "summary.json"),
