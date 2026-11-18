@@ -8,7 +8,6 @@ import { useCurrentMediaItem, useCurrentTrack } from "../../app/hooks";
 import { useLibrary } from "../../state/libraryStore";
 import { usePlayer } from "../../state/playerStore";
 import { useUi } from "../../state/uiStore";
-import { ArtistAvatar } from "../../components/ArtistAvatar";
 import { SourceBadge } from "../../components/SourceBadge";
 import { SeekRow, TransportButtons, VolumeControl } from "./PlaybackControls";
 import { PlaybackArtwork, PlaybackText } from "./PlaybackVisuals";
@@ -48,6 +47,7 @@ export function PlayerBar() {
       data-testid="player-bar"
       data-playback-mechanism={playbackMechanism}
       data-source-kind={item?.source.kind ?? "none"}
+      data-artwork-wash={Boolean(cover.front.value.src) || undefined}
       style={cover.front.value.src ? { ["--player-artwork" as string]: `url("${cover.front.value.src.replace(/"/g, "%22")}")` } : undefined}
     >
       <div className="player-track">
@@ -62,9 +62,6 @@ export function PlayerBar() {
                   {display?.title ?? "Nothing playing"}
                 </div>
                 <div className="player-artist" title={display?.artistLabel}>
-                  {display?.artistLabel ? (
-                    <ArtistAvatar name={display.artistLabel} size="xs" className="artist-avatar-inline" />
-                  ) : null}
                   <span className="player-artist-name">{display?.artistLabel ?? "Choose a song to begin"}</span>
                   {display ? <SourceBadge source={display.source} compact /> : null}
                 </div>

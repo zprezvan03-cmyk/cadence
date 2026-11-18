@@ -69,14 +69,13 @@ export class PlayerLayoutMotion extends Component<Props> {
     const root = document.getElementById("root");
     if (!root || !from || !Object.keys(from).length) return;
     const bar = root.querySelector<HTMLElement>(".player-bar");
-    // Don't animate the entire blurred page underneath its moving children. Cancel only the
-    // redundant mount animation; leave the lyrics clock, overlays and other animations alone.
-    for (const surface of [bar, root.querySelector(".lyrics-view")]) {
-      for (const animation of surface?.getAnimations() ?? []) {
-        if (["chrome-in", "view-in", "fs-in"].includes((animation as CSSAnimation).animationName)) animation.cancel();
-      }
+    const lyrics = root.querySelector(".lyrics-view");
+    // No second, full-surface fade of the artwork background underneath the flying controls.
+    for (const animation of lyrics?.getAnimations() ?? []) {
+      if (["view-in", "fs-in"].includes((animation as CSSAnimation).animationName)) animation.cancel();
     }
     const to = measure(root, this.props.layout);
+    const miniHandoff = previous.layout === "mini" || this.props.layout === "mini";
     const animations: Animation[] = [];
     const sharedHeadingAndCover = from.artwork && to.artwork && from.metadata && to.metadata;
     const duration = MOTION_DURATION_MS.scene;
@@ -95,10 +94,21 @@ export class PlayerLayoutMotion extends Component<Props> {
         { transform: displacement(part, start, end), transformOrigin: "0 0" },
         { transform: "translate(0px, 0px) scale(1)", transformOrigin: "0 0" },
       ], {
-        id: `player-${part}-handoff`, duration: duration - delay, delay, easing: MOTION_EASING.settle, fill: "both",
+        id: `player-${part}-handoff`, duration: duration - delay, delay,
+        easing: miniHandoff ? MOTION_EASING.out : MOTION_EASING.settle, fill: "both",
       }));
     }
     if (!animations.length) return;
+
+    // Settle the small compact title strip with the handoff. On expansion leave the large
+    // masked lyrics surface and its filtered backdrop still; only the shared player moves.
+    const miniChrome = this.props.layout === "mini" ? root.querySelector(".mini-player-chrome") : null;
+    if (miniChrome) {
+      animations.push(miniChrome.animate([{ opacity: 0.65 }, { opacity: 1 }], {
+        id: "player-surroundings", duration: MOTION_DURATION_MS.surface, delay: duration - MOTION_DURATION_MS.surface,
+        easing: MOTION_EASING.out, fill: "backwards",
+      }));
+    }
     if (bar) bar.dataset.playerMoving = "true";
     this.cancelFlight = finishMotion(animations, () => {
       if (bar) delete bar.dataset.playerMoving;

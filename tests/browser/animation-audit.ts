@@ -533,7 +533,7 @@ const pillProbe = await page.evaluate(async () => {
   };
   const start = performance.now();
   buttons.find(button => button.title === "Albums")!.click();
-  let immediate: { name: string; duration: number | string | null; target: string }[] = [];
+  let immediate: { name: string; duration: number | string | null; target: string; translates: boolean }[] = [];
   await new Promise<void>(done => {
     const tick = () => {
       if (!immediate.length) {
@@ -541,6 +541,7 @@ const pillProbe = await page.evaluate(async () => {
           name: (animation as CSSAnimation).animationName ?? (animation as CSSTransition).transitionProperty ?? "?",
           duration: (animation.effect?.getTiming().duration ?? null) as number | string | null,
           target: String((animation.effect as KeyframeEffect | null)?.target?.className ?? ""),
+          translates: (animation.effect as KeyframeEffect | null)?.getKeyframes().some(frame => "transform" in frame || "translate" in frame) ?? false,
         }));
       }
       samples.push({
@@ -563,7 +564,7 @@ check(
   `${distinct} distinct transforms over ${pillProbe.samples.length} frames; first ${pillProbe.samples[0]?.transform} last ${pillProbe.samples.at(-1)?.transform}`
 );
 const viewAnimation = pillProbe.immediate.find(animation => animation.name === "view-in");
-check("view-enters-with-fade", Number(viewAnimation?.duration) === 240, JSON.stringify(viewAnimation ?? pillProbe.immediate));
+check("view-enters-with-fade-without-moving-the-scrollport", Number(viewAnimation?.duration) === 240 && viewAnimation?.translates === false, JSON.stringify(viewAnimation ?? pillProbe.immediate));
 
 // Mid-transition frame: navigate again, hold the real animation at 110 ms, shoot, resume, then shoot
 // the settled frame. The two images prove an intermediate state exists.
@@ -719,15 +720,20 @@ const swap = await page.evaluate(() => {
     text: node.textContent,
     hidden: node.getAttribute("aria-hidden"),
   }));
-  return {
-    art: layers(".player-track [data-cover-layer]"),
-    text: layers(".player-track [data-track-layer]"),
-    blur: getComputedStyle(document.querySelector(".player-bar")!, "::before").filter,
-  };
+  const bar = document.querySelector(".player-bar")!;
+  const wash = getComputedStyle(bar, "::before");
+  const surface = { width: parseFloat(wash.width), filter: wash.filter, backdrop: getComputedStyle(bar).backdropFilter };
+  const root = document.documentElement;
+  const previous = root.dataset.blurArtwork;
+  root.dataset.blurArtwork = "false";
+  const hidden = getComputedStyle(bar, "::before").display === "none";
+  if (previous === undefined) delete root.dataset.blurArtwork;
+  else root.dataset.blurArtwork = previous;
+  return { art: layers(".player-track [data-cover-layer]"), text: layers(".player-track [data-track-layer]"), surface, hidden };
 });
 check("track-change-holds-decoded-outgoing-cover", swap.art.length === 2 && swap.art[0]?.img?.endsWith("amber.png") === true && swap.art[0].opacity === 1 && swap.art[1].opacity > 0 && swap.art[1].opacity < 1, JSON.stringify(swap.art));
-check("track-change-coordinates-readable-metadata", swap.text.length === 2 && swap.text[0].text?.includes("Blue Hour") === true && swap.text[1].text?.includes("Aurora") === true && swap.text[1].hidden === "true" && swap.text[0].opacity > 0 && swap.text[0].opacity < 1, JSON.stringify(swap.text));
-check("player-retains-original-artwork-blur", swap.blur === "blur(26px) saturate(1.2)" && !(await page.$(".artwork-atmosphere")), swap.blur);
+check("track-change-coordinates-readable-metadata", swap.text.length === 2 && swap.text[0].text?.includes("Blue Hour") === true && swap.text[1].text?.includes("Aurora") === true && swap.text[1].hidden === "true" && swap.text[0].opacity > 0.35 && swap.text[0].opacity < 1 && swap.text[0].opacity + swap.text[1].opacity > 0.6, JSON.stringify(swap.text));
+check("player-artwork-wash-is-local-neutral-and-optional", swap.surface.width > 0 && swap.surface.width <= 160 && swap.surface.filter.includes("grayscale(1)") && swap.surface.filter.includes("blur(10px)") && swap.surface.backdrop === "none" && swap.hidden && !(await page.$(".artwork-atmosphere")), JSON.stringify(swap.surface));
 await shot("02-player-track-change-mid");
 await resumeAll();
 await wait(370);
@@ -1145,7 +1151,7 @@ const geometry = await page.evaluate(() => {
   return { playerHeight: Math.round(player.height), contentHeight: Math.round(content.height), contentTop: Math.round(content.top),
     playerFullWidth: player.x === 0 && player.width === innerWidth, contentAbovePlayer: Math.abs(player.y - content.bottom) <= 1 };
 });
-check("layout-stable", geometry.playerHeight === 92 && geometry.contentHeight === 740 && geometry.playerFullWidth && geometry.contentAbovePlayer, JSON.stringify(geometry));
+check("layout-stable", geometry.playerHeight === 80 && geometry.contentHeight === 752 && geometry.playerFullWidth && geometry.contentAbovePlayer, JSON.stringify(geometry));
 await shot("07-after-rapid-nav");
 
 await navItem("Albums");

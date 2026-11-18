@@ -97,20 +97,22 @@ export function buildThemeCss(settings: LyricsSettings): string {
   const translationFontSizePx = secondaryFontSizePx(settings.translationFontSizePx, 32);
   const romanizationFontSizePx = secondaryFontSizePx(settings.romanizationFontSizePx, 26);
 
-  // Braccato still chooses the active line, scroll target and karaoke timing. Only shorten
-  // the presentation of each scroll; leave authored Custom CSS motion alone.
+  // Braccato still chooses the active line, scroll target and karaoke timing. These are
+  // presentation envelopes only, and leave authored Custom CSS motion alone.
   const motion = theme.id === "custom" ? "" : `
 /* blyrics-line-scroll-duration = ${MOTION_DURATION_MS.view}ms; */
 /* blyrics-line-scroll-above-duration = ${MOTION_DURATION_MS.view}ms; */
 /* blyrics-line-scroll-active-duration = ${MOTION_DURATION_MS.view}ms; */
 /* blyrics-line-scroll-below-duration = ${MOTION_DURATION_MS.view}ms; */
 .blyrics-container {
-  --blyrics-lyric-scroll-timing-function: var(--ease-settle);
+  --blyrics-lyric-scroll-timing-function: var(--ease-out);
   --blyrics-scale-transition-duration: var(--dur-3, 240ms);
   --blyrics-line-enter-easing: var(--ease-out);
-  --blyrics-line-exit-easing: var(--ease-out);
+  --blyrics-line-exit-easing: var(--ease-in-out);
   --blyrics-lyric-highlight-fade-in-duration: var(--dur-2);
-  --blyrics-lyric-highlight-fade-out-duration: var(--dur-3);
+  --blyrics-lyric-highlight-fade-out-duration: var(--dur-2);
+  --blyrics-lyric-highlight-fade-in-easing: var(--ease-out);
+  --blyrics-lyric-highlight-fade-out-easing: var(--ease-in-out);
   --blyrics-animate-word-wobble: 0;
 }`;
   const css = `

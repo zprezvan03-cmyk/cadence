@@ -136,6 +136,8 @@ export async function auditQueueRows(page: Page, check: Check, shot: Shot) {
   const removed = await rows();
   check("queue-removal-is-immediate-with-inert-exit-and-visible-flip", removed.length === before.length - 1 && !removed.includes(before[0]) && exited.inert === true && exited.hidden === "true" && exited.reused && exited.animations.includes("queue-row-out") && exited.animations.includes("queue-row-move"), JSON.stringify(exited));
   await shot("03-queue-removal-mid");
+  await finish(page, "queue-row-out");
+  check("queue-releases-transparent-exit-before-neighbors-finish", !(await page.$(".queue-row-exits")) && (await animations()).includes("queue-row-move"));
   await finish(page, "queue-row");
 
   // Start at the first occurrence so Play Next inserts inside the visible window.
@@ -158,12 +160,22 @@ export async function auditQueueRows(page: Page, check: Check, shot: Shot) {
   check("queue-insert-keeps-occurrence-identity", inserted.length === removed.length + 1 && inserted.filter(id => !removed.includes(id)).length === 1 && insertAnimations.includes("queue-row-in"), JSON.stringify(insertAnimations));
   check("queue-insert-has-intermediate-enter-frame", insertion?.duration === 180 && insertion.opacity > 0 && insertion.opacity < 1, JSON.stringify(insertion));
   await shot("03-queue-insert-mid");
+  await page.evaluate(() => {
+    const enter = document.getAnimations().find(animation => animation.id === "queue-row-in")?.effect as KeyframeEffect;
+    enter.target!.querySelector<HTMLButtonElement>('button[aria-label^="Remove"]')!.click();
+  });
+  const restarted = await page.evaluate(() => {
+    const exit = document.getAnimations().find(animation => animation.id === "queue-row-out")?.effect as KeyframeEffect | undefined;
+    return Number(exit?.getKeyframes()[0]?.opacity);
+  });
+  check("queue-interrupted-entry-exits-from-its-visible-opacity", Boolean(insertion && Math.abs(insertion.opacity - restarted) < 0.03), JSON.stringify({ insertion, restarted }));
   await finish(page, "queue-row");
   await wait(50);
+  const beforeShuffle = await rows();
   await click(page, '.player-bar [aria-label="Shuffle"]');
   const shuffled = await rows();
   const shuffleAnimations = await animations();
-  check("queue-reorder-animates-visible-rows-only", shuffled.join() !== inserted.join() && shuffled.every(id => inserted.includes(id)) && shuffleAnimations.includes("queue-row-move") && shuffleAnimations.length <= 16, JSON.stringify(shuffleAnimations));
+  check("queue-reorder-animates-visible-rows-only", shuffled.length === beforeShuffle.length && shuffled.join() !== beforeShuffle.join() && shuffled.every(id => beforeShuffle.includes(id)) && shuffleAnimations.includes("queue-row-move") && shuffleAnimations.length <= 16, JSON.stringify(shuffleAnimations));
   await click(page, '.player-bar [aria-label="Shuffle"]');
   await wait(270);
   check("queue-flip-cleans-up-after-rapid-orders", (await animations()).length === 0 && !(await page.$(".queue-row-exits [data-queue-exiting]")));
@@ -237,7 +249,8 @@ export async function auditMiniHandoff(page: Page, check: Check, shot: Shot) {
     const art = document.querySelector(".mini-player-artwork")!;
     const r = art.getBoundingClientRect();
     const clickable = art.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
-    return { y: r.y, clickable, durations: animations.map(animation => animation.effect?.getTiming().duration) };
+    const chrome = document.getAnimations().find(animation => animation.id === "player-surroundings")?.effect as KeyframeEffect | undefined;
+    return { y: r.y, clickable, durations: animations.map(animation => animation.effect?.getTiming().duration), chromeOnly: chrome?.target === document.querySelector('.mini-player-chrome') };
   });
   await shot("11-mini-collapse-mid");
   await finish(page, "player-");
@@ -245,6 +258,7 @@ export async function auditMiniHandoff(page: Page, check: Check, shot: Shot) {
   const miniTransport = await getBox(page, visibleTransport);
   check("mini-collapse-has-a-live-intermediate-frame", collapse.y < full.y - 15 && collapse.y > compact.y + 15 && collapse.clickable &&
     collapse.durations.length === 3 && collapse.durations.every(duration => duration === 300), JSON.stringify(collapse));
+  check("mini-collapse-only-settles-the-small-title-strip", collapse.chromeOnly, JSON.stringify(collapse));
   const before = await page.$eval(".mini-player .seek", el => Number((el as HTMLInputElement).value));
   await shot("11-mini-settled");
 
@@ -256,8 +270,10 @@ export async function auditMiniHandoff(page: Page, check: Check, shot: Shot) {
     const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect().toJSON();
     const art = document.querySelector(".player-bar .playback-cover")!;
     const r = art.getBoundingClientRect();
+    const surfaces = [...document.querySelectorAll('.lyrics-view, .lyrics-body, .np-bg, .kawarp-bg')];
     return {
       art: r.toJSON(),
+      backdropStill: surfaces.length === 3 && surfaces.every(el => el.getAnimations().length === 0),
       artworkUnobscured: art.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)),
       title: box('.player-bar [data-track-layer="current"] .player-title'),
       transport: box('.player-bar [data-testid="play-toggle"]'),
@@ -280,6 +296,7 @@ export async function auditMiniHandoff(page: Page, check: Check, shot: Shot) {
     Math.abs(handoff.seekTime - before) < 0.08 && handoff.art.y > compact.y + 15 && handoff.art.y < full.y - 15 &&
     interpolatedWidth && Math.abs(handoff.title.y - handoff.art.y) < handoff.art.height &&
     handoff.transport.y > miniTransport.y + 15, JSON.stringify(handoff));
+  check("mini-expansion-does-not-animate-the-large-lyrics-surfaces", handoff.backdropStill, JSON.stringify(handoff));
   await shot("11-mini-expand-mid");
   await page.mouse.click(handoff.transport.x + handoff.transport.width / 2, handoff.transport.y + handoff.transport.height / 2);
   const played = await page.waitForFunction(() => document.querySelector('.player-bar [data-testid="play-toggle"]')?.getAttribute("aria-label") === "Pause", { timeout: 2500 }).then(() => true).catch(() => false);

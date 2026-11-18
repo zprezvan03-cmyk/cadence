@@ -3,7 +3,7 @@
  * Written for Cadence.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Disc3 } from "lucide-react";
 import { measureArtworkAccent } from "../upstream/shaders/artworkBrightness";
 
@@ -62,6 +62,12 @@ export function artworkFallbackTone(label: string): string {
   return FALLBACK_TONES[hash % FALLBACK_TONES.length];
 }
 
+// Reveal in the image itself. A successful decode does not change the React tree, so a route
+// with many thumbnails need not commit each row a second time just to start its CSS fade.
+function revealCachedArtwork(image: HTMLImageElement | null) {
+  if (image?.complete && image.naturalWidth > 0) image.dataset.loaded = "true";
+}
+
 export function Artwork({
   src,
   alt,
@@ -73,13 +79,10 @@ export function Artwork({
   title,
 }: ArtworkProps) {
   const [failed, setFailed] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const imgRef = useRef<HTMLImageElement | null>(null);
   const [accent, setAccent] = useState<string | null>(() => (src && accentVar ? cachedAccent(src) : null));
 
   useEffect(() => {
     setFailed(false);
-    setLoaded(false);
     // Ordinary artwork only needs the <img>; decoding another bitmap for an unused CSS variable
     // made every song row fetch and analyse its cover. Accent work is opt-in and shared per URL.
     if (!src || !accentVar) {
@@ -100,13 +103,6 @@ export function Artwork({
     };
   }, [src, accentVar]);
 
-  // A cached cover can finish before React's onLoad is observed; treat an
-  // already-complete image as loaded so the fade-in can never strand it invisible.
-  useEffect(() => {
-    const img = imgRef.current;
-    if (img?.complete && img.naturalWidth > 0) setLoaded(true);
-  }, [src]);
-
   const fallbackTone = useMemo(() => artworkFallbackTone(alt), [alt]);
 
   const showFallback = !src || failed;
@@ -123,13 +119,14 @@ export function Artwork({
     >
       {!showFallback ? (
         <img
-          ref={imgRef}
+          key={src}
+          ref={revealCachedArtwork}
           src={src}
           alt={alt}
           loading="lazy"
           decoding="async"
-          data-loaded={loaded}
-          onLoad={() => setLoaded(true)}
+          data-loaded="false"
+          onLoad={event => { event.currentTarget.dataset.loaded = "true"; }}
           onError={() => setFailed(true)}
           draggable={false}
         />

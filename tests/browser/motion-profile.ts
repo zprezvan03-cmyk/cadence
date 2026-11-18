@@ -101,9 +101,10 @@ export async function profileMotion(page: Page, directory: string) {
     await sample("idle", "");
     await sample("idle", "");
     for (let i = 0; i < 3; i++) {
-      await click(nav("Home"));
+      await click(nav("Songs"));
       await wait(390);
-      await sample("navigation", nav("Songs"));
+      await sample("navigation-home", nav("Home"));
+      await sample("navigation-songs", nav("Songs"));
       await pickFirst();
       await sample("cover-metadata", next);
       await audio();
@@ -112,7 +113,9 @@ export async function profileMotion(page: Page, directory: string) {
       await sample("lyric-follow", "media");
       await click(nav("Songs"));
       await wait(320);
-      await enterMini();
+      await sample("mini-collapse", toggle);
+      await page.waitForFunction(() => window.innerWidth === 460);
+      await wait(120);
       await sample("mini-to-now-playing", openNow);
       await page.waitForSelector(".lyrics-view");
       await click(nav("Songs"));
@@ -150,7 +153,7 @@ export async function profileMotion(page: Page, directory: string) {
       over25Ms: intervals.filter(value => value > 25).length,
       medianLayoutCount: medianMetric("LayoutCount"), medianStyleCount: medianMetric("RecalcStyleCount"),
       medianLayoutMs: medianMetric("LayoutDuration", 1000), medianStyleMs: medianMetric("RecalcStyleDuration", 1000),
-      medianTaskMs: medianMetric("TaskDuration", 1000),
+      medianScriptMs: medianMetric("ScriptDuration", 1000), medianTaskMs: medianMetric("TaskDuration", 1000),
       tracedPaints: count("Paint"), tracedRasters: count("RasterTask"), tracedDraws: count("DrawFrame"), tracedDrops: count("DroppedFrame"),
     };
   });

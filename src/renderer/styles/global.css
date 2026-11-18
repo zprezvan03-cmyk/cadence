@@ -33,7 +33,7 @@
   --sidebar-expanded-width: 222px;
   --sidebar-compact-width: 68px;
   --sidebar-width: var(--sidebar-expanded-width);
-  --player-height: 92px;
+  --player-height: 80px;
   --topbar-height: 68px;
   --titlebar-height: 36px;
   --queue-width: 336px;
@@ -263,20 +263,14 @@ a {
   padding: 30px var(--workspace-gutter) 48px;
   max-width: 1500px;
   margin: 0 auto;
-  /* No fill mode: a lingering transform would turn the view into a containing block for the
-     fixed-position overlays rendered inside it. */
+  /* A transformed route re-lays out the sticky song table during navigation. Reveal only
+     its opacity so scroll restoration and fixed overlays keep their real geometry. */
   animation: view-in var(--dur-3) var(--ease-out);
 }
 
 @keyframes view-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0.6; }
+  to { opacity: 1; }
 }
 
 .view-loading {
@@ -1124,30 +1118,32 @@ a {
 
 .player-bar {
   height: var(--player-height);
-  flex-shrink: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(260px, 32vw, 540px) minmax(248px, 1fr);
+  grid-template-columns: minmax(0, 1fr) clamp(248px, 30vw, 400px) minmax(224px, 1fr);
   align-items: center;
-  gap: clamp(14px, 2vw, 32px);
+  gap: clamp(14px, 1.6vw, 24px);
   padding: 0 clamp(18px, 1.8vw, 32px);
   border-top: 1px solid var(--border);
   background: var(--chrome-surface);
   position: relative;
   isolation: isolate;
   overflow: hidden;
-  animation: chrome-in var(--dur-2) var(--ease-out);
 }
 
-.player-bar::before {
+/* Preserve the existing artwork-blur preference under the cover only. The neutral rail is
+   constant: artwork never tints the timeline or tools, and the filter has a bounded surface. */
+.player-bar[data-artwork-wash]::before {
   content: "";
   position: absolute;
-  inset: -32px;
+  inset: 0 auto 0 0;
+  width: 144px;
   z-index: 0;
-  background-image: var(--player-artwork, none);
+  background-image: var(--player-artwork);
   background-position: center;
   background-size: cover;
-  filter: blur(26px) saturate(1.2);
-  opacity: 0.12;
+  filter: grayscale(1) blur(10px);
+  mask-image: linear-gradient(to right, #000, transparent);
+  opacity: 0.09;
   pointer-events: none;
 }
 
@@ -1163,9 +1159,12 @@ a {
 .player-track {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: clamp(8px, 0.9vw, 12px);
   min-width: 0;
+  width: min(100%, 274px);
 }
+
+.player-track > .heart { flex: none; }
 
 .player-cover-button {
   flex: none;
@@ -1179,13 +1178,17 @@ a {
 }
 
 .player-track-meta {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
 }
 
+.player-track-meta [data-track-layer] { padding-block: 2px; }
+
 .player-title {
   font-weight: 650;
   font-size: 14px;
+  line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1197,6 +1200,7 @@ a {
   gap: 6px;
   min-width: 0;
   font-size: 12px;
+  line-height: 1.45;
   color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
@@ -1208,8 +1212,6 @@ a {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
-
 
 .player-remote-error {
   max-width: 100%;
@@ -1247,9 +1249,18 @@ a {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
   width: 100%;
 }
+
+.player-center .transport { gap: 8px; }
+.player-center .play-button {
+  width: 38px;
+  height: 38px;
+  box-shadow: none;
+}
+.player-center .seek-row { gap: 6px; }
+.player-center .time { width: 34px; color: var(--text-dim); }
 
 .transport {
   display: flex;
@@ -1316,8 +1327,8 @@ input[type="range"].volume::-webkit-slider-runnable-track {
   border-radius: 3px;
   background: linear-gradient(
     to right,
-    var(--accent) 0%,
-    var(--accent) var(--progress, 0%),
+    var(--range-fill, var(--accent)) 0%,
+    var(--range-fill, var(--accent)) var(--progress, 0%),
     rgba(255, 255, 255, 0.18) var(--progress, 0%),
     rgba(255, 255, 255, 0.18) 100%
   );
@@ -1357,22 +1368,24 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: clamp(4px, 1vw, 14px);
+  gap: clamp(6px, 0.9vw, 13px);
   min-width: 0;
 }
 
 .player-tools {
   display: flex;
-  gap: 2px;
-  padding-left: clamp(3px, 1vw, 12px);
-  border-left: 1px solid var(--border);
+  gap: 1px;
   flex: none;
 }
 
-.player-tools .icon-button { width: 31px; height: 32px; }
+.player-tools .icon-button { width: 32px; height: 32px; }
 .player-tools .icon-button.active { background: var(--accent-soft); }
 .player-right .volume-group { width: clamp(84px, 8vw, 124px); min-width: 0; }
-.player-right .volume-group input[type="range"].volume { width: 100%; min-width: 36px; }
+.player-right .volume-group input[type="range"].volume {
+  --range-fill: var(--text-dim);
+  width: 100%;
+  min-width: 36px;
+}
 
 .volume-group {
   display: flex;
@@ -1554,7 +1567,7 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   list-style: none;
   margin: 0;
   padding: 8px;
-  overflow-y: auto;
+  overflow: hidden auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1579,7 +1592,7 @@ input[type="range"].volume:active::-webkit-slider-thumb {
 }
 
 :is(.queue-list, .queue-row-exits) li.current {
-  background: var(--accent-soft);
+  background: var(--surface-3);
 }
 
 .queue-track {
@@ -1594,13 +1607,12 @@ input[type="range"].volume:active::-webkit-slider-thumb {
 }
 
 .queue-track-copy { min-width: 0; flex: 1; }
-.queue-list li:hover { background: var(--surface-2); }
-.queue-list li.current { background: var(--surface-3); }
-.queue-list li.current strong { color: var(--accent-strong); }
+.queue-list li:not(.current):hover { background: var(--surface-2); }
+:is(.queue-list, .queue-row-exits) li.current strong { color: var(--accent-strong); }
 .queue-time { color: var(--text-faint); font-variant-numeric: tabular-nums; font-size: 11px; }
 .queue-panel .queue-track .pill { padding: 2px 5px; font-size: 9.5px; }
 .queue-panel .queue-track .artwork { width: 36px; height: 36px; }
-.queue-list li > .icon-button { flex: none; width: 26px; margin-right: 3px; }
+:is(.queue-list, .queue-row-exits) li > .icon-button { flex: none; width: 26px; margin-right: 3px; }
 
 .queue-track strong {
   display: block;

@@ -3,7 +3,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, ChevronRight, Disc3, FolderPlus, Heart, ListMusic, Mic2, Play, Shuffle } from "lucide-react";
+import { ArrowRight, ChevronRight, FolderPlus, Heart, ListMusic, Mic2, Play, Shuffle } from "lucide-react";
 import { trackSourceKey } from "../../../shared/media";
 import type { HistoryPayload } from "../../../shared/types";
 import { useLibrary } from "../../state/libraryStore";
@@ -203,22 +203,24 @@ export function HomeView() {
 
       <div className="home-lead">
         {spotlight ? (
-          <section className="home-spotlight" aria-label="Album spotlight">
-            <div className="spotlight-copy">
-              <p className="eyebrow"><Disc3 size={14} aria-hidden="true" /> From your library</p>
-              <h2 title={spotlight.name}>{spotlight.name}</h2>
-              <p className="spotlight-artist" title={spotlight.albumArtist}>{spotlight.albumArtist}</p>
-              <p className="muted">{spotlight.year ? `${spotlight.year} · ` : ""}{spotlight.trackCount} {spotlight.trackCount === 1 ? "song" : "songs"}</p>
-              <div className="heading-actions">
-                <button type="button" className="primary" onClick={playSpotlight}>
-                  <Play size={15} fill="currentColor" /> Play album
-                </button>
-                <button type="button" onClick={() => navigate({ name: "album", albumId: spotlight.id })}>
-                  View album <ArrowRight size={14} />
-                </button>
+          <section className="home-spotlight" aria-labelledby="featured-album-heading">
+            <div className="shelf-heading"><h2 id="featured-album-heading">Featured album</h2></div>
+            <div className="spotlight-feature">
+              <Artwork src={spotlight.artworkUrl} alt={spotlight.name} />
+              <div className="spotlight-copy">
+                <h3 title={spotlight.name}>{spotlight.name}</h3>
+                <p className="spotlight-artist" title={spotlight.albumArtist}>{spotlight.albumArtist}</p>
+                <p className="muted">{spotlight.year ? `${spotlight.year} · ` : ""}{spotlight.trackCount} {spotlight.trackCount === 1 ? "song" : "songs"}</p>
+                <div className="heading-actions">
+                  <button type="button" className="primary" onClick={playSpotlight}>
+                    <Play size={15} fill="currentColor" /> Play album
+                  </button>
+                  <button type="button" onClick={() => navigate({ name: "album", albumId: spotlight.id })}>
+                    View album <ArrowRight size={14} />
+                  </button>
+                </div>
               </div>
             </div>
-            <Artwork src={spotlight.artworkUrl} alt={spotlight.name} className="spotlight-cover" />
           </section>
         ) : null}
         {recentlyPlayed.length > 0 ? (

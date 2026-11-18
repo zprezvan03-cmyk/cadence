@@ -97,7 +97,8 @@ describe("buildThemeCss lyric motion", () => {
     const css = buildThemeCss(settings());
     expect(css).toContain("/* blyrics-line-scroll-duration = 240ms; */");
     expect(css).toContain("/* blyrics-line-scroll-active-duration = 240ms; */");
-    expect(css).toContain("--blyrics-lyric-scroll-timing-function: var(--ease-settle);");
+    expect(css).toContain("--blyrics-lyric-scroll-timing-function: var(--ease-out);");
+    expect(css).toContain("--blyrics-lyric-highlight-fade-out-duration: var(--dur-2);");
     expect(css).not.toContain("blyrics-early-scroll-consider-s =");
   });
 

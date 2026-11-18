@@ -568,7 +568,9 @@ braccato-lyrics {
   max-width: var(--np-lyrics-max-width);
   margin: 0 auto;
   min-height: 100%;
-  text-shadow: 0 2px 26px rgba(0, 0, 0, 0.45);
+  /* A close shadow keeps words readable without rasterizing a halo around every moving line.
+     The selected karaoke treatment still owns the active words' color/glow. */
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45);
 }
 
 /* A same-track source upgrade is the only lyrics replacement that dips. The attribute is
