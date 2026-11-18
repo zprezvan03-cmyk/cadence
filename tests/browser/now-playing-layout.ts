@@ -1910,7 +1910,10 @@ await mxSetControl("Layout", "Control size", "1");
 await page.evaluate(() => {
   const audio = document.querySelector("audio")!;
   audio.currentTime = 0.4;
-  audio.playbackRate = 0.35; // stretch the 6s fixture across this whole segment
+  audio.playbackRate = 0.35;
+  // Keep the same track across all six background probes on slow software GPUs.
+  // Without looping, screenshot latency can let the six-second clip advance the queue.
+  audio.loop = true;
   void audio.play();
 });
 const qaBgByMode: Record<string, Awaited<ReturnType<typeof qaProbe>>> = {};
@@ -1936,6 +1939,7 @@ const qaCanvasAnimates = !Buffer.from(qaCanvasShotA).equals(Buffer.from(qaCanvas
 await page.evaluate(() => {
   const audio = document.querySelector("audio")!;
   audio.pause();
+  audio.loop = false;
   audio.playbackRate = 1;
 });
 await mxSetControl("Background", "Mode", "fluid");
@@ -2042,7 +2046,7 @@ await mxSetControl("Layout", "Lyrics alignment", "center");
 await mxCloseStudioBySave();
 await nav("Songs");
 await nav("Now Playing");
-await wait(600);
+await page.waitForSelector("braccato-lyrics .blyrics--line", { timeout: 15_000 });
 const qaPersistNav = await qaProbe();
 await page.reload({ waitUntil: "networkidle0" });
 await page.waitForSelector(".sidebar", { timeout: 15_000 });

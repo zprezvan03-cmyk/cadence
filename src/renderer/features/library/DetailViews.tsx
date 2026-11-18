@@ -3,7 +3,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Clock3, Mic2, Play, Plus, RefreshCw, Search, Shuffle, Sparkles, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock3, ListMusic, Mic2, Play, Plus, RefreshCw, Search, Shuffle, Sparkles, Trash2, X } from "lucide-react";
 import type { Playlist, SmartPlaylistPreset, SmartPlaylistRule, Track } from "../../../shared/types";
 import {
   SMART_PLAYLIST_PRESETS,
@@ -26,7 +26,9 @@ function Hero({
   artworkUrl,
   eyebrow,
   title,
+  subtitle,
   meta,
+  collection,
   onPlay,
   onShuffle,
   artistName,
@@ -35,48 +37,56 @@ function Hero({
   artworkUrl: string | null;
   eyebrow: string;
   title: string;
+  subtitle?: string;
   meta: string;
+  collection: "albums" | "artists" | "playlists";
   onPlay?: () => void;
   onShuffle?: () => void;
   /** When set, the hero shows that artist's circular portrait instead of album artwork. */
   artistName?: string;
   children?: React.ReactNode;
 }) {
-  const goBack = useUi(state => state.goBack);
   const navigate = useUi(state => state.navigate);
   return (
-    <header className="detail-hero" data-testid="detail-hero">
-      <button type="button" className="icon-button back-button" onClick={goBack} aria-label="Back">
-        <ArrowLeft size={18} />
-      </button>
-      {artistName ? (
-        <ArtistAvatar name={artistName} size="xl" />
-      ) : (
-        <Artwork src={artworkUrl} alt={title} size="xl" />
-      )}
-      <div className="detail-meta">
-        <p className="eyebrow">{eyebrow}</p>
-        <h1>{title}</h1>
-        <p className="muted">{meta}</p>
-        {artistName ? <ArtistImageCredit name={artistName} /> : null}
-        <div className="heading-actions">
-          {onPlay ? (
-            <button type="button" className="primary" onClick={onPlay}>
-              <Play size={16} fill="currentColor" /> Play
-            </button>
-          ) : null}
-          {onShuffle ? (
-            <button type="button" onClick={onShuffle}>
-              <Shuffle size={16} /> Shuffle
-            </button>
-          ) : null}
-          <button type="button" onClick={() => navigate({ name: "lyrics" })}>
-            <Mic2 size={16} /> Now Playing
-          </button>
-          {children}
-        </div>
+    <>
+      <div className="detail-path">
+        <button type="button" onClick={() => navigate({ name: "library", tab: collection })}>
+          <ChevronLeft size={16} /> {collection[0].toUpperCase() + collection.slice(1)}
+        </button>
+        <ChevronRight size={13} aria-hidden="true" />
+        <span title={title}>{title}</span>
       </div>
-    </header>
+      <header className="detail-hero" data-testid="detail-hero">
+        {artistName ? (
+          <ArtistAvatar name={artistName} size="xl" />
+        ) : (
+          <Artwork src={artworkUrl} alt={title} size="xl" fallbackIcon={collection === "playlists" ? <ListMusic className="artwork-fallback-icon" aria-hidden="true" /> : undefined} />
+        )}
+        <div className="detail-meta">
+          <p className="eyebrow">{eyebrow}</p>
+          <h1>{title}</h1>
+          {subtitle ? <p className="detail-artist">{subtitle}</p> : null}
+          <p className="muted">{meta}</p>
+          {artistName ? <ArtistImageCredit name={artistName} /> : null}
+          <div className="heading-actions">
+            {onPlay ? (
+              <button type="button" className="primary" onClick={onPlay}>
+                <Play size={16} fill="currentColor" /> Play
+              </button>
+            ) : null}
+            {onShuffle ? (
+              <button type="button" onClick={onShuffle}>
+                <Shuffle size={16} /> Shuffle
+              </button>
+            ) : null}
+            <button type="button" onClick={() => navigate({ name: "lyrics" })}>
+              <Mic2 size={16} /> Now Playing
+            </button>
+            {children}
+          </div>
+        </div>
+      </header>
+    </>
   );
 }
 
@@ -100,8 +110,10 @@ export function AlbumView({ albumId }: { albumId: string }) {
       <Hero
         artworkUrl={album.artworkUrl}
         eyebrow="Album"
+        collection="albums"
         title={album.name}
-        meta={`${album.albumArtist}${album.year ? ` · ${album.year}` : ""} · ${album.trackCount} songs · ${formatTime(album.duration)}`}
+        subtitle={album.albumArtist}
+        meta={`${album.year ? `${album.year} · ` : ""}${album.trackCount} ${album.trackCount === 1 ? "song" : "songs"} · ${formatTime(album.duration)}`}
         onPlay={() => void playQueue(tracks.map(track => track.id), 0)}
         onShuffle={() => void playShuffled(tracks.map(track => track.id), Math.floor(Math.random() * tracks.length))}
       />
@@ -135,6 +147,7 @@ export function ArtistView({ artistId }: { artistId: string }) {
       <Hero
         artworkUrl={artist.artworkUrl}
         eyebrow="Artist"
+        collection="artists"
         title={artist.name}
         artistName={artist.name}
         meta={`${artist.trackCount} songs · ${artist.albumCount} albums`}
@@ -152,7 +165,7 @@ export function ArtistView({ artistId }: { artistId: string }) {
       </Hero>
       <div className="shelf">
         <h2>Albums</h2>
-        <div className="card-grid artist-grid">
+        <div className="card-grid">
           {albums.map(album => (
             <AlbumCard key={album.id} album={album} />
           ))}
@@ -171,50 +184,56 @@ export function SearchView({ query }: { query: string }) {
   const search = useLibrary(state => state.search);
   const playQueue = usePlayer(state => state.playQueue);
   const navigate = useUi(state => state.navigate);
-  const [tracks, setTracks] = useState<Track[]>([]);
-  const [searching, setSearching] = useState(false);
+  const [result, setResult] = useState<{ term: string; tracks: Track[]; failed?: true }>();
+  const term = query.trim();
+  const needle = term.toLocaleLowerCase();
+  const current = result?.term === term ? result : null;
+  const tracks = current?.tracks ?? [];
+  const searching = Boolean(term && !current);
 
   useEffect(() => {
-    if (!query.trim()) {
-      setTracks([]);
-      return;
-    }
+    if (!term) return;
     let cancelled = false;
-    setSearching(true);
     const timer = window.setTimeout(() => {
-      void search(query)
-        .then(results => {
-          if (!cancelled) setTracks(results);
-        })
-        .finally(() => {
-          if (!cancelled) setSearching(false);
-        });
+      void search(term).then(
+        tracks => { if (!cancelled) setResult({ term, tracks }); },
+        () => { if (!cancelled) setResult({ term, tracks: [], failed: true }); }
+      );
     }, 140);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [query, search]);
+  }, [search, term]);
 
-  const needle = query.trim().toLocaleLowerCase();
   const albums = (snapshot?.albums ?? []).filter(
     album => needle && (album.name.toLocaleLowerCase().includes(needle) || album.albumArtist.toLocaleLowerCase().includes(needle))
   );
   const artists = (snapshot?.artists ?? []).filter(artist => needle && artist.name.toLocaleLowerCase().includes(needle));
+  const counts = [
+    `${tracks.length} ${tracks.length === 1 ? "song" : "songs"}`,
+    `${albums.length} ${albums.length === 1 ? "album" : "albums"}`,
+    `${artists.length} ${artists.length === 1 ? "artist" : "artists"}`,
+  ].join(" · ");
 
   return (
     <div className="view search-view" data-testid="search-view">
       <header className="view-heading">
         <div>
-          <p className="eyebrow">Search</p>
-          <h1>{query ? `“${query}”` : "Search your library"}</h1>
-          <p className="muted">{searching ? "Searching…" : `${tracks.length} local songs · ${albums.length} albums · ${artists.length} artists`}</p>
+          <p className="eyebrow">Your library</p>
+          <h1>Search</h1>
+          <p className="muted search-summary" role="status">
+            {term ? (
+              <>Results for <strong>“{term}”</strong> · {searching ? "Searching…" : current?.failed
+                ? "Song search unavailable" : counts}</>
+            ) : "Find a song, album or artist."}
+          </p>
         </div>
       </header>
 
       {artists.length > 0 ? (
         <section className="shelf">
-          <h2>Artists</h2>
+          <div className="shelf-heading"><h2>Artists</h2><span className="muted">{artists.length}</span></div>
           <div className="card-grid artist-grid">
             {artists.slice(0, 8).map(artist => (
               <ArtistCard key={artist.id} artist={artist} />
@@ -225,7 +244,7 @@ export function SearchView({ query }: { query: string }) {
 
       {albums.length > 0 ? (
         <section className="shelf">
-          <h2>Albums</h2>
+          <div className="shelf-heading"><h2>Albums</h2><span className="muted">{albums.length}</span></div>
           <div className="card-grid">
             {albums.slice(0, 8).map(album => (
               <AlbumCard key={album.id} album={album} />
@@ -234,29 +253,41 @@ export function SearchView({ query }: { query: string }) {
         </section>
       ) : null}
 
-      <section className="shelf">
-        <div className="shelf-heading">
-          <h2>Songs</h2>
-          {tracks.length > 0 ? (
-            <button type="button" className="link" onClick={() => void playQueue(tracks.map(track => track.id), 0)}>
-              Play all
-            </button>
-          ) : null}
+      {term && current && !current.failed && tracks.length === 0 && albums.length === 0 && artists.length === 0 ? (
+        <div className="empty-state search-empty">
+          <Search size={28} aria-hidden="true" />
+          <h2>No matches</h2>
+          <p>Try a different song, artist or album name.</p>
         </div>
-        {query ? (
-          <TrackList tracks={tracks} emptyMessage={searching ? "Searching…" : "No songs match that search."} testId="search-track-list" />
-        ) : (
-          <div className="empty-state">
-            <Search size={28} />
-            Search by track, artist or album — or press <kbd>Ctrl</kbd> + <kbd>K</kbd>.
-            <div className="heading-actions" style={{ marginTop: 16 }}>
-              <button type="button" onClick={() => navigate({ name: "library", tab: "songs" })}>
-                Browse all songs
+      ) : (
+        <section className="shelf">
+          <div className="shelf-heading">
+            <h2>Songs</h2>
+            {tracks.length > 0 ? (
+              <button type="button" className="link" onClick={() => void playQueue(tracks.map(track => track.id), 0)}>
+                Play all
               </button>
-            </div>
+            ) : null}
           </div>
-        )}
-      </section>
+          {term ? (
+            <TrackList
+              tracks={tracks}
+              emptyMessage={searching ? "Searching…" : current?.failed ? "Could not search songs. Try again." : "No songs match that search."}
+              testId="search-track-list"
+            />
+          ) : (
+            <div className="empty-state">
+              <Search size={28} />
+              Search by track, artist or album — or press <kbd>Ctrl</kbd> + <kbd>K</kbd>.
+              <div className="heading-actions" style={{ marginTop: 16 }}>
+                <button type="button" onClick={() => navigate({ name: "library", tab: "songs" })}>
+                  Browse all songs
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }
@@ -333,6 +364,7 @@ export function PlaylistView({ playlistId }: { playlistId: number }) {
         artworkUrl={playlist.artworkUrl}
         eyebrow={isSmart ? "Smart playlist" : "Playlist"}
         title={playlist.name}
+        collection="playlists"
         meta={`${playlist.trackCount} songs · ${formatTime(playlist.duration)}${smartRule ? ` · ${describeSmartPlaylistRule(smartRule)}` : ""}`}
         onPlay={() => void playQueue(tracks.map(track => track.id), 0)}
         onShuffle={() => void playShuffled(tracks.map(track => track.id), Math.floor(Math.random() * Math.max(1, tracks.length)))}

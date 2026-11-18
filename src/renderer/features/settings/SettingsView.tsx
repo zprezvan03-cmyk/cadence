@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronUp, FolderMinus, FolderPlus, Keyboard, RotateCcw, Stethoscope, Trash2 } from "lucide-react";
+import { AudioLines, ChevronDown, ChevronUp, Database, FolderMinus, FolderPlus, Info, Keyboard, Library, Palette, RotateCcw, Stethoscope, Trash2 } from "lucide-react";
 import type { AppInfo, AppSettings, EqualizerSettings, ReplayGainMode, ShaderSettings } from "../../../shared/types";
 import { FONT_KINDS, FONT_OPTIONS, resolveFontOption } from "../../../shared/fonts";
 import { detectUnavailableFonts } from "../../app/fonts";
@@ -190,8 +190,9 @@ export function SettingsView() {
     <div className="view settings-view" data-testid="settings-view">
       <header className="view-heading">
         <div>
-          <p className="eyebrow">Settings</p>
-          <h1>Make it yours</h1>
+          <p className="eyebrow">Cadence</p>
+          <h1>Settings</h1>
+          <p className="muted">Manage your library, playback and listening experience.</p>
         </div>
         <div className="heading-actions">
           <button type="button" data-testid="open-shortcuts-help" onClick={() => setShortcutsHelpOpen(true)}>
@@ -209,25 +210,25 @@ export function SettingsView() {
         </div>
       </header>
 
-      <nav className="settings-tabs">
+      <nav className="settings-tabs" aria-label="Settings categories">
         {([
-          ["appearance", "Appearance"],
-          ["library", "Library"],
-          ["playback", "Playback"],
-          ["cache", "Cache"],
-          ["about", "About"],
-        ] as const).map(([id, label]) => (
+          ["appearance", "Appearance", Palette],
+          ["library", "Library", Library],
+          ["playback", "Playback", AudioLines],
+          ["cache", "Cache", Database],
+          ["about", "About", Info],
+        ] as const).map(([id, label, Icon]) => (
           <button
             type="button"
             key={id}
             className={section === id ? "active" : ""}
+            aria-current={section === id ? "location" : undefined}
             onClick={() => setSection(id)}
           >
-            {label}
+            <Icon size={16} aria-hidden="true" /> {label}
           </button>
         ))}
       </nav>
-
       {section === "appearance" ? (
         <section className="settings-section" data-testid="settings-appearance">
           <h2>Appearance</h2>

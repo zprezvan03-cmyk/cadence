@@ -61,11 +61,11 @@ function QueueContents({ open, presence }: { open: boolean; presence: ReturnType
   const occurrences = useMemo(() => ordered.map(({ entry }) => entry.occurrenceId), [ordered]);
 
   return (
-    <aside className={`queue-panel ${presence.phaseClass}`} data-presence={presence.phase} data-testid="queue-panel" inert={!open}>
+    <aside id="playback-queue" className={`queue-panel ${presence.phaseClass}`} data-presence={presence.phase} data-testid="queue-panel" aria-label="Playback queue" inert={!open}>
       <header className="queue-header">
         <div>
           <h2>Queue</h2>
-          <p className="muted">{queue.length} songs</p>
+          <p className="muted">{ordered.length} {ordered.length === 1 ? "song" : "songs"}</p>
         </div>
         <div className="queue-actions">
           <button
@@ -95,8 +95,9 @@ function QueueContents({ open, presence }: { open: boolean; presence: ReturnType
 
       {ordered.length === 0 ? (
         <div className="empty-state">
-          <ListMusic size={28} />
-          The queue is empty. Play an album or add songs from your library.
+          <ListMusic size={28} aria-hidden="true" />
+          <h3>Nothing queued</h3>
+          <p>Play an album or add songs from your library.</p>
         </div>
       ) : null}
       <QueueMotionList occurrences={occurrences} open={open} reducedMotion={reducedMotion}>
@@ -132,18 +133,19 @@ const QueueRow = memo(function QueueRow({ entry, track, position, current, jumpT
       data-testid="queue-entry"
       data-source-kind={item.source.kind}
       data-origin={entry.origin ?? "context"}
+      aria-current={current ? "true" : undefined}
       data-occurrence-id={entry.occurrenceId}
     >
       <button type="button" className="queue-track" onClick={() => void jumpTo(position)}>
         <Artwork src={item.artworkUrl} alt={item.albumLabel ?? item.title} size="xs" />
-        <span><strong>{item.title}</strong><em>{item.artistLabel}</em></span>
+        <span className="queue-track-copy"><strong title={item.title}>{item.title}</strong><em title={item.artistLabel}>{item.artistLabel}</em></span>
         {entry.origin === "autoplay" ? (
           <span className="pill subtle" data-testid="queue-origin-badge">AutoPlay</span>
         ) : entry.origin === "manual" ? (
           <span className="pill subtle" data-testid="queue-origin-badge">Queued</span>
         ) : null}
         <SourceBadge source={item.source} compact />
-        <span className="muted">{item.durationSeconds ? formatTime(item.durationSeconds) : "--:--"}</span>
+        <span className="queue-time">{item.durationSeconds ? formatTime(item.durationSeconds) : "--:--"}</span>
       </button>
       <button
         type="button"

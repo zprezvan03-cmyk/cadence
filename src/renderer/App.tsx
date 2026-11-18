@@ -149,7 +149,7 @@ export function App() {
           <AppToast />
         </div>
       ) : (
-        <div className={`app-shell ${immersive ? "is-immersive" : ""} ${titleBar ? "has-title-bar" : ""}`}>
+        <div className={`app-shell ${immersive ? "is-immersive" : ""} ${titleBar ? "has-title-bar" : ""}`} data-route={route.name}>
           {titleBar ? <WindowTitleBar chrome={chrome} /> : null}
           {!immersive ? <Sidebar /> : null}
           <main className="app-main">
@@ -170,8 +170,8 @@ export function App() {
             >
               {renderRoute(route)}
             </div>
-            {!immersive ? <PlayerBar /> : null}
           </main>
+          {!immersive ? <PlayerBar /> : null}
           <QueuePanel />
           <PlaylistPicker />
           <TrackEditor />

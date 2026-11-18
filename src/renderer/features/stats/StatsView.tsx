@@ -146,7 +146,7 @@ export function StatsView() {
   };
 
   if (loading || !snapshot) {
-    return <div className="view-loading">Loading your listening stats…</div>;
+    return <div className="view-loading" role="status">Loading your listening stats…</div>;
   }
 
   if (error && entries.length === 0) {
@@ -193,8 +193,8 @@ export function StatsView() {
     <div className="view stats-view" data-testid="stats-view">
       <header className="view-heading">
         <div>
-          <p className="eyebrow">Stats</p>
-          <h1>Your listening, at a glance</h1>
+          <p className="eyebrow">Listening activity</p>
+          <h1>Listening stats</h1>
           <p className="muted stats-note">{historyNote}</p>
         </div>
         <div className="heading-actions">

@@ -54,18 +54,12 @@ interface ArtworkProps {
   title?: string;
 }
 
-const FALLBACK_GRADIENTS = [
-  "linear-gradient(135deg, #2b1b3d 0%, #110b1a 100%)",
-  "linear-gradient(135deg, #1b2f3d 0%, #0b1218 100%)",
-  "linear-gradient(135deg, #3d241b 0%, #180f0b 100%)",
-  "linear-gradient(135deg, #1b3d2c 0%, #0b1811 100%)",
-  "linear-gradient(135deg, #3d1b2c 0%, #180b12 100%)",
-];
+const FALLBACK_TONES = ["#343039", "#2c3740", "#3e3430", "#2d3833", "#3a3037"];
 
-export function artworkFallbackGradient(label: string): string {
+export function artworkFallbackTone(label: string): string {
   let hash = 0;
   for (let i = 0; i < label.length; i++) hash = (hash * 31 + label.charCodeAt(i)) >>> 0;
-  return FALLBACK_GRADIENTS[hash % FALLBACK_GRADIENTS.length];
+  return FALLBACK_TONES[hash % FALLBACK_TONES.length];
 }
 
 export function Artwork({
@@ -113,7 +107,7 @@ export function Artwork({
     if (img?.complete && img.naturalWidth > 0) setLoaded(true);
   }, [src]);
 
-  const gradient = useMemo(() => artworkFallbackGradient(alt), [alt]);
+  const fallbackTone = useMemo(() => artworkFallbackTone(alt), [alt]);
 
   const showFallback = !src || failed;
 
@@ -122,7 +116,7 @@ export function Artwork({
       className={`artwork artwork-${size} rounded-${rounded} ${className}`}
       title={title}
       style={{
-        background: showFallback ? gradient : undefined,
+        backgroundColor: showFallback ? fallbackTone : undefined,
         ...(accentVar && accent ? ({ "--artwork-accent": accent } as React.CSSProperties) : {}),
       }}
       data-accent={accentVar ? accent ?? undefined : undefined}

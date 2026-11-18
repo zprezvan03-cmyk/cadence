@@ -285,9 +285,8 @@ export function DecodeTesterView() {
           <p className="eyebrow">Library tools</p>
           <h1>Decode Tester</h1>
           <p className="muted decode-intro">
-            Every file in your library is really decoded — beginning, middle and end — with the same
-            decoder Cadence plays with, so corrupt, truncated and unsupported files are found by trying
-            to play their audio, not by reading their tags. Scanning never modifies your files.
+            Check your library for corrupt, truncated or unsupported audio. Cadence uses its playback
+            decoder to test each file without changing it.
           </p>
         </div>
         <div className="heading-actions">
@@ -310,8 +309,8 @@ export function DecodeTesterView() {
       </header>
 
       <div className="decode-status" data-testid="decode-status" role="status">
-        <Stethoscope size={17} />
-        <span>{statusLine}</span>
+        <span className="decode-status-icon"><Stethoscope size={19} aria-hidden="true" /></span>
+        <div><p className="eyebrow">Scan status</p><strong>{statusLine}</strong></div>
         {problems.length > 0 ? (
           <span className="decode-status-count" data-testid="decode-summary">
             {problems.length} problematic file{problems.length === 1 ? "" : "s"}

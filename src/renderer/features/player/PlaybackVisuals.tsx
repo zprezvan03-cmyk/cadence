@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Disc3 } from "lucide-react";
 import type { MediaItem } from "../../../shared/types";
 import type { Dissolve } from "../../app/useDissolve";
-import { artworkFallbackGradient } from "../../components/Artwork";
+import { artworkFallbackTone } from "../../components/Artwork";
 import type { Cover } from "./usePlaybackPresentation";
 
 export function PlaybackArtwork({ cover, label, size = "sm" }: {
@@ -18,7 +18,7 @@ export function PlaybackArtwork({ cover, label, size = "sm" }: {
           aria-hidden="true"
           className="playback-cover-layer"
           data-cover-layer={layer === cover.front ? "current" : "outgoing"}
-          style={{ background: layer.value.src ? undefined : artworkFallbackGradient(layer.value.label || label) }}
+          style={{ backgroundColor: layer.value.src ? undefined : artworkFallbackTone(layer.value.label || label) }}
         >
           {layer.value.src
             ? <img src={layer.value.src} alt="" draggable={false} />

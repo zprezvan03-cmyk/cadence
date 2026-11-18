@@ -802,6 +802,19 @@ await resumeAll();
 await wait(260);
 await shot("03-queue-settled");
 check("queue-mid-frame-differs", heldQueue.count > 0 && frameDelta("03-queue-mid", "03-queue-settled") > 0.002, `${heldQueue.count} held`);
+const queueGeometry = () => page.evaluate(() => {
+  const drawer = document.querySelector(".queue-panel")!.getBoundingClientRect();
+  const content = document.querySelector(".content-scroll")!.getBoundingClientRect();
+  const player = document.querySelector(".player-bar")!.getBoundingClientRect();
+  return {
+    sideBySide: Math.abs(drawer.left - content.right) < 1,
+    overlays: drawer.left < content.right && Math.abs(content.right - innerWidth) < 1,
+    fits: Math.abs(drawer.top - content.top) < 1 && Math.abs(drawer.bottom - player.top) < 1,
+    playerSpans: player.left === 0 && Math.abs(player.right - innerWidth) < 1,
+  };
+});
+const dockedQueue = await queueGeometry();
+check("wide-queue-reserves-content-not-player", dockedQueue.sideBySide && dockedQueue.fits && dockedQueue.playerSpans, JSON.stringify(dockedQueue));
 await auditQueueRows(page, check, shot);
 await page.keyboard.press("q");
 const queueExit = await waitForExit('[data-testid="queue-panel"]');
@@ -819,13 +832,29 @@ await page.keyboard.press("q");
 await wait(400);
 check("queue-rapid-toggle-settles", !(await page.$('[data-testid="queue-panel"]')), "rapid open/close");
 
-await page.evaluate(() => {
-  const row = document.querySelector(".track-row") as HTMLElement;
-  (row.querySelector('button[aria-label="More actions"]') as HTMLElement | null)?.click();
-});
+const visibleTrackMenuButton = (): HTMLButtonElement => {
+  const scroller = document.querySelector(".content-scroll")!.getBoundingClientRect();
+  return [...document.querySelectorAll<HTMLButtonElement>('.track-row button[aria-label="More actions"]')].reverse().find(button => {
+    const rect = button.getBoundingClientRect();
+    return rect.top >= scroller.top && rect.bottom <= scroller.bottom - 2;
+  })!;
+};
+await page.evaluate(() => { document.querySelector<HTMLElement>(".content-scroll")!.scrollTo({ top: 0, behavior: "instant" }); });
+await wait(100);
+const menuButton = await page.evaluateHandle(visibleTrackMenuButton);
+await menuButton.click();
 await page.waitForSelector(".context-menu", { timeout: 5000 });
 const menuAnimation = await animationsFor(".context-menu");
 check("context-menu-pops-in", Boolean(menuAnimation?.some(animation => animation.name === "pop-in" && Number(animation.duration) === 180)), JSON.stringify(menuAnimation));
+const menuProbe = await page.$eval(".context-menu", menu => {
+  const rect = menu.getBoundingClientRect();
+  return {
+    portaled: menu.parentElement === document.body,
+    fits: rect.top >= 0 && rect.bottom <= innerHeight && rect.left >= 0 && rect.right <= innerWidth,
+    focusMoved: menu.contains(document.activeElement),
+  };
+});
+check("track-menu-fits-and-accepts-keyboard-focus", menuProbe.portaled && menuProbe.fits && menuProbe.focusMoved, JSON.stringify(menuProbe));
 await page.keyboard.press("Escape");
 const menuExit = await waitForExit(".context-menu");
 check(
@@ -834,12 +863,32 @@ check(
   JSON.stringify(menuExit)
 );
 check("context-menu-dismisses-after-exit", await waitForGone(".context-menu"), "menu unmounted after its 120ms exit");
-
+check("escape-returns-focus-to-track-menu-trigger", await menuButton.evaluate(button => button === document.activeElement));
+await menuButton.click();
+await page.waitForSelector(".context-menu:not([inert])", { timeout: 5000 });
 await page.evaluate(() => {
-  const row = document.querySelector(".track-row") as HTMLElement;
-  (row.querySelector('button[aria-label="More actions"]') as HTMLElement | null)?.click();
+  const scroller = document.querySelector<HTMLElement>(".content-scroll")!;
+  scroller.dispatchEvent(new Event("scroll")); // An already-queued event, with no new movement.
 });
-await page.waitForSelector(".context-menu", { timeout: 5000 });
+check("track-menu-ignores-stale-scroll-event", Boolean(await page.$(".context-menu:not([inert])")));
+await page.evaluate(() => {
+  document.querySelector<HTMLElement>(".content-scroll")!.scrollBy({ top: 58, behavior: "instant" });
+});
+check("track-menu-dismisses-after-anchor-scrolls", await waitForGone(".context-menu"));
+
+await page.setViewport({ width: 1040, height: 680 });
+await page.keyboard.press("q");
+await page.waitForSelector(".queue-panel", { timeout: 5000 });
+await wait(300);
+const overlayQueue = await queueGeometry();
+check("minimum-width-queue-overlays-content-not-player", overlayQueue.overlays && overlayQueue.fits && overlayQueue.playerSpans, JSON.stringify(overlayQueue));
+await page.click('button[aria-label="Close queue"]');
+await waitForGone(".queue-panel");
+await page.setViewport({ width: 1440, height: 900 });
+await wait(280);
+const pickerTrigger = await page.evaluateHandle(visibleTrackMenuButton);
+await pickerTrigger.click();
+await page.waitForSelector(".context-menu:not([inert])", { timeout: 5000 });
 await clickText(".context-menu button", "Add to playlist…", false);
 await page.waitForSelector(".modal", { timeout: 5000 });
 const modalAnimation = await animationsFor(".modal");
@@ -1093,9 +1142,10 @@ check("rapid-nav-no-stuck-overlays", rapidState.overlays === 0, `${rapidState.ov
 const geometry = await page.evaluate(() => {
   const player = document.querySelector(".player-bar")!.getBoundingClientRect();
   const content = document.querySelector(".content-scroll")!.getBoundingClientRect();
-  return { playerHeight: Math.round(player.height), contentHeight: Math.round(content.height), contentTop: Math.round(content.top) };
+  return { playerHeight: Math.round(player.height), contentHeight: Math.round(content.height), contentTop: Math.round(content.top),
+    playerFullWidth: player.x === 0 && player.width === innerWidth, contentAbovePlayer: Math.abs(player.y - content.bottom) <= 1 };
 });
-check("layout-stable", geometry.playerHeight === 92 && geometry.contentHeight === 740, JSON.stringify(geometry));
+check("layout-stable", geometry.playerHeight === 92 && geometry.contentHeight === 740 && geometry.playerFullWidth && geometry.contentAbovePlayer, JSON.stringify(geometry));
 await shot("07-after-rapid-nav");
 
 await navItem("Albums");
@@ -1140,25 +1190,26 @@ await wait(280);
 
 await sidebarItem("Settings");
 await wait(300);
-const tabUnderline = await page.evaluate(() => {
+const categoryIndicator = await page.evaluate(() => {
   const active = document.querySelector(".settings-tabs button.active");
   const inactive = document.querySelector(".settings-tabs button:not(.active)");
   const activeStyle = active ? getComputedStyle(active, "::after") : null;
   const inactiveStyle = inactive ? getComputedStyle(inactive, "::after") : null;
+  const activeMatrix = new DOMMatrix(activeStyle?.transform ?? "none");
+  const inactiveMatrix = new DOMMatrix(inactiveStyle?.transform ?? "none");
   return {
-    activeTransform: activeStyle?.transform ?? "",
-    inactiveTransform: inactiveStyle?.transform ?? "",
+    activeScale: Math.min(activeMatrix.a, activeMatrix.d),
+    inactiveScale: Math.min(inactiveMatrix.a, inactiveMatrix.d),
     property: activeStyle?.transitionProperty ?? "",
     duration: activeStyle?.transitionDuration ?? "",
   };
 });
 check(
-  "settings-tab-underline-slides",
-  tabUnderline.activeTransform.startsWith("matrix(1") &&
-    tabUnderline.inactiveTransform.startsWith("matrix(0") &&
-    tabUnderline.property.includes("transform") &&
-    tabUnderline.duration === "0.18s",
-  JSON.stringify(tabUnderline)
+  "settings-category-indicator-animates",
+  categoryIndicator.activeScale === 1 && categoryIndicator.inactiveScale === 0 &&
+    categoryIndicator.property.includes("transform") &&
+    categoryIndicator.duration === "0.18s",
+  JSON.stringify(categoryIndicator)
 );
 await clickText(".settings-tabs button", "Appearance");
 await wait(250);
@@ -1273,6 +1324,10 @@ const toggleCompact = () =>
     (label?.querySelector('input[type="checkbox"]') as HTMLInputElement | null)?.click();
   });
 await page.mouse.move(900, 300);
+const sidebarWidths = await page.evaluate(() => {
+  const root = getComputedStyle(document.documentElement);
+  return { expanded: parseFloat(root.getPropertyValue("--sidebar-expanded-width")), compact: parseFloat(root.getPropertyValue("--sidebar-compact-width")) };
+});
 const compactWidthSamples = await page.evaluate(async () => {
   const sidebar = document.querySelector(".sidebar")!;
   const label = [...document.querySelectorAll(".setting-row")].find(row => row.textContent?.includes("Compact sidebar"));
@@ -1292,7 +1347,7 @@ const compactWidthSamples = await page.evaluate(async () => {
 const distinctCompactWidths = new Set(compactWidthSamples).size;
 check(
   "compact-sidebar-width-animates",
-  distinctCompactWidths >= 4 && compactWidthSamples[0] > 200 && compactWidthSamples.at(-1) === 76,
+  distinctCompactWidths >= 4 && compactWidthSamples[0] === sidebarWidths.expanded && compactWidthSamples.at(-1) === sidebarWidths.compact,
   `${distinctCompactWidths} distinct widths, ${compactWidthSamples[0]} -> ${compactWidthSamples.at(-1)}`
 );
 await navItem("Songs");
@@ -1331,8 +1386,8 @@ await shot("09-compact-hover-expanded");
 const hoverState = await sidebarProbe();
 check(
   "compact-hover-expands-overlay",
-  beforeHover.sidebarWidth === 76 &&
-    hoverState.sidebarWidth === 248 &&
+  beforeHover.sidebarWidth === sidebarWidths.compact &&
+    hoverState.sidebarWidth === sidebarWidths.expanded &&
     hoverState.mainLeft === beforeHover.mainLeft &&
     hoverState.labelOpacity === "1" &&
     hoverState.labelVisibility === "visible" &&
@@ -1344,13 +1399,13 @@ await wait(460);
 const afterHover = await sidebarProbe();
 check(
   "compact-hover-collapses",
-  afterHover.sidebarWidth === 76 && afterHover.labelOpacity === "0" && afterHover.labelVisibility === "hidden",
+  afterHover.sidebarWidth === sidebarWidths.compact && afterHover.labelOpacity === "0" && afterHover.labelVisibility === "hidden",
   JSON.stringify(afterHover)
 );
 await page.keyboard.press("Tab");
 await wait(560);
 const focusState = await sidebarProbe();
-check("compact-focus-expands-overlay", focusState.sidebarWidth === 248 && focusState.mainLeft === beforeHover.mainLeft, JSON.stringify(focusState));
+check("compact-focus-expands-overlay", focusState.sidebarWidth === sidebarWidths.expanded && focusState.mainLeft === beforeHover.mainLeft, JSON.stringify(focusState));
 await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
 await wait(460);
 

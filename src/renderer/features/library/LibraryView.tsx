@@ -5,6 +5,9 @@
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import {
   Copy,
+  Disc3,
+  ListMusic,
+  Users,
   FolderOpen,
   FolderPlus,
   Layers,
@@ -136,7 +139,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
     0,
   );
 
-  if (!snapshot) return <div className="view-loading">Loading…</div>;
+  if (!snapshot) return <div className="view-loading" role="status">Loading your library…</div>;
 
   const playAll = () => void playQueue(tracks.map(track => track.id), 0);
 
@@ -167,6 +170,9 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
     }
   };
 
+  const count = tab === "albums" ? snapshot.albums.length : tab === "artists" ? snapshot.artists.length : tab === "playlists" ? snapshot.playlists.length : tracks.length;
+  const itemLabel = tab === "albums" ? "album" : tab === "artists" ? "artist" : tab === "playlists" ? "playlist" : "song";
+
   return (
     <div className="view library-view" data-testid={`library-view-${tab}`}>
       <header className="view-heading">
@@ -174,7 +180,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
           <p className="eyebrow">Your library</p>
           <h1>{TITLES[tab]}</h1>
           <p className="muted">
-            {snapshot.counts.tracks} songs · {snapshot.counts.albums} albums · {snapshot.counts.artists} artists
+            {count} {itemLabel}{count === 1 ? "" : "s"}
           </p>
         </div>
         <div className="heading-actions">
@@ -188,9 +194,39 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
               </button>
             </>
           ) : null}
-          <button type="button" onClick={() => void addFolder()} disabled={scanning}>
-            <FolderPlus size={16} /> Add folder
-          </button>
+          {tab === "playlists" ? (
+            <>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => {
+                  setCreating(true);
+                  setCreatingSmart(false);
+                  setNewName("");
+                }}
+              >
+                <Plus size={16} /> New playlist
+              </button>
+              <button
+                type="button"
+                data-testid="new-smart-playlist"
+                onClick={() => {
+                  setCreatingSmart(true);
+                  setCreating(false);
+                }}
+              >
+                <Sparkles size={16} /> New smart playlist
+              </button>
+              <button type="button" onClick={() => void rescan()} disabled={scanning}>
+                Rescan library
+              </button>
+            </>
+          ) : null}
+          {tab === "playlists" ? null : (
+            <button type="button" onClick={() => void addFolder()} disabled={scanning}>
+              <FolderPlus size={16} /> Add folder
+            </button>
+          )}
         </div>
       </header>
 
@@ -223,7 +259,6 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
             >
               <Layers size={15} /> {showDuplicates ? "Hide duplicates" : "Find duplicates"}
             </button>
-            <span className="muted">{tracks.length} songs</span>
           </div>
           {showDuplicates ? (
             <section className="duplicates-panel" data-testid="duplicates-panel">
@@ -321,49 +356,27 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
       ) : null}
 
       {tab === "albums" ? (
-        <div className="card-grid">
-          {snapshot.albums.map(album => (
-            <AlbumCard key={album.id} album={album} />
-          ))}
-        </div>
+        snapshot.albums.length ? (
+          <div className="card-grid">
+            {snapshot.albums.map(album => <AlbumCard key={album.id} album={album} />)}
+          </div>
+        ) : (
+          <div className="empty-state"><Disc3 size={28} /><h2>No albums yet</h2><p>Add a music folder to see your albums here.</p></div>
+        )
       ) : null}
 
       {tab === "artists" ? (
-        <div className="card-grid artist-grid">
-          {snapshot.artists.map(artist => (
-            <ArtistCard key={artist.id} artist={artist} />
-          ))}
-        </div>
+        snapshot.artists.length ? (
+          <div className="card-grid artist-grid">
+            {snapshot.artists.map(artist => <ArtistCard key={artist.id} artist={artist} />)}
+          </div>
+        ) : (
+          <div className="empty-state"><Users size={28} /><h2>No artists yet</h2><p>Artists will appear here after you add music.</p></div>
+        )
       ) : null}
 
       {tab === "playlists" ? (
         <>
-          <div className="list-toolbar">
-            <button
-              type="button"
-              className="primary"
-              onClick={() => {
-                setCreating(true);
-                setCreatingSmart(false);
-                setNewName("");
-              }}
-            >
-              <Plus size={16} /> New playlist
-            </button>
-            <button
-              type="button"
-              data-testid="new-smart-playlist"
-              onClick={() => {
-                setCreatingSmart(true);
-                setCreating(false);
-              }}
-            >
-              <Sparkles size={16} /> New smart playlist
-            </button>
-            <button type="button" onClick={() => void rescan()} disabled={scanning}>
-              Rescan library
-            </button>
-          </div>
           {creating ? (
             <form
               className="inline-create"
@@ -472,22 +485,17 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
             </form>
           ) : null}
           {snapshot.playlists.length === 0 ? (
-            <div className="empty-state">Create a playlist to collect songs across albums.</div>
+            <div className="empty-state"><ListMusic size={28} /><h2>No playlists yet</h2><p>Create a playlist to collect songs across albums.</p></div>
           ) : (
             <div className="playlist-rows">
               {snapshot.playlists.map(playlist => (
                 <div className="playlist-row" key={playlist.id}>
-                  <button
-                    type="button"
-                    className="playlist-open"
-                    onClick={() => navigate({ name: "playlist", playlistId: playlist.id })}
-                  >
-                    <PlaylistCard playlist={playlist} />
-                  </button>
+                  <PlaylistCard playlist={playlist} />
                   <button
                     type="button"
                     className="icon-button danger"
                     aria-label={`Delete ${playlist.name}`}
+                    title={`Delete ${playlist.name}`}
                     onClick={() => void deletePlaylist(playlist.id)}
                   >
                     <Trash2 size={16} />

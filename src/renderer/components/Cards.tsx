@@ -2,7 +2,7 @@
  * Album, artist and playlist cards. Written for Cadence.
  */
 
-import { Play } from "lucide-react";
+import { ListMusic, Play } from "lucide-react";
 import type { Album, Artist, Playlist } from "../../shared/types";
 import { useLibrary } from "../state/libraryStore";
 import { usePlayer } from "../state/playerStore";
@@ -16,26 +16,21 @@ export function AlbumCard({ album }: { album: Album }) {
   const snapshot = useLibrary(state => state.snapshot);
 
   return (
-    <article
-      className="media-card"
-      onClick={() => navigate({ name: "album", albumId: album.id })}
-      data-testid="album-card"
-      role="button"
-      tabIndex={0}
-      onKeyDown={event => {
-        if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
-        event.preventDefault();
-        navigate({ name: "album", albumId: album.id });
-      }}
-    >
-      <div className="card-art">
-        <Artwork src={album.artworkUrl} alt={album.name} size="md" />
+    <article className="media-card" data-testid="album-card">
+      <button type="button" className="card-open" onClick={() => navigate({ name: "album", albumId: album.id })}>
+        <Artwork src={album.artworkUrl} alt="" size="md" />
+        <span className="card-title" title={album.name}>{album.name}</span>
+        <span className="card-subtitle" title={album.albumArtist}>
+          {album.albumArtist}{album.year ? ` · ${album.year}` : ""}
+        </span>
+      </button>
+      <div className="card-overlay">
         <button
           type="button"
           className="card-play"
           aria-label={`Play ${album.name}`}
-          onClick={event => {
-            event.stopPropagation();
+          title={`Play ${album.name}`}
+          onClick={() => {
             const tracks =
               snapshot?.tracks
                 .filter(track => `${track.albumArtist || track.artist}\u0000${track.album}` === album.id)
@@ -46,13 +41,6 @@ export function AlbumCard({ album }: { album: Album }) {
           <Play size={20} fill="currentColor" />
         </button>
       </div>
-      <div className="card-title" title={album.name}>
-        {album.name}
-      </div>
-      <div className="card-subtitle">
-        {album.albumArtist}
-        {album.year ? ` · ${album.year}` : ""}
-      </div>
     </article>
   );
 }
@@ -60,47 +48,31 @@ export function AlbumCard({ album }: { album: Album }) {
 export function ArtistCard({ artist }: { artist: Artist }) {
   const navigate = useUi(state => state.navigate);
   return (
-    <article
-      className="media-card artist-card"
-      onClick={() => navigate({ name: "artist", artistId: artist.id })}
-      role="button"
-      tabIndex={0}
-      onKeyDown={event => {
-        if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
-        event.preventDefault();
-        navigate({ name: "artist", artistId: artist.id });
-      }}
-    >
+    <button type="button" className="media-card card-open artist-card" onClick={() => navigate({ name: "artist", artistId: artist.id })}>
       <ArtistAvatar name={artist.name} size="md" />
-      <div className="card-title">{artist.name}</div>
-      <div className="card-subtitle">
-        {artist.albumCount} album{artist.albumCount === 1 ? "" : "s"} · {artist.trackCount} songs
-      </div>
-    </article>
+      <span className="card-title" title={artist.name}>{artist.name}</span>
+      <span className="card-subtitle">
+        {artist.albumCount} {artist.albumCount === 1 ? "album" : "albums"} · {artist.trackCount} {artist.trackCount === 1 ? "song" : "songs"}
+      </span>
+    </button>
   );
 }
 
 export function PlaylistCard({ playlist }: { playlist: Playlist }) {
   const navigate = useUi(state => state.navigate);
   return (
-    <article
-      className="media-card"
-      onClick={() => navigate({ name: "playlist", playlistId: playlist.id })}
-      role="button"
-      tabIndex={0}
+    <button
+      type="button"
+      className="card-open playlist-open"
       data-testid="playlist-card"
-      onKeyDown={event => {
-        if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
-        event.preventDefault();
-        navigate({ name: "playlist", playlistId: playlist.id });
-      }}
+      onClick={() => navigate({ name: "playlist", playlistId: playlist.id })}
     >
-      <Artwork src={playlist.artworkUrl} alt={playlist.name} size="md" />
-      <div className="card-title">{playlist.name}</div>
-      <div className="card-subtitle">
+      <Artwork src={playlist.artworkUrl} alt="" size="md" fallbackIcon={<ListMusic className="artwork-fallback-icon" aria-hidden="true" />} />
+      <span className="card-title" title={playlist.name}>{playlist.name}</span>
+      <span className="card-subtitle">
         {playlist.kind === "smart" ? "Smart · " : ""}
-        {playlist.trackCount} song{playlist.trackCount === 1 ? "" : "s"}
-      </div>
-    </article>
+        {playlist.trackCount} {playlist.trackCount === 1 ? "song" : "songs"}
+      </span>
+    </button>
   );
 }

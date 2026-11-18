@@ -31,7 +31,8 @@ mkdirSync(shotDir, { recursive: true });
 
 const snapshotFile = join(harnessDir, "library.json");
 if (!existsSync(snapshotFile)) throw new Error("Run: npx vite-node tests/browser/build-library.ts");
-const { snapshot } = JSON.parse(readFileSync(snapshotFile, "utf8"));
+const { snapshot, defaultSettings: fixtureDefaults } = JSON.parse(readFileSync(snapshotFile, "utf8"));
+if (!fixtureDefaults) throw new Error("Refresh the test fixture: npx vite-node tests/browser/build-library.ts");
 const byTitle = title => snapshot.tracks.find(track => track.title === title);
 
 const PLAIN_LRC = `[ti:Fixture FLAC]
@@ -181,17 +182,21 @@ const audioState = () =>
 /* Stub bridge: same contract as src/preload/index.ts, backed by real library data. */
 await page.evaluateOnNewDocument(
   data => {
-    const { snapshot, lyricsByTrack } = data;
+    const { snapshot, lyricsByTrack, fixtureDefaults } = data;
     // Mirrors the Windows shell: undecorated window, so the renderer draws the title bar.
     window.__chrome = { undecorated: true, maximized: false, fullscreen: false, focused: true };
     window.__chromeListeners = new Set();
     window.__cadenceWindowActions = [];
     const SETTINGS_KEY = "cadence.harness.settings.v1";
     const defaultSettings = {
-      version: 1,
-      playback: { volume: 0.85, muted: false, shuffle: false, repeat: "off", playbackRate: 1, resumeOnLaunch: false },
-      appearance: { accent: "#ff3d71", reduceMotion: false, compactSidebar: false, blurArtwork: true },
+      ...fixtureDefaults,
+      playback: {
+        ...fixtureDefaults.playback, resumeOnLaunch: false, autoPlay: false, smartShufflePopularity: false,
+      },
+      appearance: { ...fixtureDefaults.appearance, accent: "#ff3d71", blurArtwork: true },
+      artistImages: { ...fixtureDefaults.artistImages, enabled: false, autoFetch: false },
       lyrics: {
+        ...fixtureDefaults.lyrics,
         providerOrder: ["local-rich", "blyrics-richsynced", "unison-richsynced", "binimum-richsynced", "blyrics-wordsynced", "local-lrc", "blyrics-line", "unison-synced", "blyrics-synced", "qq-line", "lrclib-synced", "lrclib-plain", "embedded-tag"],
         autoFetch: true,
         offsetMs: 0,
@@ -214,6 +219,7 @@ await page.evaluateOnNewDocument(
         showLyricsInFullscreen: true,
       },
       shaders: {
+        ...fixtureDefaults.shaders,
         enabled: true,
         kawarpOpacity: 0.8,
         kawarpWarpIntensity: 1,
@@ -256,8 +262,9 @@ await page.evaluateOnNewDocument(
         enableAnimatedArt: false,
         performanceMode: "balanced",
       },
-      advanced: { showLogs: false },
     };
+    const historyKey = "cadence.audit.history.v1";
+    const readHistory = () => JSON.parse(localStorage.getItem(historyKey) ?? "[]");
     const loadSettings = () => {
       try {
         const raw = localStorage.getItem(SETTINGS_KEY);
@@ -399,6 +406,15 @@ await page.evaluateOnNewDocument(
         romanize: async request => ({ romanizations: request.lines.map(line => `[romanized] ${line}`) }),
         saveSidecar: async () => "/harness/lyrics.lrc",
       },
+      history: {
+        list: async () => readHistory(),
+        add: async entry => {
+          const history = readHistory();
+          history.unshift({ ...entry, id: (history[0]?.id ?? 0) + 1 });
+          localStorage.setItem(historyKey, JSON.stringify(history));
+        },
+        clear: async () => localStorage.removeItem(historyKey),
+      },
       player: {
         // Stand in for the native ALAC bridge with the matching PCM fixture in this browser harness.
         prepareAlacSource: async () => "/audio/fixture.wav",
@@ -438,7 +454,7 @@ await page.evaluateOnNewDocument(
       },
     };
   },
-  { snapshot, lyricsByTrack }
+  { snapshot, lyricsByTrack, fixtureDefaults }
 );
 
 await page.goto(base, { waitUntil: "networkidle0" });
@@ -605,6 +621,7 @@ await page.evaluateOnNewDocument(installAuditBridge);
 const auditDir = join(root, ".artifacts/ui-audit");
 mkdirSync(auditDir, { recursive: true });
 const auditShot = async name => page.screenshot({ path: join(auditDir, `${name}.png`) });
+const waitForDismissal = async selector => page.waitForSelector(selector, { hidden: true, timeout: 2500 }).then(() => true, () => false);
 const clickText = async (selector, wanted, exact = true) => {
   const handles = await page.$$(selector);
   for (const handle of handles) {
@@ -721,7 +738,7 @@ await runSection("recent-play-completes", async () => {
   await nav("Songs"); await setShuffle(false); await playTrack("Fixture FLAC");
   check("real-audio-started", !(await audioState()).paused, await playerTitle());
   await nav("Home");
-  const recentText = await page.evaluate(() => [...document.querySelectorAll(".shelf")].find(node => node.querySelector("h2")?.textContent === "Recently played")?.textContent ?? "");
+  const recentText = await page.$eval('[data-testid="home-recently-played"]', node => node.textContent ?? "");
   check("recently-played-records-real-playback", recentText.includes("Fixture FLAC"), recentText || "Recently played shelf missing");
 });
 
@@ -817,7 +834,7 @@ await runSection("blur-artwork-completes", async () => {
 /* --------------------------------------------------- exhaustive UI flow */
 
 await runSection("expanded-navigation-completes", async () => {
-  await nav("Settings"); await page.click(".view-heading button"); await wait(150);
+  await nav("Settings"); await clickText(".view-heading button", "Reset all"); await wait(150);
   const destinations = [
     ["Home", "home-view"], ["Songs", "library-view-songs"], ["Albums", "library-view-albums"],
     ["Artists", "library-view-artists"], ["Playlists", "library-view-playlists"],
@@ -843,20 +860,16 @@ await runSection("expanded-navigation-completes", async () => {
   await nav("Home"); await clickText(".quick-card", "Playlists", false);
   check("home-quick-playlists", Boolean(await page.$('[data-testid="library-view-playlists"]')), "quick card");
   await nav("Home");
-  if (await page.$(".quick-track")) {
-    await clickText(".shelf-heading .link", "Show all");
-    check("recently-played-show-all", Boolean(await page.$('[data-testid="library-view-songs"]')), "Show all");
-    await nav("Home"); await (await page.$(".quick-track")).click(); await wait(400);
-    check("recently-played-track-plays", !(await audioState()).paused, await playerTitle());
-  } else check("recently-played-track-plays", false, "no recent track button");
-  await nav("Home");
-  const albumLinks = await page.$$(".shelf-heading .link");
-  for (const link of albumLinks) {
-    const shelf = await link.evaluate(node => node.closest(".shelf")?.querySelector("h2")?.textContent);
-    if (shelf === "Your albums") { await link.click(); break; }
+  const recents = '[data-testid="home-recently-played"]';
+  if (!(await page.$(recents))) {
+    await nav("Songs"); await playTrack("Fixture FLAC"); await nav("Home");
   }
-  await wait(120);
-  check("albums-show-all", Boolean(await page.$('[data-testid="library-view-albums"]')), "Show all");
+  await clickText(`${recents} .shelf-heading button`, "History");
+  check("recently-played-history-link", Boolean(await page.$('[data-testid="history-view"]')), "opens listening history");
+  await nav("Home"); await page.click(`${recents} [data-testid="recently-played-item"]`); await wait(400);
+  check("recently-played-track-plays", !(await audioState()).paused, await playerTitle());
+  await clickText(".home-albums .shelf-heading button", "All albums");
+  check("albums-show-all", Boolean(await page.$('[data-testid="library-view-albums"]')), "All albums");
 });
 
 await runSection("expanded-library-completes", async () => {
@@ -882,22 +895,22 @@ await runSection("expanded-library-completes", async () => {
   check("favourite-removes-from-liked", (await page.$$('[data-testid="library-track-list"] [data-testid="track-row"]')).length === 0, "empty liked list");
   await nav("Songs"); await openTrackMenu("Fixture FLAC"); await clickText(".context-menu button", "Go to album");
   check("context-go-to-album", (await page.$eval(".detail-meta h1", node => node.textContent.trim())) === "Test Bench", await page.evaluate(() => location.hash));
-  if (process.env.AUDIT_DEBUG) console.log("BACK BEFORE", await page.evaluate(() => { const button = document.querySelector('.detail-hero button[aria-label="Back"]'); const rect = button?.getBoundingClientRect(); return { hash: location.hash, length: history.length, rect: rect?.toJSON(), hit: rect ? document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.outerHTML.slice(0, 180) : null }; }));
-  await page.click('.detail-hero button[aria-label="Back"]'); await wait(500);
-  if (process.env.AUDIT_DEBUG) console.log("BACK AFTER", await page.evaluate(() => ({ hash: location.hash, length: history.length })));
+  await page.click('.top-bar button[aria-label="Back"]'); await wait(500);
   check("detail-back", Boolean(await page.$('[data-testid="library-view-songs"]')), await page.evaluate(() => location.hash));
   await nav("Albums");
-  const albumCard = await page.$('[data-testid="album-card"]'); await albumCard.focus(); await page.keyboard.press("Enter"); await wait(150);
+  const albumCard = await page.$('[data-testid="album-card"] .card-open'); await albumCard.focus(); await page.keyboard.press("Enter"); await wait(150);
   check("album-card-keyboard-open", Boolean(await page.$(".detail-hero")), "Enter");
+  await page.click(".detail-path button"); await wait(150);
+  check("album-breadcrumb-opens-collection", Boolean(await page.$('[data-testid="library-view-albums"]')), await page.evaluate(() => location.hash));
   await nav("Artists"); const artistCard = await page.$(".artist-card"); await artistCard.focus(); await page.keyboard.press("Space"); await wait(150);
   check("artist-card-keyboard-open", Boolean(await page.$(".detail-hero")), "Space");
 });
 
 await runSection("expanded-playlist-completes", async () => {
-  await nav("Playlists"); await clickText(".list-toolbar button", "New playlist", false);
+  await nav("Playlists"); await clickText(".heading-actions button", "New playlist");
   await clickText(".inline-create button", "Cancel");
   check("playlist-create-cancel", !(await page.$(".inline-create")), "form closed");
-  await clickText(".list-toolbar button", "New playlist", false);
+  await clickText(".heading-actions button", "New playlist");
   await clickText(".inline-create button", "Create");
   check("playlist-blank-name-stays", Boolean(await page.$(".inline-create")), "blank name not submitted");
   await page.type('.inline-create input[placeholder="Playlist name"]', "Audit Mix");
@@ -916,8 +929,8 @@ await runSection("expanded-playlist-completes", async () => {
   await (await page.$(".modal-row")).click(); await wait(180); await page.click('.modal-header button[aria-label="Close"]');
   check("playlist-add-song", Boolean(await trackRow("Fixture FLAC")), "track row added");
   await clickText(".detail-hero button", "Add songs", false);
-  await page.mouse.click(5, 120); await wait(100);
-  check("playlist-add-backdrop-close", !(await page.$(".modal-backdrop")), "backdrop");
+  await page.mouse.click(5, 120);
+  check("playlist-add-backdrop-close", await waitForDismissal(".modal-backdrop"), "backdrop");
   await openTrackMenu("Fixture FLAC"); await clickText(".context-menu button", "Remove"); await wait(180);
   check("playlist-remove-song", (await page.$$('[data-testid="playlist-track-list"] [data-testid="track-row"]')).length === 0, "empty playlist");
   await nav("Songs"); await openTrackMenu("Fixture FLAC"); await clickText(".context-menu button", "Add to playlist…");
@@ -1337,10 +1350,11 @@ await runSection("expanded-search-and-topbar-completes", async () => {
   await pausePlayback();
   await searchFor("Harness Artist");
   check("search-artist-album-results", Boolean(await page.$(".search-view .artist-card")) && Boolean(await page.$(".search-view [data-testid=\"album-card\"]")), "artist and album shelves");
-  await (await page.$(".search-view [data-testid=\"album-card\"]")).click(); await wait(150);
+  await page.click('.search-view [data-testid="album-card"] .card-open'); await wait(150);
   check("search-album-card-opens", Boolean(await page.$(".detail-hero")), "album detail");
+  check("search-field-clears-on-browse", (await page.$eval("#global-search", node => node.value)) === "", "no stale search term on album page");
   await nav("Songs"); await searchFor("zzzz-no-match");
-  check("search-no-results", (await page.$eval(".search-view", node => node.textContent)).includes("No songs match"), "empty result message");
+  check("search-no-results", (await page.$eval(".search-view", node => node.textContent)).includes("No matches"), "empty result message");
   await page.click('button[aria-label="Clear search"]'); await wait(120);
   const addsBefore = await page.evaluate(() => window.__audit.state.calls.filter(call => call[0] === "add-folder").length);
   await clickText(".top-bar .ghost-button", "Add music"); await wait(100);
@@ -1414,23 +1428,23 @@ await runSection("expanded-queue-controls-completes", async () => {
 });
 
 await runSection("expanded-dialog-and-menu-completes", async () => {
-  await nav("Songs"); await openTrackMenu("Fixture FLAC"); await page.keyboard.press("Escape"); await wait(80);
-  check("context-menu-escape", !(await page.$(".context-menu")), "menu closed");
-  await openTrackMenu("Fixture FLAC"); await page.mouse.click(1000, 120); await wait(80);
-  check("context-menu-outside-click", !(await page.$(".context-menu")), "outside click closed");
+  await nav("Songs"); await openTrackMenu("Fixture FLAC"); await page.keyboard.press("Escape");
+  check("context-menu-escape", await waitForDismissal(".context-menu"), "menu closed");
+  await openTrackMenu("Fixture FLAC"); await page.mouse.click(1000, 120);
+  check("context-menu-outside-click", await waitForDismissal(".context-menu"), "outside click closed");
   await openTrackMenu("Fixture FLAC"); await clickText(".context-menu button", "Add to playlist…");
   check("playlist-picker-opens", Boolean(await page.$(".modal-backdrop")), "picker opened");
-  await page.click('.modal-header button[aria-label="Close"]'); await wait(80);
-  check("playlist-picker-close-button", !(await page.$(".modal-backdrop")), "close button");
-  await openTrackMenu("Fixture FLAC"); await clickText(".context-menu button", "Add to playlist…"); await page.keyboard.press("Escape"); await wait(100);
-  check("playlist-picker-escape", !(await page.$(".modal-backdrop")), "Escape closes picker");
-  await openTrackMenu("Fixture FLAC"); await clickText(".context-menu button", "Add to playlist…"); await page.mouse.click(1000, 120); await wait(80);
-  check("playlist-picker-backdrop", !(await page.$(".modal-backdrop")), "backdrop closes picker");
-  await nav("Playlists"); await clickText(".list-toolbar button", "New playlist", false); await page.type('.inline-create input[placeholder="Playlist name"]', "Modal Mix"); await clickText(".inline-create button", "Create"); await wait(200);
-  await clickText(".detail-hero button", "Add songs", false); await page.keyboard.press("Escape"); await wait(100);
-  check("playlist-add-escape", !(await page.$(".modal-backdrop")), "Escape closes add-songs dialog");
-  await clickText(".detail-hero button", "Add songs", false); await page.click('.modal-header button[aria-label="Close"]'); await wait(80);
-  check("playlist-add-close-button", !(await page.$(".modal-backdrop")), "close button");
+  await page.click('.modal-header button[aria-label="Close"]');
+  check("playlist-picker-close-button", await waitForDismissal(".modal-backdrop"), "close button");
+  await openTrackMenu("Fixture FLAC"); await clickText(".context-menu button", "Add to playlist…"); await page.keyboard.press("Escape");
+  check("playlist-picker-escape", await waitForDismissal(".modal-backdrop"), "Escape closes picker");
+  await openTrackMenu("Fixture FLAC"); await clickText(".context-menu button", "Add to playlist…"); await page.mouse.click(1000, 120);
+  check("playlist-picker-backdrop", await waitForDismissal(".modal-backdrop"), "backdrop closes picker");
+  await nav("Playlists"); await clickText(".heading-actions button", "New playlist"); await page.type('.inline-create input[placeholder="Playlist name"]', "Modal Mix"); await clickText(".inline-create button", "Create"); await wait(200);
+  await clickText(".detail-hero button", "Add songs", false); await page.keyboard.press("Escape");
+  check("playlist-add-escape", await waitForDismissal(".modal-backdrop"), "Escape closes add-songs dialog");
+  await clickText(".detail-hero button", "Add songs", false); await page.click('.modal-header button[aria-label="Close"]');
+  check("playlist-add-close-button", await waitForDismissal(".modal-backdrop"), "close button");
   await nav("Playlists"); const deleteButton = await page.$('button[aria-label="Delete Modal Mix"]'); if (deleteButton) await deleteButton.click();
 });
 
@@ -1495,7 +1509,7 @@ await runSection("expanded-album-fallback-completes", async () => {
   try {
     await nav("Settings"); await settingsTab("Library"); await clickText(".heading-actions button", "Rescan now"); await wait(150);
     await nav("Albums");
-    const cards = await page.$$('[data-testid="album-card"]');
+    const cards = await page.$$('[data-testid="album-card"] .card-open');
     let albumCard = null;
     for (const card of cards) if ((await card.$eval(".card-title", node => node.textContent.trim())) === "Test Bench") { albumCard = card; break; }
     if (!albumCard) throw new Error("Test Bench card missing after albumArtist fallback");

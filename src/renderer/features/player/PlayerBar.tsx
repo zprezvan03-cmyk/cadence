@@ -20,6 +20,7 @@ export function PlayerBar() {
   const { cover, text } = usePlaybackPresentation(item);
   const toggleQueue = useUi(state => state.toggleQueue);
   const queueOpen = useUi(state => state.queueOpen);
+  const lyricsOpen = useUi(state => state.route.name === "lyrics");
   const navigate = useUi(state => state.navigate);
   const setFavorite = useLibrary(state => state.setFavorite);
   const toggleFullscreenLyrics = useUi(state => state.toggleFullscreenLyrics);
@@ -50,7 +51,9 @@ export function PlayerBar() {
       style={cover.front.value.src ? { ["--player-artwork" as string]: `url("${cover.front.value.src.replace(/"/g, "%22")}")` } : undefined}
     >
       <div className="player-track">
-        <PlaybackArtwork cover={cover} label={item?.albumLabel ?? item?.title ?? "No track"} />
+        <button type="button" className="player-cover-button" aria-label="Open Now Playing" title="Open Now Playing" onClick={() => navigate({ name: "lyrics" })}>
+          <PlaybackArtwork cover={cover} label={item?.albumLabel ?? item?.title ?? "No track"} />
+        </button>
         <div className="player-track-meta" data-player-part="metadata">
           <PlaybackText text={text}>
             {display => (
@@ -63,12 +66,8 @@ export function PlayerBar() {
                     <ArtistAvatar name={display.artistLabel} size="xs" className="artist-avatar-inline" />
                   ) : null}
                   <span className="player-artist-name">{display?.artistLabel ?? "Choose a song to begin"}</span>
+                  {display ? <SourceBadge source={display.source} compact /> : null}
                 </div>
-                {display ? (
-                  <div className="player-source-line">
-                    <SourceBadge source={display.source} compact />
-                  </div>
-                ) : null}
               </>
             )}
           </PlaybackText>
@@ -92,6 +91,8 @@ export function PlayerBar() {
             type="button"
             className={`icon-button heart ${track.favorite ? "active" : ""}`}
             aria-label={track.favorite ? "Remove from favourites" : "Add to favourites"}
+            title={track.favorite ? "Remove from favourites" : "Add to favourites"}
+            aria-pressed={track.favorite}
             onClick={() => void setFavorite(track.id, !track.favorite)}
           >
             <Heart size={17} fill={track.favorite ? "currentColor" : "none"} />
@@ -106,43 +107,48 @@ export function PlayerBar() {
 
       <div className="player-right">
         <VolumeControl />
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Now Playing"
-          title="Now Playing (L)"
-          onClick={() => navigate({ name: "lyrics" })}
-        >
-          <Mic2 size={18} />
-        </button>
-        <button
-          type="button"
-          className={`icon-button ${queueOpen ? "active" : ""}`}
-          aria-label="Queue"
-          title="Queue (Q)"
-          onClick={() => toggleQueue()}
-        >
-          <ListMusic size={18} />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Mini player"
-          title="Mini player (Ctrl+Shift+P)"
-          data-testid="open-mini-player"
-          onClick={() => setMiniPlayer(true)}
-        >
-          <PictureInPicture2 size={17} />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Fullscreen lyrics"
-          title="Fullscreen lyrics (F)"
-          onClick={() => toggleFullscreenLyrics()}
-        >
-          <Maximize2 size={17} />
-        </button>
+        <div className="player-tools" role="group" aria-label="Player views">
+          <button
+            type="button"
+            className={`icon-button ${lyricsOpen ? "active" : ""}`}
+            aria-label="Now Playing"
+            aria-pressed={lyricsOpen}
+            title="Now Playing (L)"
+            onClick={() => navigate({ name: "lyrics" })}
+          >
+            <Mic2 size={18} />
+          </button>
+          <button
+            type="button"
+            className={`icon-button ${queueOpen ? "active" : ""}`}
+            aria-label="Queue"
+            aria-expanded={queueOpen}
+            aria-controls={queueOpen ? "playback-queue" : undefined}
+            title="Queue (Q)"
+            onClick={() => toggleQueue()}
+          >
+            <ListMusic size={18} />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Mini player"
+            title="Mini player (Ctrl+Shift+P)"
+            data-testid="open-mini-player"
+            onClick={() => setMiniPlayer(true)}
+          >
+            <PictureInPicture2 size={17} />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Fullscreen lyrics"
+            title="Fullscreen lyrics (F)"
+            onClick={() => toggleFullscreenLyrics()}
+          >
+            <Maximize2 size={17} />
+          </button>
+        </div>
       </div>
     </footer>
   );

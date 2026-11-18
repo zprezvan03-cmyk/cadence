@@ -19,7 +19,7 @@ export function TopBar() {
   const [query, setQuery] = useState(route.name === "search" ? route.query : "");
 
   useEffect(() => {
-    if (route.name === "search") setQuery(route.query);
+    setQuery(route.name === "search" ? route.query : "");
   }, [route]);
 
   return (
@@ -45,7 +45,8 @@ export function TopBar() {
         <input
           id="global-search"
           type="search"
-          placeholder="Search songs, artists and albums"
+          placeholder="Search your library"
+          aria-label="Search your library"
           value={query}
           onChange={event => {
             const value = event.target.value;
@@ -66,7 +67,7 @@ export function TopBar() {
           >
             <X size={15} />
           </button>
-        ) : null}
+        ) : <kbd className="search-shortcut" aria-hidden="true">Ctrl K</kbd>}
       </form>
 
       <div className="top-actions">
@@ -77,8 +78,8 @@ export function TopBar() {
             {scan ? `${scan.filesProcessed}/${scan.filesSeen || "?"}` : "Scanning"}
           </span>
         ) : null}
-        <button type="button" className="ghost-button" onClick={() => void addFolder()} disabled={scanning}>
-          <FolderPlus size={16} /> Add music
+        <button type="button" className="ghost-button top-add" aria-label="Add music" onClick={() => void addFolder()} disabled={scanning}>
+          <FolderPlus size={16} /> <span>Add music</span>
         </button>
       </div>
     </header>

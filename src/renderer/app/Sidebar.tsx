@@ -9,7 +9,7 @@ import {
   Heart,
   Home,
   History,
-  Library,
+  AudioLines,
   ListMusic,
   Mic2,
   Music2,
@@ -20,16 +20,16 @@ import {
 import { EMPTY_PLAYLISTS, useLibrary } from "../state/libraryStore";
 import { useUi, type LibraryTab } from "../state/uiStore";
 
-const NAV: { label: string; icon: React.ReactNode; route: Parameters<ReturnType<typeof useUi.getState>["navigate"]>[0] }[] = [
-  { label: "Home", icon: <Home size={18} />, route: { name: "home" } },
+const NAV: { label: string; icon: React.ReactNode; route: Parameters<ReturnType<typeof useUi.getState>["navigate"]>[0]; group?: string }[] = [
+  { label: "Home", group: "Listen", icon: <Home size={18} />, route: { name: "home" } },
+  { label: "Now Playing", icon: <Mic2 size={18} />, route: { name: "lyrics" } },
   { label: "History", icon: <History size={18} />, route: { name: "history" } },
   { label: "Stats", icon: <ChartColumn size={18} />, route: { name: "stats" } },
-  { label: "Songs", icon: <Music2 size={18} />, route: { name: "library", tab: "songs" } },
+  { label: "Songs", group: "Library", icon: <Music2 size={18} />, route: { name: "library", tab: "songs" } },
   { label: "Albums", icon: <AlbumIcon size={18} />, route: { name: "library", tab: "albums" } },
   { label: "Artists", icon: <Users size={18} />, route: { name: "library", tab: "artists" } },
   { label: "Playlists", icon: <ListMusic size={18} />, route: { name: "library", tab: "playlists" } },
   { label: "Liked songs", icon: <Heart size={18} />, route: { name: "library", tab: "favorites" } },
-  { label: "Now Playing", icon: <Mic2 size={18} />, route: { name: "lyrics" } },
 ];
 
 export function Sidebar() {
@@ -40,6 +40,12 @@ export function Sidebar() {
   const counts = useLibrary(state => state.snapshot?.counts);
 
   const isActive = (candidate: (typeof NAV)[number]["route"]) => {
+    // Keep the parent collection identifiable while browsing its detail page.
+    if (candidate.name === "library") {
+      if (route.name === "album") return candidate.tab === "albums";
+      if (route.name === "artist") return candidate.tab === "artists";
+      if (route.name === "playlist") return candidate.tab === "playlists";
+    }
     if (candidate.name !== route.name) return false;
     if (candidate.name === "library" && route.name === "library") {
       return candidate.tab === route.tab;
@@ -127,47 +133,24 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar">
-      <div
-        className="brand"
-        onClick={() => navigate({ name: "home" })}
-        role="button"
-        aria-label="Cadence home"
-        tabIndex={0}
-        onKeyDown={event => {
-          if (event.key !== "Enter" && event.key !== " ") return;
-          event.preventDefault();
-          navigate({ name: "home" });
-        }}
-      >
-        <span className="brand-mark">
-          <Library size={19} />
-        </span>
-        <span className="brand-text">
-          <strong>Cadence</strong>
-          <em>local music · better lyrics</em>
-        </span>
-      </div>
+      <button type="button" className="brand" onClick={() => navigate({ name: "home" })} aria-label="Cadence home">
+        <span className="brand-mark" aria-hidden="true"><AudioLines size={20} /></span>
+        <span className="brand-text"><strong>Cadence</strong></span>
+      </button>
 
-      <nav className="nav" ref={navRef}>
+      <nav className="nav" aria-label="Music navigation" ref={navRef}>
         <span className="nav-pill" ref={pillRef} aria-hidden="true" />
-        {NAV.map(item => (
-          <button
-            type="button"
-            key={item.label}
-            className={`nav-item ${isActive(item.route) ? "active" : ""}`}
-            onClick={() => navigate(item.route)}
-            title={item.label}
-            aria-label={item.label}
-          >
-            {item.icon}
-            <span>{item.label}</span>
-          </button>
-        ))}
+        {NAV.map(item => {
+          const active = isActive(item.route);
+          return (
+            <NavEntry key={item.label} item={item} active={active} navigate={navigate} />
+          );
+        })}
       </nav>
 
       <div className="sidebar-section">
         <div className="sidebar-heading">
-          <span>Playlists</span>
+          <span>My playlists</span>
           <button type="button" className="icon-button" onClick={requestPlaylistCreate} aria-label="New playlist">
             <Plus size={15} />
           </button>
@@ -180,8 +163,10 @@ export function Sidebar() {
               className={`sidebar-link ${route.name === "playlist" && route.playlistId === playlist.id ? "active" : ""}`}
               onClick={() => navigate({ name: "playlist", playlistId: playlist.id })}
               title={playlist.name}
+              aria-current={route.name === "playlist" && route.playlistId === playlist.id ? "page" : undefined}
             >
-              {playlist.name}
+              <ListMusic size={15} aria-hidden="true" />
+              <span>{playlist.name}</span>
             </button>
           ))}
           {playlists.length === 0 ? <p className="sidebar-hint">Playlists you create appear here.</p> : null}
@@ -198,12 +183,36 @@ export function Sidebar() {
           onClick={() => navigate({ name: "settings" })}
           title="Settings"
           aria-label="Settings"
+          aria-current={route.name === "settings" ? "page" : undefined}
         >
           <Settings size={18} />
           <span>Settings</span>
         </button>
       </div>
     </aside>
+  );
+}
+
+function NavEntry({ item, active, navigate }: {
+  item: (typeof NAV)[number];
+  active: boolean;
+  navigate: ReturnType<typeof useUi.getState>["navigate"];
+}) {
+  return (
+    <>
+      {item.group ? <p className="nav-group" aria-hidden="true">{item.group}</p> : null}
+      <button
+        type="button"
+        className={`nav-item ${active ? "active" : ""}`}
+        onClick={() => navigate(item.route)}
+        title={item.label}
+        aria-label={item.label}
+        aria-current={active ? "location" : undefined}
+      >
+        {item.icon}
+        <span>{item.label}</span>
+      </button>
+    </>
   );
 }
 

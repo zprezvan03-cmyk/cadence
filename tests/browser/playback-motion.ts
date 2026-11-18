@@ -268,10 +268,17 @@ export async function auditMiniHandoff(page: Page, check: Check, shot: Shot) {
       seekTime: Number(document.querySelector<HTMLInputElement>(".player-bar .seek")!.value),
     };
   });
+  // The redesigned Mini displays a larger sleeve. Check the same live cover interpolates
+  // between the two measured slots in both position and scale (rather than snapping its size).
+  const minWidth = Math.min(full.width, compact.width);
+  const maxWidth = Math.max(full.width, compact.width);
+  const interpolatedWidth = maxWidth - minWidth < 1
+    ? Math.abs(handoff.art.width - full.width) < 1
+    : handoff.art.width > minWidth && handoff.art.width < maxWidth;
   check("mini-moves-existing-cover-title-and-live-transport", handoff.nowPlaying && !handoff.duplicate && handoff.artworkUnobscured && handoff.playTargets === 1 &&
     ["artwork", "metadata", "transport"].every(part => handoff.names.includes(`player-${part}-handoff`)) &&
     Math.abs(handoff.seekTime - before) < 0.08 && handoff.art.y > compact.y + 15 && handoff.art.y < full.y - 15 &&
-    Math.abs(handoff.art.width - full.width) < 1 && Math.abs(handoff.title.y - handoff.art.y) < handoff.art.height &&
+    interpolatedWidth && Math.abs(handoff.title.y - handoff.art.y) < handoff.art.height &&
     handoff.transport.y > miniTransport.y + 15, JSON.stringify(handoff));
   await shot("11-mini-expand-mid");
   await page.mouse.click(handoff.transport.x + handoff.transport.width / 2, handoff.transport.y + handoff.transport.height / 2);

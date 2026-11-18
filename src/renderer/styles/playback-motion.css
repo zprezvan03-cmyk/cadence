@@ -51,8 +51,5 @@
 .player-bar[data-player-moving] {
   overflow: visible;
   z-index: 35; /* above the sidebar, below the queue and dialogs */
-  /* The bar sits in its own grid row and still has its artwork blur. Don't sample the
-     underlying page again as the live parts cross it. */
-  backdrop-filter: none;
 }
 .player-bar[data-player-moving]::before { clip-path: inset(32px); }

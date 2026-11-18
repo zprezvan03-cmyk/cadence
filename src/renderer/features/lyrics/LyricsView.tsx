@@ -339,10 +339,11 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
         <>
           <h1>{display?.title ?? "Nothing playing"}</h1>
           <p>
-            {display
-              ? [display.artistLabel, display.albumLabel].filter(Boolean).join(" · ")
-              : "Pick a song from your library"}
+            {display ? (
+              fullscreen ? [display.artistLabel, display.albumLabel].filter(Boolean).join(" · ") : display.artistLabel
+            ) : "Pick a song from your library"}
           </p>
+          {!fullscreen && display?.albumLabel ? <p className="lyrics-album-label">{display.albumLabel}</p> : null}
           {display ? (
             <div className="lyrics-heading-source">
               <SourceBadge source={display} />
@@ -372,6 +373,19 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
     profileConfig.metadataVisible &&
     (!fullscreen || (showLyricsSetting && profileConfig.metadataSlot === "top"));
 
+  const customizeButton = (
+    <button
+      type="button"
+      className="np-customize-button"
+      onClick={openStudio}
+      aria-label="Customize Now Playing"
+      title="Customize Now Playing"
+      data-testid="customize-now-playing"
+    >
+      <SlidersHorizontal size={16} /> Customize
+    </button>
+  );
+
   return (
     <div
       ref={viewRef}
@@ -389,6 +403,7 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
       data-now-playing-profile={activeNowPlayingProfile.id}
       data-profile-mode={fullscreen ? "fullscreen" : "windowed"}
       data-profile-artwork={profileConfig.artworkVisible ? "visible" : "hidden"}
+      data-profile-metadata={profileConfig.metadataVisible ? "visible" : "hidden"}
       data-profile-background={profileConfig.backgroundMode}
       data-profile-dock={profileConfig.dockVisible ? "visible" : "hidden"}
       data-profile-controls={profileConfig.controlsVisible ? "visible" : "hidden"}
@@ -418,18 +433,15 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
         </div>
       ) : null}
 
+      {!fullscreen ? (
+        <div className="lyrics-toolbar">
+          <span className="eyebrow">Now Playing</span>
+          {customizeButton}
+        </div>
+      ) : null}
       <div className="lyrics-header">
         {headingInHeader ? heading : null}
-        <button
-          type="button"
-          className="np-customize-button"
-          onClick={openStudio}
-          aria-label="Customize Now Playing"
-          title="Customize Now Playing"
-          data-testid="customize-now-playing"
-        >
-          <SlidersHorizontal size={16} /> Customize
-        </button>
+        {fullscreen ? customizeButton : null}
         {/* One exit button, top-right, in both fullscreen layouts. */}
         {fullscreen ? (
           <button

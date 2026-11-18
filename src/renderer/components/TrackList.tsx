@@ -2,16 +2,18 @@
  * Track list with playback, favourites and queue actions. Written for Cadence.
  */
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Disc3,
   Heart,
   ListPlus,
   MoreHorizontal,
+  Music2,
+  Pause,
   Pencil,
   Play,
   Plus,
-  Rows3,
   Trash2,
 } from "lucide-react";
 import type { Track } from "../../shared/types";
@@ -42,8 +44,8 @@ interface TrackListProps {
 
 interface MenuState {
   track: Track;
-  x: number;
-  y: number;
+  anchor: HTMLButtonElement;
+  scrollTop: number;
 }
 
 interface TrackRowProps {
@@ -51,12 +53,13 @@ interface TrackRowProps {
   index: number;
   active: boolean;
   playing: boolean;
+  menuOpen: boolean;
   showAlbum: boolean;
   showArtwork: boolean;
   onPlay: (index: number) => void;
   onToggle: () => Promise<void>;
   onFavorite: (id: number, favorite: boolean) => Promise<void>;
-  onOpenMenu: (track: Track, anchor: HTMLElement) => void;
+  onOpenMenu: (track: Track, anchor: HTMLButtonElement) => void;
 }
 
 /** Rows are memoized so playback and favourite updates do not rebuild every visible row. */
@@ -65,6 +68,7 @@ const TrackRow = memo(function TrackRow({
   index,
   active,
   playing,
+  menuOpen,
   showAlbum,
   showArtwork,
   onPlay,
@@ -74,7 +78,7 @@ const TrackRow = memo(function TrackRow({
 }: TrackRowProps) {
   return (
     <div
-      className={`track-row ${active ? "active" : ""}`}
+      className={`track-row${index % 2 === 0 ? " is-striped" : ""}${active ? " active" : ""}`}
       onDoubleClick={() => onPlay(index)}
       onClick={() => {
         if (active) {
@@ -86,15 +90,25 @@ const TrackRow = memo(function TrackRow({
       data-testid="track-row"
       data-track-id={track.id}
     >
-      <span className="col-index">
-        <span className="index-number">{index + 1}</span>
-        <span className="index-play">{active && playing ? <Rows3 size={15} /> : <Play size={15} />}</span>
-      </span>
+      <button
+        type="button"
+        className="col-index track-play"
+        aria-label={`${active && playing ? "Pause" : "Play"} ${track.title}`}
+        onDoubleClick={event => event.stopPropagation()}
+        onClick={event => {
+          event.stopPropagation();
+          if (active) void onToggle();
+          else onPlay(index);
+        }}
+      >
+        <span className="index-number" aria-hidden="true">{index + 1}</span>
+        <span className="index-play" aria-hidden="true">{active && playing ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" />}</span>
+      </button>
       <span className="col-title">
         {showArtwork ? <Artwork src={track.artworkUrl} alt={track.album} size="xs" /> : null}
         <span className="title-block">
-          <span className="title-text">{track.title}</span>
-          <span className="subtitle-text">{track.artist}</span>
+          <span className="title-text" title={track.title}>{track.title}</span>
+          <span className="subtitle-text" title={track.artist}>{track.artist}</span>
         </span>
         {!track.playable || codecSupport(track) === "unsupported" ? (
           <span
@@ -110,13 +124,14 @@ const TrackRow = memo(function TrackRow({
           </span>
         ) : null}
       </span>
-      {showAlbum ? <span className="col-album">{track.album}</span> : null}
+      {showAlbum ? <span className="col-album" title={track.album}>{track.album}</span> : null}
       <span className="col-duration">{formatTime(track.duration)}</span>
-      <span className="col-actions" onClick={event => event.stopPropagation()}>
+      <span className="col-actions" onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
         <button
           type="button"
           className={`icon-button heart ${track.favorite ? "active" : ""}`}
           aria-label={track.favorite ? "Remove from favourites" : "Add to favourites"}
+          aria-pressed={track.favorite}
           onClick={() => void onFavorite(track.id, !track.favorite)}
         >
           <Heart size={15} fill={track.favorite ? "currentColor" : "none"} />
@@ -125,6 +140,7 @@ const TrackRow = memo(function TrackRow({
           type="button"
           className="icon-button"
           aria-label="More actions"
+          aria-expanded={menuOpen}
           onClick={event => onOpenMenu(track, event.currentTarget)}
         >
           <MoreHorizontal size={17} />
@@ -169,25 +185,61 @@ export const TrackList = memo(function TrackList({
     },
     [playQueue, trackIds]
   );
-  const openMenu = useCallback((track: Track, anchor: HTMLElement) => {
-    const rect = anchor.getBoundingClientRect();
-    setMenu({ track, x: rect.right, y: rect.bottom + 6 });
+  const openMenu = useCallback((track: Track, anchor: HTMLButtonElement) => {
+    const scrollTop = listRef.current?.closest(".content-scroll")?.scrollTop ?? 0;
+    setMenu(previous => previous?.anchor === anchor ? null : { track, anchor, scrollTop });
   }, []);
+
+  const closeMenuAndRestoreFocus = () => {
+    setMenu(null);
+    menu?.anchor.focus({ preventScroll: true });
+  };
+
+  useLayoutEffect(() => {
+    const surface = menuRef.current;
+    if (!menu || !surface) return;
+    const anchor = menu.anchor.getBoundingClientRect();
+    // offset dimensions ignore the entrance transform, so the settled panel stays in bounds.
+    const width = surface.offsetWidth;
+    const height = surface.offsetHeight;
+    const inset = 10;
+    const below = anchor.bottom + 6;
+    const top = below + height <= window.innerHeight - inset ? below : anchor.top - height - 6;
+    surface.style.left = `${Math.max(inset, Math.min(anchor.right - width, window.innerWidth - width - inset))}px`;
+    surface.style.top = `${Math.max(inset, Math.min(top, window.innerHeight - height - inset))}px`;
+    surface.querySelector("button")?.focus({ preventScroll: true });
+  }, [menu, menuPresence.mounted]);
 
   useEffect(() => {
     if (!menu) return;
     const close = (event: MouseEvent) => {
-      if (menuRef.current && event.target instanceof Node && menuRef.current.contains(event.target)) return;
+      if (event.target instanceof Node && (menuRef.current?.contains(event.target) || menu.anchor.contains(event.target))) return;
       setMenu(null);
     };
     const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenu(null);
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setMenu(null);
+        menu.anchor.focus({ preventScroll: true });
+      }
+    };
+    const dismiss = () => setMenu(null);
+    const scroll = listRef.current?.closest(".content-scroll");
+    // A scroll event can arrive after a click even if its movement preceded opening the menu.
+    // Ignore that pending event, but close if the list actually moves away from the anchor.
+    const onScroll = () => {
+      if (scroll?.scrollTop !== menu.scrollTop) dismiss();
     };
     window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", escape);
+    window.addEventListener("keydown", escape, true);
+    window.addEventListener("resize", dismiss);
+    scroll?.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       window.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", escape);
+      window.removeEventListener("keydown", escape, true);
+      window.removeEventListener("resize", dismiss);
+      scroll?.removeEventListener("scroll", onScroll);
     };
   }, [menu]);
 
@@ -230,14 +282,14 @@ export const TrackList = memo(function TrackList({
   }, [tracks.length, virtualized]);
 
   if (tracks.length === 0) {
-    return <div className="empty-state">{emptyMessage}</div>;
+    return <div className="empty-state"><Music2 size={26} aria-hidden="true" /><p>{emptyMessage}</p></div>;
   }
 
   const start = virtualized ? Math.min(visibleRange.start, Math.max(0, tracks.length - 1)) : 0;
   const end = virtualized ? Math.max(start, Math.min(visibleRange.end, tracks.length)) : tracks.length;
 
   return (
-    <div className={`track-list ${compact ? "compact" : ""}`} data-testid={testId} ref={listRef}>
+    <div className={`track-list ${compact || !showAlbum ? "compact" : ""}`} data-testid={testId} ref={listRef}>
       <div className="track-head">
         <span className="col-index">#</span>
         <span className="col-title">Title</span>
@@ -256,6 +308,7 @@ export const TrackList = memo(function TrackList({
             index={index}
             active={active}
             playing={active && isPlaying}
+            menuOpen={menu?.track.id === track.id}
             showAlbum={showAlbum}
             showArtwork={showArtwork}
             onPlay={play}
@@ -269,22 +322,26 @@ export const TrackList = memo(function TrackList({
         <div aria-hidden="true" style={{ height: (tracks.length - end) * ROW_HEIGHT_PX, flexShrink: 0 }} />
       ) : null}
 
-      {menuPresence.mounted && renderedMenu ? (
+      {menuPresence.mounted && renderedMenu ? createPortal(
         <div
           className={`context-menu ${menuPresence.phaseClass}`}
           data-presence={menuPresence.phase}
-          style={{ left: Math.max(12, renderedMenu.x - 220), top: renderedMenu.y }}
+          inert={!menu}
           ref={menuRef}
+          role="group"
+          aria-label={`Actions for ${renderedMenu.track.title}`}
         >
-          <button type="button" onClick={() => { playNext([renderedMenu.track.id]); setMenu(null); }}>
+          <div className="context-menu-title" title={renderedMenu.track.title}>{renderedMenu.track.title}</div>
+          <button type="button" onClick={() => { playNext([renderedMenu.track.id]); closeMenuAndRestoreFocus(); }}>
             <Play size={15} /> Play next
           </button>
-          <button type="button" onClick={() => { addToQueue([renderedMenu.track.id]); setMenu(null); }}>
+          <button type="button" onClick={() => { addToQueue([renderedMenu.track.id]); closeMenuAndRestoreFocus(); }}>
             <ListPlus size={15} /> Add to queue
           </button>
           <button type="button" onClick={() => { openPlaylistPicker([renderedMenu.track.id]); setMenu(null); }}>
             <Plus size={15} /> Add to playlist…
           </button>
+          <hr />
           <button
             type="button"
             data-testid="track-edit-details"
@@ -316,7 +373,7 @@ export const TrackList = memo(function TrackList({
               <Trash2 size={15} /> Remove
             </button>
           ) : null}
-        </div>
+        </div>, document.body
       ) : null}
     </div>
   );

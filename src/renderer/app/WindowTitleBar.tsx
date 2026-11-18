@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { Copy, Minus, Music2, Square, X } from "lucide-react";
+import { AudioLines, Copy, Minus, Square, X } from "lucide-react";
 import type { WindowAction, WindowChromeState } from "../../shared/types";
 
 const NATIVE_CHROME: WindowChromeState = {
@@ -65,7 +65,7 @@ export function WindowTitleBar({ chrome }: { chrome: WindowChromeState }) {
     >
       <div className="title-bar-brand" data-tauri-drag-region>
         <span className="title-bar-mark" aria-hidden="true">
-          <Music2 size={11} strokeWidth={2.2} />
+          <AudioLines size={11} strokeWidth={2.2} />
         </span>
         <span className="title-bar-text" data-tauri-drag-region>
           Cadence
