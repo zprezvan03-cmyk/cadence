@@ -17,7 +17,7 @@ Timed lyric animations use the pinned Braccato defaults for follow, fades, scale
 
 ## Settings
 
-**Settings → Lyrics** groups fetching, timing, fonts and themes, AI Translation, AI Romanization, and provider order. Appearance keeps app-wide visual options, shaders and the Now Playing editor. Settings remembers the selected category while you browse; the offline lyrics recovery link opens Lyrics directly.
+**Settings → Lyrics** groups fetching, timing, fonts and themes, AI Translation, AI Romanization, and provider order. Appearance keeps app-wide visual options, shaders and the Now Playing editor. Settings remembers the selected category and its own scroll position while you browse. The offline lyrics recovery link opens Lyrics at the online-fetch switch, even if you previously scrolled much farther down the panel.
 
 Existing preferences keep the same keys and values. In particular, AI configurations are independent and disabled providers still keep their position in the saved order. **Reset all** is at the bottom of **About**. Cancel leaves current and saved settings alone; confirm restores the defaults, including playback preferences and Now Playing profiles. Clearing the lyrics cache is a separate action.
 

@@ -32,7 +32,10 @@ import { QueuePanel } from "./features/player/QueuePanel";
 import { SettingsView } from "./features/settings/SettingsView";
 import { StatsView } from "./features/stats/StatsView";
 import { usePlayer } from "./state/playerStore";
-import { useUi, type Route } from "./state/uiStore";
+import { useUi, type Route, type SettingsSection } from "./state/uiStore";
+
+const scrollMemory = new Map<string, number>();
+const settingsScrollKey = (section: SettingsSection) => `settings:${section}`;
 
 function NowPlayingRoute({ fullscreen = false }: { fullscreen?: boolean }) {
   const track = useCurrentTrack();
@@ -48,6 +51,8 @@ function NowPlayingRoute({ fullscreen = false }: { fullscreen?: boolean }) {
       fullscreen={fullscreen}
       onExit={close}
       onOpenLyricsSettings={() => {
+        // The recovery action should reveal the online-fetch switch, not a previously read row.
+        scrollMemory.delete(settingsScrollKey("lyrics"));
         useUi.getState().setSettingsSection("lyrics");
         navigate({ name: "settings" });
       }}
@@ -103,8 +108,6 @@ function AppToast() {
   );
 }
 
-const scrollMemory = new Map<string, number>();
-
 export function App() {
   useBootstrap();
   // Autofetch: lyrics lookup begins on every track change, whichever tab is open.
@@ -126,6 +129,7 @@ export function App() {
   const reducedMotion = useReducedMotion();
   const { mini: miniPlayer, staging } = useMiniWindow(miniRequested, reducedMotion);
   const route = useUi(state => state.route);
+  const settingsSection = useUi(state => state.route.name === "settings" && !state.nowPlayingOpen ? state.settingsSection : null);
   const error = usePlayer(state => state.error);
   const chrome = useWindowChrome();
 
@@ -159,11 +163,14 @@ export function App() {
       playerReturnKey.current = null;
     }
   }, [browseKey, immersive, miniPlayer]);
+  // Settings categories share the route and scrollport, not each other's scroll position.
+  // Keep the viewport mounted so the active tab keeps focus during a category change.
+  const scrollKey = settingsSection ? settingsScrollKey(settingsSection) : viewKey;
   const contentRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    const top = scrollMemory.get(viewKey);
-    if (top) contentRef.current?.scrollTo({ top, behavior: "instant" });
-  }, [viewKey, miniPlayer]);
+    const top = scrollMemory.get(scrollKey);
+    if (top || settingsSection) contentRef.current?.scrollTo({ top: top ?? 0, behavior: "instant" });
+  }, [scrollKey, settingsSection, miniPlayer]);
 
   const layout: PlayerLayout = miniPlayer ? "mini" : immersive ? "fullscreen" : route.name === "lyrics" ? "now-playing" : "library";
   return (
@@ -195,7 +202,7 @@ export function App() {
               className="content-scroll"
               key={viewKey}
               ref={contentRef}
-              onScroll={event => scrollMemory.set(viewKey, event.currentTarget.scrollTop)}
+              onScroll={event => scrollMemory.set(scrollKey, event.currentTarget.scrollTop)}
             >
               {immersive ? <NowPlayingRoute fullscreen /> : renderRoute(route)}
             </div>

@@ -662,6 +662,24 @@ const aiSettingsSections = await page.evaluate(() => ({
   modelsButtons: document.querySelectorAll(".lyrics-ai-section button").length,
 }));
 check("independent-ai-translation-and-romanization-settings", aiSettingsSections.translation && aiSettingsSections.romanization && aiSettingsSections.modelsButtons >= 4, JSON.stringify(aiSettingsSections));
+const settingsViewport = page.viewport()!;
+for (const [width, height] of [[1440, 900], [1040, 680]]) {
+  await page.setViewport({ width, height });
+  await clickText(".settings-tabs button", "Appearance");
+  await page.$eval(".content-scroll", node => node.scrollTo({ top: 0, behavior: "instant" }));
+  await clickText(".settings-tabs button", "Lyrics");
+  await page.$eval(".content-scroll", node => node.scrollTo({ top: 1250, behavior: "instant" }));
+  await wait(100);
+  const before = await page.$eval(".content-scroll", node => node.scrollTop);
+  await clickText(".settings-tabs button", "Appearance");
+  const appearancePosition = await page.$eval(".content-scroll", node => node.scrollTop);
+  const focusKept = await page.evaluate(() => document.activeElement?.matches('.settings-tabs button[aria-current="location"]'));
+  await clickText(".settings-tabs button", "Lyrics");
+  const returned = await page.$eval(".content-scroll", node => node.scrollTop);
+  check(`settings-categories-keep-independent-scroll-${width}`, before === 1250 && appearancePosition === 0 && returned === before && Boolean(focusKept),
+    JSON.stringify({ before, appearancePosition, returned, focusKept }));
+}
+await page.setViewport(settingsViewport);
 await clickText(".settings-tabs button", "Playback");
 await wait(200);
 await navItem("Home");
@@ -1165,26 +1183,35 @@ check("layout-stable", geometry.playerHeight === 80 && geometry.contentTop === 0
 // receiving focus, and a collapsed subtree must not change the current page.
 await navItem("Recently Added");
 await wait(240);
-const libraryDisclosure = await page.evaluate(async () => {
-  const toggle = document.querySelector<HTMLButtonElement>('.nav-section-toggle[title="Library"]')!;
-  const section = document.getElementById("sidebar-library")!;
-  const sizes = new Set<number>([Math.round(section.getBoundingClientRect().height)]);
-  const before = location.hash;
-  toggle.click();
-  await new Promise(requestAnimationFrame);
-  const inertWhileClosing = section.inert && section.getBoundingClientRect().height > 0;
-  const end = performance.now() + 240;
-  do {
+for (const [label, id] of [["Library", "library"], ["Playlists", "playlists"]]) {
+  const toggleSelector = `.nav-section-toggle[title="${label}"]`;
+  if (await page.$eval(toggleSelector, node => node.getAttribute("aria-expanded")) === "false") {
+    await page.click(toggleSelector);
+    await wait(240);
+  }
+  const disclosure = await page.evaluate(async (selector, key) => {
+    const toggle = document.querySelector<HTMLButtonElement>(selector)!;
+    const section = document.getElementById(`sidebar-${key}`)!;
+    const sizes = new Set<number>([Math.round(section.getBoundingClientRect().height)]);
+    const before = location.hash;
+    toggle.click();
     await new Promise(requestAnimationFrame);
-    sizes.add(Math.round(section.getBoundingClientRect().height));
-  } while (performance.now() < end);
-  return { sizes: [...sizes], stillOnRoute: before === location.hash && before.endsWith("/recently-added"), inertWhileClosing,
-    collapsed: toggle.getAttribute("aria-expanded") === "false", endedAt: section.getBoundingClientRect().height };
-});
-check("sidebar-library-disclosure-animates-and-is-inert-when-closed", libraryDisclosure.sizes.length > 3 && libraryDisclosure.collapsed &&
-  libraryDisclosure.endedAt === 0 && libraryDisclosure.inertWhileClosing && libraryDisclosure.stillOnRoute, JSON.stringify(libraryDisclosure));
-await page.click('.nav-section-toggle[title="Library"]');
-await wait(240);
+    const inertWhileClosing = section.inert && section.getBoundingClientRect().height > 0;
+    const end = performance.now() + 240;
+    do {
+      await new Promise(requestAnimationFrame);
+      sizes.add(Math.round(section.getBoundingClientRect().height));
+    } while (performance.now() < end);
+    return { sizes: [...sizes], stillOnRoute: before === location.hash && before.endsWith("/recently-added"), inertWhileClosing,
+      collapsed: toggle.getAttribute("aria-expanded") === "false", endedAt: section.getBoundingClientRect().height };
+  }, toggleSelector, id);
+  check(`sidebar-${id}-disclosure-animates-and-is-inert-when-closed`, disclosure.sizes.length > 3 && disclosure.collapsed &&
+    disclosure.endedAt === 0 && disclosure.inertWhileClosing && disclosure.stillOnRoute, JSON.stringify(disclosure));
+  if (id === "library") {
+    await page.click(toggleSelector);
+    await wait(240);
+  }
+}
 await shot("07-after-rapid-nav");
 
 await navItem("Albums");

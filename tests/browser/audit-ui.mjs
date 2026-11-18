@@ -1330,13 +1330,17 @@ await runSection("expanded-lyrics-completes", async () => {
   await openLegacyLyrics(); await wait(200);
   check("custom-theme-applies-to-renderer", (await page.$eval("braccato-lyrics", node => node.theme)).includes("--audit-theme: 42"), "custom CSS handed to Braccato");
   await nav("Settings"); await settingsTab("Lyrics"); await toggleSetting("Fetch lyrics online");
-  await settingsTab("Appearance"); // Recovery must override the previously selected tab.
+  // Recovery must override both a remembered category and a deep scroll in Lyrics.
+  await page.$eval(".content-scroll", node => node.scrollTo({ top: 1250, behavior: "instant" }));
+  await wait(100);
+  await settingsTab("Appearance");
   await nav("Songs"); await playTrack("Fixture Opus"); await openLegacyLyrics(); await wait(350); await pausePlayback();
   const lastResolve = await page.evaluate(() => window.__audit.state.calls.filter(call => call[0] === "lyrics-resolve").at(-1));
   check("offline-lyrics-resolve", lastResolve?.[2] === true, JSON.stringify(lastResolve));
   await clickText(".empty-actions button", "Enable online lyrics in settings");
   const openedLyricsSettings = await page.waitForSelector('[data-testid="settings-lyrics"]', { timeout: 4000 }).then(() => true, () => false);
-  check("offline-enable-settings-action", openedLyricsSettings, "opens Settings directly to Lyrics");
+  const scroll = await page.$eval(".content-scroll", node => node.scrollTop);
+  check("offline-enable-settings-action", openedLyricsSettings && scroll === 0, `opens Lyrics at the online-fetch switch; scrollTop=${scroll}`);
   await toggleSetting("Fetch lyrics online");
 });
 
