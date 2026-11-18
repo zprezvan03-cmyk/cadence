@@ -2,6 +2,8 @@ import { create } from "zustand";
 
 export type LibraryTab = "recently-added" | "songs" | "albums" | "artists" | "playlists" | "favorites";
 
+export type SettingsSection = "appearance" | "lyrics" | "library" | "playback" | "cache" | "about";
+
 export type Route =
   | { name: "home" }
   | { name: "history" }
@@ -17,6 +19,7 @@ export type Route =
 
 interface UiState {
   route: Route;
+  settingsSection: SettingsSection;
   queueOpen: boolean;
   nowPlayingOpen: boolean;
   searchFocused: boolean;
@@ -27,6 +30,7 @@ interface UiState {
   shortcutsHelpOpen: boolean;
   toast: string | null;
   navigate: (route: Route) => void;
+  setSettingsSection: (section: SettingsSection) => void;
   goBack: () => void;
   goForward: () => void;
   toggleQueue: (open?: boolean) => void;
@@ -120,6 +124,7 @@ let nativeEntryCancelled = false;
 
 export const useUi = create<UiState>()((set, get) => ({
   route: typeof location !== "undefined" ? hashToRoute(location.hash) : { name: "home" },
+  settingsSection: "appearance",
   queueOpen: false,
   nowPlayingOpen: false,
   searchFocused: false,
@@ -135,6 +140,7 @@ export const useUi = create<UiState>()((set, get) => ({
     get().closeNowPlaying();
     set({ route, searchFocused: false });
   },
+  setSettingsSection: settingsSection => set({ settingsSection }),
   goBack: () => history.back(),
   goForward: () => history.forward(),
   toggleQueue: open => set(state => ({ queueOpen: open ?? !state.queueOpen })),

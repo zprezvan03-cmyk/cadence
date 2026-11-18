@@ -47,7 +47,10 @@ function NowPlayingRoute({ fullscreen = false }: { fullscreen?: boolean }) {
       playing={playing}
       fullscreen={fullscreen}
       onExit={close}
-      onOpenSearch={() => navigate({ name: "settings" })}
+      onOpenLyricsSettings={() => {
+        useUi.getState().setSettingsSection("lyrics");
+        navigate({ name: "settings" });
+      }}
     />
   );
 }

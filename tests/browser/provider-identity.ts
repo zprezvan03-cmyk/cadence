@@ -33,7 +33,8 @@ import puppeteer from "puppeteer-core";
 import chromium, { inflate, setupLambdaEnvironment } from "@sparticuz/chromium";
 import { LyricsCache } from "../../src/main/lyrics/cache";
 import { LyricsService } from "../../src/main/lyrics/service";
-import { SettingsStore } from "../../src/main/settings";
+import { DEFAULT_SETTINGS, SettingsStore } from "../../src/main/settings";
+import { removeProviderFromOrder } from "../../src/shared/providerOrder";
 import type { LibraryStore } from "../../src/main/library/store";
 import type { LyricsResolveRequest, LyricsSearchRequest } from "../../src/shared/types";
 
@@ -505,10 +506,10 @@ const clickOpenSourceRow = async (name: string) => {
   );
 };
 
-/** The Settings → Appearance → Lyrics Provider Order list, as rendered. */
+/** The Settings → Lyrics → Lyrics Provider Order list, as rendered. */
 const providerOrderUi = async () => {
   await nav("Settings");
-  await clickText(".settings-tabs button", "Appearance");
+  await clickText(".settings-tabs button", "Lyrics");
   await wait(150);
   return page.$$eval('[data-testid="provider-order"] li', nodes =>
     nodes.map(node => ({
@@ -706,7 +707,7 @@ await closeSources();
 /* ------------- 4b. disabling one slot in Settings does not disable the other */
 
 await nav("Settings");
-await clickText(".settings-tabs button", "Appearance");
+await clickText(".settings-tabs button", "Lyrics");
 await wait(150);
 for (const item of await page.$$('[data-testid="provider-order"] li')) {
   const text = await item.$eval(".provider-name", node => node.childNodes[0]?.textContent?.trim() ?? "");
@@ -951,6 +952,61 @@ check(
   JSON.stringify(afterTrackSwitch.sources)
 );
 await closeSources();
+
+/* ---------------------------------------- settings from an existing installation */
+
+await nav("Settings");
+const prior = settings.get();
+const existingSettings = JSON.stringify({
+  ...prior,
+  appearance: { ...prior.appearance, fontFamily: "monospace" },
+  playback: { ...prior.playback, playbackRate: 1.25, resumeOnLaunch: false },
+  lyrics: {
+    ...prior.lyrics,
+    fontSizeRem: 2.6,
+    romanizationMode: "word",
+    providerOrder: removeProviderFromOrder(prior.lyrics.providerOrder, "blyrics-line"),
+    aiTranslation: { ...prior.lyrics.aiTranslation, enabled: true, model: "fixture-translate", targetLanguage: "es" },
+    aiRomanization: { ...prior.lyrics.aiRomanization, enabled: true, model: "fixture-romanize" },
+  },
+});
+writeFileSync(settingsFile, existingSettings, "utf8");
+coldStart();
+await page.reload({ waitUntil: "networkidle0" });
+await page.waitForSelector('[data-testid="settings-appearance"]');
+const font = await page.$eval('[data-testid="font-select"]', node => (node as HTMLSelectElement).value);
+const existingOrder = await providerOrderUi();
+const lyricsPreferences = await page.$eval('[data-testid="settings-lyrics"]', panel => {
+  const value = (selector: string) => panel.querySelector<HTMLInputElement | HTMLSelectElement>(selector)?.value;
+  return {
+    translation: value('input[list="ai-models-translation"]'),
+    romanization: value('input[list="ai-models-romanization"]'),
+    fontSize: [...panel.querySelectorAll('.range-row')].find(row => row.querySelector('strong')?.textContent === 'Font size')
+      ?.querySelector<HTMLInputElement>('input[type="range"]')?.value,
+    romanizationMode: value('select:has(option[value="word"])'),
+    enabledAiPanels: panel.querySelectorAll('.lyrics-ai-section input[type="checkbox"]:checked').length,
+  };
+});
+check("existing-settings-appear-in-the-new-tabs",
+  font === "monospace" && lyricsPreferences.fontSize === "2.6" && lyricsPreferences.romanizationMode === "word" &&
+    lyricsPreferences.enabledAiPanels === 2 && lyricsPreferences.translation === "fixture-translate" && lyricsPreferences.romanization === "fixture-romanize" &&
+    !existingOrder.some(entry => entry.name === "Better Lyrics Line"),
+  JSON.stringify({ font, ...lyricsPreferences }));
+check("visiting-settings-does-not-rewrite-existing-preferences", readFileSync(settingsFile, "utf8") === existingSettings);
+
+await clickText(".settings-tabs button", "About");
+page.once("dialog", dialog => void dialog.accept());
+await page.click('[data-testid="settings-reset-all"]');
+await page.waitForFunction(() => document.querySelector('[data-testid="app-toast"]')?.textContent?.includes("restored to defaults"));
+const resetOnDisk = JSON.parse(readFileSync(settingsFile, "utf8"));
+check("confirmed-reset-writes-the-defaults-to-disk", JSON.stringify(resetOnDisk) === JSON.stringify(DEFAULT_SETTINGS));
+coldStart();
+const reopenedSettings = settings.get();
+check("reset-defaults-survive-reopening-the-settings-file", reopenedSettings.appearance.fontFamily === DEFAULT_SETTINGS.appearance.fontFamily &&
+  reopenedSettings.playback.playbackRate === DEFAULT_SETTINGS.playback.playbackRate &&
+  reopenedSettings.lyrics.fontSizeRem === DEFAULT_SETTINGS.lyrics.fontSizeRem &&
+  !reopenedSettings.lyrics.aiTranslation.enabled && !reopenedSettings.lyrics.aiRomanization.enabled &&
+  reopenedSettings.lyrics.providerOrder.join(",") === DEFAULT_SETTINGS.lyrics.providerOrder.join(","));
 
 /* -------------------------------------------------------------------- report */
 

@@ -667,7 +667,9 @@ const nav = async label => {
 };
 const settingsTab = async label => { await clickText(".settings-tabs button", label); await wait(80); };
 const resetAllSettings = async () => {
-  await clickText(".settings-view .view-heading button", "Reset all");
+  await settingsTab("About");
+  page.once("dialog", dialog => dialog.accept());
+  await page.click('[data-testid="settings-reset-all"]');
   await page.waitForFunction(() => document.querySelector('[data-testid="app-toast"]')?.textContent?.includes("restored to defaults"), { timeout: 4000 });
 };
 const settingRow = async label => {
@@ -797,7 +799,11 @@ await runSection("sidebar-fetch-all-completes", async () => {
   await page.evaluate(() => {
     const build = state => ({ jobId: "sidebar-audit", state, total: 10, processed: 5, found: 3, notFound: 1, failed: 1, skipped: 0,
       currentTrack: { id: 3, title: "Fixture MP3", artist: "Harness Artist" }, startedAt: Date.now(), finishedAt: null });
-    window.cadence.lyrics.fetchAll = { stats: async () => ({ totalTracks: 10, withLyrics: 3, needsSearch: 7, fullyProcessed: 5 }) };
+    window.cadence.lyrics.fetchAll = {
+      stats: async () => ({ totalTracks: 10, withLyrics: 3, needsSearch: 7, fullyProcessed: 5 }),
+      // Autofetch calls this during playback, including when provider priority changes.
+      promote: async () => undefined,
+    };
     for (const [action, state] of Object.entries({ start: "running", pause: "paused", resume: "running", retryFailed: "running", cancel: "canceled" })) {
       window.cadence.lyrics.fetchAll[action] = async () => {
         window.__audit.state.calls.push([`fetch-${action}`]);
@@ -806,7 +812,7 @@ await runSection("sidebar-fetch-all-completes", async () => {
     }
   });
   await page.setViewport({ width: 1040, height: 680 });
-  await nav("Settings"); await settingsTab("Appearance");
+  await nav("Settings"); await settingsTab("Lyrics");
   await page.click('[data-testid="fetch-all-start"]');
   await page.waitForSelector('.sidebar-tools [data-testid="fetch-all-indicator"][data-state="running"]');
   await nav("Home");
@@ -948,7 +954,7 @@ await runSection("instrumental-setting-completes", async () => {
   await nav("Songs"); await playTrack("Fixture AAC"); await pausePlayback(); await openLegacyLyrics();
   await page.waitForSelector(`.lyrics-view[data-current-source-key="local:${ids.aac}"] .blyrics--line`, { timeout: 8000 });
   const before = await page.$$eval(".blyrics--line", nodes => nodes.length);
-  await nav("Settings"); await settingsTab("Appearance"); await toggleSetting("Hide instrumental-only placeholders"); await openLegacyLyrics(); await wait(400);
+  await nav("Settings"); await settingsTab("Lyrics"); await toggleSetting("Hide instrumental-only placeholders"); await openLegacyLyrics(); await wait(400);
   const after = await page.$$eval(".blyrics--line", nodes => nodes.length);
   check("hide-instrumental-only-hides-placeholder", before > 0 && after === 0, `${before} → ${after} lines`);
 });
@@ -1122,9 +1128,10 @@ await runSection("expanded-playlist-completes", async () => {
 await runSection("expanded-settings-completes", async () => {
   await nav("Settings"); await resetAllSettings(); await settingsTab("Appearance");
   const expectations = [];
+  const selectedSettingsTab = () => page.$eval('.settings-tabs [aria-current="location"]', node => node.textContent.trim());
   const remember = async (label, kind = "value") => {
     const row = await settingRow(label); const input = await row.$("input, select, textarea");
-    expectations.push({ label, kind, value: kind === "checked" ? await input.evaluate(node => node.checked) : await input.evaluate(node => node.value) });
+    expectations.push({ label, kind, tab: await selectedSettingsTab(), value: kind === "checked" ? await input.evaluate(node => node.checked) : await input.evaluate(node => node.value) });
   };
   await selectSetting("Font", "monospace");
   check("font-applies-globally", (await page.$eval(".font-preview", node => getComputedStyle(node).fontFamily)).includes("monospace"), await page.$eval(".font-preview", node => getComputedStyle(node).fontFamily));
@@ -1132,6 +1139,13 @@ await runSection("expanded-settings-completes", async () => {
   await toggleSetting("Reduce motion");
   check("reduce-motion-applies", (await page.$eval("html", node => node.dataset.reduceMotion)) === "true", "root dataset");
   await remember("Reduce motion", "checked");
+  check("appearance-only-has-visual-controls", Boolean(await page.$('[data-testid="settings-now-playing"]')) &&
+    Boolean(await page.$('[data-testid="settings-shaders"]')) && !(await page.$('[data-testid="settings-lyrics"], [data-testid="settings-reset-all"]')));
+  await settingsTab("Lyrics");
+  check("lyrics-controls-are-in-the-lyrics-tab", Boolean(await page.$('[data-testid="settings-lyrics"] .provider-order')) &&
+    await page.$$eval('[data-testid="settings-lyrics"] .lyrics-ai-section h3', nodes => nodes.map(node => node.textContent).join(", ")) === "AI Translation, AI Romanization");
+  await nav("Home"); await nav("Settings");
+  check("settings-recall-the-lyrics-tab", await selectedSettingsTab() === "Lyrics");
   await toggleSetting("Fetch lyrics online"); await remember("Fetch lyrics online", "checked");
   await toggleSetting("Romanize non-Latin lyrics"); await remember("Romanize non-Latin lyrics", "checked");
   await toggleSetting("Show songwriters"); await remember("Show songwriters", "checked");
@@ -1154,6 +1168,8 @@ await runSection("expanded-settings-completes", async () => {
     ["Beat zoom boost (%)", "shaders"], ["Dim strength", "shaders"],
   ];
   for (const [label, group] of rangeGroups) {
+    const tab = group === "lyrics" ? "Lyrics" : "Appearance";
+    if (await selectedSettingsTab() !== tab) await settingsTab(tab);
     const row = await settingRow(label); const input = await row.$('input[type="range"]');
     await input.focus(); await page.keyboard.press("Home"); await page.keyboard.press("ArrowRight"); await wait(60);
     const value = await input.evaluate(node => node.value);
@@ -1167,16 +1183,12 @@ await runSection("expanded-settings-completes", async () => {
       Dithering: "kawarpDithering", "Beat threshold": "audioBeatThreshold", "Beat speed multiplier": "audioSpeedMultiplier",
       "Beat zoom boost (%)": "kawarpAudioScaleBoost", "Dim strength": "autoDimStrength" })[label];
     check(`setting-range-${group}-${property}`, Number(value) === Number(stored[group]?.[property]) && output.length > 0, `${label}: ${value}, output=${output}, stored=${stored[group]?.[property]}`);
-    expectations.push({ label, kind: "value", value });
+    expectations.push({ label, kind: "value", tab, value });
   }
 
+  await settingsTab("Lyrics");
   const firstProviders = () => page.$$eval(".provider-order .provider-name", nodes => nodes.slice(0, 2).map(node => node.textContent.trim()));
-  const activateProviderButton = async selector => {
-    // Use native keyboard activation so focusing a control in the long settings pane
-    // cannot shift the list between measuring a pointer target and delivering the click.
-    const button = await page.waitForSelector(selector, { visible: true, timeout: 4000 });
-    await button.press("Enter");
-  };
+  const activateProviderButton = selector => page.locator(selector).setTimeout(4000).click();
   const waitForProviderOrder = expected => page.waitForFunction(names => {
     const first = [...document.querySelectorAll('.provider-order .provider-name')].slice(0, 2);
     return names.every((name, i) => first[i]?.textContent.trim() === name);
@@ -1199,6 +1211,7 @@ await runSection("expanded-settings-completes", async () => {
   await activateProviderButton(".provider-restore");
   check("provider-restore-defaults", (await storedSettings()).lyrics.providerOrder.length === 13, `${(await page.$$(".provider-order li")).length} rows`);
 
+  await settingsTab("Appearance");
   await selectSetting("Performance mode", "off"); await remember("Performance mode");
   await toggleSetting("Enable shader background"); await remember("Enable shader background", "checked");
   await toggleSetting("React to the audio"); await remember("React to the audio", "checked");
@@ -1245,12 +1258,24 @@ await runSection("expanded-settings-completes", async () => {
   await settingsTab("Appearance"); await page.reload({ waitUntil: "domcontentloaded" }); await page.waitForSelector('[data-testid="settings-view"]'); await wait(500);
   const mismatches = [];
   for (const expected of expectations) {
-    await settingsTab(["Playback speed", "Repeat", "Restore the last session on launch"].includes(expected.label) ? "Playback" : "Appearance");
+    if (await selectedSettingsTab() !== expected.tab) await settingsTab(expected.tab);
     const row = await settingRow(expected.label); const input = await row.$("input, select, textarea");
     const actual = expected.kind === "checked" ? await input.evaluate(node => node.checked) : await input.evaluate(node => node.value);
     if (actual !== expected.value) mismatches.push(`${expected.label}: ${expected.value} → ${actual}`);
   }
   check("settings-restart-persistence", mismatches.length === 0, mismatches.join("; ") || `${expectations.length} changed controls restored`);
+  await settingsTab("About");
+  check("reset-all-is-last-in-about", await page.$eval('[data-testid="settings-reset-all"]', button =>
+    button.closest('[data-testid="settings-about"]')?.lastElementChild === button.parentElement));
+  const savedBeforeCancel = await storedSettings();
+  let cancelPrompt = "";
+  page.once("dialog", dialog => { cancelPrompt = dialog.message(); return dialog.dismiss(); });
+  await page.click('[data-testid="settings-reset-all"]');
+  await settingsTab("Appearance");
+  const fontAfterCancel = await (await settingRow("Font")).$eval("select", node => node.value);
+  check("reset-all-cancel-keeps-saved-and-live-settings", cancelPrompt.includes("Reset all settings") &&
+    fontAfterCancel === "monospace" && JSON.stringify(await storedSettings()) === JSON.stringify(savedBeforeCancel),
+  `confirmation: ${Boolean(cancelPrompt)}; font: ${fontAfterCancel}`);
   await resetAllSettings();
   const defaults = await storedSettings();
   check("reset-all-clears-saved-overrides", Object.keys(defaults).length === 0, "harness reset removes the saved override object");
@@ -1300,16 +1325,19 @@ await runSection("expanded-lyrics-completes", async () => {
 
   // The dock Style popover was removed; its sliders/toggles are audited via Settings below.
 
-  await nav("Settings"); await settingsTab("Appearance"); await selectSetting("Theme", "custom");
+  await nav("Settings"); await settingsTab("Lyrics"); await selectSetting("Theme", "custom");
   await page.type('[data-testid="settings-lyrics"] textarea', ".blyrics-container { --audit-theme: 42; }");
   await openLegacyLyrics(); await wait(200);
   check("custom-theme-applies-to-renderer", (await page.$eval("braccato-lyrics", node => node.theme)).includes("--audit-theme: 42"), "custom CSS handed to Braccato");
-  await nav("Settings"); await settingsTab("Appearance"); await toggleSetting("Fetch lyrics online");
+  await nav("Settings"); await settingsTab("Lyrics"); await toggleSetting("Fetch lyrics online");
+  await settingsTab("Appearance"); // Recovery must override the previously selected tab.
   await nav("Songs"); await playTrack("Fixture Opus"); await openLegacyLyrics(); await wait(350); await pausePlayback();
   const lastResolve = await page.evaluate(() => window.__audit.state.calls.filter(call => call[0] === "lyrics-resolve").at(-1));
   check("offline-lyrics-resolve", lastResolve?.[2] === true, JSON.stringify(lastResolve));
-  check("offline-enable-settings-action", Boolean(await clickText(".empty-actions button", "Enable online lyrics in settings")) && Boolean(await page.$('[data-testid="settings-view"]')), "opens Settings");
-  await settingsTab("Appearance"); await toggleSetting("Fetch lyrics online");
+  await clickText(".empty-actions button", "Enable online lyrics in settings");
+  const openedLyricsSettings = await page.waitForSelector('[data-testid="settings-lyrics"]', { timeout: 4000 }).then(() => true, () => false);
+  check("offline-enable-settings-action", openedLyricsSettings, "opens Settings directly to Lyrics");
+  await toggleSetting("Fetch lyrics online");
 });
 
 await runSection("expanded-manual-lyrics-completes", async () => {
@@ -1705,14 +1733,14 @@ await runSection("expanded-appearance-controls-completes", async () => {
   await toggleSetting("Restore the last session on launch");
   check("appearance-playback-resume-toggle", (await storedSettings()).playback?.resumeOnLaunch === true, "resume setting stored");
   await toggleSetting("Restore the last session on launch");
-  await settingsTab("Appearance");
+  await settingsTab("Lyrics");
   const themeValues = await page.$$eval('.setting-row select', nodes => {
     const row = nodes.find(node => node.closest(".setting-row")?.querySelector("strong")?.textContent === "Theme");
     return row ? [...row.options].map(option => option.value) : [];
   });
   for (const theme of themeValues) {
     await selectSetting("Theme", theme);
-    check(`appearance-theme-${theme}`, (await storedSettings()).lyrics?.themeId === theme, theme);
+    check(`lyrics-theme-${theme}`, (await storedSettings()).lyrics?.themeId === theme, theme);
   }
   await resetAllSettings();
 });
@@ -1774,6 +1802,9 @@ await runSection("expanded-async-settings-completes", async () => {
 });
 
 for (const name of unmatchedSections) check(name, false, "Unknown AUDIT_ONLY section");
+const rendererErrors = logs.filter(line => line.startsWith("[pageerror]"));
+check("no-unhandled-renderer-errors", rendererErrors.length === 0, rendererErrors.slice(0, 3).join("; "));
+
 
 blocked("native-windows-smtc", "No Windows host is available; actual SMTC flyout, AUMID registration, media keys, and native metadata remain unverified.");
 blocked("native-window-and-os-dialogs", "Chromium exercises renderer dispatch and stubbed dialogs only; native Tauri window controls, fullscreen, and filesystem dialogs require Windows.");

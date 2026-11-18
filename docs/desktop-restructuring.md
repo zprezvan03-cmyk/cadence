@@ -15,6 +15,12 @@ The saved profile format stays additive at v1. Its `fullscreen` configuration is
 
 Timed lyric animations use the pinned Braccato defaults for follow, fades, scale, word effects and instrumental motion. The renderer adds no alternate timing clock. Artwork, metadata and transport still hand off between live slots rather than animating duplicate players.
 
+## Settings
+
+**Settings → Lyrics** groups fetching, timing, fonts and themes, AI Translation, AI Romanization, and provider order. Appearance keeps app-wide visual options, shaders and the Now Playing editor. Settings remembers the selected category while you browse; the offline lyrics recovery link opens Lyrics directly.
+
+Existing preferences keep the same keys and values. In particular, AI configurations are independent and disabled providers still keep their position in the saved order. **Reset all** is at the bottom of **About**. Cancel leaves current and saved settings alone; confirm restores the defaults, including playback preferences and Now Playing profiles. Clearing the lyrics cache is a separate action.
+
 ## Verification
 
 The production renderer passed the following checks with real local audio and a simulated Tauri bridge:
@@ -28,7 +34,7 @@ The production renderer passed the following checks with real local audio and a 
 
 The Now Playing suite covers mode changes without a playback restart, browse history and focus, simulated native exits and pending F11 requests, independent drafts, a rejected save and retry, and legacy layouts. Eight visual checks covered the two modes and their editor previews at 1440×900 and 1040×680, with no layout issues observed. Type checking and the production web build also passed.
 
-The extended audit passed 272 checks in one run. Two provider-order pointer checks failed in that run; both passed through the real keyboard-activated controls in a focused rerun (78 passed, 0 failed). The audit also reports four blocked and three untested checks separately.
+During the Settings split, the extended audit reproduced two earlier provider-order failures. Its Fetch All fixture was missing the `promote` bridge method called by Autofetch during playback, which aborted the first settings write. The fixture now supplies the method and the audit fails on unhandled renderer errors. Provider moves, removal and re-addition are also tested with a real settings file.
 
 See the [test commands in the README](../README.md#tests). After `npm run test:ui` builds the bundle and library fixtures, run `node tests/browser/audit-ui.mjs` for the extended interaction audit. The offline suite excludes `_matasaburo_full.test.ts`, which needs a private local fixture and live AI access.
 

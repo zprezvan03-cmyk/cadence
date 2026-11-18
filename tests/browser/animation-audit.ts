@@ -654,7 +654,7 @@ await wait(200);
 
 await sidebarItem("Settings");
 await wait(280);
-await clickText(".settings-tabs button", "Appearance");
+await clickText(".settings-tabs button", "Lyrics");
 await wait(200);
 const aiSettingsSections = await page.evaluate(() => ({
   translation: [...document.querySelectorAll(".lyrics-ai-section > h3")].some(node => node.textContent?.trim() === "AI Translation"),
@@ -1099,7 +1099,8 @@ await page.evaluate(() => {
   });
   observer.observe(document.body, { subtree: true, attributes: true, childList: true, attributeFilter: ["data-presence"] });
 });
-await clickText("button", "Reset all");
+page.once("dialog", dialog => void dialog.accept());
+await page.click('[data-testid="settings-reset-all"]');
 await page.waitForSelector(".toast", { timeout: 5000 });
 const toastState = await animationsFor(".toast");
 check("toast-slides-in", Boolean(toastState?.some(animation => animation.name === "toast-in")), JSON.stringify(toastState));

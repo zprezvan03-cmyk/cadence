@@ -1076,15 +1076,15 @@ const setSettingsRange = (label, value) =>
 
 // The dock's Style popover was removed; its sliders live in Settings, so the size
 // checks below detour there and back to the lyrics.
+const selectSettingsTab = async (label, panel) => {
+  await page.evaluate(text => [...document.querySelectorAll(".settings-tabs button")]
+    .find(node => node.textContent?.trim() === text)?.click(), label);
+  await page.waitForSelector(`[data-testid="${panel}"]`);
+};
 const openSettingsView = async () => {
   await page.click('aside.sidebar button[title="Settings"]');
   await page.waitForSelector('[data-testid="settings-view"]');
-  await page.evaluate(() => {
-    const appearanceTab = [...document.querySelectorAll(".settings-tabs button")].find(node =>
-      /appearance/i.test(node.textContent ?? "")
-    );
-    appearanceTab?.click();
-  });
+  await selectSettingsTab("Lyrics", "settings-lyrics");
   await wait(400);
 };
 const backToNowPlaying = async () => {
@@ -1891,19 +1891,15 @@ check("fullscreen-exit-after-n", !(await page.$(".lyrics-view.is-fullscreen")), 
 
 await page.click('aside.sidebar button[title="Settings"]');
 await page.waitForSelector('[data-testid="settings-view"]');
+await selectSettingsTab("Appearance", "settings-appearance");
 await wait(500);
 const settingsTabs = await page.$$eval(".settings-tabs button", buttons => buttons.map(button => button.textContent?.trim()));
-const shaderSection = await page.$('[data-testid="settings-shaders"]');
-const lyricsSection = await page.$('[data-testid="settings-lyrics"]');
-check(
-  "settings-tabs-consolidated",
-  settingsTabs.length === 5 &&
-    ["Appearance", "Library", "Playback", "Cache", "About"].every(tab => settingsTabs.includes(tab)) &&
-    !settingsTabs.includes("Lyrics") &&
-    !settingsTabs.includes("Shaders"),
-  `${settingsTabs.join(", ")}`
-);
-check("settings-appearance-subsections", Boolean(shaderSection) && Boolean(lyricsSection), "lyrics and shader controls in Appearance");
+check("settings-has-a-dedicated-lyrics-tab", settingsTabs.join(", ") === "Appearance, Lyrics, Library, Playback, Cache, About", settingsTabs.join(", "));
+check("settings-appearance-subsections", await page.evaluate(() =>
+  Boolean(document.querySelector('[data-testid="settings-shaders"]')) &&
+  Boolean(document.querySelector('[data-testid="settings-now-playing"]')) &&
+  !document.querySelector('[data-testid="settings-lyrics"], [data-testid="settings-reset-all"]')
+), "Shader and Studio controls stay in Appearance; Lyrics and Reset all do not");
 await page.screenshot({ path: join(shotDir, "07-settings.png") });
 
 await page.evaluate(() => {
@@ -1917,11 +1913,7 @@ const playbackAppearanceControls = await page.evaluate(() => ({
   fontSelect: Boolean(document.querySelector('[data-testid="settings-playback"] [data-testid="font-select"]')),
 }));
 check("playback-appearance-removed", !playbackAppearanceControls.appearanceHeader && !playbackAppearanceControls.fontSelect, JSON.stringify(playbackAppearanceControls));
-await page.evaluate(() => {
-  const appearanceTab = [...document.querySelectorAll(".settings-tabs button")].find(node => /appearance/i.test(node.textContent ?? ""));
-  appearanceTab?.click();
-});
-await wait(400);
+await selectSettingsTab("Lyrics", "settings-lyrics");
 const persisted = await page.evaluate(async () => {
   // Select by label, not "first range in the section": the Not-Found cooldown slider now sits
   // ahead of Font size in the Lyrics settings, and grabbing it would silently set days not rem.
@@ -1955,6 +1947,7 @@ await page.waitForSelector(".sidebar", { timeout: 15_000 }).catch(async () => {
 });
 await page.click('aside.sidebar button[title="Settings"]');
 await page.waitForSelector('[data-testid="settings-view"]');
+await selectSettingsTab("Lyrics", "settings-lyrics");
 await wait(600);
 // Same by-label selection as above: the first range/output in the Lyrics section is now the
 // Not-Found cooldown control, so reading positionally would check days instead of rem.

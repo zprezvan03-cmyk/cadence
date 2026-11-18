@@ -59,6 +59,8 @@ npm run build:desktop  # Full Tauri production build (frontend + Rust host + pla
    embedded tag (USLT/SYLT/`©lyr`/Vorbis `LYRICS`). Use the dock or Lyrics Selector to change source, run a
    manual search (including keyless YouTube link metadata fill), adjust timing (±0.1 s steps),
    translate or romanize lyrics, reload, open a file, or save lyrics as a `.ttml` or `.lrc` sidecar.
+   **Settings → Lyrics** contains online fetching, typography, timing, AI Translation, AI Romanization
+   and provider order.
 4. **Settings → Appearance → Shader background** controls opacity, warp, blur passes, animation speed,
    transition duration, saturation, dithering, auto-dim, audio reactivity, and pause when idle.
    Performance mode `off` uses the static artwork fallback.
@@ -66,7 +68,7 @@ npm run build:desktop  # Full Tauri production build (frontend + Rust host + pla
    view. Choices apply immediately, persist across restarts, and fall back to similar system fonts
    when the selected family is not installed.
 6. **Settings → Library** shows folders, rescan, the SQLite engine in use and scan errors;
-   **About** lists versions and runtime information.
+   **About** lists versions and runtime information and has a confirmed **Reset all** action at the bottom.
 7. **Decode Tester** (Settings → Library) health-checks your library by really decoding
    every file — beginning, middle and end — through the same playback path. Chromium decodes the
    normal formats from the `cadence-media` Range protocol; ALAC is first decoded by native Symphonia

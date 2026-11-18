@@ -38,7 +38,7 @@ export interface LyricsViewProps {
   fullscreen: boolean;
   onExit?: () => void;
   preview?: { profile: NowPlayingProfile; mode: NowPlayingLayoutMode };
-  onOpenSearch?: () => void;
+  onOpenLyricsSettings?: () => void;
 }
 
 function clampFinite(value: number | undefined, fallback: number, min: number, max: number): number {
@@ -47,7 +47,7 @@ function clampFinite(value: number | undefined, fallback: number, min: number, m
 
 const NO_LYRIC_CREDITS: readonly string[] = [];
 
-export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenSearch, preview }: LyricsViewProps) {
+export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyricsSettings, preview }: LyricsViewProps) {
   const settings = useSettings(state => state.settings);
   const patchSettings = useSettings(state => state.patch);
   const [toast, setToast] = useState<string | null>(null);
@@ -457,8 +457,8 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenSea
               <button type="button" onClick={lyrics.reload}>
                 <RefreshCw size={16} /> Try again
               </button>
-              {!lyricsSettings?.autoFetch && onOpenSearch ? (
-                <button type="button" onClick={onOpenSearch}>
+              {!lyricsSettings?.autoFetch && onOpenLyricsSettings ? (
+                <button type="button" onClick={onOpenLyricsSettings}>
                   Enable online lyrics in settings
                 </button>
               ) : null}
