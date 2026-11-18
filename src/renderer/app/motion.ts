@@ -21,7 +21,7 @@ export const MOTION_DURATION_MS = {
   /** Artwork dissolves, sidebar width, buffered-fill catch-up. CSS `--dur-4`. */
   layout: 320,
   /** Shared player layout changes. CSS `--dur-scene`. */
-  scene: 380,
+  scene: 300,
 } as const;
 
 export type MotionDurationName = keyof typeof MOTION_DURATION_MS;

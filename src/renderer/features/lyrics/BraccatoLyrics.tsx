@@ -16,7 +16,7 @@ import "@braccato/core/styles/instrumental.css";
 import { injectRomanization, injectTranslation, type Lyric, type LyricsRenderer } from "@braccato/core";
 import type { LyricsSyncType } from "../../../shared/types";
 import { audioEngine } from "../../audio/engine";
-import { MOTION_DURATION_MS, MOTION_EASING } from "../../app/motion";
+import { MOTION_DURATION_MS } from "../../app/motion";
 import { useReducedMotion } from "../../app/useMotionPreference";
 import type { RemotePlaybackClockSource } from "../../player/playbackClock";
 import { shouldCrossfadeUpgrade, type LyricsRenderIdentity } from "./upgrade";
@@ -134,67 +134,28 @@ function lyricTick(policy: MotionPolicy, smooth = true, active = policy.active) 
   };
 }
 
-/** Long seeks land at the correct line immediately instead of animating every crossed line.
- * A brief settle on the destination makes that reposition readable. Short seeks and natural
- * line changes still use Braccato's additive autoscroll and the actual media clock. */
+/** Suspend only rendering when there is nothing to paint; on reveal the same media element
+ * supplies the current position. This never changes playback or the lyric timestamps. */
 function bindLyricMedia(element: BraccatoElement, policy: () => MotionPolicy, onError: (message: string) => void) {
-  let media: HTMLAudioElement | null = null;
-  let settle: Animation | undefined;
-  let farSeek = false;
-  const seeking = () => {
-    if (!media || Math.abs(media.currentTime - element.currentTime) < 3.5) return;
-    farSeek = true;
-    element.tickOptions = lyricTick(policy(), false);
-    const sync = element.renderer?.syncType;
-    if (policy().reduced || !sync || sync === "none" || !element.animate || settle?.playState === "running") return;
-    settle = element.animate([
-      { opacity: 0.58, translate: `0 ${media.currentTime >= element.currentTime ? 8 : -8}px` },
-      { opacity: 1, translate: "0 0" },
-    ], { duration: MOTION_DURATION_MS.surface, easing: MOTION_EASING.out, id: "lyrics-seek-settle" });
-  };
-  const seeked = () => {
-    if (!media || media.seeking || !farSeek) return;
-    farSeek = false;
-    element.tickOptions = lyricTick(policy());
-  };
-  const unbind = () => {
-    if (!media) return;
-    media.removeEventListener("seeking", seeking, true);
-    media.removeEventListener("seeked", seeked);
-    media = null;
-    farSeek = false;
-    settle?.cancel();
-    element.source = null;
-    if (element.isConnected) {
-      element.tickOptions = lyricTick(policy(), false, false);
-      element.playing = false;
-    }
-  };
-  const bind = (source: HTMLAudioElement) => {
-    if (document.hidden || source === media) return;
-    unbind();
-    media = source;
-    media.addEventListener("seeking", seeking, true); // Set the visual policy before Braccato ticks.
+  const bind = (source: HTMLAudioElement | null) => {
+    if (element.source === source) return;
     try {
-      element.tickOptions = lyricTick(policy(), false);
-      element.source = media;
-      media.addEventListener("seeked", seeked); // Restore smooth following after the bound tick.
-      element.tickOptions = lyricTick(policy());
+      element.tickOptions = lyricTick(policy(), false, Boolean(source));
+      element.source = source;
+      if (source) element.tickOptions = lyricTick(policy());
+      else if (element.isConnected) element.playing = false;
     } catch (error) {
       onError(`source: ${(error as Error).message}`);
     }
   };
-  const onVisibility = () => {
-    if (document.hidden) unbind();
-    else bind(audioEngine.element);
-  };
-  const unsubscribe = audioEngine.on("source", ({ element: source }) => bind(source));
+  const onVisibility = () => bind(document.hidden ? null : audioEngine.element);
+  const unsubscribe = audioEngine.on("source", ({ element: source }) => { if (!document.hidden) bind(source); });
   onVisibility();
   document.addEventListener("visibilitychange", onVisibility);
   return () => {
     unsubscribe();
     document.removeEventListener("visibilitychange", onVisibility);
-    unbind();
+    bind(null);
   };
 }
 
@@ -387,7 +348,6 @@ export function BraccatoLyrics({
     const element = ref.current;
     if (!element) return;
     element.tickOptions = lyricTick(latest.current);
-    if (reduced) element.getAnimations().find(animation => animation.id === "lyrics-seek-settle")?.cancel();
   }, [offsetMs, passiveScroll, reduced]);
 
   useEffect(() => {
@@ -472,7 +432,7 @@ export function BraccatoLyrics({
     // Empty array is the renderer's way to say "cleared"; null says "never given one", which the
     // renderer answers by keeping what it already shows. A finished resolve that found nothing must
     // clear, or the previous track's lines stay on screen behind the "No lyrics found" panel.
-    element.lyrics = lyrics && lyrics.length > 0 ? lyrics : lyrics || noLyrics || loaderVisible ? CLEARED_LYRICS : null;
+    element.lyrics = lyrics && lyrics.length > 0 ? lyrics : lyrics || noLyrics ? CLEARED_LYRICS : null;
     // The build above is synchronous and already fired the loaded handler, which decorated the new
     // lines; this second pass covers an assignment the element took without rebuilding (it keeps the
     // injectors' own duplicate guards from ever running twice on one element).

@@ -1,4 +1,5 @@
-/* A single artwork frame, with the last good image under the incoming decoded cover. */
+/* The existing artwork frame never changes size on a track change. Only the decoded image
+   fades; the last image stays underneath until the fade completes. */
 .playback-cover-layer {
   position: absolute;
   inset: 0;
@@ -8,12 +9,12 @@
 }
 
 [data-cover-layer="outgoing"] + [data-cover-layer="current"] {
-  animation: cover-dissolve var(--dur-4) var(--ease-settle) backwards;
+  animation: cover-dissolve var(--dur-4) var(--ease-in-out) backwards;
 }
 
 @keyframes cover-dissolve {
-  from { opacity: 0; transform: scale(1.035); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .playback-text { position: relative; }
@@ -23,15 +24,15 @@
   inset: 0;
   overflow: hidden;
   pointer-events: none;
-  animation: track-text-out var(--dur-2) var(--ease-out) both;
+  animation: track-text-out var(--dur-1) var(--ease-out) both;
 }
 
 .playback-text:has(> [data-track-layer="outgoing"]) > [data-track-layer="current"] {
-  animation: track-text-in var(--dur-3) var(--ease-settle) backwards;
+  animation: track-text-in var(--dur-2) var(--ease-settle) calc(var(--dur-3) - var(--dur-2)) backwards;
 }
 
 @keyframes track-text-out {
-  to { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 0; transform: translateY(-4px); }
 }
 
 @keyframes track-text-in {
@@ -39,36 +40,19 @@
   to { opacity: 1; transform: none; }
 }
 
-.artwork-atmosphere,
-.artwork-atmosphere-layer {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
+/* Match the unchanged native size only while the OS resize and the shared move overlap. */
+.mini-shell[data-mini-staging] .mini-player {
+  width: min(100%, 460px);
+  height: min(100%, 160px);
 }
 
-.artwork-wash {
-  background:
-    radial-gradient(110% 145% at 14% 0%, color-mix(in srgb, var(--cover-tint) 46%, #111018), transparent 68%),
-    radial-gradient(90% 105% at 88% 46%, color-mix(in srgb, var(--cover-tint) 19%, #111018), transparent 73%),
-    #0d0d13;
+/* Let the actual controls/artwork travel across the page. Keep the existing backdrop clipped
+   to the bar, not to the moving children. The original clipping returns on landing. */
+.player-bar[data-player-moving] {
+  overflow: visible;
+  z-index: 35; /* above the sidebar, below the queue and dialogs */
+  /* The bar sits in its own grid row and still has its artwork blur. Don't sample the
+     underlying page again as the live parts cross it. */
+  backdrop-filter: none;
 }
-
-[data-atmosphere-layer="outgoing"] + [data-atmosphere-layer="current"] {
-  animation: fade-in var(--dur-4) var(--ease-settle) backwards;
-}
-
-/* Only the clipped cover and text fly in this pointer-transparent layer. Transport stays live. */
-.player-scene { display: contents; }
-.player-flight {
-  position: fixed;
-  inset: 0;
-  z-index: 56; /* Above Now Playing, below the queue and dialogs. */
-  overflow: hidden;
-  pointer-events: none;
-}
-
-[data-player-part][data-in-flight="true"] { opacity: 0; }
-.player-scene[data-player-handoff] .lyrics-view { animation: none; }
-.player-scene[data-player-handoff] .player-bar { animation: none; }
-.player-scene[data-player-moving] .player-bar { overflow: visible; z-index: 4; }
+.player-bar[data-player-moving]::before { clip-path: inset(32px); }

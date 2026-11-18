@@ -23,12 +23,14 @@ import { PNG } from "pngjs";
 import { LibraryStore } from "../../src/main/library/store";
 import { scanLibrary } from "../../src/main/library/scanner";
 import { SettingsStore } from "../../src/main/settings";
-import { auditArtworkResilience, auditMiniHandoff, auditLyricFollow, auditQueueRows } from "./playback-motion";
+import { auditArtworkResilience, auditMiniHandoff, auditHiddenArtwork, auditLyricFollow, auditQueueRows } from "./playback-motion";
 
 const root = resolve(import.meta.dirname, "../..");
-const outDir = join(root, "dist");
+const profileRun = process.env.CADENCE_MOTION_RUN;
+if (profileRun && !/^[a-z0-9-]+$/i.test(profileRun)) throw new Error("Use a simple profile label, e.g. before or after.");
+const outDir = profileRun && process.env.CADENCE_PROFILE_DIST ? resolve(process.env.CADENCE_PROFILE_DIST) : join(root, "dist");
 const fixtures = join(root, ".artifacts/fixtures/formats");
-const shotDir = join(root, ".artifacts/animation-audit");
+const shotDir = profileRun ? join(root, ".artifacts/motion-quality", profileRun) : join(root, ".artifacts/animation-audit");
 mkdirSync(shotDir, { recursive: true });
 
 if (!existsSync(join(outDir, "index.html"))) throw new Error("Run: npm run build:web");
@@ -112,7 +114,11 @@ const snapshot = () => {
 const settings = new SettingsStore(join(stateDir, "settings.json"));
 // The artwork wash is deterministic under software rendering. test:now-playing separately
 // verifies the production shader and canvas modes.
-settings.patch({ shaders: { enabled: false }, playback: { autoPlay: false, crossfadeSeconds: 0 } });
+settings.patch({
+  shaders: { enabled: false },
+  playback: { autoPlay: false, crossfadeSeconds: 0 },
+  ...(profileRun ? { nowPlayingProfiles: { activeProfileId: "lyrics-focus" }, artistImages: { enabled: false } } : {}),
+});
 const firstId = store.getTrackByPath(join(musicDir, "Alpha Song 01.flac"))!.id;
 
 /* ------------------------------------------------------------------ server */
@@ -432,6 +438,21 @@ const waitForApp = async () => {
 
 /* -------------------------------------------------------------------- boot */
 
+if (profileRun) {
+  try {
+    await page.goto(base, { waitUntil: "networkidle2" });
+    const { profileMotion } = await import("./motion-profile");
+    await profileMotion(page, shotDir);
+    const errors = logs.filter(line => line.startsWith("[pageerror]"));
+    console.log("renderer errors", errors);
+    if (errors.length) process.exitCode = 1;
+  } finally {
+    await browser.close();
+    server.close();
+  }
+  process.exit(process.exitCode ?? 0);
+}
+
 await page.goto(base, { waitUntil: "networkidle2" });
 await waitForApp();
 await shot("00-boot");
@@ -474,7 +495,7 @@ check(
     motionTokens.dur1 === 120 &&
     motionTokens.dur2 === 180 &&
     motionTokens.dur3 === 240 &&
-    motionTokens.dur4 === 320 && motionTokens.scene === 380 &&
+    motionTokens.dur4 === 320 && motionTokens.scene === 300 &&
     motionTokens.stagger === 24,
   JSON.stringify(motionTokens)
 );
@@ -547,11 +568,8 @@ check("view-enters-with-fade", Number(viewAnimation?.duration) === 240, JSON.str
 // Mid-transition frame: navigate again, hold the real animation at 110 ms, shoot, resume, then shoot
 // the settled frame. The two images prove an intermediate state exists.
 await navItem("Songs");
-const routeExit = await page.evaluate(() => {
-  const pane = document.querySelector<HTMLElement>("[data-route-exit]");
-  return { inert: pane?.inert, hidden: pane?.getAttribute("aria-hidden"), animation: pane && getComputedStyle(pane).animationName };
-});
-check("browse-exit-is-brief-and-inert", routeExit.inert === true && routeExit.hidden === "true" && routeExit.animation === "fade-out", JSON.stringify(routeExit));
+const activeViews = await page.$$eval(".content-scroll", panes => panes.length);
+check("navigation-keeps-one-live-view", activeViews === 1, `${activeViews} scrollports during movement`);
 const held = await freezeAt(100);
 await shot("01-nav-albums-mid");
 await resumeAll();
@@ -704,17 +722,18 @@ const swap = await page.evaluate(() => {
   return {
     art: layers(".player-track [data-cover-layer]"),
     text: layers(".player-track [data-track-layer]"),
-    tints: [...document.querySelectorAll<HTMLElement>(".player-bar [data-atmosphere-layer]")].map(node => node.style.getPropertyValue("--cover-tint")),
+    blur: getComputedStyle(document.querySelector(".player-bar")!, "::before").filter,
   };
 });
 check("track-change-holds-decoded-outgoing-cover", swap.art.length === 2 && swap.art[0]?.img?.endsWith("amber.png") === true && swap.art[0].opacity === 1 && swap.art[1].opacity > 0 && swap.art[1].opacity < 1, JSON.stringify(swap.art));
-check("track-change-coordinates-text-and-tint", swap.text.length === 2 && swap.text[0].text?.includes("Blue Hour") === true && swap.text[1].text?.includes("Aurora") === true && swap.text[1].hidden === "true" && swap.tints.length === 2 && swap.tints[0] !== swap.tints[1], JSON.stringify(swap));
+check("track-change-coordinates-readable-metadata", swap.text.length === 2 && swap.text[0].text?.includes("Blue Hour") === true && swap.text[1].text?.includes("Aurora") === true && swap.text[1].hidden === "true" && swap.text[0].opacity > 0 && swap.text[0].opacity < 1, JSON.stringify(swap.text));
+check("player-retains-original-artwork-blur", swap.blur === "blur(26px) saturate(1.2)" && !(await page.$(".artwork-atmosphere")), swap.blur);
 await shot("02-player-track-change-mid");
 await resumeAll();
 await wait(370);
 await shot("02-player-track-change-settled");
 check("player-mid-frame-differs", heldMeta.count > 0 && frameDelta("02-player-track-change-mid", "02-player-track-change-settled") > 0.0005, `${heldMeta.count} held`);
-check("track-change-cleans-up", await waitForGone(".player-bar [data-cover-layer=outgoing], .player-bar [data-track-layer=outgoing], .player-bar [data-atmosphere-layer=outgoing]"));
+check("track-change-cleans-up", await waitForGone(".player-bar [data-cover-layer=outgoing], .player-bar [data-track-layer=outgoing]"));
 await auditArtworkResilience(page, check, shot);
 
 // Seek fill: painted from the audio clock, never transitioned, so the bar cannot lag the song.
@@ -990,7 +1009,7 @@ await page.keyboard.press("Escape");
 await page.waitForSelector(".player-bar", { timeout: 3000 });
 const exitState = await page.evaluate(() => ({
   fullscreen: Boolean(document.querySelector(".lyrics-view.is-fullscreen")),
-  artReturns: Boolean(document.querySelector('[data-player-flight="artwork"]')),
+  artReturns: document.getAnimations().some(animation => animation.id === "player-artwork-handoff"),
   sidebar: Boolean(document.querySelector(".sidebar")),
 }));
 check("fullscreen-exits", !exitState.fullscreen && exitState.sidebar, JSON.stringify(exitState));
@@ -999,6 +1018,7 @@ await wait(400);
 await shot("05-fullscreen-exit-settled");
 await auditLyricFollow(page, check, shot);
 await auditMiniHandoff(page, check, shot);
+await auditHiddenArtwork(page, check);
 
 await sidebarItem("Settings");
 await wait(300);

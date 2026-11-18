@@ -11,7 +11,7 @@ import { SourceBadge } from "../../components/SourceBadge";
 import { useLibrary } from "../../state/libraryStore";
 import { useUi } from "../../state/uiStore";
 import { SeekRow, TransportButtons } from "./PlaybackControls";
-import { ArtworkAtmosphere, PlaybackArtwork, PlaybackText } from "./PlaybackVisuals";
+import { PlaybackArtwork, PlaybackText } from "./PlaybackVisuals";
 import { usePlaybackPresentation } from "./usePlaybackPresentation";
 
 function windowAction(action: WindowAction): void {
@@ -21,22 +21,19 @@ function windowAction(action: WindowAction): void {
 export function MiniPlayer() {
   const track = useCurrentTrack();
   const item = useCurrentMediaItem();
-  const { cover, text } = usePlaybackPresentation(item, track?.accentColor);
+  const { cover, text } = usePlaybackPresentation(item);
   const setMiniPlayer = useUi(state => state.setMiniPlayer);
   const navigate = useUi(state => state.navigate);
-  const setFullscreenLyrics = useUi(state => state.setFullscreenLyrics);
   const setFavorite = useLibrary(state => state.setFavorite);
 
   const expand = () => setMiniPlayer(false);
   const openNowPlaying = () => {
-    navigate({ name: "lyrics" });
-    setFullscreenLyrics(false);
     setMiniPlayer(false);
+    navigate({ name: "lyrics" });
   };
 
   return (
     <section className="mini-player" data-testid="mini-player" aria-label="Mini player">
-      <ArtworkAtmosphere cover={cover} intensity={0.6} />
       <div className="mini-player-chrome">
         <div className="mini-player-drag" data-tauri-drag-region>
           <span data-tauri-drag-region>Cadence</span>
@@ -78,13 +75,14 @@ export function MiniPlayer() {
         <button
           type="button"
           className="mini-player-artwork"
+          data-player-part="artwork"
           aria-label="Open Now Playing"
           title="Open Now Playing"
           onClick={openNowPlaying}
         >
           <PlaybackArtwork cover={cover} label={item?.albumLabel ?? item?.title ?? "No track"} />
         </button>
-        <PlaybackText text={text} className="mini-player-meta" draggable>
+        <PlaybackText text={text} className="mini-player-meta" shared draggable>
           {display => (
             <>
               <div className="mini-player-title" title={display?.title} data-tauri-drag-region>

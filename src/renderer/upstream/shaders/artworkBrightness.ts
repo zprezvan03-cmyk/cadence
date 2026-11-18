@@ -117,34 +117,32 @@ export const measureArtworkHighlight = async (imageUrl: string): Promise<number 
 };
 
 /** Dominant colour, used by the UI for per-album accents. Not part of the upstream module. */
-export function artworkAccentFromPixels(data: Uint8ClampedArray): string | null {
-  let r = 0;
-  let g = 0;
-  let b = 0;
-  let weight = 0;
-  for (let i = 0; i < data.length; i += 4) {
-    const alpha = data[i + 3] / 255;
-    if (alpha < 0.5) continue;
-    const max = Math.max(data[i], data[i + 1], data[i + 2]);
-    const min = Math.min(data[i], data[i + 1], data[i + 2]);
-    const saturation = max === 0 ? 0 : (max - min) / max;
-    const luminance = (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) / 255;
-    // Prefer saturated mid-tones: they read as an accent rather than as grey.
-    const w = (0.15 + saturation) * (1 - Math.abs(luminance - 0.55));
-    r += data[i] * w;
-    g += data[i + 1] * w;
-    b += data[i + 2] * w;
-    weight += w;
-  }
-  if (weight === 0) return null;
-  const toHex = (value: number) => Math.round(Math.min(255, value)).toString(16).padStart(2, "0");
-  return `#${toHex(r / weight)}${toHex(g / weight)}${toHex(b / weight)}`;
-}
-
 export const measureArtworkAccent = async (imageUrl: string): Promise<string | null> => {
   try {
     const data = await loadArtworkPixels(imageUrl, "low");
-    return data ? artworkAccentFromPixels(data) : null;
+    if (!data) return null;
+
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let weight = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const alpha = data[i + 3] / 255;
+      if (alpha < 0.5) continue;
+      const max = Math.max(data[i], data[i + 1], data[i + 2]);
+      const min = Math.min(data[i], data[i + 1], data[i + 2]);
+      const saturation = max === 0 ? 0 : (max - min) / max;
+      const luminance = (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) / 255;
+      // Prefer saturated mid-tones: they read as an accent rather than as grey.
+      const w = (0.15 + saturation) * (1 - Math.abs(luminance - 0.55));
+      r += data[i] * w;
+      g += data[i + 1] * w;
+      b += data[i + 2] * w;
+      weight += w;
+    }
+    if (weight === 0) return null;
+    const toHex = (value: number) => Math.round(Math.min(255, value)).toString(16).padStart(2, "0");
+    return `#${toHex(r / weight)}${toHex(g / weight)}${toHex(b / weight)}`;
   } catch {
     return null;
   }

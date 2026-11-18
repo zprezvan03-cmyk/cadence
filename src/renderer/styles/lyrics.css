@@ -449,32 +449,6 @@
   padding: clamp(20px, 3.4cqh, 40px) var(--np-gutter) 6px;
 }
 
-.lyrics-heading {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.lyrics-view:not(.is-fullscreen) .lyrics-header {
-  align-items: center;
-  justify-content: flex-start;
-  padding-bottom: clamp(10px, 2cqh, 20px);
-}
-
-.np-window-cover .artwork {
-  --np-window-cover-size: calc(clamp(72px, min(16cqi, 19cqh), 178px) * var(--np-profile-artwork-scale, 1));
-  width: var(--np-window-cover-size);
-  height: var(--np-window-cover-size);
-  border-radius: clamp(12px, 1.4cqi, 20px);
-}
-
-.np-kicker { color: rgba(255, 255, 255, 0.54); }
-
-.lyrics-view:not(.is-fullscreen) .np-customize-button {
-  flex-shrink: 0;
-  align-self: flex-start;
-  margin-inline-start: auto;
-}
-
 .lyrics-heading h1 {
   font-size: var(--np-title-size);
   text-shadow: 0 2px 24px rgba(0, 0, 0, 0.5);

@@ -833,20 +833,17 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     setRomanizationRevision(value => value + 1);
   }, [settings.romanization]);
 
-  const ownsDisplay = store.trackId === (track?.id ?? null);
   return useMemo<UseLyricsResult>(
     () => ({
-      // Never hand the old song's timed lines to the newly promoted media element while its
-      // provider request starts. The resolver still retains same-track fallback/upgrade data.
-      status: ownsDisplay ? store.status : track ? "loading" : "idle",
-      refreshing: ownsDisplay && store.refreshing,
-      candidates: ownsDisplay ? store.candidates : [],
-      activeSource: ownsDisplay ? store.activeSource : null,
-      parsed: ownsDisplay ? store.parsed : null,
-      lyrics: ownsDisplay ? store.lyrics : null,
-      syncType: ownsDisplay ? store.syncType : "none",
-      providerStatus: ownsDisplay ? store.providerStatus : [],
-      error: ownsDisplay ? store.error : null,
+      status: store.status,
+      refreshing: store.refreshing,
+      candidates: store.candidates,
+      activeSource: store.activeSource,
+      parsed: store.parsed,
+      lyrics: store.lyrics,
+      syncType: store.syncType,
+      providerStatus: store.providerStatus,
+      error: store.error,
       translating: store.translating,
       romanizing: store.romanizing,
       translatedLanguage: store.translatedLanguage,
@@ -863,14 +860,12 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
       searchDraft: session?.draft ?? { title: "", artist: "", album: "", youtubeUrl: "" },
       patchDraft,
       clearSearch,
-      hasLyrics: ownsDisplay && Boolean(store.lyrics?.length),
+      hasLyrics: Boolean(store.lyrics && store.lyrics.length > 0),
       regenerateTranslation,
       regenerateRomanization,
     }),
     [
       store,
-      ownsDisplay,
-      track,
       session,
       selectSource,
       reload,

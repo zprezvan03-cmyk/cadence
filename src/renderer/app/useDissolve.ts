@@ -11,9 +11,8 @@ export interface Dissolve<T> {
 }
 
 /**
- * Retains just one outgoing layer. While a dissolve is running, the latest ready target wins
- * the next beat rather than cancelling the visible blend or queuing every intermediate target.
- * Pass a memoized target; null means the next visual is not ready to reveal yet.
+ * Never queue a track change behind an animation. Keep at most one outgoing layer, even when
+ * interrupted. Pass a memoized target; null means the next image is not ready to reveal yet.
  */
 export function useDissolve<T>(
   target: VisualLayer<T> | null,
@@ -22,7 +21,7 @@ export function useDissolve<T>(
   animate: boolean
 ): Dissolve<T> {
   const [layers, setLayers] = useState<Dissolve<T>>(() => ({ front: target ?? initial, back: null }));
-  if (target && target !== layers.front && (target.key === layers.front.key || !layers.back || !animate)) {
+  if (target && target !== layers.front) {
     setLayers({
       front: target,
       back: !animate ? null : target.key === layers.front.key ? layers.back : layers.front,

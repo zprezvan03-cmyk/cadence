@@ -49,11 +49,20 @@ export function Sidebar() {
 
   const navRef = useRef<HTMLElement | null>(null);
   const pillRef = useRef<HTMLSpanElement | null>(null);
+  const slots = useRef(new Map<Element, { height: number; top: number }>());
+  const measureSlots = useCallback(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+    slots.current.clear();
+    for (const button of nav.querySelectorAll<HTMLElement>(".nav-item")) {
+      slots.current.set(button, { height: button.offsetHeight, top: button.offsetTop });
+    }
+  }, []);
 
   /**
    * One pill slides between nav items instead of each item fading its own background in. The DOM is
-   * measured here — on navigation and on resize, never per frame — and the `.active` class stays
-   * the single source of truth for which item the pill belongs to.
+   * measured only when the rail's geometry changes. Navigation just picks the cached slot,
+   * avoiding a forced layout of the incoming page in the same commit.
    */
   const placePill = useCallback((instant: boolean) => {
     const nav = navRef.current;
@@ -64,8 +73,10 @@ export function Sidebar() {
       pill.classList.remove("is-visible");
       return;
     }
-    const height = `${button.offsetHeight}px`;
-    const transform = `translateY(${button.offsetTop}px)`;
+    const slot = slots.current.get(button);
+    if (!slot) return;
+    const height = `${slot.height}px`;
+    const transform = `translateY(${slot.top}px)`;
     // Compact hover can resize the rail on every interpolated frame without changing the pill's
     // vertical geometry. Don't restart (or snap) a navigation move for those notifications.
     const moved = pill.style.height !== height || pill.style.transform !== transform;
@@ -85,6 +96,7 @@ export function Sidebar() {
     // callback immediately and cancel the very transition it was about to animate.
   }, []);
 
+  useLayoutEffect(measureSlots, [measureSlots]);
   useLayoutEffect(() => {
     placePill(navRef.current?.dataset.pill !== "ready");
   }, [placePill, route]);
@@ -92,16 +104,26 @@ export function Sidebar() {
   // The nav can move under the pill without a route change: a resized window, a compact sidebar, or
   // playlists appearing above the footer. Re-place instantly instead of sliding from a stale spot.
   useEffect(() => {
-    const replace = () => placePill(true);
+    const replace = () => {
+      measureSlots();
+      placePill(true);
+    };
     window.addEventListener("resize", replace);
     const nav = navRef.current;
-    const observer = nav ? new ResizeObserver(replace) : null;
+    // Width-only hover measurements cannot move these single-line buttons vertically.
+    // Avoid reading layout from every intermediate compact-sidebar resize notification.
+    let height: number | undefined;
+    const observer = nav ? new ResizeObserver(([entry]) => {
+      if (!entry || entry.contentRect.height === height) return;
+      height = entry.contentRect.height;
+      replace();
+    }) : null;
     if (nav && observer) observer.observe(nav);
     return () => {
       window.removeEventListener("resize", replace);
       observer?.disconnect();
     };
-  }, [placePill]);
+  }, [measureSlots, placePill]);
 
   return (
     <aside className="sidebar">
@@ -136,7 +158,6 @@ export function Sidebar() {
             onClick={() => navigate(item.route)}
             title={item.label}
             aria-label={item.label}
-            aria-current={isActive(item.route) ? "page" : undefined}
           >
             {item.icon}
             <span>{item.label}</span>
@@ -159,7 +180,6 @@ export function Sidebar() {
               className={`sidebar-link ${route.name === "playlist" && route.playlistId === playlist.id ? "active" : ""}`}
               onClick={() => navigate({ name: "playlist", playlistId: playlist.id })}
               title={playlist.name}
-              aria-current={route.name === "playlist" && route.playlistId === playlist.id ? "page" : undefined}
             >
               {playlist.name}
             </button>
@@ -178,7 +198,6 @@ export function Sidebar() {
           onClick={() => navigate({ name: "settings" })}
           title="Settings"
           aria-label="Settings"
-          aria-current={route.name === "settings" ? "page" : undefined}
         >
           <Settings size={18} />
           <span>Settings</span>

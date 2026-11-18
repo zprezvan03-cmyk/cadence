@@ -66,7 +66,6 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
   const itemIdentity = item ? trackSourceKey(item.source) : null;
   const viewRef = useRef<HTMLDivElement | null>(null);
   const footerRef = useRef<HTMLDivElement | null>(null);
-  const { cover, text } = usePlaybackPresentation(item, track?.accentColor);
   // Fullscreen only: the controls show while the pointer is over them and fade out when it leaves,
   // unless a popover or the queue is open.
   // Fullscreen with lyrics on: the footer (controls and dock) is shown over the lyrics. Fullscreen with
@@ -123,6 +122,7 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
     [fullscreen, nowPlayingProfilesSettings, studioDraft]
   );
   const profileConfig = nowPlayingProfileConfig;
+  const { cover, text } = usePlaybackPresentation(item, fullscreen && profileConfig.artworkVisible);
   const showLyrics = lyricsSettings?.showLyricsInFullscreen ?? true;
   // The toggle only applies in fullscreen; the normal page always shows lyrics.
   const lyricsVisible = !fullscreen || showLyrics;
@@ -334,10 +334,9 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
 
   const artwork = <PlaybackArtwork cover={cover} label={item?.albumLabel ?? item?.title ?? "Artwork"} size="hero" />;
   const heading = (
-    <PlaybackText text={text} className="lyrics-heading">
+    <PlaybackText text={text} className="lyrics-heading" shared={fullscreen}>
       {display => (
         <>
-          {!fullscreen ? <div className="eyebrow np-kicker">Now playing</div> : null}
           <h1>{display?.title ?? "Nothing playing"}</h1>
           <p>
             {display
@@ -399,7 +398,7 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
     >
       <NowPlayingBackground
         mode={profileConfig.backgroundMode}
-        cover={cover}
+        artworkUrl={item?.artworkUrl ?? null}
         animatedArtUrl={track?.animatedArtUrl ?? null}
         shaderSettings={shaderSettings ?? settings.shaders}
         playing={playing}
@@ -408,18 +407,18 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
         blurPx={profileConfig.backgroundBlurPx}
         speed={profileConfig.effectSpeed}
         density={profileConfig.effectDensity}
+        accentColor={track?.accentColor ?? null}
         fallbackAccent={settings.appearance.accent}
       />
 
       {showSide ? (
         <div className="fs-side">
-          {profileConfig.artworkVisible ? <div className="fs-artwork">{artwork}</div> : null}
+          <div className="fs-artwork">{artwork}</div>
           {headingInSide ? heading : null}
         </div>
       ) : null}
 
       <div className="lyrics-header">
-        {!fullscreen && item && profileConfig.artworkVisible ? <div className="np-window-cover">{artwork}</div> : null}
         {headingInHeader ? heading : null}
         <button
           type="button"
@@ -448,7 +447,7 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
 
       {panelMode ? (
         <div className="fs-panel-layout">
-          {profileConfig.artworkVisible ? <div className="fs-panel-art">{artwork}</div> : null}
+          <div className="fs-panel-art">{artwork}</div>
           <div className="fs-panel">
             {profileConfig.metadataVisible ? heading : null}
             <FullscreenControls

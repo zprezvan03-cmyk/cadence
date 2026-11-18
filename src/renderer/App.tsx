@@ -2,7 +2,7 @@
  * Application shell. Written for Cadence.
  */
 
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { useCurrentMediaItem, useCurrentTrack } from "./app/hooks";
 import { useAutofetchLyrics } from "./features/lyrics/useAutofetch";
 import { useLastFmScrobbler } from "./features/scrobble/useLastFmScrobbler";
@@ -13,7 +13,6 @@ import { useSettings } from "./state/settingsStore";
 import { PlaylistPicker } from "./app/PlaylistPicker";
 import { ShortcutsHelp } from "./app/ShortcutsHelp";
 import { TrackEditor } from "./features/library/TrackEditor";
-import { RouteViewport } from "./app/RouteViewport";
 import { Sidebar } from "./app/Sidebar";
 import { TopBar } from "./app/TopBar";
 import { useReducedMotion } from "./app/useMotionPreference";
@@ -103,6 +102,8 @@ function AppToast() {
   );
 }
 
+const scrollMemory = new Map<string, number>();
+
 export function App() {
   useBootstrap();
   // Autofetch: lyrics lookup begins on every track change, whichever tab is open.
@@ -122,7 +123,7 @@ export function App() {
   const fullscreenLyrics = useUi(state => state.fullscreenLyrics);
   const miniRequested = useUi(state => state.miniPlayer);
   const reducedMotion = useReducedMotion();
-  const miniPlayer = useMiniWindow(miniRequested, reducedMotion);
+  const { mini: miniPlayer, staging } = useMiniWindow(miniRequested, reducedMotion);
   const route = useUi(state => state.route);
   const error = usePlayer(state => state.error);
   const chrome = useWindowChrome();
@@ -132,11 +133,18 @@ export function App() {
   // hand the whole window to the content.
   const titleBar = chrome.undecorated && !chrome.fullscreen && !immersive;
 
+  const viewKey = route.name === "search" ? "search" : `${route.name}-${JSON.stringify(route)}`;
+  const contentRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const top = scrollMemory.get(viewKey);
+    if (top) contentRef.current?.scrollTo({ top, behavior: "instant" });
+  }, [viewKey, miniPlayer]);
+
   const layout: PlayerLayout = miniPlayer ? "mini" : immersive ? "fullscreen" : route.name === "lyrics" ? "now-playing" : "library";
   return (
     <PlayerLayoutMotion layout={layout} reducedMotion={reducedMotion}>
       {miniPlayer ? (
-        <div className="mini-shell">
+        <div className="mini-shell" data-mini-staging={staging || undefined}>
           <MiniPlayer />
           <AppToast />
         </div>
@@ -154,7 +162,14 @@ export function App() {
                 </button>
               </div>
             ) : null}
-            <RouteViewport route={route} reducedMotion={reducedMotion} renderRoute={renderRoute} />
+            <div
+              className="content-scroll"
+              key={viewKey}
+              ref={contentRef}
+              onScroll={event => scrollMemory.set(viewKey, event.currentTarget.scrollTop)}
+            >
+              {renderRoute(route)}
+            </div>
             {!immersive ? <PlayerBar /> : null}
           </main>
           <QueuePanel />

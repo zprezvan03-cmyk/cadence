@@ -11,13 +11,13 @@ import { useUi } from "../../state/uiStore";
 import { ArtistAvatar } from "../../components/ArtistAvatar";
 import { SourceBadge } from "../../components/SourceBadge";
 import { SeekRow, TransportButtons, VolumeControl } from "./PlaybackControls";
-import { ArtworkAtmosphere, PlaybackArtwork, PlaybackText } from "./PlaybackVisuals";
+import { PlaybackArtwork, PlaybackText } from "./PlaybackVisuals";
 import { usePlaybackPresentation } from "./usePlaybackPresentation";
 
 export function PlayerBar() {
   const track = useCurrentTrack();
   const item = useCurrentMediaItem();
-  const { cover, text } = usePlaybackPresentation(item, track?.accentColor);
+  const { cover, text } = usePlaybackPresentation(item);
   const toggleQueue = useUi(state => state.toggleQueue);
   const queueOpen = useUi(state => state.queueOpen);
   const navigate = useUi(state => state.navigate);
@@ -47,11 +47,11 @@ export function PlayerBar() {
       data-testid="player-bar"
       data-playback-mechanism={playbackMechanism}
       data-source-kind={item?.source.kind ?? "none"}
+      style={cover.front.value.src ? { ["--player-artwork" as string]: `url("${cover.front.value.src.replace(/"/g, "%22")}")` } : undefined}
     >
-      <ArtworkAtmosphere cover={cover} intensity={0.48} />
       <div className="player-track">
         <PlaybackArtwork cover={cover} label={item?.albumLabel ?? item?.title ?? "No track"} />
-        <div className="player-track-meta">
+        <div className="player-track-meta" data-player-part="metadata">
           <PlaybackText text={text}>
             {display => (
               <>

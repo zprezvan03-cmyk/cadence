@@ -52,7 +52,7 @@
   --dur-2: 180ms; /* small surfaces: menus, toasts, toggles */
   --dur-3: 240ms; /* views, panels, the sidebar indicator */
   --dur-4: 320ms; /* artwork dissolves, sidebar width, buffered-fill catch-up */
-  --dur-scene: 380ms; /* shared player layouts */
+  --dur-scene: 300ms; /* shared player layouts */
   --stagger-step: 24ms; /* per-item delay for capped grid entrances */
   --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
   --ease-in: cubic-bezier(0.55, 0.06, 0.68, 0.19);
@@ -256,15 +256,9 @@ a {
   min-height: 0;
 }
 
-.route-stage {
-  position: relative;
+.content-scroll {
   flex: 1;
   min-height: 0;
-}
-
-.content-scroll {
-  position: absolute;
-  inset: 0;
   overflow-y: auto;
   scroll-behavior: smooth;
   /* The route viewport is the responsive reference for Now Playing. In windowed mode this
@@ -272,13 +266,6 @@ a {
      expands to the whole window, so one set of container rules serves both. */
   container-type: size;
   container-name: app-content;
-}
-
-.content-scroll[data-route-exit="true"] {
-  z-index: 1;
-  pointer-events: none;
-  overflow: hidden;
-  animation: fade-out var(--dur-1) var(--ease-out) both;
 }
 
 .view {
@@ -453,7 +440,6 @@ a {
   transition:
     background var(--dur-1) var(--ease-out),
     color var(--dur-1) var(--ease-out),
-    scale var(--dur-0) var(--ease-out),
     gap var(--dur-3) var(--ease-in-out),
     padding-inline var(--dur-3) var(--ease-in-out);
   text-align: left;
@@ -481,8 +467,6 @@ a {
   background: var(--surface-2);
   color: var(--text);
 }
-
-.nav-item:active { scale: 0.98; }
 
 .nav-item.active {
   background: var(--accent-soft);
@@ -545,7 +529,6 @@ a {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
 }
 
 .sidebar-link:hover {
@@ -658,7 +641,7 @@ a {
   justify-content: flex-start;
   gap: 12px;
   padding-inline: 12px;
-  transition-delay: 0s, 0s, 0s, var(--dur-0), var(--dur-0);
+  transition-delay: 0s, 0s, var(--dur-0), var(--dur-0);
 }
 
 [data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .sidebar-heading {
@@ -1114,12 +1097,25 @@ a {
   animation: chrome-in var(--dur-2) var(--ease-out);
 }
 
-.player-bar > :not(.artwork-atmosphere) {
+.player-bar::before {
+  content: "";
+  position: absolute;
+  inset: -32px;
+  z-index: 0;
+  background-image: var(--player-artwork, none);
+  background-position: center;
+  background-size: cover;
+  filter: blur(26px) saturate(1.2);
+  opacity: 0.24;
+  pointer-events: none;
+}
+
+.player-bar > * {
   position: relative;
   z-index: 1;
 }
 
-[data-blur-artwork="false"] :is(.player-bar, .mini-player) > .artwork-atmosphere {
+[data-blur-artwork="false"] .player-bar::before {
   display: none;
 }
 
@@ -1423,7 +1419,7 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   background: rgba(15, 15, 21, 0.97);
   border-left: 1px solid var(--border);
   backdrop-filter: blur(24px);
-  z-index: 57;
+  z-index: 40;
   display: flex;
   flex-direction: column;
   animation: slide-in var(--dur-3) var(--ease-out);
@@ -1435,6 +1431,7 @@ input[type="range"].volume:active::-webkit-slider-thumb {
 .app-shell.is-immersive .queue-panel {
   top: 0;
   bottom: 0;
+  z-index: 56;
   background: rgba(14, 14, 22, 0.26);
   border-left: 1px solid rgba(255, 255, 255, 0.14);
   backdrop-filter: blur(26px) saturate(1.35);
@@ -1494,13 +1491,15 @@ input[type="range"].volume:active::-webkit-slider-thumb {
 
 .queue-list:empty { display: none; }
 
-.queue-motion-exits {
-  z-index: 1;
-  overflow: hidden;
+.queue-row-exits {
+  list-style: none;
+  padding: 0;
   pointer-events: none;
+  overflow: hidden;
+  contain: layout paint;
 }
 
-:is(.queue-list, .queue-motion-exits) li {
+:is(.queue-list, .queue-row-exits) li {
   display: flex;
   align-items: center;
   border-radius: 10px;
@@ -1508,7 +1507,7 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   transition: background var(--dur-2) var(--ease-out);
 }
 
-:is(.queue-list, .queue-motion-exits) li.current {
+:is(.queue-list, .queue-row-exits) li.current {
   background: var(--accent-soft);
 }
 
@@ -1824,24 +1823,20 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background: var(--bg);
+  background: #0c0c11;
 }
 
 .mini-player {
-  position: relative;
-  isolation: isolate;
-  /* Match the desktop window geometry even during the brief handoff before/after an OS resize. */
-  width: min(100%, 460px);
-  height: min(100%, 160px);
+  height: 100%;
   display: flex;
   flex-direction: column;
   gap: 5px;
   padding: 7px 12px 10px;
-  background: #101016;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(255, 61, 113, 0.16), transparent 44%),
+    rgba(12, 12, 17, 0.97);
   user-select: none;
 }
-
-.mini-player > :not(.artwork-atmosphere) { position: relative; }
 
 .mini-player-chrome {
   display: flex;

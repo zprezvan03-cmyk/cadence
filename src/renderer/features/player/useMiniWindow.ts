@@ -4,11 +4,12 @@ import { MOTION_DURATION_MS } from "../../app/motion";
 /** Native window geometry and the React layout are separate. Restore while the compact card is
  * still pinned in place, then measure the expanded destination. In reverse, the card becomes live
  * immediately and the OS window shrinks only once the shared elements have reached it. */
-export function useMiniWindow(requested: boolean, reducedMotion: boolean): boolean {
+export function useMiniWindow(requested: boolean, reducedMotion: boolean) {
   const app = window.cadence?.app;
   const native = Boolean(app?.setMiniPlayer);
   const [mini, setMini] = useState(requested);
   const nativeMini = useRef(false);
+  const [compact, setCompact] = useState(false);
   const nativeResizing = useRef(false);
   const commands = useRef(Promise.resolve());
 
@@ -27,6 +28,7 @@ export function useMiniWindow(requested: boolean, reducedMotion: boolean): boole
         try {
           await app.setMiniPlayer?.(value);
           nativeMini.current = value;
+          setCompact(value);
         } finally {
           nativeResizing.current = false;
         }
@@ -40,7 +42,7 @@ export function useMiniWindow(requested: boolean, reducedMotion: boolean): boole
       if (!nativeMini.current || nativeResizing.current) {
         const shrink = () => { void resizeNative(true).catch(() => undefined); };
         if (reducedMotion || document.hidden || typeof Element.prototype.animate !== "function") shrink();
-        else timeout = window.setTimeout(shrink, MOTION_DURATION_MS.scene + 24);
+        else timeout = window.setTimeout(shrink, MOTION_DURATION_MS.scene + 16);
       }
     } else if (nativeMini.current || nativeResizing.current) {
       const width = window.innerWidth;
@@ -54,7 +56,8 @@ export function useMiniWindow(requested: boolean, reducedMotion: boolean): boole
       const afterResize = () => {
         if (cancelled) return;
         if (frame !== undefined) window.cancelAnimationFrame(frame);
-        frame = window.requestAnimationFrame(reveal);
+        if (reducedMotion || document.hidden) reveal();
+        else frame = window.requestAnimationFrame(reveal);
       };
       const onResize = () => {
         if (window.innerWidth > width || window.innerHeight > height) afterResize();
@@ -78,5 +81,5 @@ export function useMiniWindow(requested: boolean, reducedMotion: boolean): boole
     };
   }, [app, requested, reducedMotion]);
 
-  return native ? mini : requested;
+  return { mini: native ? mini : requested, staging: native && mini && (!requested || !compact) };
 }

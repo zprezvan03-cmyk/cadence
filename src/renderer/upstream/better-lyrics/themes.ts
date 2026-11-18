@@ -106,12 +106,11 @@ export function buildThemeCss(settings: LyricsSettings): string {
 /* blyrics-line-scroll-below-duration = ${MOTION_DURATION_MS.view}ms; */
 .blyrics-container {
   --blyrics-lyric-scroll-timing-function: var(--ease-settle);
-  --blyrics-scale: 0.985;
   --blyrics-scale-transition-duration: var(--dur-3, 240ms);
   --blyrics-line-enter-easing: var(--ease-out);
   --blyrics-line-exit-easing: var(--ease-out);
-  --blyrics-lyric-highlight-fade-in-duration: 200ms;
-  --blyrics-lyric-highlight-fade-out-duration: 240ms;
+  --blyrics-lyric-highlight-fade-in-duration: var(--dur-2);
+  --blyrics-lyric-highlight-fade-out-duration: var(--dur-3);
   --blyrics-animate-word-wobble: 0;
 }`;
   const css = `
