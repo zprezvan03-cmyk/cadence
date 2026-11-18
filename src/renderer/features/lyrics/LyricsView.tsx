@@ -49,6 +49,8 @@ function clampFinite(value: number | undefined, fallback: number, min: number, m
   return Number.isFinite(value) ? Math.min(max, Math.max(min, value as number)) : fallback;
 }
 
+const NO_LYRIC_CREDITS: readonly string[] = [];
+
 export function LyricsView({ track, item, playing, fullscreen, onToggleFullscreen, onOpenSearch }: LyricsViewProps) {
   const settings = useSettings(state => state.settings);
   const patchSettings = useSettings(state => state.patch);
@@ -483,8 +485,9 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
             themeCss={themeCss}
             offsetMs={lyricsSettings?.offsetMs ?? 0}
             passiveScroll={lyricsSettings?.passiveScroll ?? true}
+            active={lyricsVisible && !statusPanel}
             fontFamily={profileConfig.fontId || settings.appearance.fontFamily}
-            songwriters={lyrics.parsed?.songwriters ?? []}
+            songwriters={lyrics.parsed?.songwriters ?? NO_LYRIC_CREDITS}
             language={lyrics.parsed?.language ?? null}
             noLyrics={lyrics.status === "empty"}
             loaderVisible={lyrics.status === "loading" && !lyrics.hasLyrics}

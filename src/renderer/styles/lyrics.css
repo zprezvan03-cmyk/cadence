@@ -1934,3 +1934,18 @@ braccato-lyrics[data-upgrading="true"] {
   padding: 12px 2px 2px;
   background: linear-gradient(180deg, transparent, rgba(11, 11, 18, 0.97) 38%);
 }
+
+/* Both app and OS preferences reach Braccato's WAAPI settings, not only CSS keyframes.
+   Karaoke colouring remains timed; it doesn't need the line/word travel to show the beat. */
+braccato-lyrics[data-lyrics-reduced="true"] .blyrics-container {
+  --blyrics-animate-scroll: 0 !important;
+  --blyrics-animate-line-scale: 0 !important;
+  --blyrics-animate-word-wobble: 0 !important;
+  --blyrics-animate-instrumental: 0 !important;
+  --blyrics-animate-decoration-entry: 0 !important;
+  --blyrics-scale: 1 !important;
+  --blyrics-active-scale: 1 !important;
+  --blyrics-letter-wave-emphasis-scale: 1 !important;
+  --blyrics-letter-wave-transform: translateY(0) !important;
+  --blyrics-letter-wave-settle: translateY(0) !important;
+}

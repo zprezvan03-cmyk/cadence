@@ -17,6 +17,7 @@
  */
 
 import type { LyricsSettings } from "../../../shared/types";
+import { MOTION_DURATION_MS } from "../../app/motion";
 import defaultCss from "./themes/Default.css?raw";
 import hdrCss from "./themes/HDR.css?raw";
 
@@ -96,8 +97,26 @@ export function buildThemeCss(settings: LyricsSettings): string {
   const translationFontSizePx = secondaryFontSizePx(settings.translationFontSizePx, 32);
   const romanizationFontSizePx = secondaryFontSizePx(settings.romanizationFontSizePx, 26);
 
+  // Braccato still chooses the active line, scroll target and karaoke timing. Only shorten
+  // the presentation of each scroll; leave authored Custom CSS motion alone.
+  const motion = theme.id === "custom" ? "" : `
+/* blyrics-line-scroll-duration = ${MOTION_DURATION_MS.view}ms; */
+/* blyrics-line-scroll-above-duration = ${MOTION_DURATION_MS.view}ms; */
+/* blyrics-line-scroll-active-duration = ${MOTION_DURATION_MS.view}ms; */
+/* blyrics-line-scroll-below-duration = ${MOTION_DURATION_MS.view}ms; */
+.blyrics-container {
+  --blyrics-lyric-scroll-timing-function: var(--ease-settle);
+  --blyrics-scale: 0.985;
+  --blyrics-scale-transition-duration: var(--dur-3, 240ms);
+  --blyrics-line-enter-easing: var(--ease-out);
+  --blyrics-line-exit-easing: var(--ease-out);
+  --blyrics-lyric-highlight-fade-in-duration: 200ms;
+  --blyrics-lyric-highlight-fade-out-duration: 240ms;
+  --blyrics-animate-word-wobble: 0;
+}`;
   const css = `
 ${base}
+${motion}
 /* blyrics-target-scroll-pos-ratio = ${Math.min(0.9, Math.max(0.1, settings.targetScrollRatio))}; */
 ${settings.hideInstrumentalOnly ? "/* blyrics-hide-instrumental-only = true; */" : ""}
 ${settings.showCredits ? "" : "/* blyrics-hide-credits = true; */"}

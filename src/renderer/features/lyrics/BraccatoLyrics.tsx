@@ -16,7 +16,8 @@ import "@braccato/core/styles/instrumental.css";
 import { injectRomanization, injectTranslation, type Lyric, type LyricsRenderer } from "@braccato/core";
 import type { LyricsSyncType } from "../../../shared/types";
 import { audioEngine } from "../../audio/engine";
-import { MOTION_DURATION_MS } from "../../app/motion";
+import { MOTION_DURATION_MS, MOTION_EASING } from "../../app/motion";
+import { useReducedMotion } from "../../app/useMotionPreference";
 import type { RemotePlaybackClockSource } from "../../player/playbackClock";
 import { shouldCrossfadeUpgrade, type LyricsRenderIdentity } from "./upgrade";
 
@@ -29,6 +30,8 @@ export interface BraccatoLyricsProps {
   themeCss: string;
   offsetMs: number;
   passiveScroll: boolean;
+  /** Keep the built lines, but stop rendering/ticking while the lyrics panel is hidden. */
+  active?: boolean;
   /** The chosen font, so a change can re-measure line positions taken with the old metrics. */
   fontFamily?: string;
   layout?: "scroll" | "stage";
@@ -61,7 +64,7 @@ export interface BraccatoLyricsProps {
 function applyLineDecorations(
   element: BraccatoElement,
   lyrics: readonly Lyric[] | null,
-  tick: { offsetMs: number; passiveScroll: boolean }
+  tick: MotionPolicy
 ): void {
   const renderer = element.renderer;
   if (!renderer || !lyrics || lyrics.length === 0) return;
@@ -89,18 +92,14 @@ function applyLineDecorations(
       decorated = true;
     }
   });
-  if (!decorated) return;
+  if (!decorated || !tick.active || document.hidden) return;
   // Port of upstream `lyricsElementAdded()` + `retickMainView()`: re-measure on the next frame, then
   // render again against the last player snapshot so lines the decorations moved ease into place.
   renderer.scheduleLyricPositionUpdate(
     () => element.isConnected,
     () => {
       renderer.retickFromPlaybackClock((eventCreationTime, isPlaying) => ({
-        eventCreationTime,
-        isPlaying,
-        smoothScroll: false,
-        globalLyricOffset: tick.offsetMs / 1000,
-        passiveScrollEnabled: tick.passiveScroll,
+        ...lyricTick(tick, false), eventCreationTime, isPlaying,
       }));
     }
   );
@@ -120,6 +119,85 @@ type BraccatoElement = HTMLElement & {
   status: string;
 };
 
+interface MotionPolicy {
+  offsetMs: number;
+  passiveScroll: boolean;
+  reduced: boolean;
+  active: boolean;
+}
+
+function lyricTick(policy: MotionPolicy, smooth = true, active = policy.active) {
+  return {
+    globalLyricOffset: policy.offsetMs / 1000,
+    passiveScrollEnabled: active && policy.passiveScroll && !policy.reduced,
+    smoothScroll: active && smooth && !policy.reduced,
+  };
+}
+
+/** Long seeks land at the correct line immediately instead of animating every crossed line.
+ * A brief settle on the destination makes that reposition readable. Short seeks and natural
+ * line changes still use Braccato's additive autoscroll and the actual media clock. */
+function bindLyricMedia(element: BraccatoElement, policy: () => MotionPolicy, onError: (message: string) => void) {
+  let media: HTMLAudioElement | null = null;
+  let settle: Animation | undefined;
+  let farSeek = false;
+  const seeking = () => {
+    if (!media || Math.abs(media.currentTime - element.currentTime) < 3.5) return;
+    farSeek = true;
+    element.tickOptions = lyricTick(policy(), false);
+    const sync = element.renderer?.syncType;
+    if (policy().reduced || !sync || sync === "none" || !element.animate || settle?.playState === "running") return;
+    settle = element.animate([
+      { opacity: 0.58, translate: `0 ${media.currentTime >= element.currentTime ? 8 : -8}px` },
+      { opacity: 1, translate: "0 0" },
+    ], { duration: MOTION_DURATION_MS.surface, easing: MOTION_EASING.out, id: "lyrics-seek-settle" });
+  };
+  const seeked = () => {
+    if (!media || media.seeking || !farSeek) return;
+    farSeek = false;
+    element.tickOptions = lyricTick(policy());
+  };
+  const unbind = () => {
+    if (!media) return;
+    media.removeEventListener("seeking", seeking, true);
+    media.removeEventListener("seeked", seeked);
+    media = null;
+    farSeek = false;
+    settle?.cancel();
+    element.source = null;
+    if (element.isConnected) {
+      element.tickOptions = lyricTick(policy(), false, false);
+      element.playing = false;
+    }
+  };
+  const bind = (source: HTMLAudioElement) => {
+    if (document.hidden || source === media) return;
+    unbind();
+    media = source;
+    media.addEventListener("seeking", seeking, true); // Set the visual policy before Braccato ticks.
+    try {
+      element.tickOptions = lyricTick(policy(), false);
+      element.source = media;
+      media.addEventListener("seeked", seeked); // Restore smooth following after the bound tick.
+      element.tickOptions = lyricTick(policy());
+    } catch (error) {
+      onError(`source: ${(error as Error).message}`);
+    }
+  };
+  const onVisibility = () => {
+    if (document.hidden) unbind();
+    else bind(audioEngine.element);
+  };
+  const unsubscribe = audioEngine.on("source", ({ element: source }) => bind(source));
+  onVisibility();
+  document.addEventListener("visibilitychange", onVisibility);
+  return () => {
+    unsubscribe();
+    document.removeEventListener("visibilitychange", onVisibility);
+    unbind();
+  };
+}
+
 /** Shared identity so a cleared panel never re-triggers the assignment effect on every render. */
 const CLEARED_LYRICS: Lyric[] = [];
 
@@ -130,6 +208,7 @@ export function BraccatoLyrics({
   themeCss,
   offsetMs,
   passiveScroll,
+  active = true,
   fontFamily,
   layout = "scroll",
   songwriters,
@@ -144,19 +223,19 @@ export function BraccatoLyrics({
   onLineClick,
 }: BraccatoLyricsProps) {
   const ref = useRef<BraccatoElement | null>(null);
+  const reduced = useReducedMotion();
   const measuredFont = useRef(fontFamily);
   const callbacks = useRef({ onLoaded, onError, onScrollState, onLineClick });
   callbacks.current = { onLoaded, onError, onScrollState, onLineClick };
   // The decoration pass reads the latest lyrics and tick settings, so it can run from the element's
   // own build events (which fire while a lyrics assignment is still on the stack) as well as from the
   // effect that assigns them.
-  const latest = useRef({ lyrics, offsetMs, passiveScroll });
-  latest.current = { lyrics, offsetMs, passiveScroll };
+  const latest = useRef({ lyrics, offsetMs, passiveScroll, reduced, active });
+  latest.current = { lyrics, offsetMs, passiveScroll, reduced, active };
   const decorate = useRef(() => {
     const element = ref.current;
     if (!element) return;
-    const { lyrics: current, offsetMs: offset, passiveScroll: passive } = latest.current;
-    applyLineDecorations(element, current, { offsetMs: offset, passiveScroll: passive });
+    applyLineDecorations(element, latest.current.lyrics, latest.current);
   });
   const renderedIdentity = useRef<LyricsRenderIdentity | null>(null);
   const renderedLyrics = useRef<Lyric[] | null>(null);
@@ -174,7 +253,7 @@ export function BraccatoLyrics({
     };
     const element = ref.current;
     const payloadChanged = renderedLyrics.current !== lyrics;
-    if (element && payloadChanged && shouldCrossfadeUpgrade(renderedIdentity.current, next)) {
+    if (element && active && !reduced && !document.hidden && payloadChanged && shouldCrossfadeUpgrade(renderedIdentity.current, next)) {
       if (upgradeTimer.current !== undefined) window.clearTimeout(upgradeTimer.current);
       delete element.dataset.upgrading;
       void element.offsetWidth;
@@ -186,7 +265,7 @@ export function BraccatoLyrics({
     }
     renderedIdentity.current = next;
     renderedLyrics.current = lyrics;
-  }, [lyrics, sourceKey, trackId]);
+  }, [lyrics, sourceKey, trackId, reduced, active]);
 
   useEffect(
     () => () => {
@@ -229,40 +308,18 @@ export function BraccatoLyrics({
     element.addEventListener("braccato:scroll-state", handleScroll);
     element.addEventListener("braccato:line-click", handleLineClick);
 
-    let unsubscribeSource: () => void = () => undefined;
-    if (remoteClockSource) {
-      try {
-        element.source = null;
-      } catch (error) {
-        callbacks.current.onError?.(`source: ${(error as Error).message}`);
-      }
-    } else {
-      const bindSource = (sourceElement: HTMLAudioElement) => {
-        try {
-          if (element.source !== sourceElement) element.source = sourceElement;
-        } catch (error) {
-          callbacks.current.onError?.(`source: ${(error as Error).message}`);
-        }
-      };
-      bindSource(audioEngine.element);
-      unsubscribeSource = audioEngine.on("source", ({ element: sourceElement }) => {
-        bindSource(sourceElement);
-      });
-    }
+    const unbind = active && !remoteClockSource
+      ? bindLyricMedia(element, () => latest.current, message => callbacks.current.onError?.(message))
+      : undefined;
 
     return () => {
-      unsubscribeSource();
+      unbind?.();
       element.removeEventListener("braccato:lyrics-loaded", handleLoaded);
       element.removeEventListener("braccato:error", handleError);
       element.removeEventListener("braccato:scroll-state", handleScroll);
       element.removeEventListener("braccato:line-click", handleLineClick);
-      try {
-        element.source = null;
-      } catch {
-        /* element may already be gone */
-      }
     };
-  }, [remoteClockSource]);
+  }, [remoteClockSource, active]);
 
   // Manual clock adapter for an external provider clock. The provider is sampled by its
   // owner; between samples this effect projects the last sample at the provider playback rate
@@ -270,34 +327,36 @@ export function BraccatoLyrics({
   // no fabricated HTMLAudioElement). Paused/ended samples write once and stop the frame loop.
   useEffect(() => {
     const element = ref.current;
-    if (!element || !remoteClockSource) return;
+    if (!element || !remoteClockSource || !active) return;
 
     let frame: number | undefined;
     let stopped = false;
 
     const writeClock = () => {
       const projected = remoteClockSource.projectedAt();
-      const { offsetMs: offset, passiveScroll: passive } = latest.current;
-      element.tickOptions = {
-        globalLyricOffset: offset / 1000,
-        passiveScrollEnabled: passive,
-        playbackRate: projected.playbackRate,
-      };
+      element.tickOptions = { ...lyricTick(latest.current), playbackRate: projected.playbackRate };
       element.currentTime = projected.currentTime;
       if (element.playing !== projected.isPlaying) element.playing = projected.isPlaying;
     };
 
     const schedule = () => {
-      if (stopped || frame !== undefined) return;
+      if (stopped || document.hidden || frame !== undefined) return;
       frame = window.requestAnimationFrame(() => {
         frame = undefined;
-        if (stopped || !element.isConnected) return;
+        if (stopped || document.hidden || !element.isConnected) return;
         writeClock();
         if (remoteClockSource.getSnapshot().isPlaying) schedule();
       });
     };
 
-    const unsubscribe = remoteClockSource.subscribe(() => {
+    const update = () => {
+      if (document.hidden) {
+        if (frame !== undefined) window.cancelAnimationFrame(frame);
+        frame = undefined;
+        element.tickOptions = lyricTick(latest.current, false, false);
+        element.playing = false;
+        return;
+      }
       writeClock();
       if (remoteClockSource.getSnapshot().isPlaying) {
         schedule();
@@ -305,37 +364,38 @@ export function BraccatoLyrics({
         window.cancelAnimationFrame(frame);
         frame = undefined;
       }
-    });
-
-    writeClock();
-    if (remoteClockSource.getSnapshot().isPlaying) schedule();
+    };
+    const unsubscribe = remoteClockSource.subscribe(update);
+    document.addEventListener("visibilitychange", update);
+    update();
 
     return () => {
       stopped = true;
       unsubscribe();
+      document.removeEventListener("visibilitychange", update);
       if (frame !== undefined) window.cancelAnimationFrame(frame);
       try {
+        element.tickOptions = lyricTick(latest.current, false, false);
         element.playing = false;
       } catch {
         /* The element may already be disconnected. */
       }
     };
-  }, [remoteClockSource]);
+  }, [remoteClockSource, active]);
 
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
-    element.tickOptions = {
-      globalLyricOffset: offsetMs / 1000,
-      passiveScrollEnabled: passiveScroll,
-    };
-  }, [offsetMs, passiveScroll]);
+    element.tickOptions = lyricTick(latest.current);
+    if (reduced) element.getAnimations().find(animation => animation.id === "lyrics-seek-settle")?.cancel();
+  }, [offsetMs, passiveScroll, reduced]);
 
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
-    if (element.theme !== themeCss) element.theme = themeCss;
-  }, [themeCss]);
+    const theme = `${themeCss}\n/* cadence-reduced: ${reduced} */`;
+    if (element.theme !== theme) element.theme = theme;
+  }, [themeCss, reduced]);
 
   useEffect(() => {
     const element = ref.current;
@@ -359,7 +419,7 @@ export function BraccatoLyrics({
   // moves the audio clock nor replaces the renderer's own scroll calculation.
   useEffect(() => {
     const element = ref.current;
-    if (!element || typeof ResizeObserver === "undefined") return;
+    if (!active || !element || typeof ResizeObserver === "undefined") return;
     const scrollport = element.parentElement ?? element;
     let lastSize: { width: number; height: number } | null = null;
     let frame: number | undefined;
@@ -382,17 +442,12 @@ export function BraccatoLyrics({
       frame = window.requestAnimationFrame(() => {
         frame = undefined;
         const renderer = element.renderer;
-        if (!renderer || !element.isConnected) return;
-        const { offsetMs: offset, passiveScroll: passive } = latest.current;
+        if (!renderer || !element.isConnected || document.hidden) return;
         renderer.scheduleLyricPositionUpdate(
           () => element.isConnected,
           () => {
             renderer.retickFromPlaybackClock((eventCreationTime, isPlaying) => ({
-              eventCreationTime,
-              isPlaying,
-              smoothScroll: false,
-              globalLyricOffset: offset / 1000,
-              passiveScrollEnabled: passive,
+              ...lyricTick(latest.current, false), eventCreationTime, isPlaying,
             }));
           }
         );
@@ -403,7 +458,7 @@ export function BraccatoLyrics({
       observer.disconnect();
       if (frame !== undefined) window.cancelAnimationFrame(frame);
     };
-  }, []);
+  }, [active]);
 
   useEffect(() => {
     const element = ref.current;
@@ -417,7 +472,7 @@ export function BraccatoLyrics({
     // Empty array is the renderer's way to say "cleared"; null says "never given one", which the
     // renderer answers by keeping what it already shows. A finished resolve that found nothing must
     // clear, or the previous track's lines stay on screen behind the "No lyrics found" panel.
-    element.lyrics = lyrics && lyrics.length > 0 ? lyrics : lyrics || noLyrics ? CLEARED_LYRICS : null;
+    element.lyrics = lyrics && lyrics.length > 0 ? lyrics : lyrics || noLyrics || loaderVisible ? CLEARED_LYRICS : null;
     // The build above is synchronous and already fired the loaded handler, which decorated the new
     // lines; this second pass covers an assignment the element took without rebuilding (it keeps the
     // injectors' own duplicate guards from ever running twice on one element).
@@ -429,6 +484,7 @@ export function BraccatoLyrics({
       ref.current = node as BraccatoElement | null;
     },
     class: className,
+    "data-lyrics-reduced": reduced || undefined,
     "data-testid": "braccato-lyrics",
   });
 }

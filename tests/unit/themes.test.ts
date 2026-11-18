@@ -90,3 +90,20 @@ describe("buildThemeCss opacity derivations", () => {
     expect(css.match(/--blyrics-lyric-active-color:/g)).toHaveLength(1);
   });
 });
+
+
+describe("buildThemeCss lyric motion", () => {
+  it("sets the compensated scroll transition without changing the lyric clock", () => {
+    const css = buildThemeCss(settings());
+    expect(css).toContain("/* blyrics-line-scroll-duration = 240ms; */");
+    expect(css).toContain("/* blyrics-line-scroll-active-duration = 240ms; */");
+    expect(css).toContain("--blyrics-lyric-scroll-timing-function: var(--ease-settle);");
+    expect(css).not.toContain("blyrics-early-scroll-consider-s =");
+  });
+
+  it("does not replace explicitly authored custom scroll motion", () => {
+    const css = buildThemeCss(settings({ themeId: "custom", customThemeCss: "/* blyrics-line-scroll-duration = 560ms; */" }));
+    expect(css).toContain("/* blyrics-line-scroll-duration = 560ms; */");
+    expect(css).not.toContain("/* blyrics-line-scroll-duration = 240ms; */");
+  });
+});
