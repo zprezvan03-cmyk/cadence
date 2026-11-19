@@ -66,9 +66,10 @@
 }
 
 /* Enabled after first paint by useBootstrap, so a restored compact sidebar does not animate on
-   launch. The root value itself flips instantly; each consumer interpolates it locally in
-   parallel (shell track, sidebar, title-bar segment) — transitioning the root property instead
-   made consumers chase its animated output and doubled the toggle duration. */
+   launch. The root value itself flips instantly; the shell track and sidebar interpolate it
+   locally in parallel — transitioning the root property instead made consumers chase its
+   animated output and doubled the toggle duration. The title bar brand is independent of the
+   sidebar and does not follow this value. */
 :root[data-motion-ready="true"] .app-shell:not(.is-immersive) {
   transition: grid-template-columns var(--dur-4) var(--ease-in-out);
 }
@@ -78,13 +79,6 @@
     --sidebar-width var(--dur-4) var(--ease-in-out),
     padding-inline var(--dur-4) var(--ease-in-out),
     box-shadow var(--dur-2) var(--ease-out);
-}
-
-:root[data-motion-ready="true"] .title-bar-brand {
-  transition:
-    --sidebar-width var(--dur-4) var(--ease-in-out),
-    gap var(--dur-3) var(--ease-in-out),
-    padding-inline var(--dur-3) var(--ease-in-out);
 }
 
 * {
@@ -611,8 +605,7 @@ a {
 }
 
 [data-compact-sidebar="true"] .brand,
-[data-compact-sidebar="true"] .nav-item,
-[data-compact-sidebar="true"] .title-bar-brand {
+[data-compact-sidebar="true"] .nav-item {
   justify-content: center;
 }
 
@@ -626,14 +619,8 @@ a {
   padding-inline: 0;
 }
 
-[data-compact-sidebar="true"] .title-bar-brand {
-  gap: 0;
-  padding-inline: 0;
-}
-
 [data-compact-sidebar="true"] .brand-text,
-[data-compact-sidebar="true"] .nav-item span,
-[data-compact-sidebar="true"] .title-bar-text {
+[data-compact-sidebar="true"] .nav-item span {
   max-width: 0;
   opacity: 0;
   transform: translateX(-4px);
@@ -714,21 +701,20 @@ a {
   z-index: 30;
 }
 
-/* Mirrors the sidebar column (surface + divider) so the two read as one continuous panel. */
+/* The title bar keeps its own fixed brand area: it never shrinks or hides the app name when the
+   sidebar becomes compact or peeks open. */
 .title-bar-brand {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: var(--sidebar-width);
+  flex: 0 0 auto;
+  width: 256px;
   height: 100%;
   padding: 0 22px;
   border-right: 1px solid var(--border);
   background: var(--bg-elevated);
   color: var(--text-faint);
   overflow: hidden;
-  transition:
-    gap var(--dur-3) var(--ease-in-out),
-    padding-inline var(--dur-3) var(--ease-in-out);
 }
 
 .title-bar-mark {
@@ -750,11 +736,6 @@ a {
   min-width: 0;
   max-width: 140px;
   overflow: hidden;
-  transition:
-    max-width var(--dur-3) var(--ease-in-out),
-    opacity var(--dur-2) var(--ease-out),
-    transform var(--dur-2) var(--ease-out),
-    visibility var(--dur-2) var(--ease-out);
 }
 
 .title-bar-drag {
@@ -763,7 +744,7 @@ a {
   min-width: 0;
 }
 
-/* Page history sits against the content edge, just right of the sidebar-brand segment. */
+/* Page history sits just right of the fixed title-bar brand segment. */
 .title-bar-nav {
   display: flex;
   align-items: center;
