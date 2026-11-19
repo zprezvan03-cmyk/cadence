@@ -700,6 +700,25 @@ a {
   min-width: 0;
 }
 
+/* Page history sits against the content edge, just right of the sidebar-brand segment. */
+.title-bar-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 100%;
+  padding: 0 8px;
+  flex: 0 0 auto;
+}
+
+.title-bar-nav .icon-button {
+  width: 28px;
+  height: 24px;
+}
+
+.window-title-bar.is-blurred .title-bar-nav .icon-button {
+  color: var(--text-faint);
+}
+
 /* Windows convention: equal-width caption buttons flush to the top-right corner. */
 .window-controls {
   display: flex;
@@ -764,10 +783,9 @@ a {
   flex: none;
 }
 
-.sidebar-actions { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
-.history-buttons { display: flex; }
+/* Fallback for native window frames (macOS/Linux), where the custom title bar is not drawn. */
+.sidebar-tools .history-buttons { display: flex; gap: 2px; }
 .sidebar-tools .history-buttons .icon-button { width: 28px; height: 30px; }
-.sidebar-tools .sidebar-add { padding: 5px 8px; white-space: nowrap; font-size: 12px; }
 
 .global-search {
   position: relative;
@@ -816,10 +834,8 @@ a {
 [data-compact-sidebar="true"] .sidebar:not(:has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) {
   .global-search { justify-content: center; padding-inline: 0; }
   .global-search input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
-  :is(.search-shortcut, .global-search .icon-button, .sidebar-add span, .scan-indicator span, .nav-chevron, .fetch-indicator-count, .fetch-indicator-bar) { display: none; }
-  .sidebar-actions { flex-direction: column; align-items: stretch; }
-  .history-buttons .icon-button { width: 50%; }
-  .sidebar-add { justify-content: center; }
+  :is(.search-shortcut, .global-search .icon-button, .scan-indicator span, .nav-chevron, .fetch-indicator-count, .fetch-indicator-bar) { display: none; }
+  .sidebar-tools .history-buttons .icon-button { width: 50%; }
 }
 
 .scan-indicator {

@@ -9,8 +9,9 @@
  */
 
 import { useEffect, useState } from "react";
-import { AudioLines, Copy, Minus, Square, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, AudioLines, Copy, Minus, Square, X } from "lucide-react";
 import type { WindowAction, WindowChromeState } from "../../shared/types";
+import { useUi } from "../state/uiStore";
 
 const NATIVE_CHROME: WindowChromeState = {
   undecorated: false,
@@ -55,6 +56,9 @@ function runWindowAction(action: WindowAction): void {
 }
 
 export function WindowTitleBar({ chrome }: { chrome: WindowChromeState }) {
+  const goBack = useUi(state => state.goBack);
+  const goForward = useUi(state => state.goForward);
+
   // In native fullscreen the OS owns the whole screen: no caption, no controls, no drag region.
   if (!chrome.undecorated || chrome.fullscreen) return null;
 
@@ -70,6 +74,15 @@ export function WindowTitleBar({ chrome }: { chrome: WindowChromeState }) {
         <span className="title-bar-text" data-tauri-drag-region>
           Cadence
         </span>
+      </div>
+
+      <div className="title-bar-nav" role="group" aria-label="Page navigation">
+        <button type="button" className="icon-button" onClick={goBack} aria-label="Back" title="Back">
+          <ArrowLeft size={15} />
+        </button>
+        <button type="button" className="icon-button" onClick={goForward} aria-label="Forward" title="Forward">
+          <ArrowRight size={15} />
+        </button>
       </div>
 
       <div className="title-bar-drag" data-tauri-drag-region />

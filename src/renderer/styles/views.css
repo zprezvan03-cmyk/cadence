@@ -213,9 +213,10 @@
   grid-auto-columns: min(100%, clamp(148px, 16.6cqi, 192px));
   gap: clamp(12px, 1.4cqi, 20px);
   overflow: auto hidden;
-  scrollbar-width: thin;
+  scrollbar-width: none;
   padding-block: 3px 10px;
 }
+.home-shelf .card-grid.home-shelf-track::-webkit-scrollbar { display: none; }
 .home-shelf-track:focus-visible { outline-offset: -2px; }
 .home-shelf .card-open:focus-visible { outline-offset: -2px; }
 .home-shelf .card-title { margin-top: 7px; }

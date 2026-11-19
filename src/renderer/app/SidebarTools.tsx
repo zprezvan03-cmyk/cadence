@@ -1,20 +1,19 @@
 /**
- * Global search and library actions in the sidebar. Written for Cadence.
+ * Global search, navigation fallback and library status in the sidebar. Written for Cadence.
  */
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, FolderPlus, Loader2, Search, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, Search, X } from "lucide-react";
 import { useLibrary } from "../state/libraryStore";
 import { useUi } from "../state/uiStore";
 import { FetchAllIndicator } from "../features/lyrics-fetch/FetchAllIndicator";
 
-export function SidebarTools() {
+export function SidebarTools({ showHistory = false }: { showHistory?: boolean }) {
   const navigate = useUi(state => state.navigate);
   const goBack = useUi(state => state.goBack);
   const goForward = useUi(state => state.goForward);
   const route = useUi(state => state.route);
   const scanning = useLibrary(state => state.scanning);
-  const addFolder = useLibrary(state => state.addFolder);
   const scan = useLibrary(state => state.snapshot?.scan);
   const [query, setQuery] = useState(route.name === "search" ? route.query : "");
 
@@ -61,7 +60,7 @@ export function SidebarTools() {
         ) : <kbd className="search-shortcut" aria-hidden="true">Ctrl K</kbd>}
       </form>
 
-      <div className="sidebar-actions">
+      {showHistory ? (
         <div className="history-buttons">
           <button type="button" className="icon-button" onClick={goBack} aria-label="Back" title="Back">
             <ArrowLeft size={16} />
@@ -70,10 +69,7 @@ export function SidebarTools() {
             <ArrowRight size={16} />
           </button>
         </div>
-        <button type="button" className="ghost-button sidebar-add" aria-label="Add music" title="Add music" onClick={() => void addFolder()} disabled={scanning}>
-          <FolderPlus size={15} /> <span>Add music</span>
-        </button>
-      </div>
+      ) : null}
       <FetchAllIndicator />
       {scanning || scan?.running ? (
         <span className="scan-indicator" role="status" title={scan?.message ?? "Scanning library"}>

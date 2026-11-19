@@ -2,7 +2,7 @@
 
 ## Browsing and playback
 
-- Library expands to Recently Added, Artists, Albums and Songs. Playlists expands to the collection, named playlists and New playlist. Liked songs stays a direct destination. Back, Forward, search, Add music and scan/lyrics-fetch status live in the sidebar, not in a second toolbar. The native window strip stays separate on Windows.
+- Library expands to Recently Added, Artists, Albums and Songs. Playlists expands to the collection, named playlists and New playlist. Liked songs stays a direct destination. Search and scan/lyrics-fetch status live in the sidebar. Back and Forward live in the integrated Windows title bar; when the OS draws the frame, they fall back to the sidebar. Add folder lives in the Library heading. The native window strip stays separate on Windows.
 - Home uses single-row artwork shelves for Explore, Your top tracks and On repeat. Album browsing and playback are separate actions. Top Tracks plays its ranked queue; On Repeat uses the last 14 days and plays the selected track without replacing the queue.
 - Now Playing opens from the full-width player bar. It is a presentation of the current playback, not an entry in the browsing history. Escape closes the queue first, then Now Playing. F11 and the native View menu use OS fullscreen; normal entry does not resize the window. Mini artwork opens Now Playing, while Restore leaves the current browse route in place.
 - Lyrics On keeps the timed renderer and lyrics tools. Lyrics Off offers artwork, track details and transport, with no lyrics dock. Switching modes keeps the same audio element and Braccato host. Empty, loading and failed lookups leave the mode controls and Exit available.

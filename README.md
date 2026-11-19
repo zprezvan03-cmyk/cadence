@@ -38,7 +38,7 @@ npm run build:desktop  # Full Tauri production build (frontend + Rust host + pla
 
 ## Using it
 
-1. **Add music** — use **Add music** in the sidebar, or <kbd>Ctrl/Cmd</kbd>+<kbd>O</kbd>. Folders are
+1. **Add music** — use **Add folder** in your Library, or <kbd>Ctrl/Cmd</kbd>+<kbd>O</kbd>. Folders are
    scanned recursively; hidden directories and common system folders are skipped. Expand **Library**
    for Recently Added, Artists, Albums, and Songs. Home's discovery shelves scroll horizontally.
 2. **Play** — click a row. <kbd>Space</kbd> toggles, <kbd>←</kbd>/<kbd>→</kbd> seek 5 s

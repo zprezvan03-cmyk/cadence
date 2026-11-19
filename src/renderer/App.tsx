@@ -183,7 +183,7 @@ export function App() {
       ) : (
         <div className={`app-shell ${immersive ? "is-immersive" : ""} ${titleBar ? "has-title-bar" : ""}`} data-route={route.name}>
           {titleBar ? <WindowTitleBar chrome={chrome} /> : null}
-          {!immersive ? <Sidebar /> : null}
+          {!immersive ? <Sidebar showHistory={!titleBar} /> : null}
           <main
             ref={mainRef}
             className="app-main"

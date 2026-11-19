@@ -39,7 +39,7 @@ const LIBRARY: Destination[] = [
 const LIKED: Destination = { label: "Liked songs", icon: <Heart size={18} />, route: { name: "library", tab: "favorites" } };
 const ALL_PLAYLISTS: Destination = { label: "All playlists", icon: <ListMusic size={16} />, route: { name: "library", tab: "playlists" } };
 
-export function Sidebar() {
+export function Sidebar({ showHistory = false }: { showHistory?: boolean }) {
   const route = useUi(state => state.route);
   const navigate = useUi(state => state.navigate);
   const requestPlaylistCreate = useUi(state => state.requestPlaylistCreate);
@@ -158,7 +158,7 @@ export function Sidebar() {
         <span className="brand-text"><strong>Cadence</strong></span>
       </button>
 
-      <SidebarTools />
+      <SidebarTools showHistory={showHistory} />
 
       <div className="sidebar-scroll">
         <nav className="nav" aria-label="Music navigation" ref={navRef}>

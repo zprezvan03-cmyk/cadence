@@ -1027,10 +1027,10 @@ await runSection("expanded-navigation-completes", async () => {
     check(`nav-${testId}`, Boolean(await page.$(`[data-testid="${testId}"]`)), label);
   }
   await nav("Albums"); await nav("Artists");
-  await page.click('.sidebar-tools button[aria-label="Back"]'); await wait(150);
-  check("sidebar-back", Boolean(await page.$('[data-testid="library-view-albums"]')), await page.evaluate(() => location.hash));
-  await page.click('.sidebar-tools button[aria-label="Forward"]'); await wait(150);
-  check("sidebar-forward", Boolean(await page.$('[data-testid="library-view-artists"]')), await page.evaluate(() => location.hash));
+  await page.click('.title-bar-nav button[aria-label="Back"]'); await wait(150);
+  check("titlebar-back", Boolean(await page.$('[data-testid="library-view-albums"]')), await page.evaluate(() => location.hash));
+  await page.click('.title-bar-nav button[aria-label="Forward"]'); await wait(150);
+  check("titlebar-forward", Boolean(await page.$('[data-testid="library-view-artists"]')), await page.evaluate(() => location.hash));
   const brand = await page.$(".brand"); await brand.focus(); await page.keyboard.press("Enter"); await wait(120);
   check("brand-enter-home", Boolean(await page.$('[data-testid="home-view"]')), "Enter");
   await nav("Songs"); await brand.focus(); await page.keyboard.press("Space"); await wait(120);
@@ -1073,7 +1073,7 @@ await runSection("expanded-library-completes", async () => {
   check("favourite-removes-from-liked", (await page.$$('[data-testid="library-track-list"] [data-testid="track-row"]')).length === 0, "empty liked list");
   await nav("Songs"); await openTrackMenu("Fixture FLAC"); await clickText(".context-menu button", "Go to album");
   check("context-go-to-album", (await page.$eval(".detail-meta h1", node => node.textContent.trim())) === "Test Bench", await page.evaluate(() => location.hash));
-  await page.click('.sidebar-tools button[aria-label="Back"]'); await wait(500);
+  await page.click('.title-bar-nav button[aria-label="Back"]'); await wait(500);
   check("detail-back", Boolean(await page.$('[data-testid="library-view-songs"]')), await page.evaluate(() => location.hash));
   await nav("Albums");
   const albumCard = await page.$('[data-testid="album-card"] .card-open'); await albumCard.focus(); await page.keyboard.press("Enter"); await wait(150);
@@ -1606,14 +1606,15 @@ await runSection("expanded-sidebar-search-completes", async () => {
   await nav("Songs"); await searchFor("zzzz-no-match");
   check("search-no-results", (await page.$eval(".search-view", node => node.textContent)).includes("No matches"), "empty result message");
   await page.click('button[aria-label="Clear search"]'); await wait(120);
+  await nav("Songs");
   const addsBefore = await page.evaluate(() => {
     window.__audit.state.holdAddFolder = true;
     return window.__audit.state.calls.filter(call => call[0] === "add-folder").length;
   });
-  await clickText(".sidebar-tools .ghost-button", "Add music");
+  await clickText(".library-view .heading-actions button", "Add folder");
   await page.waitForSelector(".sidebar-tools .scan-indicator");
-  check("sidebar-add-music", (await page.evaluate(() => window.__audit.state.calls.filter(call => call[0] === "add-folder").length)) === addsBefore + 1, "folder picker request");
-  check("sidebar-shows-pending-scan", await page.$eval(".sidebar-add", node => node.disabled));
+  check("library-add-music", (await page.evaluate(() => window.__audit.state.calls.filter(call => call[0] === "add-folder").length)) === addsBefore + 1, "folder picker request");
+  check("add-folder-disabled-while-scanning", await page.$$eval(".library-view .heading-actions button", nodes => nodes.some(node => node.textContent?.includes("Add folder") && node.disabled)));
   await page.evaluate(() => window.__audit.state.finishAddFolder());
   await page.waitForSelector(".sidebar-tools .scan-indicator", { hidden: true });
   await nav("Settings"); await settingsTab("Appearance");
