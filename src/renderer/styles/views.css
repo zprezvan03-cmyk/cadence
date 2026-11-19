@@ -34,7 +34,7 @@
   flex-wrap: wrap;
 }
 
-/* ------------------------------------------------------------ listen now */
+/* ------------------------------------------------------------ home */
 
 .home-view { padding-top: clamp(18px, 1.8cqi, 22px); }
 .home-view .view-heading { margin-bottom: 17px; gap: 12px 24px; }

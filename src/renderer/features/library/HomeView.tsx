@@ -137,7 +137,7 @@ export function HomeView() {
       <header className="view-heading has-rule">
         <div>
           <p className="eyebrow">{greeting()}</p>
-          <h1>Listen Now</h1>
+          <h1>Home</h1>
         </div>
         <div className="heading-actions">
           <button
