@@ -29,7 +29,9 @@
   --radius: 10px;
   --radius-sm: 7px;
   --cover-radius: 8px;
-  --workspace-gutter: 10px;
+  /* Page margin fluid: widens with the route viewport (cqi) so wide windows breathe while
+     narrow ones keep content usable. Resolved against `.content-scroll` (container app-content). */
+  --workspace-gutter: clamp(10px, 1.8cqi, 32px);
   --sidebar-expanded-width: 256px;
   --sidebar-compact-width: 68px;
   --sidebar-width: var(--sidebar-expanded-width);
@@ -261,7 +263,8 @@ a {
 }
 
 .view {
-  padding: 24px var(--workspace-gutter) 48px;
+  padding: clamp(18px, 1.5cqi, 32px) var(--workspace-gutter)
+    clamp(36px, 3.6cqi, 72px);
   /* A transformed route re-lays out the sticky song table during navigation. Reveal only
      its opacity so scroll restoration and fixed overlays keep their real geometry. */
   animation: view-in var(--dur-3) var(--ease-out);

@@ -183,19 +183,14 @@ export function StatsView() {
     );
   }
 
-  const historyNote =
-    stats.historyPlayCount >= 1000
-      ? "Charts and rankings use your latest 1,000 recorded play starts."
-      : `Based on ${playLabel(stats.historyPlayCount)} recorded as play starts.`;
   const maxGenrePlays = Math.max(1, ...stats.genres.map(genre => genre.playCount));
 
   return (
     <div className="view stats-view" data-testid="stats-view">
-      <header className="view-heading">
+      <header className="view-heading has-rule">
         <div>
           <p className="eyebrow">Listening activity</p>
           <h1>Listening stats</h1>
-          <p className="muted stats-note">{historyNote}</p>
         </div>
         <div className="heading-actions">
           <button type="button" onClick={() => navigate({ name: "history" })}>

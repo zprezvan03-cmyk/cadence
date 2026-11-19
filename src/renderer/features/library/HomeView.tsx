@@ -133,11 +133,10 @@ export function HomeView() {
 
   return (
     <div className="home-view view" data-testid="home-view">
-      <header className="view-heading">
+      <header className="view-heading has-rule">
         <div>
           <p className="eyebrow">{greeting()}</p>
           <h1>Listen Now</h1>
-          <p className="muted">Pick up where you left off, or find something to play.</p>
         </div>
         <div className="heading-actions">
           <button

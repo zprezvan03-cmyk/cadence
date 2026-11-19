@@ -86,11 +86,10 @@ export function HistoryView() {
   let previousDay: string | undefined;
   return (
     <div className="view" data-testid="history-view">
-      <header className="view-heading">
+      <header className="view-heading has-rule">
         <div>
           <p className="eyebrow">Listening activity</p>
           <h1>History</h1>
-          <p className="muted">Your recently played songs, newest first.</p>
         </div>
         <div className="heading-actions">
           <button

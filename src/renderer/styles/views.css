@@ -10,7 +10,7 @@
 }
 
 .view-heading h1 {
-  font-size: clamp(36px, 4.1cqi, 54px);
+  font-size: clamp(33px, 3.4cqi, 43px);
   letter-spacing: -0.055em;
   font-weight: 720;
 }
@@ -19,6 +19,12 @@
   margin-top: 8px;
   font-size: 14px;
   line-height: 1.45;
+}
+
+/* Replaces the removed heading subtitles: a full-width rule across the page content. */
+.view-heading.has-rule {
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
 }
 
 .heading-actions {
@@ -34,7 +40,6 @@
 .home-view .view-heading { margin-bottom: 17px; gap: 12px 24px; }
 .home-view .view-heading .eyebrow { margin-bottom: 4px; }
 .home-view .view-heading h1 { font-size: clamp(33px, 3.4cqi, 43px); }
-.home-view .view-heading .muted { margin-top: 5px; font-size: 13px; }
 
 .home-empty {
   min-height: 100%;
@@ -2473,7 +2478,6 @@
 }
 
 .stats-view .view-heading { margin-bottom: 1px; }
-.stats-note { margin: 8px 0 0; }
 
 .stats-empty svg {
   color: var(--accent);
