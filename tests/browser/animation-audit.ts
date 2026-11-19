@@ -969,6 +969,7 @@ const fsState = await page.evaluate(() => {
   };
 });
 check("fullscreen-enters-with-shared-artwork", fsHeld.names.includes("player-artwork-handoff"), JSON.stringify(fsHeld));
+check("fullscreen-background-slides-in", fsHeld.names.includes("player-background-handoff"), JSON.stringify(fsHeld));
 check("fullscreen-covers-window", fsState.rect?.width === 1440 && fsState.rect?.height === 900, JSON.stringify(fsState.rect));
 check("fullscreen-mid-frame-differs", fsHeld.count > 0 && frameDelta("05-fullscreen-mid", "05-fullscreen-settled") > 0.001, `${fsHeld.count} held, ${(frameDelta("05-fullscreen-mid", "05-fullscreen-settled") * 100).toFixed(2)}% changed`);
 
@@ -1085,10 +1086,12 @@ await page.waitForSelector(".player-bar", { timeout: 3000 });
 const exitState = await page.evaluate(() => ({
   fullscreen: Boolean(document.querySelector(".lyrics-view.is-fullscreen")),
   artReturns: document.getAnimations().some(animation => animation.id === "player-artwork-handoff"),
+  bgReturns: document.getAnimations().some(animation => animation.id === "player-background-handoff"),
   sidebar: Boolean(document.querySelector(".sidebar")),
 }));
 check("fullscreen-exits", !exitState.fullscreen && exitState.sidebar, JSON.stringify(exitState));
 check("fullscreen-artwork-returns", exitState.artReturns, JSON.stringify(exitState));
+check("fullscreen-background-returns", exitState.bgReturns, JSON.stringify(exitState));
 await wait(400);
 await shot("05-fullscreen-exit-settled");
 await auditMiniHandoff(page, check, shot);

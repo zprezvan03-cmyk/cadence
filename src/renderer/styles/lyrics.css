@@ -161,6 +161,9 @@
   height: 100vh;
   height: 100cqh;
   z-index: 55;
+  /* The background slides up from the bottom; keep the uncovered area dark instead of
+     showing the app behind it while the layer travels. */
+  background: #05050a;
   /* The shared-player handoff cancels this fallback entry fade when parts can move. */
   animation: fs-in var(--dur-3) var(--ease-out);
   /* Artwork in the left column, lyrics in the right. The artwork's size follows the window height and

@@ -1,96 +1,79 @@
-# AGENTS.md — Cadence AI Development Handoff
+# AGENTS.md — Handoff: animasi background Now Playing
 
-## 1. Project Context
+Status: **selesai diimplementasikan** di commit ini (`feat/ui`). File ini menggantikan handoff lama yang sudah usang dan tetap dipertahankan sebagai catatan keputusan.
 
-Cadence is a Tauri v2 desktop music player with a React 19 renderer, SQLite/JSON library store, timed lyrics, translation, and romanization.
+## Konteks
 
-- Desktop: `src-tauri/` (Rust/Tauri v2)
-- Renderer: `src/renderer/` (React 19, Vite, Zustand)
-- Core/main services: `src/main/`
-- Shared types: `src/shared/types.ts`
-- Tauri bridge: `src/tauri/bridge.ts`
+- Branch aktif: `feat/ui` (dibuat dari `main` @ `1615d5b`).
+- Commit terakhir: `2d984e2 feat(ui): rename Listen Now heading to Home and add changelog`.
+- Dua file ini sudah modified sebelum pekerjaan apa pun — **jangan disentuh / jangan di-commit**:
+  - `src-tauri/gen/schemas/desktop-schema.json`
+  - `src-tauri/gen/schemas/windows-schema.json`
+- Perintah: `npm run typecheck`, `npm run build`, `npm test`.
 
-Primary commands:
+## Masalah
 
-```bash
-npm test
-npm run typecheck
-npm run build
-npm run dev
-```
+Video `C:\Users\Tyas\Videos\Screen Recordings\Screen Recording 2026-11-19 173421.mp4` menunjukkan saat masuk fullscreen Now Playing: judul lagu dan artwork bergerak dari playbar, tetapi background langsung muncul seketika.
 
-## 2. Current Branch
+Akar penyebab (sudah diverifikasi dari kode):
+- `PlayerLayoutMotion.componentDidUpdate` membatalkan animasi `view-in` / `fs-in` pada `.lyrics-view` supaya artwork + judul tidak double-fade saat handoff.
+- Artwork, metadata, dan transport dianimasikan lewat WAAPI dengan id `player-*-handoff`.
+- Layer background (`.kawarp-bg` untuk mode *fluid*, `.np-bg` untuk mode lain) tidak punya animasi masuk/keluar sendiri.
 
-- Branch: `fix/translation-output`
-- HEAD: `210bfc9` (version bump `1.1.0`)
-- Remote tag `v1.1.0` points to this commit (force-updated).
-- Working tree should be clean.
+## Keputusan pengguna
 
-## 3. Major Work Completed on This Branch
+- Gaya: **geser penuh dari bawah** (`translateY(100%) → 0`), bukan clip-path / fade.
+- Dipakai saat **masuk + keluar** fullscreen.
+- Kerja dilanjutkan di branch `feat/ui`, commit baru.
 
-### Translation
-- Separated translation and romanization prompts.
-- Fixed untranslated mixed-language segments by translating every segment into target language.
-- Improved DevTools logging for cache, HTTP, request/response, parsing, and apply step.
+## Rencana implementasi
 
-### Romanization
-- Added `romanizationMode: "line" | "word"` (`default: "line"`).
-- Word mode aligns generated romanization to TTML spans/timings.
-- AI returns `text` + `words`.
-- Spans with spaces are preserved as timed parts.
-- Non-Latin output is lowercased.
-- Google legacy romanization also lowercases non-Latin output.
+### 1. `src/renderer/features/player/PlayerLayoutMotion.tsx`
 
-### Prompt / AI Cache
-- AI prompt version bumped to `v: 19` (cache key version).
-- Validation now accepts `text` and optional `words`.
+- Di `getSnapshotBeforeUpdate`, simpan node + `DOMRect` background fullscreen dengan selector `:is(.kawarp-bg, .np-bg)` di dalam `.lyrics-view.is-fullscreen` (hanya saat transisi melibatkan `fullscreen`, dan hanya kalau `canAnimateLayout()` serta `!reducedMotion`).
+- **Masuk fullscreen:** animasikan background yang baru tiba:
+  - keyframe `[{ transform: "translateY(100%)" }, { transform: "translateY(0)" }]`
+  - `id: "player-background-handoff"`
+  - `duration: MOTION_DURATION_MS.scene` (300ms), `easing: MOTION_EASING.settle`, `fill: "both"`
+  - masukkan ke array `animations` yang sudah ada supaya ikut `finishMotion`.
+- **Keluar fullscreen:** pakai **node asli** yang tersimpan (bukan clone/snapshot layer):
+  - kalau node sudah tidak `isConnected` (LyricsView ikut unmount), append sementara ke `document.body`;
+  - pin ke rect lama memakai `position: fixed`, `left/top/width/height` dari rect, `margin: 0`, `zIndex: 34` — di atas sidebar/konten (30) tapi di bawah player bar (35) supaya artwork yang terbang tetap di atas;
+  - animasikan `translateY(0) → translateY(100%)` dengan id dan timing yang sama;
+  - saat selesai / dibatalkan `finishMotion`: kembalikan inline style kalau node masih terpasang, atau `node.remove()` kalau tadi dipindahkan ke body.
+- Pindahkan pengecekan `if (!animations.length) return;` **setelah** animasi background ditambahkan.
+- Biarkan blok pembatalan `view-in` / `fs-in` apa adanya.
 
-### Settings / UI
-- Added romanization display selector (Line / Word-by-word) in Settings → Appearance → Lyrics.
-- Word-by-word mode gated by source `parts` and available AI words.
+### 2. `src/renderer/styles/lyrics.css`
 
-## 4. Files Most Likely Relevant for Next Work
+- Tambah `background: #05050a;` pada `.lyrics-view.is-fullscreen` supaya area di atas layer yang masih naik tidak menampilkan app di belakangnya.
+- Tidak perlu keyframe CSS baru; gerak fullscreen dilakukan via WAAPI agar entry/exit memakai satu jalur dan nol js tambahan di komponen lain.
+- Reduced-motion sudah ditangani aturan global `[data-reduce-motion="true"]` / `prefers-reduced-motion`.
 
-- `src/main/lyrics/ai.ts`
-- `src/main/lyrics/translation.ts`
-- `src/tauri/bridge.ts`
-- `src/renderer/features/lyrics/useLyrics.ts`
-- `src/renderer/features/lyrics/parseLyrics.ts`
-- `src/renderer/features/lyrics/BraccatoLyrics.tsx`
-- `src/renderer/features/settings/SettingsView.tsx`
-- `src/shared/types.ts`
-- `src/main/settingsCore.ts`
-- `tests/unit/lyricsAi.test.ts`
+### 3. `tests/browser/animation-audit.ts`
 
-## 5. Verification Status
+- Di `freezeAt(120)` setelah klik `open-now-playing` (dekat `fullscreen-enters-with-shared-artwork`), tambah cek bahwa `fsHeld.names` memuat `player-background-handoff`.
+- Di blok Escape (`exitState`), cek animations `document.getAnimations()` juga memuat id `player-background-handoff` saat keluar.
+- Jangan melemahkan assertion yang sudah ada.
 
-Last verified before push:
+### 4. `CHANGELOG.md`
 
-- `npm run typecheck` passed.
-- `npm test` targeted `tests/unit/lyricsAi.test.ts`: 13/13 passed.
-- Manual Cerebras tests for Japanese tracks succeeded:
-  - word-by-word spacing fixed
-  - span alignment works
+- Tambah entri untuk commit ini dengan gaya yang sama seperti entri `e41e7f6`, `760d5d9`, `2d984e2` (branch + hash + daftar perubahan + verifikasi).
 
-Before larger changes, rerun:
+### 5. Verifikasi & commit
 
 ```bash
 npm run typecheck
-npm test
 npm run build
+npm test
 ```
 
-## 6. Known Caveats
+- Commit baru di `feat/ui` dengan pesan seperti `feat(ui): animate Now Playing background from player bar`.
+- Audit browser: `AUDIT_ONLY` hanya bisa jalan kalau binary Chromium tersedia. Di sesi sebelumnya gagal dengan `spawn C:\Users\Tyas\AppData\Local\Temp\chromium ENOENT`; coba lagi, tapi laporkan kalau masih gagal.
 
-- Remote history previously contained refactoring commits not present in this branch; this branch force-pushed over remote. Those changes (timed romanization refactor, thinking modes, `AGENTS.md`, robustness suite additions) may need cherry-pick if desired.
-- `derivedCache` keeps older persisted keys; new cache key versions mitigate mismatches.
-- Sidecar/file-supplied romanizations are not auto-lowercased.
-- Word mode falls back to line when AI words do not align with source spans/parts.
+## Catatan
 
-## 7. Core Rules
-
-- Inspect before editing.
-- Make minimal surgical edits.
-- Do not weaken tests.
-- Never log secrets.
-- Respect Windows paths/locking.
+- Durasi 300ms = `--dur-scene`, sama dengan handoff artwork/judul; tidak menambah delay.
+- Memakai node asli berarti canvas Kawarp tetap hidup selama animasi keluar — jangan diganti dengan snapshot/clone.
+- `data-player-moving` tidak diperlukan untuk rencana ini; jangan menambah flag CSS baru kecuali memang perlu.
+- Aturan kerja: inspect before editing, edit minimal, jangan curang pada test, jangan log secret, hormati path/locking Windows.
