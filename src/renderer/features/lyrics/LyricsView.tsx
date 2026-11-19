@@ -21,6 +21,7 @@ import { SourceBadge } from "../../components/SourceBadge";
 import { MarqueeText } from "../../components/MarqueeText";
 import { BraccatoLyrics } from "./BraccatoLyrics";
 import { LyricsDock } from "./LyricsDock";
+import { LyricsModeMotion } from "./LyricsModeMotion";
 import { FullscreenControls } from "./FullscreenControls";
 import { PlaybackArtwork, PlaybackText } from "../player/PlaybackVisuals";
 import { usePlaybackPresentation } from "../player/usePlaybackPresentation";
@@ -318,6 +319,7 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
   const panelDetailsVisible = (profileConfig.metadataVisible && !headingInHeader) || profileConfig.controlsVisible;
 
   return (
+    <LyricsModeMotion mode={showLyricsSetting ? "on" : "off"} active={fullscreen && !preview}>
     <div
       ref={viewRef}
       className={[
@@ -529,6 +531,7 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
         </div>
       ) : null}
     </div>
+    </LyricsModeMotion>
   );
 }
 
