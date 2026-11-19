@@ -804,20 +804,21 @@ braccato-lyrics[data-upgrading="true"] {
 /* ------------------------------------------------------------- lyrics dock */
 
 .lyrics-dock {
+  /* Compact toolbar under the fullscreen player: about a third shorter than the transport. */
+  --dock-control-size: clamp(26px, 2.9cqh, 38px);
   position: relative;
   z-index: 3;
   display: flex;
   align-items: center;
   gap: clamp(8px, 1cqi, 14px);
   flex-wrap: wrap;
-  padding: clamp(8px, 1.4cqh, 14px) clamp(16px, 2cqi, 30px);
+  padding: clamp(5px, 0.9cqh, 9px) clamp(16px, 2cqi, 30px);
   margin: 0 auto clamp(12px, 2.4cqh, 24px);
   width: fit-content;
   max-width: calc(100% - (2 * var(--np-gutter)));
   border-radius: var(--radius);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-
 }
 
 /* Fullscreen transport and lyrics tools remain readable independently of the background. */
@@ -833,6 +834,15 @@ braccato-lyrics[data-upgrading="true"] {
   border-radius: var(--radius);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
+}
+
+/* Both footer bars float over the live Now Playing background. Keep them translucent glass so the
+   shader/artwork reads through; the opaque fill made them look like flat chrome. */
+.lyrics-dock,
+.fs-controls {
+  background: color-mix(in srgb, var(--bg-elevated) 58%, transparent);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
 }
 
 .fs-controls .seek-row {
@@ -945,6 +955,11 @@ braccato-lyrics[data-upgrading="true"] {
   color: rgba(255, 255, 255, 0.82);
 }
 
+.lyrics-dock .dock-button {
+  min-height: var(--dock-control-size);
+  padding-block: 0;
+}
+
 .dock-button:hover {
   background: rgba(255, 255, 255, 0.08);
   color: #fff;
@@ -962,6 +977,11 @@ braccato-lyrics[data-upgrading="true"] {
   place-items: center;
   border-radius: var(--radius-sm);
   color: rgba(255, 255, 255, 0.75);
+}
+
+.lyrics-dock .dock-icon {
+  width: var(--dock-control-size);
+  height: var(--dock-control-size);
 }
 
 .dock-icon:hover {
