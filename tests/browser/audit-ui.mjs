@@ -1031,10 +1031,10 @@ await runSection("expanded-navigation-completes", async () => {
   check("titlebar-back", Boolean(await page.$('[data-testid="library-view-albums"]')), await page.evaluate(() => location.hash));
   await page.click('.title-bar-nav button[aria-label="Forward"]'); await wait(150);
   check("titlebar-forward", Boolean(await page.$('[data-testid="library-view-artists"]')), await page.evaluate(() => location.hash));
-  const brand = await page.$(".brand"); await brand.focus(); await page.keyboard.press("Enter"); await wait(120);
-  check("brand-enter-home", Boolean(await page.$('[data-testid="home-view"]')), "Enter");
-  await nav("Songs"); await brand.focus(); await page.keyboard.press("Space"); await wait(120);
-  check("brand-space-home", Boolean(await page.$('[data-testid="home-view"]')), "Space");
+  const homeNav = await page.$('.sidebar .nav-item[aria-label="Home"]'); await homeNav.focus(); await page.keyboard.press("Enter"); await wait(120);
+  check("home-nav-enter", Boolean(await page.$('[data-testid="home-view"]')), "Enter");
+  await nav("Songs"); await homeNav.focus(); await page.keyboard.press("Space"); await wait(120);
+  check("home-nav-space", Boolean(await page.$('[data-testid="home-view"]')), "Space");
   await nav("Home");
   check("home-no-shortcut-row-or-recently-added", !(await page.$(".quick-row")) &&
     !(await page.$$eval(".home-view h2", headings => headings.some(node => node.textContent?.toLowerCase().includes("recently added")))));

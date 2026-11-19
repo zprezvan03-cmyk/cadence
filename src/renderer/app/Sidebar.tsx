@@ -11,7 +11,6 @@ import {
   Heart,
   Home,
   History,
-  AudioLines,
   Library,
   ListMusic,
   Music2,
@@ -212,17 +211,11 @@ export function Sidebar({ showHistory = false }: { showHistory?: boolean }) {
 
   return (
     <aside ref={sidebarRef} className={`sidebar${peeking ? " is-compact-peek" : ""}`}>
-      <button type="button" className="brand" onClick={() => navigate({ name: "home" })} aria-label="Cadence home">
-        <span className="brand-mark" aria-hidden="true"><AudioLines size={20} /></span>
-        <span className="brand-text"><strong>Cadence</strong></span>
-      </button>
-
       <SidebarTools showHistory={showHistory} />
 
       <div className="sidebar-scroll">
         <nav className="nav" aria-label="Music navigation" ref={navRef}>
           <span className="nav-pill" ref={pillRef} aria-hidden="true" />
-          <p className="nav-group" aria-hidden="true">Listen</p>
           {LISTEN.map(item => <NavEntry key={item.label} item={item} active={isActive(item.route)} navigate={navigate} />)}
           <NavSection id="library" icon={<Library size={18} />} label="Library" current={inLibrary} open={libraryExpanded} onToggle={() => toggleSection("library", libraryOpen, setLibraryOpen)}>
             {LIBRARY.map(item => <NavEntry key={item.label} item={item} active={libraryExpanded && isActive(item.route)} navigate={navigate} />)}

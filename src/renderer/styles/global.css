@@ -391,50 +391,6 @@ a {
   animation: chrome-in var(--dur-2) var(--ease-out);
 }
 
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 0 8px 7px;
-  text-align: left;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition:
-    gap var(--dur-3) var(--ease-in-out),
-    padding-inline var(--dur-3) var(--ease-in-out);
-}
-
-.brand-mark {
-  width: 34px;
-  height: 34px;
-  flex: none;
-  display: grid;
-  place-items: center;
-  border-radius: 8px;
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-}
-
-.brand-text {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.2;
-  min-width: 0;
-  max-width: 180px;
-  overflow: hidden;
-  white-space: nowrap;
-  transition:
-    max-width var(--dur-3) var(--ease-in-out),
-    opacity var(--dur-2) var(--ease-out),
-    transform var(--dur-2) var(--ease-out),
-    visibility var(--dur-2) var(--ease-out);
-}
-
-.brand-text strong {
-  font-size: 19px;
-  letter-spacing: -0.04em;
-}
-
 .sidebar-scroll {
   flex: 1;
   min-height: 0;
@@ -450,21 +406,6 @@ a {
   flex-direction: column;
   gap: 2px;
   flex: none;
-}
-
-.nav-group {
-  color: var(--text-faint);
-  font-size: 10.5px;
-  font-weight: 650;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-}
-
-.nav-group {
-  height: 25px;
-  padding: 5px 12px 0;
-  white-space: nowrap;
-  transition: opacity var(--dur-2) var(--ease-out);
 }
 
 /* The active pill is one element that slides between items instead of each item fading its own
@@ -597,29 +538,16 @@ a {
   --sidebar-width: var(--sidebar-compact-width);
 }
 
-[data-compact-sidebar="true"] .nav-group { opacity: 0; }
-[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .nav-group { opacity: 1; }
-
 [data-compact-sidebar="true"] .sidebar {
   padding-inline: 10px;
 }
 
-[data-compact-sidebar="true"] .brand,
 [data-compact-sidebar="true"] .nav-item {
   justify-content: center;
-}
-
-[data-compact-sidebar="true"] .brand {
   gap: 0;
   padding-inline: 0;
 }
 
-[data-compact-sidebar="true"] .nav-item {
-  gap: 0;
-  padding-inline: 0;
-}
-
-[data-compact-sidebar="true"] .brand-text,
 [data-compact-sidebar="true"] .nav-item span {
   max-width: 0;
   opacity: 0;
@@ -645,13 +573,6 @@ a {
   transition-delay: var(--dur-0);
 }
 
-[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .brand {
-  justify-content: flex-start;
-  gap: 11px;
-  padding-inline: 8px;
-  transition-delay: var(--dur-0);
-}
-
 [data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .nav-item {
   justify-content: flex-start;
   gap: 12px;
@@ -659,7 +580,6 @@ a {
   transition-delay: 0s, 0s, var(--dur-0), var(--dur-0);
 }
 
-[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .brand-text,
 [data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .nav-item span {
   max-width: 180px;
   opacity: 1;
@@ -677,10 +597,8 @@ a {
 
 @media (max-height: 720px) {
   .sidebar { gap: 6px; padding-block: 12px 8px; }
-  .brand { padding-bottom: 1px; }
   .nav { gap: 1px; }
-  .nav-group { height: 19px; padding-top: 2px; }
-  .nav-item { min-height: 29px; padding-block: 5px; }
+  .nav-item { min-height: 31px; padding-block: 6px; }
   .sidebar-footer { padding-top: 4px; }
   .sidebar-stats { display: none; }
 }
