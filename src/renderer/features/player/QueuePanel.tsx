@@ -2,32 +2,25 @@
  * Playback queue drawer. Written for Cadence.
  */
 
-import { useEffect } from "react";
+import { memo, useEffect, useMemo } from "react";
 import { Infinity as InfinityIcon, ListMusic, Trash2, X } from "lucide-react";
 import { mediaItemFromLocalTrack } from "../../../shared/media";
-import type { MediaItem, QueueEntry } from "../../../shared/types";
+import type { QueueEntry, Track } from "../../../shared/types";
 import { usePresence } from "../../app/usePresence";
+import { useReducedMotion } from "../../app/useMotionPreference";
 import { useLibrary } from "../../state/libraryStore";
 import { usePlayer } from "../../state/playerStore";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
 import { Artwork } from "../../components/Artwork";
 import { SourceBadge } from "../../components/SourceBadge";
+import { MarqueeText } from "../../components/MarqueeText";
 import { formatTime } from "../../player/queue";
+import { QueueMotionList } from "./QueueMotionList";
 
 export function QueuePanel() {
   const open = useUi(state => state.queueOpen);
   const toggleQueue = useUi(state => state.toggleQueue);
-  const order = usePlayer(state => state.order);
-  const orderPosition = usePlayer(state => state.orderPosition);
-  const queue = usePlayer(state => state.queue);
-  const jumpTo = usePlayer(state => state.jumpTo);
-  const removeQueueEntry = usePlayer(state => state.removeQueueEntry);
-  const clearQueue = usePlayer(state => state.clearQueue);
-  const replenishAutoPlay = usePlayer(state => state.replenishAutoPlay);
-  const autoPlay = useSettings(state => state.settings?.playback.autoPlay ?? true);
-  const patchSettings = useSettings(state => state.patch);
-  const tracksById = useLibrary(state => state.tracksById);
   // Closing flips `open` immediately; presence keeps the drawer mounted for its fast
   // slide-out (and it keeps owning Escape until it is actually gone).
   const presence = usePresence(open);
@@ -35,6 +28,7 @@ export function QueuePanel() {
   useEffect(() => {
     if (!presence.mounted) return;
     const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || (event.target instanceof Element && event.target.closest("dialog[open]"))) return;
       if (event.key === "Escape") {
         // This overlay owns Escape. Do not let the immersive-view shortcut also handle the same key.
         event.preventDefault();
@@ -46,31 +40,34 @@ export function QueuePanel() {
     return () => window.removeEventListener("keydown", onKey);
   }, [presence.mounted, toggleQueue]);
 
-  if (!presence.mounted) return null;
+  return presence.mounted ? <QueueContents open={open} presence={presence} /> : null;
+}
 
-  const resolveItem = (entry: QueueEntry): MediaItem => {
-    if (entry.item.source.kind === "local") {
-      const track = tracksById.get(entry.item.source.trackId);
-      return track ? mediaItemFromLocalTrack(track, entry.item.fetchedAt || Date.now()) : entry.item;
-    }
-    return entry.item;
-  };
-
-  const ordered = order.flatMap((queueIndex, position) => {
+function QueueContents({ open, presence }: { open: boolean; presence: ReturnType<typeof usePresence> }) {
+  const toggleQueue = useUi(state => state.toggleQueue);
+  const reducedMotion = useReducedMotion();
+  const order = usePlayer(state => state.order);
+  const orderPosition = usePlayer(state => state.orderPosition);
+  const queue = usePlayer(state => state.queue);
+  const jumpTo = usePlayer(state => state.jumpTo);
+  const removeQueueEntry = usePlayer(state => state.removeQueueEntry);
+  const clearQueue = usePlayer(state => state.clearQueue);
+  const replenishAutoPlay = usePlayer(state => state.replenishAutoPlay);
+  const autoPlay = useSettings(state => state.settings?.playback.autoPlay ?? true);
+  const patchSettings = useSettings(state => state.patch);
+  const tracksById = useLibrary(state => state.tracksById);
+  const ordered = useMemo(() => order.flatMap((queueIndex, position) => {
     const entry = queue[queueIndex];
-    return entry ? [{ entry, item: resolveItem(entry), position }] : [];
-  });
-
-  const handleJump = (position: number) => {
-    void jumpTo(position);
-  };
+    return entry ? [{ entry, position }] : [];
+  }), [order, queue]);
+  const occurrences = useMemo(() => ordered.map(({ entry }) => entry.occurrenceId), [ordered]);
 
   return (
-    <aside className={`queue-panel ${presence.phaseClass}`} data-presence={presence.phase} data-testid="queue-panel">
+    <aside id="playback-queue" className={`queue-panel ${presence.phaseClass}`} data-presence={presence.phase} data-testid="queue-panel" aria-label="Playback queue" inert={!open}>
       <header className="queue-header">
         <div>
           <h2>Queue</h2>
-          <p className="muted">{queue.length} songs</p>
+          <p className="muted">{ordered.length} {ordered.length === 1 ? "song" : "songs"}</p>
         </div>
         <div className="queue-actions">
           <button
@@ -100,46 +97,69 @@ export function QueuePanel() {
 
       {ordered.length === 0 ? (
         <div className="empty-state">
-          <ListMusic size={28} />
-          The queue is empty. Play an album or add songs from your library.
+          <ListMusic size={28} aria-hidden="true" />
+          <h3>Nothing queued</h3>
+          <p>Play an album or add songs from your library.</p>
         </div>
-      ) : (
-        <ol className="queue-list">
-          {ordered.map(({ entry, item, position }) => (
-            <li
-              key={entry.occurrenceId}
-              className={position === orderPosition ? "current" : undefined}
-              data-testid="queue-entry"
-              data-source-kind={item.source.kind}
-              data-origin={entry.origin ?? "context"}
-              data-occurrence-id={entry.occurrenceId}
-            >
-              <button type="button" className="queue-track" onClick={() => handleJump(position)}>
-                <Artwork src={item.artworkUrl} alt={item.albumLabel ?? item.title} size="xs" />
-                <span>
-                  <strong>{item.title}</strong>
-                  <em>{item.artistLabel}</em>
-                </span>
-                {entry.origin === "autoplay" ? (
-                  <span className="pill subtle" data-testid="queue-origin-badge">AutoPlay</span>
-                ) : entry.origin === "manual" ? (
-                  <span className="pill subtle" data-testid="queue-origin-badge">Queued</span>
-                ) : null}
-                <SourceBadge source={item.source} compact />
-                <span className="muted">{item.durationSeconds ? formatTime(item.durationSeconds) : "--:--"}</span>
-              </button>
-              <button
-                type="button"
-                className="icon-button"
-                aria-label={`Remove ${item.title} from queue`}
-                onClick={() => removeQueueEntry(entry.occurrenceId)}
-              >
-                <X size={14} />
-              </button>
-            </li>
-          ))}
-        </ol>
-      )}
+      ) : null}
+      <QueueMotionList occurrences={occurrences} open={open} reducedMotion={reducedMotion}>
+        {ordered.map(({ entry, position }) => (
+          <QueueRow
+            key={entry.occurrenceId}
+            entry={entry}
+            track={entry.item.source.kind === "local" ? tracksById.get(entry.item.source.trackId) : undefined}
+            position={position}
+            current={position === orderPosition}
+            jumpTo={jumpTo}
+            remove={removeQueueEntry}
+          />
+        ))}
+      </QueueMotionList>
     </aside>
   );
 }
+
+// Progress/current-row changes do not rebuild every artwork, badge and action in the drawer.
+const QueueRow = memo(function QueueRow({ entry, track, position, current, jumpTo, remove }: {
+  entry: QueueEntry;
+  track?: Track;
+  position: number;
+  current: boolean;
+  jumpTo: (position: number) => Promise<void>;
+  remove: (id: string) => void;
+}) {
+  const item = track ? mediaItemFromLocalTrack(track, entry.item.fetchedAt || Date.now()) : entry.item;
+  return (
+    <li
+      className={current ? "current" : undefined}
+      data-testid="queue-entry"
+      data-source-kind={item.source.kind}
+      data-origin={entry.origin ?? "context"}
+      aria-current={current ? "true" : undefined}
+      data-occurrence-id={entry.occurrenceId}
+    >
+      <button type="button" className="queue-track" onClick={() => void jumpTo(position)}>
+        <Artwork src={item.artworkUrl} alt={item.albumLabel ?? item.title} size="xs" />
+        <span className="queue-track-copy">
+          <MarqueeText as="strong" title={item.title}>{item.title}</MarqueeText>
+          <MarqueeText as="em" title={item.artistLabel}>{item.artistLabel}</MarqueeText>
+        </span>
+        {entry.origin === "autoplay" ? (
+          <span className="pill subtle" data-testid="queue-origin-badge">AutoPlay</span>
+        ) : entry.origin === "manual" ? (
+          <span className="pill subtle" data-testid="queue-origin-badge">Queued</span>
+        ) : null}
+        <SourceBadge source={item.source} compact />
+        <span className="queue-time">{item.durationSeconds ? formatTime(item.durationSeconds) : "--:--"}</span>
+      </button>
+      <button
+        type="button"
+        className="icon-button"
+        aria-label={`Remove ${item.title} from queue`}
+        onClick={() => remove(entry.occurrenceId)}
+      >
+        <X size={14} />
+      </button>
+    </li>
+  );
+});

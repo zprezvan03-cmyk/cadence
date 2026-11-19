@@ -1,8 +1,8 @@
 /**
  * The Now Playing Customization Studio.
  *
- * A drawer over the live Now Playing view: every edit writes to a draft profile that
- * the view renders immediately (same tree, same playback clock), while nothing is
+ * Opened from Appearance over a live Now Playing preview: every edit writes to a draft
+ * profile rendered immediately against the shared playback clock, while nothing is
  * persisted until Save. Built-in profiles open read-only — Duplicate makes the
  * editable custom copy — so a shipped preset can never be damaged. Includes the
  * grid-constrained layout editor (components snap into named slots, never free
@@ -10,7 +10,7 @@
  * optional per-context profile activation. Written for Cadence.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
   Check,
   Copy,
@@ -25,40 +25,39 @@ import {
   X,
 } from "lucide-react";
 import type {
+  NowPlayingLayoutMode,
   NowPlayingProfile,
   NowPlayingProfileConfig,
   NowPlayingProfilesSettings,
 } from "../../../shared/types";
 import {
   BASE_NOW_PLAYING_PROFILE_CONFIG,
+  DEFAULT_NOW_PLAYING_PROFILE_ID,
   BUILT_IN_NOW_PLAYING_PROFILES,
   cloneNowPlayingProfile,
   createCustomNowPlayingProfileId,
+  getEffectiveNowPlayingProfile,
+  getLyricsOffNowPlayingProfile,
+  listNowPlayingProfiles,
   normalizeNowPlayingProfile,
   parseNowPlayingProfileJson,
   serializeNowPlayingProfile,
 } from "../../../shared/nowPlayingProfiles";
 import { FONT_OPTIONS } from "../../../shared/fonts";
 
-export interface StudioSavePayload {
-  customProfiles: NowPlayingProfile[];
-  activeProfileId: string;
-  contextSwitching: NowPlayingProfilesSettings["contextSwitching"];
-}
-
 interface CustomizationStudioProps {
   profilesSettings: NowPlayingProfilesSettings;
-  draft: NowPlayingProfile;
-  onDraftChange: (next: NowPlayingProfile) => void;
-  /** The surface on screen when the Studio opened; the editor starts on its config. */
-  initialMode: "windowed" | "fullscreen";
-  onSave: (payload: StudioSavePayload) => void;
+  initialMode: NowPlayingLayoutMode;
+  renderPreview: (profile: NowPlayingProfile, mode: NowPlayingLayoutMode) => ReactNode;
+  onSave: (payload: NowPlayingProfilesSettings) => Promise<void>;
   onClose: () => void;
-  phaseClass?: string;
-  phase?: string;
+  phaseClass: string;
+  phase: string;
 }
 
-type Mode = "windowed" | "fullscreen";
+const EDIT_MODES: [NowPlayingLayoutMode, string][] = [
+  ["fullscreen", "Lyrics On"], ["lyricsOff", "Lyrics Off"], ["windowed", "Windowed"],
+];
 type DragComponent = "artwork" | "metadata";
 
 const LAYOUT_KEYS: (keyof NowPlayingProfileConfig)[] = [
@@ -114,21 +113,26 @@ function upsertCustom(list: NowPlayingProfile[], profile: NowPlayingProfile): No
   return next;
 }
 
+/** Profile choices are part of the draft too. Changing layout tabs never changes a choice. */
+function activateProfile(settings: NowPlayingProfilesSettings, mode: NowPlayingLayoutMode, id: string): NowPlayingProfilesSettings {
+  if (mode === "lyricsOff") return { ...settings, lyricsOffProfileId: id };
+  if (!settings.contextSwitching.enabled) return { ...settings, activeProfileId: id };
+  const key = mode === "fullscreen" ? "fullscreenProfileId" : "windowedProfileId";
+  return { ...settings, contextSwitching: { ...settings.contextSwitching, [key]: id } };
+}
+
 export function CustomizationStudio({
   profilesSettings,
-  draft,
-  onDraftChange,
   initialMode,
+  renderPreview,
   onSave,
   onClose,
-  phaseClass = "",
+  phaseClass,
   phase,
 }: CustomizationStudioProps) {
-  const [editMode, setEditMode] = useState<Mode>(initialMode);
-  const [workingCustoms, setWorkingCustoms] = useState<NowPlayingProfile[]>(() =>
-    profilesSettings.customProfiles.map(cloneNowPlayingProfile)
-  );
-  const [context, setContext] = useState(profilesSettings.contextSwitching);
+  const [working, setWorking] = useState(() => structuredClone(profilesSettings));
+  const [editMode, setEditMode] = useState(initialMode);
+  const [saving, setSaving] = useState(false);
   const [past, setPast] = useState<string[]>([]);
   const [future, setFuture] = useState<string[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -136,31 +140,54 @@ export function CustomizationStudio({
   const [importText, setImportText] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [dragComponent, setDragComponent] = useState<DragComponent | null>(null);
-  const committedRef = useRef(JSON.stringify(draft));
-
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const saveRef = useRef<HTMLButtonElement>(null);
+  const retrySave = useRef(false);
+  const lyricsOff = editMode === "lyricsOff";
+  const draft = lyricsOff ? getLyricsOffNowPlayingProfile(working) : getEffectiveNowPlayingProfile(working, editMode === "fullscreen");
   const readOnly = draft.builtIn;
   const cfg = draft[editMode];
+  const context = working.contextSwitching;
+  const displayProfiles = listNowPlayingProfiles(working);
+  const committedRef = useRef(JSON.stringify(draft));
+  const dirty = JSON.stringify(working) !== JSON.stringify(profilesSettings);
 
-  const displayProfiles = useMemo(() => {
-    const customs = workingCustoms.map(profile =>
-      profile.id === draft.id ? draft : profile
-    );
-    const all = [...BUILT_IN_NOW_PLAYING_PROFILES, ...customs];
-    return all.some(profile => profile.id === draft.id) ? all : [...all, draft];
-  }, [workingCustoms, draft]);
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    dialog.showModal();
+    closeRef.current?.focus({ preventScroll: true });
+    return () => dialog.close();
+  }, []);
 
-  const savedVersion = useMemo(
-    () =>
-      [...BUILT_IN_NOW_PLAYING_PROFILES, ...profilesSettings.customProfiles].find(
-        profile => profile.id === draft.id
-      ),
-    [profilesSettings.customProfiles, draft.id]
-  );
-  const dirty =
-    JSON.stringify(draft) !== JSON.stringify(savedVersion ?? null) ||
-    JSON.stringify(context) !== JSON.stringify(profilesSettings.contextSwitching) ||
-    JSON.stringify(workingCustoms.map(profile => profile.id)) !==
-      JSON.stringify(profilesSettings.customProfiles.map(profile => profile.id));
+  useLayoutEffect(() => {
+    if (!saving && retrySave.current) {
+      retrySave.current = false;
+      saveRef.current?.focus({ preventScroll: true });
+    }
+  }, [saving]);
+
+  const editingKey = `${editMode}:${draft.id}`;
+  const previousKey = useRef(editingKey);
+  useLayoutEffect(() => {
+    if (previousKey.current === editingKey) return;
+    previousKey.current = editingKey;
+    committedRef.current = JSON.stringify(draft);
+    setPast([]);
+    setFuture([]);
+    setConfirmDelete(false);
+    setDragComponent(null);
+  }, [editingKey, draft]);
+
+  const writeDraft = (profile: NowPlayingProfile) => setWorking(current => ({
+    ...current,
+    customProfiles: upsertCustom(current.customProfiles, profile),
+  }));
+  const setContext = (next: NowPlayingProfilesSettings["contextSwitching"]) => {
+    setConfirmDiscard(false);
+    setWorking(current => ({ ...current, contextSwitching: next }));
+  };
 
   /* ------------------------------------------------------------ history */
 
@@ -171,13 +198,14 @@ export function CustomizationStudio({
       committedRef.current = JSON.stringify(next);
     }
     setConfirmDiscard(false);
-    onDraftChange(next);
+    writeDraft(next);
   };
 
   const commit = () => {
     const current = JSON.stringify(draft);
-    if (current === committedRef.current) return;
-    setPast(history => [...history.slice(-49), committedRef.current]);
+    const previous = committedRef.current;
+    if (current === previous) return;
+    setPast(history => [...history.slice(-49), previous]);
     setFuture([]);
     committedRef.current = current;
   };
@@ -186,7 +214,7 @@ export function CustomizationStudio({
     const parsed = normalizeNowPlayingProfile(JSON.parse(snapshot), draft.builtIn);
     if (!parsed) return;
     committedRef.current = snapshot;
-    onDraftChange(parsed);
+    writeDraft(parsed);
   };
 
   const undo = () => {
@@ -205,39 +233,37 @@ export function CustomizationStudio({
     restore(nextSnapshot);
   };
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        requestClose();
-        return;
-      }
-      const target = event.target as HTMLElement | null;
-      const typing = target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT");
-      if (typing || readOnly) return;
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
-        event.preventDefault();
-        if (event.shiftKey) redo();
-        else undo();
-      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
-        event.preventDefault();
-        redo();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
+  const onEditorKey = (event: KeyboardEvent<HTMLDialogElement>) => {
+    if (phase === "exiting" || saving || readOnly) return;
+    const target = event.target;
+    if (target instanceof Element && target.closest("textarea, input[type=text]")) return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+      event.preventDefault();
+      if (event.shiftKey) redo();
+      else undo();
+    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
+      event.preventDefault();
+      redo();
+    }
+  };
 
   /* --------------------------------------------------------- profile ops */
 
-  const switchEditing = (profile: NowPlayingProfile) => {
-    // Keep in-progress edits in the working list when moving between customs.
-    if (!draft.builtIn) setWorkingCustoms(list => upsertCustom(list, draft));
+  const selectProfile = (id: string) => {
+    setConfirmDiscard(false);
+    setWorking(current => activateProfile(current, editMode, id));
+  };
+
+  const addProfile = (profile: NowPlayingProfile) => {
+    setConfirmDiscard(false);
+    setWorking(current => activateProfile({
+      ...current,
+      customProfiles: upsertCustom(current.customProfiles, profile),
+    }, editMode, profile.id));
+    // Importing over the current profile doesn't change the editing id.
+    committedRef.current = JSON.stringify(profile);
     setPast([]);
     setFuture([]);
-    setConfirmDelete(false);
-    committedRef.current = JSON.stringify(profile);
-    onDraftChange(cloneNowPlayingProfile(profile));
   };
 
   const duplicateDraft = () => {
@@ -245,14 +271,7 @@ export function CustomizationStudio({
     copy.id = createCustomNowPlayingProfileId();
     copy.name = `${draft.name} copy`.slice(0, 60);
     copy.builtIn = false;
-    // Preserve in-progress edits on the original before switching to the copy,
-    // like switchEditing/createNew do; otherwise unsaved edits are lost.
-    if (!draft.builtIn) setWorkingCustoms(list => upsertCustom(list, draft));
-    setWorkingCustoms(list => [...list, cloneNowPlayingProfile(copy)]);
-    setPast([]);
-    setFuture([]);
-    committedRef.current = JSON.stringify(copy);
-    onDraftChange(copy);
+    addProfile(copy);
     setMessage(`Duplicated as “${copy.name}”. This copy is yours to edit.`);
   };
 
@@ -262,12 +281,7 @@ export function CustomizationStudio({
     fresh.name = "My profile";
     fresh.description = "";
     fresh.builtIn = false;
-    if (!draft.builtIn) setWorkingCustoms(list => upsertCustom(list, draft));
-    setWorkingCustoms(list => [...list, cloneNowPlayingProfile(fresh)]);
-    setPast([]);
-    setFuture([]);
-    committedRef.current = JSON.stringify(fresh);
-    onDraftChange(fresh);
+    addProfile(fresh);
   };
 
   const deleteDraft = () => {
@@ -276,22 +290,21 @@ export function CustomizationStudio({
       setConfirmDelete(true);
       return;
     }
-    setWorkingCustoms(list => list.filter(profile => profile.id !== draft.id));
-    setContext(current => ({
+    const remainingId = (id: string) => id === draft.id ? DEFAULT_NOW_PLAYING_PROFILE_ID : id;
+    setWorking(current => ({
       ...current,
-      windowedProfileId:
-        current.windowedProfileId === draft.id ? "balanced" : current.windowedProfileId,
-      fullscreenProfileId:
-        current.fullscreenProfileId === draft.id ? "balanced" : current.fullscreenProfileId,
+      customProfiles: current.customProfiles.filter(profile => profile.id !== draft.id),
+      activeProfileId: remainingId(current.activeProfileId),
+      lyricsOffProfileId: remainingId(current.lyricsOffProfileId),
+      contextSwitching: {
+        ...current.contextSwitching,
+        windowedProfileId: remainingId(current.contextSwitching.windowedProfileId),
+        fullscreenProfileId: remainingId(current.contextSwitching.fullscreenProfileId),
+      },
     }));
     setConfirmDelete(false);
+    setConfirmDiscard(false);
     setMessage(`Deleted “${draft.name}”. Save to make it permanent.`);
-    const deletedId = draft.id;
-    switchEditing(BUILT_IN_NOW_PLAYING_PROFILES[0]);
-    // switchEditing upserts the outgoing draft to preserve in-progress edits; when
-    // that draft is the one being deleted the upsert would resurrect it, so filter
-    // again afterwards (queued updaters run in call order).
-    setWorkingCustoms(list => list.filter(profile => profile.id !== deletedId));
   };
 
   const resetKeys = (keys: (keyof NowPlayingProfileConfig)[]) => {
@@ -302,18 +315,10 @@ export function CustomizationStudio({
     apply({ ...draft, [editMode]: { ...cfg, ...patch } }, true);
   };
 
-  const resetAll = () => {
-    apply(
-      {
-        ...draft,
-        windowed: { ...BASE_NOW_PLAYING_PROFILE_CONFIG },
-        fullscreen: { ...BASE_NOW_PLAYING_PROFILE_CONFIG },
-      },
-      true
-    );
-  };
+  const resetLayout = () => apply({ ...draft, [editMode]: { ...BASE_NOW_PLAYING_PROFILE_CONFIG } }, true);
 
   const requestClose = () => {
+    if (saving) return;
     if (dirty && !confirmDiscard) {
       setConfirmDiscard(true);
       setMessage("You have unsaved changes — close again to discard them, or Save first.");
@@ -322,9 +327,18 @@ export function CustomizationStudio({
     onClose();
   };
 
-  const save = () => {
-    const customs = draft.builtIn ? workingCustoms : upsertCustom(workingCustoms, draft);
-    onSave({ customProfiles: customs, activeProfileId: draft.id, contextSwitching: context });
+  const save = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await onSave(working);
+      onClose();
+    } catch {
+      retrySave.current = true;
+      setMessage("Could not save Now Playing profiles. Please try again.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   /* ---------------------------------------------------------- import/export */
@@ -365,16 +379,8 @@ export function CustomizationStudio({
     const profile = result.profile;
     const collidesBuiltIn = BUILT_IN_NOW_PLAYING_PROFILES.some(entry => entry.id === profile.id);
     if (collidesBuiltIn) profile.id = createCustomNowPlayingProfileId();
-    const overwrite = workingCustoms.some(entry => entry.id === profile.id);
-    // Preserve in-progress edits on the outgoing draft before switching to the
-    // import, like switchEditing/createNew do. When the import overwrites the
-    // outgoing draft itself, the second upsert wins, which is the intent.
-    if (!draft.builtIn) setWorkingCustoms(list => upsertCustom(list, draft));
-    setWorkingCustoms(list => upsertCustom(list, profile));
-    setPast([]);
-    setFuture([]);
-    committedRef.current = JSON.stringify(profile);
-    onDraftChange(cloneNowPlayingProfile(profile));
+    const overwrite = working.customProfiles.some(entry => entry.id === profile.id);
+    addProfile(profile);
     setImportText("");
     setMessage(
       overwrite
@@ -394,7 +400,9 @@ export function CustomizationStudio({
       if (zone === "top") return;
       setCfg({ artworkSlot: zone, artworkVisible: true }, true);
     } else {
-      setCfg({ metadataSlot: zone === "top" ? "top" : "artwork", metadataVisible: true }, true);
+      setCfg(zone === "top"
+        ? { metadataSlot: "top", metadataVisible: true }
+        : { metadataSlot: "artwork", metadataVisible: true, artworkSlot: lyricsOff ? (zone === "left" ? "right" : "left") : zone }, true);
     }
     setDragComponent(null);
   };
@@ -406,7 +414,7 @@ export function CustomizationStudio({
     if (
       zone !== "top" &&
       cfg.metadataSlot === "artwork" &&
-      cfg.artworkSlot === zone &&
+      (lyricsOff ? cfg.artworkSlot !== zone : cfg.artworkSlot === zone) &&
       cfg.metadataVisible
     ) {
       occupants.push("metadata");
@@ -433,23 +441,30 @@ export function CustomizationStudio({
   /* ------------------------------------------------------------------ UI */
 
   return (
-    <div
-      className={`np-studio-backdrop ${phaseClass}`}
-      data-presence={phase}
+    <dialog
+      className={`np-studio-stage ${phaseClass}`}
+      ref={dialogRef}
+      aria-labelledby="np-studio-title"
+      onCancel={event => {
+        event.preventDefault();
+        requestClose();
+      }}
+      onKeyDown={onEditorKey}
       onMouseDown={event => {
         if (event.target === event.currentTarget) requestClose();
       }}
     >
+      {renderPreview(draft, editMode)}
       <aside
         className="np-studio"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Customize Now Playing"
         data-testid="customization-studio"
+        data-presence={phase}
+        inert={phase === "exiting" || saving}
+        aria-busy={saving}
       >
         <header className="studio-header">
           <div>
-            <h2>Customize</h2>
+            <h2 id="np-studio-title">Customize Now Playing</h2>
             <p>
               {draft.name}
               {readOnly ? " · Built-in (protected)" : " · Custom"}
@@ -463,11 +478,29 @@ export function CustomizationStudio({
             <button type="button" className="dock-icon" onClick={redo} disabled={readOnly || future.length === 0} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">
               <Redo2 size={16} />
             </button>
-            <button type="button" className="dock-icon" onClick={requestClose} title="Close" aria-label="Close customization" data-testid="studio-close">
+            <button type="button" className="dock-icon" onClick={requestClose} ref={closeRef} title="Close" aria-label="Close customization" data-testid="studio-close">
               <X size={17} />
             </button>
           </div>
         </header>
+
+        <div className="studio-mode-toggle" role="group" aria-label="Surface to edit">
+          {EDIT_MODES.map(([mode, label]) => (
+            <button
+              type="button"
+              key={mode}
+              className={editMode === mode ? "active" : ""}
+              aria-pressed={editMode === mode}
+              data-mode={mode}
+              onClick={() => {
+                setConfirmDiscard(false);
+                setEditMode(mode);
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
 
         <div className="studio-profiles" role="list" aria-label="Profiles">
           {displayProfiles.map(profile => (
@@ -476,7 +509,8 @@ export function CustomizationStudio({
               key={profile.id}
               role="listitem"
               className={`studio-profile-row ${profile.id === draft.id ? "active" : ""}`}
-              onClick={() => switchEditing(profile)}
+              aria-pressed={profile.id === draft.id}
+              onClick={() => selectProfile(profile.id)}
               data-profile-id={profile.id}
             >
               <span>{profile.name}</span>
@@ -500,8 +534,8 @@ export function CustomizationStudio({
           >
             <Trash2 size={14} /> {confirmDelete ? "Confirm delete" : "Delete"}
           </button>
-          <button type="button" className="studio-button" onClick={resetAll} disabled={readOnly}>
-            <RotateCcw size={14} /> Reset all
+          <button type="button" className="studio-button" onClick={resetLayout} disabled={readOnly}>
+            <RotateCcw size={14} /> Reset layout
           </button>
         </div>
 
@@ -524,26 +558,12 @@ export function CustomizationStudio({
           </p>
         )}
 
-        <div className="studio-mode-toggle" role="group" aria-label="Surface to edit">
-          {(["windowed", "fullscreen"] as Mode[]).map(mode => (
-            <button
-              type="button"
-              key={mode}
-              className={editMode === mode ? "active" : ""}
-              aria-pressed={editMode === mode}
-              onClick={() => setEditMode(mode)}
-            >
-              {mode === "windowed" ? "Windowed" : "Fullscreen"}
-            </button>
-          ))}
-        </div>
-
         <fieldset className="studio-sections" disabled={readOnly}>
           <Section title="Layout" onReset={() => resetKeys(LAYOUT_KEYS)}>
             {editMode === "windowed" ? (
               <p className="studio-note" data-testid="studio-windowed-layout-note">
                 The windowed layout has no artwork column or inline playback controls, so
-                artwork, placement and playback-control settings are set in the Fullscreen tab.
+                artwork, placement and playback-control settings are set in the Lyrics On and Off tabs.
               </p>
             ) : null}
             <div className="studio-layout-editor" aria-label="Layout slots">
@@ -559,47 +579,47 @@ export function CustomizationStudio({
                     {zone === "top" ? "Top bar" : zone === "left" ? "Left column" : "Right column"}
                   </span>
                   {zoneOccupants(zone).map(chip)}
-                  {zone !== "top" && cfg.artworkSlot !== zone ? (
+                  {!lyricsOff && zone !== "top" && cfg.artworkSlot !== zone ? (
                     <span className="studio-slot-lyrics">Lyrics</span>
                   ) : null}
                 </div>
               ))}
             </div>
             <p className="studio-note">
-              Drag Artwork or Title &amp; artist into a slot (or click a chip, then a slot).
-              Lyrics always take the remaining column, so nothing can overlap.
+              Drag Artwork or Title &amp; artist into a slot (or click a chip, then a slot).{" "}
+              {lyricsOff ? "Track details sit beside the artwork or above the layout." : "Lyrics always take the remaining column, so nothing can overlap."}
             </p>
             <SliderRow label="Artwork size" value={cfg.artworkScale} min={0.6} max={1.25} step={0.01} format={pct} onChange={v => setCfg({ artworkScale: v })} onCommit={commit} />
-            <SliderRow label="Lyrics max width" value={cfg.lyricsMaxWidth} min={720} max={1280} step={10} format={v => `${Math.round(v)}px`} onChange={v => setCfg({ lyricsMaxWidth: Math.round(v) })} onCommit={commit} />
+            {!lyricsOff && <SliderRow label="Lyrics max width" value={cfg.lyricsMaxWidth} min={720} max={1280} step={10} format={v => `${Math.round(v)}px`} onChange={v => setCfg({ lyricsMaxWidth: Math.round(v) })} onCommit={commit} />}
             <SliderRow label="Control size" value={cfg.controlsScale} min={0.8} max={1.2} step={0.01} format={pct} onChange={v => setCfg({ controlsScale: v })} onCommit={commit} />
             <SliderRow label="Spacing" value={cfg.spacingScale} min={0.8} max={1.25} step={0.01} format={pct} onChange={v => setCfg({ spacingScale: v })} onCommit={commit} />
-            <SelectRow label="Lyrics alignment" value={cfg.lyricsAlignment} options={[["left", "Left"], ["center", "Center"]]} onChange={v => setCfg({ lyricsAlignment: v as typeof cfg.lyricsAlignment }, true)} />
+            {!lyricsOff && <SelectRow label="Lyrics alignment" value={cfg.lyricsAlignment} options={[["left", "Left"], ["center", "Center"]]} onChange={v => setCfg({ lyricsAlignment: v as typeof cfg.lyricsAlignment }, true)} />}
             <ToggleRow label="Show artwork" checked={cfg.artworkVisible} onChange={v => setCfg({ artworkVisible: v }, true)} />
             <ToggleRow label="Show title & artist" checked={cfg.metadataVisible} onChange={v => setCfg({ metadataVisible: v }, true)} />
             <ToggleRow label="Show playback controls" checked={cfg.controlsVisible} onChange={v => setCfg({ controlsVisible: v }, true)} />
-            <ToggleRow label="Show lyrics dock" checked={cfg.dockVisible} onChange={v => setCfg({ dockVisible: v }, true)} />
+            {!lyricsOff && <ToggleRow label="Show lyrics dock" checked={cfg.dockVisible} onChange={v => setCfg({ dockVisible: v }, true)} />}
           </Section>
 
           <Section title="Typography" onReset={() => resetKeys(TYPOGRAPHY_KEYS)}>
-            <SliderRow label="Main lyrics size" testId="studio-lyrics-scale" value={cfg.lyricsScale} min={0.7} max={1.35} step={0.01} format={pct} onChange={v => setCfg({ lyricsScale: v })} onCommit={commit} />
-            <SliderRow label="Translation size" value={cfg.translationScale} min={0.7} max={1.35} step={0.01} format={pct} onChange={v => setCfg({ translationScale: v })} onCommit={commit} />
-            <SliderRow label="Romanization size" value={cfg.romanizationScale} min={0.7} max={1.35} step={0.01} format={pct} onChange={v => setCfg({ romanizationScale: v })} onCommit={commit} />
+            {!lyricsOff && <SliderRow label="Main lyrics size" testId="studio-lyrics-scale" value={cfg.lyricsScale} min={0.7} max={1.35} step={0.01} format={pct} onChange={v => setCfg({ lyricsScale: v })} onCommit={commit} />}
+            {!lyricsOff && <SliderRow label="Translation size" value={cfg.translationScale} min={0.7} max={1.35} step={0.01} format={pct} onChange={v => setCfg({ translationScale: v })} onCommit={commit} />}
+            {!lyricsOff && <SliderRow label="Romanization size" value={cfg.romanizationScale} min={0.7} max={1.35} step={0.01} format={pct} onChange={v => setCfg({ romanizationScale: v })} onCommit={commit} />}
             <SliderRow label="Title size" value={cfg.titleScale} min={0.75} max={1.25} step={0.01} format={pct} onChange={v => setCfg({ titleScale: v })} onCommit={commit} />
             <SliderRow label="Artist / album size" value={cfg.metadataScale} min={0.75} max={1.25} step={0.01} format={pct} onChange={v => setCfg({ metadataScale: v })} onCommit={commit} />
-            <SliderRow label="Line spacing" value={cfg.lineSpacingScale} min={0.85} max={1.4} step={0.01} format={pct} onChange={v => setCfg({ lineSpacingScale: v })} onCommit={commit} />
-            <SliderRow label="Letter spacing" value={cfg.letterSpacingEm} min={-0.02} max={0.08} step={0.005} format={v => `${v.toFixed(3)}em`} onChange={v => setCfg({ letterSpacingEm: v })} onCommit={commit} />
-            <FontRow label="Lyrics font" value={cfg.fontId} onChange={v => setCfg({ fontId: v }, true)} />
-            <FontRow label="Translation font" value={cfg.translationFontId} onChange={v => setCfg({ translationFontId: v }, true)} />
-            <FontRow label="Romanization font" value={cfg.romanizationFontId} onChange={v => setCfg({ romanizationFontId: v }, true)} />
-            <SelectRow
+            {!lyricsOff && <SliderRow label="Line spacing" value={cfg.lineSpacingScale} min={0.85} max={1.4} step={0.01} format={pct} onChange={v => setCfg({ lineSpacingScale: v })} onCommit={commit} />}
+            {!lyricsOff && <SliderRow label="Letter spacing" value={cfg.letterSpacingEm} min={-0.02} max={0.08} step={0.005} format={v => `${v.toFixed(3)}em`} onChange={v => setCfg({ letterSpacingEm: v })} onCommit={commit} />}
+            {!lyricsOff && <FontRow label="Lyrics font" value={cfg.fontId} onChange={v => setCfg({ fontId: v }, true)} />}
+            {!lyricsOff && <FontRow label="Translation font" value={cfg.translationFontId} onChange={v => setCfg({ translationFontId: v }, true)} />}
+            {!lyricsOff && <FontRow label="Romanization font" value={cfg.romanizationFontId} onChange={v => setCfg({ romanizationFontId: v }, true)} />}
+            {!lyricsOff && <SelectRow
               label="Lyrics weight"
               value={String(cfg.lyricsWeight)}
               options={[["0", "From Settings"], ...[300, 400, 500, 600, 700, 800, 900].map(w => [String(w), String(w)] as [string, string])]}
               onChange={v => setCfg({ lyricsWeight: Number(v) }, true)}
-            />
+            />}
           </Section>
 
-          <Section title="Lyrics appearance" onReset={() => resetKeys(APPEARANCE_KEYS)}>
+          <Section title="Lyrics appearance" hidden={lyricsOff} onReset={() => resetKeys(APPEARANCE_KEYS)}>
             <ColorRow label="Active line colour" value={cfg.activeColor} onChange={v => setCfg({ activeColor: v }, true)} />
             <ColorRow label="Inactive line colour" value={cfg.inactiveColor} onChange={v => setCfg({ inactiveColor: v }, true)} />
             <SliderRow label="Inactive opacity" value={cfg.inactiveOpacityScale} min={0.4} max={1.6} step={0.01} format={pct} onChange={v => setCfg({ inactiveOpacityScale: v })} onCommit={commit} />
@@ -607,7 +627,7 @@ export function CustomizationStudio({
             <SliderRow label="Inactive blur" value={cfg.inactiveBlurPx} min={0} max={6} step={0.5} format={v => `${v}px`} onChange={v => setCfg({ inactiveBlurPx: v })} onCommit={commit} />
           </Section>
 
-          <Section title="Karaoke highlight" onReset={() => resetKeys(KARAOKE_KEYS)}>
+          <Section title="Karaoke highlight" hidden={lyricsOff} onReset={() => resetKeys(KARAOKE_KEYS)}>
             <SelectRow
               label="Style"
               value={cfg.karaokeStyle}
@@ -642,7 +662,7 @@ export function CustomizationStudio({
         </fieldset>
 
         <section className="studio-section">
-          <h3>Per-context profiles</h3>
+          <h3>Legacy windowed profiles</h3>
           <ToggleRow
             label="Use different profiles for windowed and fullscreen"
             checked={context.enabled}
@@ -698,12 +718,12 @@ export function CustomizationStudio({
           <button type="button" className="studio-button" onClick={requestClose}>
             {confirmDiscard ? "Discard changes" : "Cancel"}
           </button>
-          <button type="button" className="studio-button primary" onClick={save} data-testid="studio-save">
-            <Save size={14} /> Save &amp; apply
+          <button type="button" className="studio-button primary" ref={saveRef} onClick={() => void save()} disabled={saving} data-testid="studio-save">
+            <Save size={14} /> {saving ? "Saving…" : "Save & apply"}
           </button>
         </footer>
       </aside>
-    </div>
+    </dialog>
   );
 }
 
@@ -715,13 +735,15 @@ function Section({
   title,
   onReset,
   children,
+  hidden,
 }: {
   title: string;
+  hidden?: boolean;
   onReset: () => void;
   children: React.ReactNode;
 }) {
   return (
-    <section className="studio-section">
+    <section className="studio-section" hidden={hidden}>
       <div className="studio-section-head">
         <h3>{title}</h3>
         <button type="button" className="studio-reset" onClick={onReset} title={`Reset ${title}`}>

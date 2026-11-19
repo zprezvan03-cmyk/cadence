@@ -3,7 +3,7 @@
  * Written for Cadence.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Disc3 } from "lucide-react";
 import { measureArtworkAccent } from "../upstream/shaders/artworkBrightness";
 
@@ -54,13 +54,19 @@ interface ArtworkProps {
   title?: string;
 }
 
-const FALLBACK_GRADIENTS = [
-  "linear-gradient(135deg, #2b1b3d 0%, #110b1a 100%)",
-  "linear-gradient(135deg, #1b2f3d 0%, #0b1218 100%)",
-  "linear-gradient(135deg, #3d241b 0%, #180f0b 100%)",
-  "linear-gradient(135deg, #1b3d2c 0%, #0b1811 100%)",
-  "linear-gradient(135deg, #3d1b2c 0%, #180b12 100%)",
-];
+const FALLBACK_TONES = ["#343039", "#2c3740", "#3e3430", "#2d3833", "#3a3037"];
+
+export function artworkFallbackTone(label: string): string {
+  let hash = 0;
+  for (let i = 0; i < label.length; i++) hash = (hash * 31 + label.charCodeAt(i)) >>> 0;
+  return FALLBACK_TONES[hash % FALLBACK_TONES.length];
+}
+
+// Reveal in the image itself. A successful decode does not change the React tree, so a route
+// with many thumbnails need not commit each row a second time just to start its CSS fade.
+function revealCachedArtwork(image: HTMLImageElement | null) {
+  if (image?.complete && image.naturalWidth > 0) image.dataset.loaded = "true";
+}
 
 export function Artwork({
   src,
@@ -73,13 +79,10 @@ export function Artwork({
   title,
 }: ArtworkProps) {
   const [failed, setFailed] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const imgRef = useRef<HTMLImageElement | null>(null);
   const [accent, setAccent] = useState<string | null>(() => (src && accentVar ? cachedAccent(src) : null));
 
   useEffect(() => {
     setFailed(false);
-    setLoaded(false);
     // Ordinary artwork only needs the <img>; decoding another bitmap for an unused CSS variable
     // made every song row fetch and analyse its cover. Accent work is opt-in and shared per URL.
     if (!src || !accentVar) {
@@ -100,18 +103,7 @@ export function Artwork({
     };
   }, [src, accentVar]);
 
-  // A cached cover can finish before React's onLoad is observed; treat an
-  // already-complete image as loaded so the fade-in can never strand it invisible.
-  useEffect(() => {
-    const img = imgRef.current;
-    if (img?.complete && img.naturalWidth > 0) setLoaded(true);
-  }, [src]);
-
-  const gradient = useMemo(() => {
-    let hash = 0;
-    for (let i = 0; i < alt.length; i++) hash = (hash * 31 + alt.charCodeAt(i)) >>> 0;
-    return FALLBACK_GRADIENTS[hash % FALLBACK_GRADIENTS.length];
-  }, [alt]);
+  const fallbackTone = useMemo(() => artworkFallbackTone(alt), [alt]);
 
   const showFallback = !src || failed;
 
@@ -120,20 +112,21 @@ export function Artwork({
       className={`artwork artwork-${size} rounded-${rounded} ${className}`}
       title={title}
       style={{
-        background: showFallback ? gradient : undefined,
+        backgroundColor: showFallback ? fallbackTone : undefined,
         ...(accentVar && accent ? ({ "--artwork-accent": accent } as React.CSSProperties) : {}),
       }}
       data-accent={accentVar ? accent ?? undefined : undefined}
     >
       {!showFallback ? (
         <img
-          ref={imgRef}
+          key={src}
+          ref={revealCachedArtwork}
           src={src}
           alt={alt}
           loading="lazy"
           decoding="async"
-          data-loaded={loaded}
-          onLoad={() => setLoaded(true)}
+          data-loaded="false"
+          onLoad={event => { event.currentTarget.dataset.loaded = "true"; }}
           onError={() => setFailed(true)}
           draggable={false}
         />

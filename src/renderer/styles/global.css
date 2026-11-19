@@ -5,41 +5,45 @@
 @property --sidebar-width {
   syntax: "<length>";
   inherits: true;
-  initial-value: 248px;
+  initial-value: 222px;
 }
 
 :root {
   color-scheme: dark;
-  --bg: #08080b;
-  --bg-elevated: #0f0f15;
-  --surface: #14141c;
-  --surface-2: #1b1b25;
-  --surface-3: #252532;
-  --border: rgba(255, 255, 255, 0.07);
-  --border-strong: rgba(255, 255, 255, 0.14);
-  --text: #f5f5f8;
-  --text-dim: #a4a4b3;
-  --text-faint: #74748a;
+  /* Neutral library canvas, slightly lifted rails, then opaque utility surfaces. */
+  --bg: #1e1e20;
+  --bg-elevated: #262628;
+  --surface: #29292c;
+  --surface-2: #323235;
+  --surface-3: #414145;
+  --border: rgba(255, 255, 255, 0.085);
+  --border-strong: rgba(255, 255, 255, 0.17);
+  --text: #f5f4f3;
+  --text-dim: #b5b3b8;
+  --text-faint: #939197;
   --accent: #ff3d71;
   --accent-soft: rgba(255, 61, 113, 0.16);
   --accent-strong: #ff5c86;
   --success: #35d07f;
-  --danger: #ff5d5d;
-  --radius: 14px;
-  --radius-sm: 9px;
-  --sidebar-expanded-width: 248px;
-  --sidebar-compact-width: 76px;
+  --danger: #ff7777;
+  --radius: 10px;
+  --radius-sm: 7px;
+  --cover-radius: 8px;
+  /* Page margin fluid: widens with the route viewport (cqi) so wide windows breathe while
+     narrow ones keep content usable. Resolved against `.content-scroll` (container app-content). */
+  --workspace-gutter: clamp(10px, 1.8cqi, 32px);
+  --sidebar-expanded-width: 256px;
+  --sidebar-compact-width: 68px;
   --sidebar-width: var(--sidebar-expanded-width);
-  --player-height: 92px;
-  --topbar-height: 68px;
+  --player-height: 80px;
   --titlebar-height: 36px;
-  /* The window chrome surface, shared by the integrated title bar and the top bar so the two read
-     as one continuous panel. */
-  --chrome-surface: rgba(8, 8, 11, 0.72);
+  --queue-width: 336px;
+  --chrome-surface: var(--bg-elevated);
+
   /* Height consumed above the app shell by the integrated title bar (0 when the OS draws the frame
      or in immersive/fullscreen mode). Views that size themselves against the window use this. */
   --window-chrome-top: 0px;
-  --shadow-lg: 0 24px 70px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.34);
   --font: "Inter", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
   /* Motion. One timing scale and a small easing family for the whole app, so a menu, a toggle
      and a view change share the same rhythm: ease-out to enter, ease-in to leave, ease-in-out
@@ -51,12 +55,14 @@
   --dur-1: 120ms; /* hover, press and exit feedback */
   --dur-2: 180ms; /* small surfaces: menus, toasts, toggles */
   --dur-3: 240ms; /* views, panels, the sidebar indicator */
-  --dur-4: 320ms; /* major layout: sidebar width, buffered-fill catch-up */
+  --dur-4: 320ms; /* artwork dissolves, sidebar width, buffered-fill catch-up */
+  --dur-scene: 300ms; /* shared player layouts */
   --stagger-step: 24ms; /* per-item delay for capped grid entrances */
   --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
   --ease-in: cubic-bezier(0.55, 0.06, 0.68, 0.19);
   --ease-in-out: cubic-bezier(0.45, 0.05, 0.55, 0.95);
   --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+  --ease-settle: cubic-bezier(0.22, 0.8, 0.3, 1);
 }
 
 /* Enabled after first paint by useBootstrap, so a restored compact sidebar does not animate on
@@ -198,10 +204,10 @@ a {
 .eyebrow {
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.12em;
   color: var(--text-faint);
-  margin-bottom: 6px;
-  font-weight: 600;
+  margin-bottom: 7px;
+  font-weight: 650;
 }
 
 .error-text {
@@ -209,42 +215,89 @@ a {
   font-size: 13px;
 }
 
+/* ------------------------------------------------------------ marquee text */
+
+/* Opt-in single-line labels. The wrapper clips while the inner span is the layer that moves,
+   so neighbouring badges and icons stay put. MarqueeText measures the overflow and drives the
+   movement with WAAPI; CSS only owns clipping and the reduced-motion fallback. */
+.marquee {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  /* Legacy per-selector ellipsis rules are more specific; the moving layer must never show one. */
+  text-overflow: clip !important;
+}
+
+/* Tight line-heights can put a descender (the tail of a "g") below the line box; overflow:hidden
+   would shave it off. Give the clip box a few extra pixels below, then take the space back so
+   surrounding layout keeps its original height. Bordered rows are excluded so their borders
+   do not grow. */
+.marquee:not(.folder-row) {
+  padding-block-end: 3px;
+  margin-block-end: -3px !important;
+}
+
+/* Legacy descendant selectors such as `.history-info span` also match the inner span. Give this
+   rule enough specificity to undo their overflow/ellipsis so only the wrapper clips. */
+.marquee .marquee__inner {
+  display: inline-block;
+  flex: none;
+  min-width: 0;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+/* Movement is handled by MarqueeText via the Web Animations API so the end-of-line pause and
+   travel speed stay exact. CSS here only owns clipping and the reduced-motion fallback. */
+
+/* With motion off the label cannot scroll, so fall back to the familiar clipped ellipsis.
+   The inner span becomes inline so the ellipsis belongs to the wrapper's inline content. */
+[data-reduce-motion="true"] .marquee {
+  text-overflow: ellipsis !important;
+}
+
+[data-reduce-motion="true"] .marquee .marquee__inner {
+  display: inline !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee {
+    text-overflow: ellipsis !important;
+  }
+
+  .marquee .marquee__inner {
+    display: inline !important;
+  }
+}
+
 /* ------------------------------------------------------------------ shell */
 
 .app-shell {
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) var(--player-height);
   height: 100vh;
-  background:
-    radial-gradient(1200px 700px at 12% -10%, rgba(255, 61, 113, 0.07), transparent 60%),
-    var(--bg);
+  background: var(--bg);
 }
 
-/* Undecorated window: the title bar takes the first row and spans both columns, so the shell keeps
-   its single continuous background and nothing is layered underneath it. */
+/* Windows keeps a separate native drag / caption strip; the player spans the rails below it. */
 .app-shell.has-title-bar {
   --window-chrome-top: var(--titlebar-height);
-  grid-template-rows: var(--titlebar-height) minmax(0, 1fr);
+  grid-template-rows: var(--titlebar-height) minmax(0, 1fr) var(--player-height);
 }
 
-.app-shell.has-title-bar > .window-title-bar {
+.app-shell > .window-title-bar,
+.app-shell > .player-bar {
   grid-column: 1 / -1;
-  grid-row: 1;
-}
-
-.app-shell.has-title-bar > .sidebar {
-  grid-column: 1;
-  grid-row: 2;
-}
-
-.app-shell.has-title-bar > .app-main {
-  grid-column: 2;
-  grid-row: 2;
 }
 
 .app-shell.is-immersive {
   grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .app-main {
@@ -254,42 +307,50 @@ a {
   min-height: 0;
 }
 
+.app-shell.is-immersive .app-main:focus { outline: none; }
+
 .content-scroll {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden auto;
   scroll-behavior: smooth;
   /* The route viewport is the responsive reference for Now Playing. In windowed mode this
-     is exactly the area between the sidebar/top bar/player; in immersive mode the same box
+     is exactly the area between the sidebar and player; in immersive mode the same box
      expands to the whole window, so one set of container rules serves both. */
   container-type: size;
   container-name: app-content;
 }
 
 .view {
-  padding: 28px 36px 48px;
-  max-width: 1500px;
-  margin: 0 auto;
-  /* No fill mode: a lingering transform would turn the view into a containing block for the
-     fixed-position overlays rendered inside it. */
+  padding: clamp(18px, 1.5cqi, 32px) var(--workspace-gutter)
+    clamp(36px, 3.6cqi, 72px);
+  /* A transformed route re-lays out the sticky song table during navigation. Reveal only
+     its opacity so scroll restoration and fixed overlays keep their real geometry. */
   animation: view-in var(--dur-3) var(--ease-out);
 }
 
 @keyframes view-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0.6; }
+  to { opacity: 1; }
 }
 
 .view-loading {
-  padding: 48px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 40px var(--workspace-gutter);
   color: var(--text-dim);
   animation: fade-in var(--dur-2) var(--ease-out);
+}
+
+.view-loading::before {
+  content: "";
+  width: 15px;
+  height: 15px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 750ms linear infinite;
 }
 
 .error-banner {
@@ -318,10 +379,10 @@ a {
   width: var(--sidebar-width);
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 20px 14px 16px;
+  gap: 12px;
+  padding: 21px 14px 13px;
   border-right: 1px solid var(--border);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 40%), var(--bg-elevated);
+  background: var(--bg-elevated);
   min-height: 0;
   overflow: hidden;
   /* Width is structural, so it is the one sanctioned layout transition. After first paint the
@@ -340,7 +401,8 @@ a {
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 6px 8px 12px;
+  padding: 0 8px 7px;
+  text-align: left;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition:
@@ -349,14 +411,14 @@ a {
 }
 
 .brand-mark {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
+  flex: none;
   display: grid;
   place-items: center;
-  border-radius: 11px;
-  background: linear-gradient(135deg, var(--accent), #7b5cff);
-  color: white;
-  box-shadow: 0 8px 24px rgba(255, 61, 113, 0.28);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
 }
 
 .brand-text {
@@ -375,22 +437,40 @@ a {
 }
 
 .brand-text strong {
-  font-size: 17px;
-  letter-spacing: -0.02em;
+  font-size: 19px;
+  letter-spacing: -0.04em;
 }
 
-.brand-text em {
-  font-style: normal;
-  font-size: 10.5px;
-  color: var(--text-faint);
-  letter-spacing: 0.04em;
+.sidebar-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden auto;
+  /* Leave room for an inset focus outline without changing the sidebar's horizontal gutter. */
+  scrollbar-width: thin;
 }
 
 .nav {
+  --nav-indent: 12px;
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  flex: none;
+}
+
+.nav-group {
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.nav-group {
+  height: 25px;
+  padding: 5px 12px 0;
+  white-space: nowrap;
+  transition: opacity var(--dur-2) var(--ease-out);
 }
 
 /* The active pill is one element that slides between items instead of each item fading its own
@@ -404,15 +484,16 @@ a {
   right: 0;
   height: 0;
   z-index: 0;
-  border-radius: 10px;
-  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
   pointer-events: none;
   opacity: 0;
   transition:
-    transform var(--dur-3) var(--ease-out),
-    height var(--dur-3) var(--ease-out),
+    transform var(--dur-3) var(--ease-settle),
     opacity var(--dur-2) var(--ease-out);
 }
+
+.nav-pill[data-nested="true"] { inset-inline-start: var(--nav-indent); }
 
 .nav-pill.is-visible {
   opacity: 1;
@@ -431,10 +512,12 @@ a {
   z-index: 1;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 10px;
+  gap: 11px;
+  padding: 7px 12px;
+  min-height: 34px;
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
+  font-size: 13.5px;
   font-weight: 550;
   transition:
     background var(--dur-1) var(--ease-out),
@@ -468,92 +551,40 @@ a {
 }
 
 .nav-item.active {
-  background: var(--accent-soft);
-  color: #fff;
+  background: var(--surface-3);
+  color: var(--text);
 }
 
 .nav-item.active svg {
   color: var(--accent);
 }
 
-.sidebar-section {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  flex: 1;
-  padding-top: 6px;
-  border-top: 1px solid var(--border);
+.nav-section-content {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--dur-2) var(--ease-out);
 }
 
-.sidebar-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 10px 6px;
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+.nav-section-content[data-open="true"] { grid-template-rows: 1fr; }
+.nav-section-inner { min-height: 0; overflow: hidden; padding-inline-start: var(--nav-indent); }
+.nav-section-inner .nav-item { margin-block: 2px; font-size: 13px; font-weight: 500; }
+.nav-section-inner .nav-item:focus-visible { outline-offset: -2px; }
+.nav-section-toggle .nav-chevron {
+  margin-inline-start: auto;
   color: var(--text-faint);
+  transition: transform var(--dur-2) var(--ease-out);
 }
-
-.sidebar-heading > span {
-  min-width: 0;
-  max-width: 140px;
-  overflow: hidden;
-  white-space: nowrap;
-  transition:
-    max-width var(--dur-3) var(--ease-in-out),
-    opacity var(--dur-2) var(--ease-out),
-    transform var(--dur-2) var(--ease-out),
-    visibility var(--dur-2) var(--ease-out);
-}
-
-.sidebar-playlists {
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding-bottom: 10px;
-  transition:
-    opacity var(--dur-2) var(--ease-out),
-    visibility var(--dur-2) var(--ease-out);
-}
-
-.sidebar-link {
-  text-align: left;
-  padding: 8px 12px;
-  border-radius: 8px;
-  color: var(--text-dim);
-  font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sidebar-link:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-
-.sidebar-link.active {
-  color: var(--accent-strong);
-  background: var(--accent-soft);
-}
-
-.sidebar-hint {
-  padding: 4px 12px;
-  color: var(--text-faint);
-  font-size: 12px;
-  line-height: 1.5;
-}
+.nav-section-toggle[aria-expanded="true"] .nav-chevron { transform: rotate(180deg); }
+.nav-item span { text-overflow: ellipsis; }
 
 .sidebar-footer {
   margin-top: auto;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 3px;
+  flex: none;
   border-top: 1px solid var(--border);
-  padding-top: 10px;
+  padding-top: 8px;
 }
 
 .sidebar-stats {
@@ -566,14 +597,14 @@ a {
     visibility var(--dur-2) var(--ease-out);
 }
 
-/* Compact mode keeps every destination and the playlist-create action available as icon buttons.
-   Labels no longer pop out with `display: none`: they collapse horizontally and fade as the
-   registered --sidebar-width interpolates, so icons glide to centre instead of jumping. The
-   vertical rhythm is preserved (playlists/footer keep their space) to avoid a sideways-plus-
-   vertical double jump during the toggle. */
+/* Compact mode preserves access to every destination. Focusing search always expands its rail
+   as an overlay, including when the separate hover-expand preference is off. */
 [data-compact-sidebar="true"] {
   --sidebar-width: var(--sidebar-compact-width);
 }
+
+[data-compact-sidebar="true"] .nav-group { opacity: 0; }
+[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .nav-group { opacity: 1; }
 
 [data-compact-sidebar="true"] .sidebar {
   padding-inline: 10px;
@@ -581,7 +612,6 @@ a {
 
 [data-compact-sidebar="true"] .brand,
 [data-compact-sidebar="true"] .nav-item,
-[data-compact-sidebar="true"] .sidebar-heading,
 [data-compact-sidebar="true"] .title-bar-brand {
   justify-content: center;
 }
@@ -603,7 +633,6 @@ a {
 
 [data-compact-sidebar="true"] .brand-text,
 [data-compact-sidebar="true"] .nav-item span,
-[data-compact-sidebar="true"] .sidebar-heading > span,
 [data-compact-sidebar="true"] .title-bar-text {
   max-width: 0;
   opacity: 0;
@@ -611,44 +640,40 @@ a {
   visibility: hidden;
 }
 
-[data-compact-sidebar="true"] .sidebar-stats,
-[data-compact-sidebar="true"] .sidebar-playlists {
+[data-compact-sidebar="true"] .sidebar-stats {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
 }
 
 /* Hover expansion (separate setting, default on) is an overlay, not a layout mode: the shell
-   column stays 76px and the content never reflows while the sidebar itself widens above it.
+   column stays at its compact width and the content never reflows while the sidebar itself widens above it.
    The dur-0 delay is hover intent — a pointer merely crossing the rail does not expand it,
-   while collapse on leave is immediate. Keyboard focus expands it the same way. */
-[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) {
+   while collapse on leave is immediate. Keyboard focus expands it the same way, and a temporary
+   peek reuses these rules when hover expansion is off. */
+[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) {
   --sidebar-width: var(--sidebar-expanded-width);
   padding-inline: 14px;
   box-shadow: 24px 0 60px rgba(0, 0, 0, 0.38);
   transition-delay: var(--dur-0);
 }
 
-[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .brand {
+[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .brand {
   justify-content: flex-start;
   gap: 11px;
   padding-inline: 8px;
   transition-delay: var(--dur-0);
 }
 
-[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .nav-item {
+[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .nav-item {
   justify-content: flex-start;
   gap: 12px;
   padding-inline: 12px;
   transition-delay: 0s, 0s, var(--dur-0), var(--dur-0);
 }
 
-[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .sidebar-heading {
-  justify-content: space-between;
-}
-
-[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .brand-text,
-[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .nav-item span {
+[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .brand-text,
+[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .nav-item span {
   max-width: 180px;
   opacity: 1;
   transform: none;
@@ -656,20 +681,21 @@ a {
   transition-delay: var(--dur-0);
 }
 
-[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .sidebar-heading > span {
-  max-width: 140px;
-  opacity: 1;
-  transform: none;
-  visibility: visible;
-  transition-delay: var(--dur-0);
-}
-
-[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .sidebar-stats,
-[data-compact-sidebar="true"][data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible)) .sidebar-playlists {
+[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .sidebar-stats {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
   transition-delay: var(--dur-0);
+}
+
+@media (max-height: 720px) {
+  .sidebar { gap: 6px; padding-block: 12px 8px; }
+  .brand { padding-bottom: 1px; }
+  .nav { gap: 1px; }
+  .nav-group { height: 19px; padding-top: 2px; }
+  .nav-item { min-height: 29px; padding-block: 5px; }
+  .sidebar-footer { padding-top: 4px; }
+  .sidebar-stats { display: none; }
 }
 
 /* -------------------------------------------------------------- title bar */
@@ -680,7 +706,7 @@ a {
   height: var(--titlebar-height);
   min-width: 0;
   background: var(--chrome-surface);
-  backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--border);
   user-select: none;
   -webkit-user-select: none;
   cursor: default;
@@ -735,6 +761,25 @@ a {
   flex: 1;
   height: 100%;
   min-width: 0;
+}
+
+/* Page history sits against the content edge, just right of the sidebar-brand segment. */
+.title-bar-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 100%;
+  padding: 0 8px;
+  flex: 0 0 auto;
+}
+
+.title-bar-nav .icon-button {
+  width: 28px;
+  height: 24px;
+}
+
+.window-title-bar.is-blurred .title-bar-nav .icon-button {
+  color: var(--text-faint);
 }
 
 /* Windows convention: equal-width caption buttons flush to the top-right corner. */
@@ -792,36 +837,31 @@ a {
   color: #ffffff;
 }
 
-/* ---------------------------------------------------------------- top bar */
+/* ------------------------------------------------------------ sidebar tools */
 
-.top-bar {
-  height: var(--topbar-height);
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 0 24px;
-  border-bottom: 1px solid var(--border);
-  background: var(--chrome-surface);
-  backdrop-filter: blur(18px);
-  flex-shrink: 0;
+.sidebar-tools {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  flex: none;
 }
 
-.history-buttons {
-  display: flex;
-  gap: 4px;
-}
+/* Fallback for native window frames (macOS/Linux), where the custom title bar is not drawn. */
+.sidebar-tools .history-buttons { display: flex; gap: 2px; }
+.sidebar-tools .history-buttons .icon-button { width: 28px; height: 30px; }
 
 .global-search {
-  flex: 1;
-  max-width: 560px;
+  position: relative;
+  min-width: 0;
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 12px;
-  height: 40px;
+  gap: 8px;
+  padding: 0 10px;
+  height: 36px;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 999px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   color: var(--text-faint);
   transition: border-color var(--dur-2) var(--ease-out), background var(--dur-2) var(--ease-out);
 }
@@ -833,21 +873,43 @@ a {
 
 .global-search input {
   flex: 1;
+  min-width: 0;
+  font-size: 13px;
   background: none;
   border: 0;
   padding: 0;
   height: 100%;
 }
 
+.global-search:has(input:focus-visible) { border-color: var(--accent); }
+.global-search input:focus-visible { outline: none; }
+.global-search button:focus-visible { outline-offset: -1px; }
+.global-search input::placeholder { color: var(--text-faint); }
+.global-search .icon-button { width: 22px; height: 26px; margin-right: -5px; }
+.global-search .search-shortcut { color: var(--text-faint); white-space: nowrap; }
+
 .global-search input::-webkit-search-cancel-button {
   display: none;
 }
 
-.top-actions {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 12px;
+/* The compact search input is still a focus target. It expands into the ordinary field when
+   clicked or focused with Ctrl/Cmd+K, without reflowing the page. */
+[data-compact-sidebar="true"] .sidebar:not(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) {
+  .global-search { justify-content: center; padding-inline: 0; }
+  .global-search input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
+  /* Nested destinations are unavailable until the rail expands. Collapse them with the same
+     grid-row transition as a normal disclosure click, and let visibility follow after the rows
+     finish so the collapse is actually seen. */
+  .nav-section-content {
+    grid-template-rows: 0fr;
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+      grid-template-rows var(--dur-2) var(--ease-out),
+      visibility 0s linear var(--dur-2);
+  }
+  :is(.search-shortcut, .global-search .icon-button, .scan-indicator span, .nav-chevron, .fetch-indicator-count, .fetch-indicator-bar) { display: none; }
+  .sidebar-tools .history-buttons .icon-button { width: 50%; }
 }
 
 .scan-indicator {
@@ -862,8 +924,8 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 14px;
-  border-radius: 999px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   border: 1px solid var(--border);
   font-weight: 550;
@@ -880,7 +942,7 @@ a {
   place-items: center;
   width: 34px;
   height: 34px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
   transition:
     background var(--dur-1) var(--ease-out),
@@ -924,12 +986,12 @@ a {
     transform var(--dur-2) var(--ease-spring),
     box-shadow var(--dur-2) var(--ease-out),
     background var(--dur-1) var(--ease-out);
-  box-shadow: 0 6px 20px rgba(255, 255, 255, 0.14);
+  box-shadow: 0 2px 12px rgba(255, 255, 255, 0.09);
 }
 
 .play-button:hover {
   transform: scale(1.05);
-  box-shadow: 0 8px 26px rgba(255, 255, 255, 0.2);
+  box-shadow: 0 3px 14px rgba(255, 255, 255, 0.16);
 }
 
 .play-button:active {
@@ -968,36 +1030,32 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 18px;
-  border-radius: 999px;
+  padding: 9px 15px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   border: 1px solid var(--border);
   font-weight: 600;
-  transition:
-    background var(--dur-1) var(--ease-out),
-    transform var(--dur-1) var(--ease-out),
-    border-color var(--dur-1) var(--ease-out);
+  font-size: 13px;
+  transition: background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
 }
 
 .primary,
 .heading-actions button.primary,
 .empty-actions button.primary,
 .inline-create button.primary {
-  background: #fff;
-  color: #09090d;
+  background: var(--text);
+  color: var(--bg);
   border-color: transparent;
 }
 
-.primary:hover,
-.heading-actions button.primary:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 10px 24px rgba(255, 255, 255, 0.12);
-  background: #fff;
-}
+.primary:not(:disabled):hover,
+.heading-actions button.primary:not(:disabled):hover,
+.empty-actions button.primary:not(:disabled):hover,
+.inline-create button.primary:not(:disabled):hover { background: #fff; }
 
-.heading-actions button:hover,
-.empty-actions button:hover,
-.inline-create button:hover {
+.heading-actions button:not(.primary):hover,
+.empty-actions button:not(.primary):hover,
+.inline-create button:not(.primary):hover {
   background: var(--surface-3);
   border-color: var(--border-strong);
 }
@@ -1037,7 +1095,7 @@ a {
   display: grid;
   place-items: center;
   background: var(--surface-2);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  box-shadow: none;
 }
 
 .artwork img {
@@ -1047,70 +1105,61 @@ a {
   display: block;
 }
 
-/* Covers fade in where they are large enough to be looked at (album grids, detail headers, the
-   player, fullscreen). Song-row thumbnails deliberately do not: a 500-row list must not start 500
-   transitions when it opens. The fade is keyed to the image actually loading (`data-loaded`,
+/* Library covers fade in on album grids and detail headers. Song-row thumbnails deliberately
+   do not: a 500-row list must not start 500 transitions when it opens. The fade is keyed to the image actually loading (`data-loaded`,
    set by Artwork on load / when already complete), not to mount, so a slow cover cannot pop in
    after a mount-keyed animation already finished. */
-.media-card .artwork img,
-.detail-hero .artwork img,
-.fs-artwork .artwork img,
-.fs-panel-art .artwork img {
+:is(.card-open, .detail-hero, .home-spotlight) .artwork img {
   opacity: 0;
   transition: opacity var(--dur-3) var(--ease-out);
 }
 
-.media-card .artwork img[data-loaded="true"],
-.detail-hero .artwork img[data-loaded="true"],
-.fs-artwork .artwork img[data-loaded="true"],
-.fs-panel-art .artwork img[data-loaded="true"] {
+:is(.card-open, .detail-hero, .home-spotlight) .artwork img[data-loaded="true"] {
   opacity: 1;
 }
 
 .artwork-fallback-icon {
-  color: rgba(255, 255, 255, 0.22);
+  color: rgba(255, 255, 255, 0.4);
 }
 
-.artwork-xs { width: 40px; height: 40px; border-radius: 7px; }
-.artwork-sm { width: 56px; height: 56px; border-radius: 9px; }
-.artwork-md { width: 100%; aspect-ratio: 1; border-radius: 12px; }
-.artwork-lg { width: 220px; height: 220px; border-radius: 16px; }
-.artwork-xl { width: 220px; height: 220px; border-radius: 16px; }
-.artwork-hero { width: min(46vh, 420px); height: min(46vh, 420px); border-radius: 22px; }
+.artwork-xs { width: 40px; height: 40px; border-radius: 5px; }
+.artwork-sm { width: 56px; height: 56px; border-radius: 7px; }
+.artwork-md { width: 100%; aspect-ratio: 1; border-radius: var(--cover-radius); }
+.artwork-lg, .artwork-xl { width: 220px; height: 220px; border-radius: var(--cover-radius); }
+.artwork-hero { width: min(46vh, 420px); height: min(46vh, 420px); border-radius: 12px; }
 .rounded-full { border-radius: 999px; }
-.artwork-xs.artwork-fallback-icon,
-.artwork-sm .artwork-fallback-icon { width: 55%; height: 55%; }
-.artwork .artwork-fallback-icon { width: 34%; height: 34%; }
+.artwork .artwork-fallback-icon { width: 32%; height: 32%; }
 
 /* ------------------------------------------------------------ player bar */
 
 .player-bar {
   height: var(--player-height);
-  flex-shrink: 0;
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(320px, 2.1fr) minmax(180px, 1fr);
+  grid-template-columns: minmax(0, 1fr) clamp(248px, 30vw, 400px) minmax(224px, 1fr);
   align-items: center;
-  gap: 18px;
-  padding: 0 20px;
+  gap: clamp(14px, 1.6vw, 24px);
+  padding: 0 clamp(18px, 1.8vw, 32px);
   border-top: 1px solid var(--border);
-  background: rgba(12, 12, 17, 0.86);
-  backdrop-filter: blur(20px);
+  background: var(--chrome-surface);
   position: relative;
   isolation: isolate;
-  animation: chrome-in var(--dur-2) var(--ease-out);
   overflow: hidden;
 }
 
-.player-bar::before {
+/* Preserve the existing artwork-blur preference under the cover only. The neutral rail is
+   constant: artwork never tints the timeline or tools, and the filter has a bounded surface. */
+.player-bar[data-artwork-wash]::before {
   content: "";
   position: absolute;
-  inset: -32px;
+  inset: 0 auto 0 0;
+  width: 144px;
   z-index: 0;
-  background-image: var(--player-artwork, none);
+  background-image: var(--player-artwork);
   background-position: center;
   background-size: cover;
-  filter: blur(26px) saturate(1.2);
-  opacity: 0.24;
+  filter: grayscale(1) blur(10px);
+  mask-image: linear-gradient(to right, #000, transparent);
+  opacity: 0.09;
   pointer-events: none;
 }
 
@@ -1126,49 +1175,32 @@ a {
 .player-track {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: clamp(8px, 0.9vw, 12px);
   min-width: 0;
+  width: min(100%, 274px);
 }
 
-/* PlayerBar restarts these two animations when the song changes (a class toggle, not a remount).
-   Only the player bar does this — a 500-row list fades nothing in, because animating hundreds of
-   images at once is exactly what makes a UI feel slow. */
-.player-artwork-swap.is-swapping {
-  animation: artwork-in var(--dur-3) var(--ease-out);
+.player-track > .heart { flex: none; }
+
+.player-track > .playback-cover { flex: none; }
+
+.mini-player-artwork:hover .artwork {
+  outline: 1px solid var(--border-strong);
+  outline-offset: 2px;
 }
 
 .player-track-meta {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
 }
 
-.player-track-meta.is-swapping {
-  animation: meta-in var(--dur-2) var(--ease-out);
-}
-
-@keyframes artwork-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes meta-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
+.player-track-meta [data-track-layer] { padding-block: 2px; }
 
 .player-title {
-  font-weight: 600;
-  font-size: 13.5px;
+  font-weight: 650;
+  font-size: 14px;
+  line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1180,6 +1212,7 @@ a {
   gap: 6px;
   min-width: 0;
   font-size: 12px;
+  line-height: 1.45;
   color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
@@ -1190,33 +1223,6 @@ a {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.player-source-line {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  margin-top: 2px;
-}
-
-.player-open-now-playing {
-  display: block;
-  max-width: 100%;
-  margin-top: 2px;
-  padding: 0;
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.25;
-  text-align: left;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.player-open-now-playing:hover {
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 
 .player-remote-error {
@@ -1255,9 +1261,18 @@ a {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
   width: 100%;
 }
+
+.player-center .transport { gap: 8px; }
+.player-center .play-button {
+  width: 38px;
+  height: 38px;
+  box-shadow: none;
+}
+.player-center .seek-row { gap: 6px; }
+.player-center .time { width: 34px; color: var(--text-dim); }
 
 .transport {
   display: flex;
@@ -1324,8 +1339,8 @@ input[type="range"].volume::-webkit-slider-runnable-track {
   border-radius: 3px;
   background: linear-gradient(
     to right,
-    var(--accent) 0%,
-    var(--accent) var(--progress, 0%),
+    var(--range-fill, var(--accent)) 0%,
+    var(--range-fill, var(--accent)) var(--progress, 0%),
     rgba(255, 255, 255, 0.18) var(--progress, 0%),
     rgba(255, 255, 255, 0.18) 100%
   );
@@ -1365,7 +1380,23 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  gap: clamp(6px, 0.9vw, 13px);
+  min-width: 0;
+}
+
+.player-tools {
+  display: flex;
+  gap: 1px;
+  flex: none;
+}
+
+.player-tools .icon-button { width: 32px; height: 32px; }
+.player-tools .icon-button.active { background: var(--accent-soft); }
+.player-right .volume-group { width: clamp(84px, 8vw, 124px); min-width: 0; }
+.player-right .volume-group input[type="range"].volume {
+  --range-fill: var(--text-dim);
+  width: 100%;
+  min-width: 36px;
 }
 
 .volume-group {
@@ -1381,66 +1412,89 @@ input[type="range"].volume:active::-webkit-slider-thumb {
 
 /* --------------------------------------------------------------- artwork */
 
-.media-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px;
-  border-radius: var(--radius);
-  transition:
-    background var(--dur-2) var(--ease-out),
-    transform var(--dur-2) var(--ease-out);
-  cursor: pointer;
-}
-
-.media-card:hover {
-  background: var(--surface);
-  transform: translateY(-2px);
-}
-
-.card-art {
+.media-card,
+.playlist-row {
+  min-width: 0;
   position: relative;
+}
+
+.card-open {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+  border-radius: var(--cover-radius);
+}
+
+.card-open .artwork::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: rgba(0, 0, 0, 0.18);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-1) var(--ease-out);
+}
+
+:is(.card-open:hover, .card-open:focus-visible, .media-card:focus-within, .media-card:hover) .artwork::after { opacity: 1; }
+.card-open:hover .card-title { text-decoration: underline; text-underline-offset: 3px; }
+
+/* The play target is a sibling of the album's open button, not an interactive element inside it. */
+.card-overlay {
+  position: absolute;
+  inset: 0 0 auto;
+  aspect-ratio: 1;
+  pointer-events: none;
 }
 
 .card-play {
   position: absolute;
   right: 10px;
   bottom: 10px;
-  width: 42px;
-  height: 42px;
-  border-radius: 999px;
+  width: 39px;
+  height: 39px;
+  padding: 0;
+  border-radius: 50%;
   display: grid;
   place-items: center;
-  background: var(--accent);
-  color: #fff;
+  background: var(--text);
+  color: var(--bg);
   opacity: 0;
-  transform: translateY(6px);
-  transition:
-    opacity var(--dur-2) var(--ease-out),
-    transform var(--dur-2) var(--ease-spring);
-  box-shadow: 0 10px 22px rgba(255, 61, 113, 0.4);
+  transform: translateY(4px);
+  transition: opacity var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.26);
 }
 
-.media-card:hover .card-play,
-.card-play:focus-visible {
+.media-card:is(:hover, :focus-within) .card-play {
   opacity: 1;
-  transform: translateY(0);
+  pointer-events: auto;
+  transform: none;
+}
+
+.card-play:hover { background: #fff; }
+
+.card-title,
+.card-subtitle {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .card-title {
-  font-weight: 600;
-  font-size: 13.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  margin-top: 10px;
+  font-weight: 650;
+  font-size: 14px;
+  line-height: 1.35;
 }
 
 .card-subtitle {
-  font-size: 12px;
+  margin-top: 3px;
+  font-size: 12.5px;
+  line-height: 1.35;
   color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* -------------------------------------------------------------- overlays */
@@ -1450,27 +1504,32 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   top: var(--window-chrome-top);
   right: 0;
   bottom: var(--player-height);
-  width: 340px;
-  background: rgba(15, 15, 21, 0.97);
+  width: min(var(--queue-width), 100vw);
+  background: var(--bg-elevated);
   border-left: 1px solid var(--border);
-  backdrop-filter: blur(24px);
   z-index: 40;
   display: flex;
   flex-direction: column;
   animation: slide-in var(--dur-3) var(--ease-out);
-  box-shadow: -30px 0 60px rgba(0, 0, 0, 0.4);
+  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.24);
 }
 
-/* Queue opened from fullscreen Now Playing: it spans the full height above the fullscreen view and
-   uses the same shader-backed glass as the lyrics dock instead of an opaque black panel. */
+/* Reserve the inspector's width once at wide sizes. The drawer itself animates, not the
+   library grid. In a narrow or lyrics window it overlays the viewport instead. */
+@media (min-width: 1240px) {
+  .app-shell:not(.is-immersive, [data-route="lyrics"]):has(> .queue-panel) .content-scroll {
+    margin-inline-end: var(--queue-width);
+  }
+  .app-shell:not(.is-immersive, [data-route="lyrics"]) .queue-panel { box-shadow: none; }
+}
+
 .app-shell.is-immersive .queue-panel {
-  top: 0;
+  /* The drawer overlays the lyrics, not the mode picker and exit button. */
+  top: calc(clamp(18px, 3vh, 36px) + 50px);
   bottom: 0;
   z-index: 56;
-  background: rgba(14, 14, 22, 0.26);
-  border-left: 1px solid rgba(255, 255, 255, 0.14);
-  backdrop-filter: blur(26px) saturate(1.35);
-  box-shadow: -18px 0 40px rgba(0, 0, 0, 0.28);
+  border-top: 1px solid var(--border);
+  border-top-left-radius: var(--radius);
 }
 
 @keyframes slide-in {
@@ -1504,9 +1563,14 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 18px 12px;
+  padding: 21px 14px 16px 18px;
   border-bottom: 1px solid var(--border);
+  gap: 8px;
 }
+
+.queue-header h2 { font-size: 22px; margin-bottom: 3px; }
+.queue-actions .icon-button.active { background: var(--accent-soft); }
+.queue-panel .empty-state h3 { margin: 0; color: var(--text); text-transform: none; letter-spacing: normal; }
 
 .queue-actions {
   display: flex;
@@ -1514,25 +1578,36 @@ input[type="range"].volume:active::-webkit-slider-thumb {
 }
 
 .queue-list {
+  position: relative;
   list-style: none;
   margin: 0;
   padding: 8px;
-  overflow-y: auto;
+  overflow: hidden auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
-.queue-list li {
+.queue-list:empty { display: none; }
+
+.queue-row-exits {
+  list-style: none;
+  padding: 0;
+  pointer-events: none;
+  overflow: hidden;
+  contain: layout paint;
+}
+
+:is(.queue-list, .queue-row-exits) li {
   display: flex;
   align-items: center;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   /* The queue advances while it is open; the current-row highlight glides instead of jumping. */
   transition: background var(--dur-2) var(--ease-out);
 }
 
-.queue-list li.current {
-  background: var(--accent-soft);
+:is(.queue-list, .queue-row-exits) li.current {
+  background: var(--surface-3);
 }
 
 .queue-track {
@@ -1546,10 +1621,13 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   min-width: 0;
 }
 
-.queue-track span:first-of-type {
-  min-width: 0;
-  flex: 1;
-}
+.queue-track-copy { min-width: 0; flex: 1; }
+.queue-list li:not(.current):hover { background: var(--surface-2); }
+:is(.queue-list, .queue-row-exits) li.current strong { color: var(--accent-strong); }
+.queue-time { color: var(--text-faint); font-variant-numeric: tabular-nums; font-size: 11px; }
+.queue-panel .queue-track .pill { padding: 2px 5px; font-size: 9.5px; }
+.queue-panel .queue-track .artwork { width: 36px; height: 36px; }
+:is(.queue-list, .queue-row-exits) li > .icon-button { flex: none; width: 26px; margin-right: 3px; }
 
 .queue-track strong {
   display: block;
@@ -1593,8 +1671,7 @@ input[type="range"].volume:active::-webkit-slider-thumb {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(4, 4, 7, 0.72);
-  backdrop-filter: blur(6px);
+  background: rgba(12, 12, 14, 0.65);
   display: grid;
   place-items: center;
   z-index: 80;
@@ -1608,7 +1685,7 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   flex-direction: column;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 18px;
+  border-radius: 12px;
   box-shadow: var(--shadow-lg);
   overflow: hidden;
   animation: modal-in var(--dur-2) var(--ease-out);
@@ -1710,14 +1787,32 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   flex-direction: column;
 }
 
+/* The picker separates existing destinations from creating a new one. */
+.playlist-picker .modal-header { align-items: flex-start; }
+.playlist-picker .modal-header .muted { margin-top: 4px; }
+.playlist-picker .modal-row.simple { gap: 11px; padding: 7px 10px; }
+.playlist-picker .modal-row .artwork { width: 34px; height: 34px; }
+.playlist-picker .inline-create {
+  margin: 0;
+  padding: 14px 16px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  animation: none;
+}
+.playlist-picker .inline-create input { min-width: 0; }
+.picker-empty { padding: 10px 12px; }
+
 .context-menu {
   position: fixed;
   z-index: 90;
-  width: 220px;
-  padding: 6px;
+  width: min(244px, calc(100vw - 20px));
+  max-height: calc(100vh - 20px);
+  overflow-y: auto;
+  padding: 5px;
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
-  border-radius: 12px;
+  border-radius: 9px;
   box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
@@ -1761,9 +1856,18 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   font-size: 13px;
 }
 
-.context-menu button:hover {
-  background: var(--surface-3);
+.context-menu button:is(:hover, :focus-visible) { background: var(--surface-3); }
+.context-menu button:focus-visible { outline-offset: -2px; }
+.context-menu-title {
+  padding: 7px 10px 9px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
+.context-menu hr { width: calc(100% - 14px); border: 0; border-top: 1px solid var(--border); margin: 4px 7px; }
 
 .toast {
   position: fixed;
@@ -1847,25 +1951,23 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background: #0c0c11;
+  background: var(--bg-elevated);
 }
 
 .mini-player {
   height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 7px 12px 10px;
-  background:
-    radial-gradient(circle at 18% 0%, rgba(255, 61, 113, 0.16), transparent 44%),
-    rgba(12, 12, 17, 0.97);
+  gap: 7px;
+  padding: 7px 14px 9px;
+  background: var(--bg-elevated);
   user-select: none;
 }
 
 .mini-player-chrome {
   display: flex;
   align-items: center;
-  min-height: 24px;
+  min-height: 23px;
 }
 
 .mini-player-drag {
@@ -1873,98 +1975,63 @@ input[type="range"].volume:active::-webkit-slider-thumb {
   align-self: stretch;
   display: flex;
   align-items: center;
-  color: var(--text-faint);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  gap: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
   cursor: grab;
 }
 
-.mini-player-window-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.mini-window-button {
-  width: 27px;
-  height: 23px;
-  border-radius: 6px;
-}
-
-.mini-window-button.danger:hover {
-  background: #d92d20;
-  color: #fff;
-}
+.mini-player-drag svg { color: var(--accent-strong); }
+.mini-mode { color: var(--text-faint); font-size: 11px; margin-left: 5px; font-weight: 500; }
+.mini-player-window-actions { display: flex; align-items: center; gap: 2px; }
+.mini-window-button { width: 27px; height: 23px; border-radius: 5px; }
+.mini-window-button.danger:hover { background: #d92d20; color: #fff; }
 
 .mini-player-main {
   flex: 1;
   min-height: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
 }
 
-.mini-player-artwork {
-  flex-shrink: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
-  cursor: pointer;
-}
+.mini-player-artwork { flex: none; padding: 0; border-radius: 7px; }
+.mini-player-artwork .artwork { width: 88px; height: 88px; }
+.mini-player-deck { display: grid; flex: 1; min-width: 0; gap: 5px; }
+.mini-player-info { display: flex; align-items: center; gap: 8px; }
+.mini-player-info .heart { margin-left: auto; flex: none; }
+.mini-player-meta { min-width: 0; align-self: center; cursor: grab; }
 
-.mini-player-meta {
-  flex: 1;
-  min-width: 0;
-  align-self: stretch;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  cursor: grab;
-}
-
-.mini-player-title {
-  overflow: hidden;
-  font-size: 13.5px;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
+.mini-player-title,
 .mini-player-artist {
   overflow: hidden;
-  color: var(--text-dim);
-  font-size: 11.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.mini-player-title { font-weight: 650; font-size: 14px; }
+.mini-player-artist { color: var(--text-dim); font-size: 12px; margin-top: 2px; }
+.mini-player .transport { gap: clamp(3px, 1.8vw, 9px); justify-content: center; }
+.mini-player .transport .icon-button { width: 30px; height: 30px; }
+.mini-player .play-button { width: 34px; height: 34px; }
+.mini-player .seek-row { gap: 7px; }
+.mini-player .time { width: 34px; font-size: 10px; }
 
-.mini-player .transport {
-  flex-shrink: 0;
-  gap: 5px;
+@media (max-width: 830px) {
+  :root { --sidebar-expanded-width: 216px; }
+  .global-search .search-shortcut { display: none; }
+  .player-bar { grid-template-columns: minmax(0, 1fr) minmax(188px, 1.2fr) minmax(212px, 1fr); gap: 10px; }
+  .player-right .volume-group { width: 68px; }
+  .player-tools .icon-button { width: 28px; }
+  .player-track { gap: 7px; }
 }
 
-.mini-player .play-button {
-  width: 38px;
-  height: 38px;
-}
-
-.mini-player .seek-row {
-  gap: 7px;
-}
-
-.mini-player .time {
-  width: 34px;
-  font-size: 10px;
-}
-
-@media (max-width: 410px) {
-  .mini-player .transport > .icon-button:nth-child(1),
-  .mini-player .transport > .icon-button:nth-child(5) {
-    display: none;
-  }
+@media (max-width: 650px) {
+  .player-bar { grid-template-columns: minmax(0, 1fr) minmax(178px, 1.3fr); grid-template-rows: minmax(0, 1fr) 30px; gap: 0 10px; }
+  .player-right { grid-column: 1 / -1; justify-content: space-between; }
+  .player-track .artwork-sm { width: 40px; height: 40px; }
+  .player-center .play-button { width: 33px; height: 33px; }
+  .player-center .transport { gap: 2px; }
 }
 
 .modal.shortcuts-modal {
@@ -2060,6 +2127,7 @@ kbd {
   --dur-2: 0.01ms;
   --dur-3: 0.01ms;
   --dur-4: 0.01ms;
+  --dur-scene: 0.01ms;
 }
 
 [data-reduce-motion="true"],
@@ -2082,6 +2150,7 @@ kbd {
     --dur-2: 0.01ms;
     --dur-3: 0.01ms;
     --dur-4: 0.01ms;
+    --dur-scene: 0.01ms;
   }
 
   *,

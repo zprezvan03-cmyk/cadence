@@ -4,25 +4,20 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Disc3,
   Heart,
-  ListPlus,
   MoreHorizontal,
-  Pencil,
+  Music2,
+  Pause,
   Play,
-  Plus,
-  Rows3,
-  Trash2,
 } from "lucide-react";
 import type { Track } from "../../shared/types";
 import { formatTime } from "../player/queue";
 import { useLibrary } from "../state/libraryStore";
-import { usePlayer } from "../state/playerStore";
-import { useUi } from "../state/uiStore";
+import { currentTrackId, usePlayer } from "../state/playerStore";
 import { codecSupport } from "../audio/codecs";
-import { currentTrackId } from "../state/playerStore";
-import { useLastNonNull, usePresence } from "../app/usePresence";
+import { useTrackMenu } from "./useTrackMenu";
 import { Artwork } from "./Artwork";
+import { MarqueeText } from "./MarqueeText";
 
 const ROW_HEIGHT_PX = 58;
 const HEADER_HEIGHT_PX = 40;
@@ -40,23 +35,18 @@ interface TrackListProps {
   testId?: string;
 }
 
-interface MenuState {
-  track: Track;
-  x: number;
-  y: number;
-}
-
 interface TrackRowProps {
   track: Track;
   index: number;
   active: boolean;
   playing: boolean;
+  menuOpen: boolean;
   showAlbum: boolean;
   showArtwork: boolean;
   onPlay: (index: number) => void;
   onToggle: () => Promise<void>;
   onFavorite: (id: number, favorite: boolean) => Promise<void>;
-  onOpenMenu: (track: Track, anchor: HTMLElement) => void;
+  onOpenMenu: (track: Track, anchor: HTMLButtonElement) => void;
 }
 
 /** Rows are memoized so playback and favourite updates do not rebuild every visible row. */
@@ -65,6 +55,7 @@ const TrackRow = memo(function TrackRow({
   index,
   active,
   playing,
+  menuOpen,
   showAlbum,
   showArtwork,
   onPlay,
@@ -74,7 +65,7 @@ const TrackRow = memo(function TrackRow({
 }: TrackRowProps) {
   return (
     <div
-      className={`track-row ${active ? "active" : ""}`}
+      className={`track-row${index % 2 === 0 ? " is-striped" : ""}${active ? " active" : ""}`}
       onDoubleClick={() => onPlay(index)}
       onClick={() => {
         if (active) {
@@ -86,15 +77,25 @@ const TrackRow = memo(function TrackRow({
       data-testid="track-row"
       data-track-id={track.id}
     >
-      <span className="col-index">
-        <span className="index-number">{index + 1}</span>
-        <span className="index-play">{active && playing ? <Rows3 size={15} /> : <Play size={15} />}</span>
-      </span>
+      <button
+        type="button"
+        className="col-index track-play"
+        aria-label={`${active && playing ? "Pause" : "Play"} ${track.title}`}
+        onDoubleClick={event => event.stopPropagation()}
+        onClick={event => {
+          event.stopPropagation();
+          if (active) void onToggle();
+          else onPlay(index);
+        }}
+      >
+        <span className="index-number" aria-hidden="true">{index + 1}</span>
+        <span className="index-play" aria-hidden="true">{active && playing ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" />}</span>
+      </button>
       <span className="col-title">
         {showArtwork ? <Artwork src={track.artworkUrl} alt={track.album} size="xs" /> : null}
         <span className="title-block">
-          <span className="title-text">{track.title}</span>
-          <span className="subtitle-text">{track.artist}</span>
+          <MarqueeText className="title-text" title={track.title}>{track.title}</MarqueeText>
+          <MarqueeText className="subtitle-text" title={track.artist}>{track.artist}</MarqueeText>
         </span>
         {!track.playable || codecSupport(track) === "unsupported" ? (
           <span
@@ -110,13 +111,14 @@ const TrackRow = memo(function TrackRow({
           </span>
         ) : null}
       </span>
-      {showAlbum ? <span className="col-album">{track.album}</span> : null}
+      {showAlbum ? <MarqueeText className="col-album" title={track.album}>{track.album}</MarqueeText> : null}
       <span className="col-duration">{formatTime(track.duration)}</span>
-      <span className="col-actions" onClick={event => event.stopPropagation()}>
+      <span className="col-actions" onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
         <button
           type="button"
           className={`icon-button heart ${track.favorite ? "active" : ""}`}
           aria-label={track.favorite ? "Remove from favourites" : "Add to favourites"}
+          aria-pressed={track.favorite}
           onClick={() => void onFavorite(track.id, !track.favorite)}
         >
           <Heart size={15} fill={track.favorite ? "currentColor" : "none"} />
@@ -125,6 +127,7 @@ const TrackRow = memo(function TrackRow({
           type="button"
           className="icon-button"
           aria-label="More actions"
+          aria-expanded={menuOpen}
           onClick={event => onOpenMenu(track, event.currentTarget)}
         >
           <MoreHorizontal size={17} />
@@ -143,24 +146,14 @@ export const TrackList = memo(function TrackList({
   compact = false,
   testId,
 }: TrackListProps) {
-  const [menu, setMenu] = useState<MenuState | null>(null);
-  // Menu actions and dismissal flip `menu` instantly; presence only keeps the surface
-  // mounted for its fast pop-out, rendering the last target so it never blanks mid-exit.
-  const menuPresence = usePresence(menu !== null);
-  const renderedMenu = useLastNonNull(menu);
-  const menuRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const { openMenu, menuTrackId, surface } = useTrackMenu(listRef, onRemove);
   const [visibleRange, setVisibleRange] = useState({ start: 0, end: 40 });
   const playQueue = usePlayer(state => state.playQueue);
-  const addToQueue = usePlayer(state => state.addToQueue);
-  const playNext = usePlayer(state => state.playNext);
   const currentId = usePlayer(state => currentTrackId(state));
   const isPlaying = usePlayer(state => state.isPlaying);
   const toggle = usePlayer(state => state.toggle);
   const setFavorite = useLibrary(state => state.setFavorite);
-  const openPlaylistPicker = useUi(state => state.openPlaylistPicker);
-  const openTrackEditor = useUi(state => state.openTrackEditor);
-  const navigate = useUi(state => state.navigate);
 
   const trackIds = useMemo(() => tracks.map(track => track.id), [tracks]);
   const play = useCallback(
@@ -169,28 +162,6 @@ export const TrackList = memo(function TrackList({
     },
     [playQueue, trackIds]
   );
-  const openMenu = useCallback((track: Track, anchor: HTMLElement) => {
-    const rect = anchor.getBoundingClientRect();
-    setMenu({ track, x: rect.right, y: rect.bottom + 6 });
-  }, []);
-
-  useEffect(() => {
-    if (!menu) return;
-    const close = (event: MouseEvent) => {
-      if (menuRef.current && event.target instanceof Node && menuRef.current.contains(event.target)) return;
-      setMenu(null);
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenu(null);
-    };
-    window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", escape);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", escape);
-    };
-  }, [menu]);
-
   const virtualized = tracks.length >= VIRTUALIZATION_THRESHOLD;
 
   useEffect(() => {
@@ -230,14 +201,14 @@ export const TrackList = memo(function TrackList({
   }, [tracks.length, virtualized]);
 
   if (tracks.length === 0) {
-    return <div className="empty-state">{emptyMessage}</div>;
+    return <div className="empty-state"><Music2 size={26} aria-hidden="true" /><p>{emptyMessage}</p></div>;
   }
 
   const start = virtualized ? Math.min(visibleRange.start, Math.max(0, tracks.length - 1)) : 0;
   const end = virtualized ? Math.max(start, Math.min(visibleRange.end, tracks.length)) : tracks.length;
 
   return (
-    <div className={`track-list ${compact ? "compact" : ""}`} data-testid={testId} ref={listRef}>
+    <div className={`track-list ${compact || !showAlbum ? "compact" : ""}`} data-testid={testId} ref={listRef}>
       <div className="track-head">
         <span className="col-index">#</span>
         <span className="col-title">Title</span>
@@ -256,6 +227,7 @@ export const TrackList = memo(function TrackList({
             index={index}
             active={active}
             playing={active && isPlaying}
+            menuOpen={menuTrackId === track.id}
             showAlbum={showAlbum}
             showArtwork={showArtwork}
             onPlay={play}
@@ -269,55 +241,7 @@ export const TrackList = memo(function TrackList({
         <div aria-hidden="true" style={{ height: (tracks.length - end) * ROW_HEIGHT_PX, flexShrink: 0 }} />
       ) : null}
 
-      {menuPresence.mounted && renderedMenu ? (
-        <div
-          className={`context-menu ${menuPresence.phaseClass}`}
-          data-presence={menuPresence.phase}
-          style={{ left: Math.max(12, renderedMenu.x - 220), top: renderedMenu.y }}
-          ref={menuRef}
-        >
-          <button type="button" onClick={() => { playNext([renderedMenu.track.id]); setMenu(null); }}>
-            <Play size={15} /> Play next
-          </button>
-          <button type="button" onClick={() => { addToQueue([renderedMenu.track.id]); setMenu(null); }}>
-            <ListPlus size={15} /> Add to queue
-          </button>
-          <button type="button" onClick={() => { openPlaylistPicker([renderedMenu.track.id]); setMenu(null); }}>
-            <Plus size={15} /> Add to playlist…
-          </button>
-          <button
-            type="button"
-            data-testid="track-edit-details"
-            onClick={() => {
-              openTrackEditor(renderedMenu.track.id);
-              setMenu(null);
-            }}
-          >
-            <Pencil size={15} /> Edit details…
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              navigate({ name: "album", albumId: `${renderedMenu.track.albumArtist || renderedMenu.track.artist}\u0000${renderedMenu.track.album}` });
-              setMenu(null);
-            }}
-          >
-            <Disc3 size={15} /> Go to album
-          </button>
-          {onRemove ? (
-            <button
-              type="button"
-              className="danger"
-              onClick={() => {
-                onRemove(renderedMenu.track);
-                setMenu(null);
-              }}
-            >
-              <Trash2 size={15} /> Remove
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+      {surface}
     </div>
   );
 });

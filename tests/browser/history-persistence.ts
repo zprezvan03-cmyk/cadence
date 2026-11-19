@@ -921,7 +921,7 @@ try {
   await clickNav(page, "Home");
   await page.waitForSelector('[data-testid="home-top-tracks"]', { timeout: 10_000 }).catch(() => null);
   const homeShelves = await page.evaluate(() => ({
-    top: Array.from(document.querySelectorAll('[data-testid="home-top-tracks"] .title-text')).map(
+    top: Array.from(document.querySelectorAll('[data-testid="home-top-tracks"] .card-title')).map(
       el => el.textContent?.trim() ?? "",
     ),
     onRepeat: Array.from(
@@ -940,6 +940,46 @@ try {
       homeShelves.rediscover.includes("Fixture ALAC"),
     JSON.stringify(homeShelves),
   );
+
+  const shelfCards = await page.evaluate(() => {
+    const top = document.querySelector('[data-testid="top-track-item"] .artwork')?.getBoundingClientRect();
+    const repeat = document.querySelector('[data-testid="on-repeat-item"] .artwork')?.getBoundingClientRect();
+    return { top: top?.width ?? 0, repeat: repeat?.width ?? 0, square: top?.height === top?.width && repeat?.height === repeat?.width };
+  });
+  check("launch5-top-and-repeat-use-the-same-artwork-cards", shelfCards.square && shelfCards.top >= 140 && shelfCards.top === shelfCards.repeat &&
+    homeShelves.top.includes("Fixture Opus") && !homeShelves.onRepeat.includes("Fixture Opus"), JSON.stringify(shelfCards));
+
+  await page.click('[data-testid="home-top-tracks"] .card-open[aria-label="Play Fixture MP3"]');
+  await page.waitForFunction(() => document.querySelector(".player-title")?.textContent === "Fixture MP3" && !document.querySelector("audio")?.paused);
+  await page.click('.player-bar button[aria-label="Queue"]');
+  await page.waitForSelector('[data-testid="queue-panel"]:not([inert])');
+  const queueTitles = () => page.$$eval('.queue-track strong', nodes => nodes.map(node => node.textContent?.trim()));
+  const rankedQueue = await queueTitles();
+  check("launch5-top-card-plays-the-ranked-queue", JSON.stringify(rankedQueue) === JSON.stringify(homeShelves.top), JSON.stringify(rankedQueue));
+  await page.click('button[aria-label="Close queue"]');
+  await page.waitForSelector('[data-testid="queue-panel"]', { hidden: true });
+  await page.click('[data-testid="home-on-repeat"] .card-open[aria-label="Play Fixture FLAC"]');
+  await page.waitForFunction(() => document.querySelector(".player-title")?.textContent === "Fixture FLAC" && !document.querySelector("audio")?.paused);
+  await page.click('.player-bar button[aria-label="Queue"]');
+  await page.waitForSelector('[data-testid="queue-panel"]:not([inert])');
+  const repeatQueue = await queueTitles();
+  check("launch5-on-repeat-card-keeps-the-existing-queue", JSON.stringify(repeatQueue) === JSON.stringify(rankedQueue), JSON.stringify(repeatQueue));
+  await page.click('button[aria-label="Close queue"]');
+  await page.waitForSelector('[data-testid="queue-panel"]', { hidden: true });
+  const rankedMore = '[data-testid="home-top-tracks"] .home-card-tools button[aria-label="More actions"]';
+  await page.click(rankedMore);
+  await page.waitForSelector('.context-menu:not([inert])');
+  check("launch5-top-card-retains-track-actions", await page.$eval('.context-menu', node =>
+    ["Play next", "Add to queue", "Add to playlist", "Edit details", "Go to album"].every(action => node.textContent?.includes(action))));
+  await page.keyboard.press("Escape");
+  await page.waitForSelector('.context-menu', { hidden: true });
+  // The harness has no native ALAC decoder; choose the known decodable Rediscover fixture.
+  const rediscoverOpus = await page.evaluateHandle(() => [...document.querySelectorAll<HTMLButtonElement>('[data-testid="rediscover-item"]')]
+    .find(node => node.querySelector("strong")?.textContent === "Fixture Opus")!);
+  await rediscoverOpus.click();
+  await page.waitForFunction(() => document.querySelector(".player-title")?.textContent === "Fixture Opus" && !document.querySelector("audio")?.paused,
+    { timeout: 5000 });
+  check("launch5-rediscover-card-still-plays", true, "Fixture Opus");
 
   /* =================================================================================
    * Launch 6: Library tools. Edit a track's title + cover in the UI, force a real
@@ -1051,8 +1091,18 @@ try {
     JSON.stringify(titlesAfterRescan),
   );
 
-  await clickNav(page, "Playlists");
-  await page.click('[data-testid="new-smart-playlist"]');
+  await page.locator('.sidebar button[title="Playlists"][aria-expanded="false"]').click();
+  const allPlaylists = '#sidebar-playlists[data-open="true"] button[title="All playlists"]';
+  // A button inside the expanding disclosure exists before the clipped row is clickable.
+  await page.waitForFunction(selector => {
+    const button = document.querySelector(selector);
+    if (!button) return false;
+    const { left, top, width, height } = button.getBoundingClientRect();
+    return button.contains(document.elementFromPoint(left + width / 2, top + height / 2));
+  }, { timeout: 10_000 }, allPlaylists);
+  await page.locator(allPlaylists).click();
+  await page.waitForSelector('[data-testid="library-view-playlists"]', { timeout: 10_000 });
+  await page.locator('[data-testid="new-smart-playlist"]').click();
   await page.waitForSelector('[data-testid="smart-playlist-form"]', { timeout: 10_000 });
   const smartPreviewText = await page.$eval(
     '[data-testid="smart-playlist-preview"]',

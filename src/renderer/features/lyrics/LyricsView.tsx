@@ -1,34 +1,31 @@
 /**
- * The Now Playing page (route `lyrics`): the upstream Braccato renderer over the upstream Kawarp
- * shader background, with Cadence's dock, provider picker and translation controls. In fullscreen
- * it is the single Now Playing view: artwork on the left, lyrics on the right, and the audio controls
- * and lyrics on/off toggle along the bottom. Written for Cadence.
+ * Now Playing: Braccato, the artwork background and the live playback controls. The old
+ * windowed route remains readable for saved links; the player opens the immersive view.
  */
 
 import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Minimize2, Music4, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
+import { Minimize2, Music4, RefreshCw, Search } from "lucide-react";
 import { trackSourceKey } from "../../../shared/media";
-import type { AppSettings, MediaItem, NowPlayingProfile, Track } from "../../../shared/types";
+import type { AppSettings, MediaItem, NowPlayingLayoutMode, NowPlayingProfile, Track } from "../../../shared/types";
 import { DEFAULT_PROVIDER_ORDER } from "../../../shared/upstream/better-lyrics/constants";
 import {
-  cloneNowPlayingProfile,
-  getActiveNowPlayingProfile,
   getEffectiveNowPlayingProfile,
+  getLyricsOffNowPlayingProfile,
   getNowPlayingAnimationCacheKey,
   listNowPlayingProfiles,
-  resolveNowPlayingProfileConfig,
 } from "../../../shared/nowPlayingProfiles";
 import { fontStack } from "../../../shared/fonts";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
 import { SourceBadge } from "../../components/SourceBadge";
+import { MarqueeText } from "../../components/MarqueeText";
 import { BraccatoLyrics } from "./BraccatoLyrics";
 import { LyricsDock } from "./LyricsDock";
 import { FullscreenControls } from "./FullscreenControls";
-import { Artwork } from "../../components/Artwork";
+import { PlaybackArtwork, PlaybackText } from "../player/PlaybackVisuals";
+import { usePlaybackPresentation } from "../player/usePlaybackPresentation";
 import { useControlsHover } from "./useControlsHover";
 import { NowPlayingBackground } from "./NowPlayingBackground";
-import { CustomizationStudio, type StudioSavePayload } from "./CustomizationStudio";
 import { useLyrics } from "./useLyrics";
 import { buildThemeCss } from "../../upstream/better-lyrics/themes";
 import { useLastNonNull, usePresence } from "../../app/usePresence";
@@ -40,15 +37,18 @@ export interface LyricsViewProps {
   item: MediaItem | null;
   playing: boolean;
   fullscreen: boolean;
-  onToggleFullscreen: () => void;
-  onOpenSearch?: () => void;
+  onExit?: () => void;
+  preview?: { profile: NowPlayingProfile; mode: NowPlayingLayoutMode };
+  onOpenLyricsSettings?: () => void;
 }
 
 function clampFinite(value: number | undefined, fallback: number, min: number, max: number): number {
   return Number.isFinite(value) ? Math.min(max, Math.max(min, value as number)) : fallback;
 }
 
-export function LyricsView({ track, item, playing, fullscreen, onToggleFullscreen, onOpenSearch }: LyricsViewProps) {
+const NO_LYRIC_CREDITS: readonly string[] = [];
+
+export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyricsSettings, preview }: LyricsViewProps) {
   const settings = useSettings(state => state.settings);
   const patchSettings = useSettings(state => state.patch);
   const [toast, setToast] = useState<string | null>(null);
@@ -63,16 +63,12 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
   const itemIdentity = item ? trackSourceKey(item.source) : null;
   const viewRef = useRef<HTMLDivElement | null>(null);
   const footerRef = useRef<HTMLDivElement | null>(null);
-  const fsArtworkRef = useRef<HTMLDivElement | null>(null);
-  const fsPanelArtRef = useRef<HTMLDivElement | null>(null);
-  // Fullscreen only: the controls show while the pointer is over them and fade out when it leaves,
-  // unless a popover or the queue is open.
-  // Fullscreen with lyrics on: the footer (controls and dock) is shown over the lyrics. Fullscreen with
-  // lyrics off: the artwork and the controls form a panel instead, with no footer.
-  const showLyricsSetting = settings?.lyrics?.showLyricsInFullscreen ?? true;
+  // Lyrics On keeps the hover-only footer over the lyrics unless a popover or queue is open.
+  // Lyrics Off puts its controls in the artwork panel instead.
+  const showLyricsSetting = preview ? preview.mode !== "lyricsOff" : settings?.lyrics?.showLyricsInFullscreen ?? true;
   const footerPresent = fullscreen && showLyricsSetting;
   const panelMode = fullscreen && !showLyricsSetting;
-  const controlsVisible = useControlsHover(footerPresent, dockPopoverOpen || queueOpen, footerRef);
+  const controlsVisible = useControlsHover(footerPresent, dockPopoverOpen || queueOpen || Boolean(preview), footerRef);
 
   // Fullscreen only: the controls overlay the bottom of the lyrics body instead of taking space from it.
   // The footer's measured height is published to the view as --fs-footer-height, so the body keeps its
@@ -92,50 +88,21 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
     };
   }, [footerPresent]);
 
-  // Restart only the artwork wrapper's entrance on a real track change. The Artwork component
-  // itself stays mounted, so its decode/fallback state and layout do not jump.
-  useLayoutEffect(() => {
-    if (!itemIdentity) return;
-    for (const node of [fsArtworkRef.current, fsPanelArtRef.current]) {
-      if (!node) continue;
-      node.classList.remove("is-swapping");
-      void node.offsetWidth;
-      node.classList.add("is-swapping");
-    }
-  }, [itemIdentity]);
-
   const lyricsSettings = settings?.lyrics;
   const shaderSettings = settings?.shaders;
   const nowPlayingProfilesSettings = settings?.nowPlayingProfiles;
-  // The Studio edits a draft clone; while it exists the view renders the draft so
-  // every control previews live on this same tree, and nothing reaches settings
-  // until Save. Playback, the lyrics clock and scroll state are never touched.
-  const [studioOpen, setStudioOpen] = useState(false);
-  const [studioDraft, setStudioDraft] = useState<NowPlayingProfile | null>(null);
-  const studioPresence = usePresence(studioOpen);
-  const activeNowPlayingProfile = useMemo(
-    () =>
-      studioDraft ??
-      getEffectiveNowPlayingProfile(nowPlayingProfilesSettings, fullscreen),
-    [fullscreen, nowPlayingProfilesSettings, studioDraft]
+  const lyricsOnProfile = useMemo(
+    () => getEffectiveNowPlayingProfile(nowPlayingProfilesSettings, fullscreen),
+    [fullscreen, nowPlayingProfilesSettings]
   );
-  const availableNowPlayingProfiles = useMemo(
-    () => listNowPlayingProfiles(nowPlayingProfilesSettings),
-    [nowPlayingProfilesSettings]
-  );
-  const nowPlayingProfileConfig = useMemo(
-    () =>
-      studioDraft
-        ? fullscreen
-          ? studioDraft.fullscreen
-          : studioDraft.windowed
-        : resolveNowPlayingProfileConfig(nowPlayingProfilesSettings, fullscreen),
-    [fullscreen, nowPlayingProfilesSettings, studioDraft]
-  );
-  const profileConfig = nowPlayingProfileConfig;
-  const showLyrics = lyricsSettings?.showLyricsInFullscreen ?? true;
-  // The toggle only applies in fullscreen; the normal page always shows lyrics.
-  const lyricsVisible = !fullscreen || showLyrics;
+  const lyricsOffProfile = useMemo(() => getLyricsOffNowPlayingProfile(nowPlayingProfilesSettings), [nowPlayingProfilesSettings]);
+  const availableNowPlayingProfiles = useMemo(() => listNowPlayingProfiles(nowPlayingProfilesSettings), [nowPlayingProfilesSettings]);
+  const activeNowPlayingProfile = preview?.profile ?? (panelMode ? lyricsOffProfile : lyricsOnProfile);
+  const profileConfig = activeNowPlayingProfile[panelMode ? "lyricsOff" : fullscreen ? "fullscreen" : "windowed"];
+  // The hidden Braccato renderer keeps its Lyrics On configuration and media clock.
+  const rendererConfig = panelMode ? lyricsOnProfile.fullscreen : profileConfig;
+  const { cover, text } = usePlaybackPresentation(item, fullscreen && profileConfig.artworkVisible);
+  const lyricsVisible = !panelMode;
 
   const lyrics = useLyrics(
     isRemote ? null : track ?? null,
@@ -163,9 +130,9 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
   // renderer's theme-setting parser never treats it as a setting.
   const themeCss = useMemo(() => {
     if (!lyricsSettings) return "";
-    const key = getNowPlayingAnimationCacheKey(profileConfig);
+    const key = getNowPlayingAnimationCacheKey(rendererConfig);
     return `${buildThemeCss(lyricsSettings)}\n/* cadence-anim-key: ${key} */`;
-  }, [lyricsSettings, profileConfig]);
+  }, [lyricsSettings, rendererConfig]);
 
   // Legacy typography settings were authored against a 48px (3rem) main lyric. Their
   // ratios multiply the container-derived fluid base in `lyrics.css`; the active
@@ -185,7 +152,7 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
       10,
       48
     );
-    const cfg = nowPlayingProfileConfig;
+    const cfg = rendererConfig;
     const karaoke = {
       sweep: { swipe: 1, glow: 1, fade: 1 },
       solid: { swipe: 0, glow: 0, fade: 1 },
@@ -197,11 +164,11 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
       "--np-lyrics-font-scale": (fontSizeRem / 3) * cfg.lyricsScale,
       "--np-translation-font-ratio": (translationFontSizePx / 48) * cfg.translationScale,
       "--np-romanization-font-ratio": (romanizationFontSizePx / 48) * cfg.romanizationScale,
-      "--np-profile-artwork-scale": cfg.artworkScale,
-      "--np-profile-title-scale": cfg.titleScale,
-      "--np-profile-metadata-scale": cfg.metadataScale,
-      "--np-profile-controls-scale": cfg.controlsScale,
-      "--np-profile-spacing-scale": cfg.spacingScale,
+      "--np-profile-artwork-scale": profileConfig.artworkScale,
+      "--np-profile-title-scale": profileConfig.titleScale,
+      "--np-profile-metadata-scale": profileConfig.metadataScale,
+      "--np-profile-controls-scale": profileConfig.controlsScale,
+      "--np-profile-spacing-scale": profileConfig.spacingScale,
       "--np-profile-lyrics-max-width": `${cfg.lyricsMaxWidth}px`,
       "--np-lyrics-align": cfg.lyricsAlignment,
       "--np-line-spacing-scale": cfg.lineSpacingScale,
@@ -238,7 +205,8 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
     lyricsSettings?.fontSizeRem,
     lyricsSettings?.translationFontSizePx,
     lyricsSettings?.romanizationFontSizePx,
-    nowPlayingProfileConfig,
+    profileConfig,
+    rendererConfig,
   ]);
 
   const patchLyrics = useCallback(
@@ -268,35 +236,6 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
       });
     },
     [fullscreen, nowPlayingProfilesSettings?.contextSwitching, patchSettings]
-  );
-
-  const openStudio = useCallback(() => {
-    setStudioDraft(
-      cloneNowPlayingProfile(
-        getEffectiveNowPlayingProfile(nowPlayingProfilesSettings, fullscreen)
-      )
-    );
-    setStudioOpen(true);
-  }, [fullscreen, nowPlayingProfilesSettings]);
-
-  const closeStudio = useCallback(() => {
-    setStudioOpen(false);
-    setStudioDraft(null);
-  }, []);
-
-  const saveStudio = useCallback(
-    (payload: StudioSavePayload) => {
-      void patchSettings({
-        nowPlayingProfiles: {
-          customProfiles: payload.customProfiles,
-          activeProfileId: payload.activeProfileId,
-          contextSwitching: payload.contextSwitching,
-        },
-      });
-      setStudioOpen(false);
-      setStudioDraft(null);
-    },
-    [patchSettings]
   );
 
   useEffect(() => {
@@ -331,10 +270,6 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
     }
   }, [lyrics, flash]);
 
-  const toggleLyricsVisible = useCallback(() => {
-    patchLyrics({ showLyricsInFullscreen: !showLyrics });
-  }, [patchLyrics, showLyrics]);
-
   const handleError = useCallback((message: string) => {
     console.error("[Cadence] Lyrics renderer error:", message);
     flash(message);
@@ -342,22 +277,26 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
 
   if (!settings) return <div className="view-loading">Loading…</div>;
 
-  // The title block: in fullscreen it sits under the artwork in the left column; on the normal page it
-  // is the header's heading.
+  const artwork = <PlaybackArtwork cover={cover} label={item?.albumLabel ?? item?.title ?? "Artwork"} size="hero" />;
   const heading = (
-    <div className="lyrics-heading" key={itemIdentity ?? "none"}>
-      <h1>{item?.title ?? "Nothing playing"}</h1>
-      <p>
-        {item
-          ? [item.artistLabel, item.albumLabel].filter(Boolean).join(" · ")
-          : "Pick a song from your library"}
-      </p>
-      {item ? (
-        <div className="lyrics-heading-source">
-          <SourceBadge source={item} />
-        </div>
-      ) : null}
-    </div>
+    <PlaybackText text={text} className="lyrics-heading" shared={fullscreen}>
+      {display => (
+        <>
+          <MarqueeText as="h1" auto title={display?.title}>{display?.title ?? "Nothing playing"}</MarqueeText>
+          <MarqueeText as="p" auto title={display?.artistLabel}>
+            {display ? (
+              fullscreen ? [display.artistLabel, display.albumLabel].filter(Boolean).join(" · ") : display.artistLabel
+            ) : "Pick a song from your library"}
+          </MarqueeText>
+          {!fullscreen && display?.albumLabel ? <MarqueeText as="p" auto className="lyrics-album-label" title={display.albumLabel}>{display.albumLabel}</MarqueeText> : null}
+          {display ? (
+            <div className="lyrics-heading-source">
+              <SourceBadge source={display} />
+            </div>
+          ) : null}
+        </>
+      )}
+    </PlaybackText>
   );
 
   // "Loading", "no lyrics" and "could not load" all replace the lyric lines, so the body centres
@@ -375,9 +314,8 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
     fullscreen && showLyricsSetting && profileConfig.metadataSlot === "artwork" && profileConfig.metadataVisible;
   const showSide =
     fullscreen && showLyricsSetting && (profileConfig.artworkVisible || headingInSide);
-  const headingInHeader =
-    profileConfig.metadataVisible &&
-    (!fullscreen || (showLyricsSetting && profileConfig.metadataSlot === "top"));
+  const headingInHeader = profileConfig.metadataVisible && (!fullscreen || profileConfig.metadataSlot === "top");
+  const panelDetailsVisible = (profileConfig.metadataVisible && !headingInHeader) || profileConfig.controlsVisible;
 
   return (
     <div
@@ -385,6 +323,7 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
       className={[
         "lyrics-view",
         fullscreen ? "is-fullscreen" : "",
+        preview ? "is-preview" : "",
         panelMode ? "is-lyrics-off" : "",
         profileConfig.artworkSlot === "right" ? "artwork-right" : "",
         fullscreen && showLyricsSetting && !showSide ? "has-no-side" : "",
@@ -394,14 +333,16 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
       data-current-source={item?.source.kind ?? "none"}
       data-current-source-key={itemIdentity ?? ""}
       data-now-playing-profile={activeNowPlayingProfile.id}
-      data-profile-mode={fullscreen ? "fullscreen" : "windowed"}
+      data-profile-mode={panelMode ? "lyricsOff" : fullscreen ? "fullscreen" : "windowed"}
+      data-lyrics-mode={panelMode ? "off" : "on"}
       data-profile-artwork={profileConfig.artworkVisible ? "visible" : "hidden"}
+      data-profile-metadata={profileConfig.metadataVisible ? "visible" : "hidden"}
       data-profile-background={profileConfig.backgroundMode}
       data-profile-dock={profileConfig.dockVisible ? "visible" : "hidden"}
       data-profile-controls={profileConfig.controlsVisible ? "visible" : "hidden"}
-      data-profile-blur={profileConfig.inactiveBlurPx > 0 ? "on" : "off"}
-      data-profile-active-color={profileConfig.activeColor ? "custom" : "theme"}
-      data-profile-inactive-color={profileConfig.inactiveColor ? "custom" : "theme"}
+      data-profile-blur={rendererConfig.inactiveBlurPx > 0 ? "on" : "off"}
+      data-profile-active-color={rendererConfig.activeColor ? "custom" : "theme"}
+      data-profile-inactive-color={rendererConfig.inactiveColor ? "custom" : "theme"}
     >
       <NowPlayingBackground
         mode={profileConfig.backgroundMode}
@@ -420,54 +361,39 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
 
       {showSide ? (
         <div className="fs-side">
-          <div className="fs-artwork" ref={fsArtworkRef}>
-            <Artwork src={item?.artworkUrl} alt={item?.albumLabel ?? item?.title ?? "Artwork"} size="hero" />
-          </div>
+          <div className="fs-artwork">{artwork}</div>
           {headingInSide ? heading : null}
         </div>
       ) : null}
 
       <div className="lyrics-header">
         {headingInHeader ? heading : null}
-        <button
-          type="button"
-          className="np-customize-button"
-          onClick={openStudio}
-          aria-label="Customize Now Playing"
-          title="Customize Now Playing"
-          data-testid="customize-now-playing"
-        >
-          <SlidersHorizontal size={16} /> Customize
-        </button>
-        {/* One exit button, top-right, in both fullscreen layouts. */}
-        {fullscreen ? (
-          <button
-            type="button"
-            className="icon-button fs-exit"
-            onClick={onToggleFullscreen}
-            aria-label={panelMode ? "Exit fullscreen" : "Exit fullscreen lyrics"}
-            title={panelMode ? "Exit fullscreen (Esc)" : "Exit fullscreen lyrics (Esc)"}
-          >
-            <Minimize2 size={18} />
-          </button>
+        {fullscreen && !preview ? (
+          <div className="fs-page-actions">
+            <div className="fs-mode-tabs" role="group" aria-label="Lyrics display">
+              <button type="button" data-testid="lyrics-mode-on" aria-pressed={showLyricsSetting} onClick={() => !showLyricsSetting && patchLyrics({ showLyricsInFullscreen: true })}>
+                Lyrics On
+              </button>
+              <button type="button" data-testid="lyrics-mode-off" aria-pressed={!showLyricsSetting} onClick={() => showLyricsSetting && patchLyrics({ showLyricsInFullscreen: false })}>
+                Lyrics Off
+              </button>
+            </div>
+            <button type="button" className="icon-button fs-exit" onClick={onExit} aria-label="Exit Now Playing" title="Exit Now Playing (Esc)">
+              <Minimize2 size={18} />
+            </button>
+          </div>
         ) : null}
-        {panelMode ? <span className="eyebrow fs-eyebrow">Now playing</span> : null}
       </div>
 
-      {panelMode ? (
+      {panelMode && (profileConfig.artworkVisible || panelDetailsVisible) ? (
         <div className="fs-panel-layout">
-          <div className="fs-panel-art" ref={fsPanelArtRef}>
-            <Artwork src={item?.artworkUrl} alt={item?.albumLabel ?? item?.title ?? "Artwork"} size="hero" />
-          </div>
-          <div className="fs-panel">
-            {profileConfig.metadataVisible ? heading : null}
-            <FullscreenControls
-              variant="panel"
-              track={track}
-              showLyrics={showLyrics}
-              onToggleLyrics={toggleLyricsVisible}
-            />
-          </div>
+          {profileConfig.artworkVisible ? <div className="fs-panel-art">{artwork}</div> : null}
+          {panelDetailsVisible ? (
+            <div className="fs-panel">
+              {profileConfig.metadataVisible && !headingInHeader ? heading : null}
+              {profileConfig.controlsVisible ? <FullscreenControls variant="panel" track={track} /> : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -475,6 +401,7 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
         className={`lyrics-body ${lyricsVisible ? "" : "is-hidden"} ${
           statusPanel ? "has-status-panel" : ""
         }`}
+        inert={!lyricsVisible}
       >
         {item && isRemote ? (
           <div className="lyrics-empty-panel" data-testid="remote-playback-unavailable">
@@ -495,8 +422,9 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
             themeCss={themeCss}
             offsetMs={lyricsSettings?.offsetMs ?? 0}
             passiveScroll={lyricsSettings?.passiveScroll ?? true}
-            fontFamily={profileConfig.fontId || settings.appearance.fontFamily}
-            songwriters={lyrics.parsed?.songwriters ?? []}
+            active={lyricsVisible && !statusPanel}
+            fontFamily={rendererConfig.fontId || settings.appearance.fontFamily}
+            songwriters={lyrics.parsed?.songwriters ?? NO_LYRIC_CREDITS}
             language={lyrics.parsed?.language ?? null}
             noLyrics={lyrics.status === "empty"}
             loaderVisible={lyrics.status === "loading" && !lyrics.hasLyrics}
@@ -521,36 +449,17 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
         ) : null}
 
         {item && !isRemote && lyrics.status === "empty" ? (
-          <div className="lyrics-empty-panel" data-testid="lyrics-empty-panel">
-            <div className="lyrics-empty-icon" aria-hidden="true">
-              <Music4 size={20} />
-            </div>
-            <h2>No lyrics found</h2>
-            <p>
-              {lyricsSettings?.autoFetch ? (
-                <>
-                  Cadence checked sidecar <code>.lrc</code>/<code>.ttml</code>/<code>.qrc</code> files, embedded
-                  tags, and enabled online providers (Better Lyrics, Unison, BiniLyrics, LRCLIB).
-                  {lyrics.providerStatus.some(entry => entry.status === "error")
-                    ? ` Some providers reported an issue (${lyrics.providerStatus.find(entry => entry.status === "error")?.detail ?? "request failed"}).`
-                    : ""}
-                </>
-              ) : (
-                <>
-                  Cadence checked sidecar <code>.lrc</code>/<code>.ttml</code>/<code>.qrc</code> files and embedded
-                  tags (online lyrics lookup is turned off).
-                </>
-              )}
-            </p>
+          <div className="lyrics-empty-panel lyrics-unavailable" data-testid="lyrics-empty-panel">
+            <p role="status">Lyrics aren’t available for this track.</p>
             <div className="empty-actions">
-              <button type="button" className="primary" onClick={() => void lyrics.chooseFile()}>
+              <button type="button" onClick={() => void lyrics.chooseFile()}>
                 <Search size={16} /> Choose a lyrics file
               </button>
               <button type="button" onClick={lyrics.reload}>
                 <RefreshCw size={16} /> Try again
               </button>
-              {!lyricsSettings?.autoFetch && onOpenSearch ? (
-                <button type="button" onClick={onOpenSearch}>
+              {!lyricsSettings?.autoFetch && onOpenLyricsSettings ? (
+                <button type="button" onClick={onOpenLyricsSettings}>
                   Enable online lyrics in settings
                 </button>
               ) : null}
@@ -574,62 +483,44 @@ export function LyricsView({ track, item, playing, fullscreen, onToggleFullscree
         ) : null}
       </div>
 
-      {panelMode ? null : (
-      <div ref={footerRef} className="lyrics-footer">
-        {fullscreen ? (
-          <FullscreenControls
-            track={track}
-            showLyrics={showLyrics}
-            onToggleLyrics={toggleLyricsVisible}
-            concealed={!controlsVisible}
-          />
-        ) : null}
+      {!panelMode ? (
+        <div ref={footerRef} className="lyrics-footer">
+          {fullscreen ? (
+            <FullscreenControls track={track} concealed={!controlsVisible} />
+          ) : null}
 
-        {item && track ? (
-          <LyricsDock
-            settings={lyricsSettings ?? fallbackLyricsSettings}
-            onPatch={patchLyrics}
-            nowPlayingProfiles={availableNowPlayingProfiles}
-            activeNowPlayingProfileId={activeNowPlayingProfile.id}
-            onSelectNowPlayingProfile={handleSelectNowPlayingProfile}
-            candidates={lyrics.candidates}
-            activeSource={lyrics.activeSource}
-            onSelectSource={lyrics.selectSource}
-            providerStatus={lyrics.providerStatus}
-            onReload={lyrics.reload}
-            onRegenerateTranslation={lyrics.regenerateTranslation}
-            onRegenerateRomanization={lyrics.regenerateRomanization}
-            onSaveSidecar={(format) => void handleSave(format)}
-            onChooseFile={() => void lyrics.chooseFile()}
-            trackDuration={track.duration ?? 0}
-            searchDraft={lyrics.searchDraft}
-            onDraftChange={lyrics.patchDraft}
-            onClearSearch={lyrics.clearSearch}
-            manualSearchState={lyrics.manualSearchState}
-            youtubeState={lyrics.youtubeState}
-            onManualSearch={input => void lyrics.manualSearch(input)}
-            onResolveYouTube={handleResolveYouTube}
-            onSelectSearchResult={lyrics.selectSearchResult}
-            syncLabel={syncLabel}
-            busy={lyrics.status === "loading" || lyrics.translating || lyrics.romanizing}
-            concealed={!controlsVisible}
-            onPopoverChange={setDockPopoverOpen}
-          />
-        ) : null}
-      </div>
-      )}
-
-      {studioPresence.mounted && studioDraft && nowPlayingProfilesSettings ? (
-        <CustomizationStudio
-          profilesSettings={nowPlayingProfilesSettings}
-          draft={studioDraft}
-          onDraftChange={setStudioDraft}
-          initialMode={fullscreen ? "fullscreen" : "windowed"}
-          onSave={saveStudio}
-          onClose={closeStudio}
-          phaseClass={studioPresence.phaseClass}
-          phase={studioPresence.phase}
-        />
+          {item && track ? (
+            <LyricsDock
+              settings={lyricsSettings ?? fallbackLyricsSettings}
+              onPatch={patchLyrics}
+              nowPlayingProfiles={availableNowPlayingProfiles}
+              activeNowPlayingProfileId={activeNowPlayingProfile.id}
+              onSelectNowPlayingProfile={handleSelectNowPlayingProfile}
+              candidates={lyrics.candidates}
+              activeSource={lyrics.activeSource}
+              onSelectSource={lyrics.selectSource}
+              providerStatus={lyrics.providerStatus}
+              onReload={lyrics.reload}
+              onRegenerateTranslation={lyrics.regenerateTranslation}
+              onRegenerateRomanization={lyrics.regenerateRomanization}
+              onSaveSidecar={(format) => void handleSave(format)}
+              onChooseFile={() => void lyrics.chooseFile()}
+              trackDuration={track.duration ?? 0}
+              searchDraft={lyrics.searchDraft}
+              onDraftChange={lyrics.patchDraft}
+              onClearSearch={lyrics.clearSearch}
+              manualSearchState={lyrics.manualSearchState}
+              youtubeState={lyrics.youtubeState}
+              onManualSearch={input => void lyrics.manualSearch(input)}
+              onResolveYouTube={handleResolveYouTube}
+              onSelectSearchResult={lyrics.selectSearchResult}
+              syncLabel={syncLabel}
+              busy={lyrics.status === "loading" || lyrics.translating || lyrics.romanizing}
+              concealed={!controlsVisible}
+              onPopoverChange={setDockPopoverOpen}
+            />
+          ) : null}
+        </div>
       ) : null}
 
       {toastPresence.mounted && renderedToast ? (

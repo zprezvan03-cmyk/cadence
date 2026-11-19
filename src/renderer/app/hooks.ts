@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { mediaItemFromLocalTrack } from "../../shared/media";
 import type { MediaItem, Track } from "../../shared/types";
 import { useLibrary } from "../state/libraryStore";
@@ -14,12 +15,11 @@ export function useCurrentTrack(): Track | null {
 export function useCurrentMediaItem(): MediaItem | null {
   const entry = usePlayer(currentQueueEntry);
   const tracksById = useLibrary(state => state.tracksById);
-  if (!entry) return null;
-  if (entry.item.source.kind !== "local") return entry.item;
-  const track = tracksById.get(entry.item.source.trackId);
-  return track
-    ? mediaItemFromLocalTrack(track, entry.item.fetchedAt || Date.now())
-    : entry.item;
+  const track = entry?.item.source.kind === "local" ? tracksById.get(entry.item.source.trackId) : undefined;
+  return useMemo(
+    () => track && entry ? mediaItemFromLocalTrack(track, entry.item.fetchedAt || Date.now()) : entry?.item ?? null,
+    [entry, track]
+  );
 }
 
 /** Local tracks in queue order, for callers that genuinely operate on library files. */

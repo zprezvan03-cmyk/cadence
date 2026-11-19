@@ -48,6 +48,8 @@ import {
 // Re-exported so existing consumers can keep importing the state types from the hook.
 export type { ManualSearchState, YouTubeResolveState } from "../../state/lyricsStore";
 
+type LyricsLookupSettings = Pick<LyricsSettings, "autoFetch" | "providerOrder">;
+
 const IDLE_YOUTUBE: YouTubeResolveState = { status: "idle", videoId: null, metadata: null, detail: null };
 const EMPTY_SEARCH: ManualSearchState = { status: "idle", results: [], error: null };
 
@@ -168,7 +170,7 @@ let forceNextResolve = false;
  */
 function applyResolveResult(
   track: Track,
-  settings: LyricsSettings,
+  settings: LyricsLookupSettings,
   result: {
     candidates: LyricsCandidate[];
     providerStatus: ProviderStatusEntry[];
@@ -275,7 +277,7 @@ function applyResolveResult(
  */
 export async function ensureLyricsForTrack(
   track: Track,
-  settings: LyricsSettings,
+  settings: LyricsLookupSettings,
   options?: { reloadTick?: number; force?: boolean }
 ): Promise<void> {
   const force = Boolean(options?.force || forceNextResolve);
@@ -379,9 +381,9 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     [track]
   );
 
-  // Resolve candidates whenever the track or the provider configuration changes. The pipeline
-  // itself lives in `ensureLyricsForTrack` so the app-level Autofetch driver can run it before
-  // (or without) this view mounting; on remount with the same request key it returns at once.
+  // Only provider settings affect lookup. A presentation change (such as Lyrics On/Off)
+  // must not retry a failed request or restart the loading panel.
+  const providerOrderKey = settings.providerOrder.join(",");
   useEffect(() => {
     if (!track) {
       generations.resolve += 1;
@@ -390,7 +392,7 @@ export function useLyrics(track: Track | null, settings: LyricsSettings): UseLyr
     }
     void ensureLyricsForTrack(track, settings, { reloadTick });
     // reloadTick mirrors the module token that survives remounts.
-  }, [track, settings, reloadTick]);
+  }, [track, settings.autoFetch, providerOrderKey, reloadTick]);
 
   // Translation pass (ported Better Lyrics batching lives in the main process).
   useEffect(() => {

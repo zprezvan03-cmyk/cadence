@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { patchBraccato } from "./scripts/patch-braccato.ts";
 
 const host = process.env.TAURI_DEV_HOST || "0.0.0.0";
 
@@ -9,7 +10,7 @@ export default defineConfig({
   // Relative asset URLs so the built renderer works under Tauri custom protocols and HTTP test servers.
   base: "./",
   clearScreen: false,
-  plugins: [react()],
+  plugins: [react(), patchBraccato()],
   server: {
     port: 1420,
     strictPort: true,

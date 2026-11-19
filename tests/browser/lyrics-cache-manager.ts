@@ -548,6 +548,10 @@ const clickText = async (selector: string, wanted: string, exact = true) => {
     )}`
   );
 };
+const openLegacyLyrics = async () => {
+  await page.evaluate(() => { location.hash = "#/lyrics"; });
+  await page.waitForSelector('.lyrics-view:not(.is-fullscreen)', { timeout: 5000 });
+};
 const nav = async (label: string) => {
   await clickText(".sidebar .nav-item", label);
   await wait(280);
@@ -589,7 +593,7 @@ const rawLyricText = () =>
 
 /** Polls until the panel shows `expected`, so a slow resolve is never read as a stale track. */
 const lyricText = async (expected?: string) => {
-  await nav("Now Playing");
+  await openLegacyLyrics();
   const deadline = Date.now() + 15_000;
   let text = await rawLyricText();
   while (expected !== undefined && !text.includes(expected) && Date.now() < deadline) {
@@ -827,7 +831,7 @@ await shot("06-after-delete-one");
 
 /* 8. A manually searched and chosen result is remembered for its track. */
 await playTrackId(ids.flac);
-await nav("Now Playing");
+await openLegacyLyrics();
 await wait(300);
 await page.click('.lyrics-dock button[title="Lyrics source"]');
 await wait(250);
@@ -852,7 +856,7 @@ check(
 
 /* 9. Chosen file: stored, then restored after a restart. */
 await playTrackId(ids.empty);
-await nav("Now Playing");
+await openLegacyLyrics();
 await page.waitForSelector(".lyrics-empty-panel", { timeout: 20_000 });
 const emptyLyrics = await rawLyricText();
 check(
@@ -860,7 +864,7 @@ check(
   !emptyLyrics.trim(),
   `${await currentTrack()} | ${JSON.stringify(emptyLyrics.slice(0, 80))} | ${cacheKeys()}`
 );
-await nav("Now Playing");
+await openLegacyLyrics();
 await wait(300);
 await page.evaluate(
   (text: string) => {
@@ -888,7 +892,7 @@ check(
 const resolveAfterChosen = resolveCount;
 await nav("Songs");
 await nav("Albums");
-await nav("Now Playing");
+await openLegacyLyrics();
 await wait(600);
 const afterNavigation = await page.$$eval(".blyrics--line", nodes => nodes.map(node => node.textContent ?? "").join(" | "));
 check(

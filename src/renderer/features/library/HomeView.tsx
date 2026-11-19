@@ -1,22 +1,23 @@
 /**
- * Home: recent activity, quick access and library shortcuts. Written for Cadence.
+ * Home: featured albums, listening history and discovery shelves. Written for Cadence.
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { Clock3, FolderPlus, Heart, Mic2, Play, Shuffle } from "lucide-react";
+import { ArrowRight, ChevronRight, FolderPlus, Play, Shuffle } from "lucide-react";
 import { trackSourceKey } from "../../../shared/media";
 import type { HistoryPayload } from "../../../shared/types";
 import { useLibrary } from "../../state/libraryStore";
 import { useHistory } from "../../state/historyStore";
 import { usePlayer } from "../../state/playerStore";
 import { useUi } from "../../state/uiStore";
-import { formatTime } from "../../player/queue";
-import { TrackList } from "../../components/TrackList";
 import { AlbumCard } from "../../components/Cards";
 import { Artwork } from "../../components/Artwork";
 import { SourceBadge } from "../../components/SourceBadge";
+import { MarqueeText } from "../../components/MarqueeText";
 import { shuffle } from "../../player/queue";
 import { onRepeatTracks, rediscoverTracks, topLibraryTracks } from "../stats/listeningStats";
+import { HomeShelf, HomeTrackShelf } from "./HomeShelves";
+
 function greeting(): string {
   const hour = new Date().getHours();
   if (hour < 5) return "Still up?";
@@ -68,11 +69,6 @@ export function HomeView() {
     return result;
   }, [historyEntries]);
 
-  const recentlyAdded = useMemo(
-    () => [...(snapshot?.tracks ?? [])].sort((a, b) => b.addedAt - a.addedAt).slice(0, 10),
-    [snapshot?.tracks],
-  );
-
   const albums = useMemo(() => {
     const list = snapshot?.albums ?? [];
     const seen = new Set<string>();
@@ -86,8 +82,6 @@ export function HomeView() {
     // the library snapshot changes or the view is (re)mounted.
     return shuffle(unique).slice(0, 10);
   }, [snapshot?.albums]);
-
-  const favorites = useMemo(() => (snapshot?.tracks ?? []).filter(track => track.favorite), [snapshot?.tracks]);
 
   const topTracks = useMemo(
     () => topLibraryTracks(snapshot?.tracks ?? [], historyEntries, { now, limit: 10 }),
@@ -105,20 +99,17 @@ export function HomeView() {
   );
 
   if (!snapshot) {
-    return <div className="view-loading">Loading your library…</div>;
+    return <div className="view-loading" role="status">Loading your library…</div>;
   }
 
   if (snapshot.tracks.length === 0) {
     return (
       <div className="home-empty" data-testid="home-empty">
-        <div className="home-empty-art">
-          <Artwork src={null} alt="Cadence" size="hero" />
-          <Mic2 className="home-empty-icon" size={56} />
-        </div>
+        <Artwork src={null} alt="" size="lg" className="home-empty-art" />
+        <p className="eyebrow">Your library</p>
         <h1>Bring your music home</h1>
-        <p>
-          Cadence plays the files you already own — FLAC, MP3, AAC/M4A, WAV, Ogg Vorbis and Opus — and pairs
-          them with the Better Lyrics engine and its shader backgrounds. Nothing is uploaded anywhere.
+        <p className="home-empty-copy">
+          Add a folder to listen to the music you already own. Your files stay on this device.
         </p>
         <div className="empty-actions">
           <button type="button" className="primary" onClick={() => void addFolder()} disabled={scanning}>
@@ -132,12 +123,21 @@ export function HomeView() {
     );
   }
 
+  const spotlight = albums.find(album => album.artworkUrl) ?? albums[0];
+  const playSpotlight = () => {
+    if (!spotlight) return;
+    const tracks = snapshot.tracks
+      .filter(track => `${track.albumArtist || track.artist}\u0000${track.album}` === spotlight.id)
+      .sort((a, b) => (a.discNo ?? 0) - (b.discNo ?? 0) || (a.trackNo ?? 0) - (b.trackNo ?? 0));
+    void playQueue(tracks.map(track => track.id), 0);
+  };
+
   return (
     <div className="home-view view" data-testid="home-view">
-      <header className="view-heading">
+      <header className="view-heading has-rule">
         <div>
           <p className="eyebrow">{greeting()}</p>
-          <h1>Listen again</h1>
+          <h1>Listen Now</h1>
         </div>
         <div className="heading-actions">
           <button
@@ -159,104 +159,92 @@ export function HomeView() {
         </div>
       </header>
 
-      <section className="quick-row">
-        <button type="button" className="quick-card" onClick={() => navigate({ name: "library", tab: "favorites" })}>
-          <span className="quick-icon liked">
-            <Heart size={20} fill="currentColor" />
-          </span>
-          <span>
-            <strong>Liked songs</strong>
-            <em>{favorites.length} songs</em>
-          </span>
-        </button>
-        <button type="button" className="quick-card" onClick={() => navigate({ name: "lyrics" })}>
-          <span className="quick-icon lyrics">
-            <Mic2 size={20} />
-          </span>
-          <span>
-            <strong>Now Playing</strong>
-            <em>Better Lyrics + Shaders</em>
-          </span>
-        </button>
-        <button type="button" className="quick-card" onClick={() => navigate({ name: "library", tab: "playlists" })}>
-          <span className="quick-icon playlists">
-            <Clock3 size={20} />
-          </span>
-          <span>
-            <strong>Playlists</strong>
-            <em>{snapshot.playlists.length} playlists</em>
-          </span>
-        </button>
-      </section>
+      <div className="home-lead">
+        {spotlight ? (
+          <section className="home-spotlight" aria-labelledby="featured-album-heading">
+            <div className="shelf-heading"><h2 id="featured-album-heading">Featured album</h2></div>
+            <div className="spotlight-feature">
+              <Artwork src={spotlight.artworkUrl} alt={spotlight.name} />
+              <div className="spotlight-copy">
+                <MarqueeText as="h3" auto title={spotlight.name}>{spotlight.name}</MarqueeText>
+                <MarqueeText as="p" className="spotlight-artist" title={spotlight.albumArtist}>{spotlight.albumArtist}</MarqueeText>
+                <p className="muted">{spotlight.year ? `${spotlight.year} · ` : ""}{spotlight.trackCount} {spotlight.trackCount === 1 ? "song" : "songs"}</p>
+                <div className="heading-actions">
+                  <button type="button" className="primary" onClick={playSpotlight}>
+                    <Play size={15} fill="currentColor" /> Play album
+                  </button>
+                  <button type="button" onClick={() => navigate({ name: "album", albumId: spotlight.id })}>
+                    View album <ArrowRight size={14} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+        ) : null}
+        {recentlyPlayed.length > 0 ? (
+          <section className="home-recents" data-testid="home-recently-played">
+            <div className="shelf-heading">
+              <h2>Recently played</h2>
+              <button type="button" className="link" onClick={() => navigate({ name: "history" })}>History <ChevronRight size={14} /></button>
+            </div>
+            <div className="home-recent-list">
+              {recentlyPlayed.map(track => (
+                <button
+                  type="button"
+                  key={trackSourceKey(track.source)}
+                  className="quick-track"
+                  data-testid="recently-played-item"
+                  data-source-kind={track.source.kind}
+                  onClick={() => {
+                    if (track.source.kind === "local") {
+                      void playTrack(track.source.trackId);
+                      return;
+                    }
+                    void showToast("Remote playback is not available in this build.");
+                  }}
+                >
+                  <Artwork src={track.artworkUrl ?? null} alt={track.album || track.title} size="xs" />
+                  <span>
+                    <MarqueeText as="strong">{track.title}</MarqueeText>
+                    <MarqueeText as="em">{track.artist}</MarqueeText>
+                  </span>
+                  <SourceBadge source={track.source} compact />
+                  <Play size={15} className="recent-play" aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null}
+      </div>
 
-      {recentlyPlayed.length > 0 ? (
-        <section className="shelf" data-testid="home-recently-played">
-          <div className="shelf-heading">
-            <h2>Recently played</h2>
-            <button type="button" className="link" onClick={() => navigate({ name: "history" })}>Show all</button>
-          </div>
-          <div className="quick-grid">
-            {recentlyPlayed.map(track => (
-              <button
-                type="button"
-                key={trackSourceKey(track.source)}
-                className="quick-track"
-                data-testid="recently-played-item"
-                data-source-kind={track.source.kind}
-                onClick={() => {
-                  if (track.source.kind === "local") {
-                    void playTrack(track.source.trackId);
-                    return;
-                  }
-                  void showToast("Remote playback is not available in this build.");
-                }}
-              >
-                <Artwork src={track.artworkUrl ?? null} alt={track.album || track.title} size="xs" />
-                <span>
-                  <strong>{track.title}</strong>
-                  <em>{track.artist}</em>
-                </span>
-                <SourceBadge source={track.source} />
-              </button>
-            ))}
-          </div>
-        </section>
+      {albums.length > 0 ? (
+        <HomeShelf
+          className="home-albums"
+          testId="home-albums"
+          title="Explore your albums"
+          aside={<button type="button" className="link" onClick={() => navigate({ name: "library", tab: "albums" })}>All albums <ChevronRight size={15} /></button>}
+        >
+          {albums.map(album => <AlbumCard key={album.id} album={album} />)}
+        </HomeShelf>
       ) : null}
 
       {topTracks.length > 0 ? (
-        <section className="shelf" data-testid="home-top-tracks">
-          <div className="shelf-heading">
-            <h2>Your top tracks</h2>
-            <button type="button" className="link" onClick={() => navigate({ name: "stats" })}>See stats</button>
-          </div>
-          <TrackList tracks={topTracks.map(item => item.track)} compact testId="top-tracks" />
-        </section>
+        <HomeTrackShelf
+          title="Your top tracks"
+          testId="home-top-tracks"
+          items={topTracks}
+          rankedQueue
+          aside={<button type="button" className="link" onClick={() => navigate({ name: "stats" })}>See stats</button>}
+        />
       ) : null}
 
       {onRepeat.length > 0 ? (
-        <section className="shelf" data-testid="home-on-repeat">
-          <div className="shelf-heading">
-            <h2>On repeat</h2>
-            <span className="muted">What you have been looping lately</span>
-          </div>
-          <div className="quick-grid">
-            {onRepeat.map(item => (
-              <button
-                type="button"
-                key={item.track.id}
-                className="quick-track"
-                data-testid="on-repeat-item"
-                onClick={() => void playTrack(item.track.id)}
-              >
-                <Artwork src={item.track.artworkUrl ?? null} alt={item.track.album || item.track.title} size="xs" />
-                <span>
-                  <strong>{item.track.title}</strong>
-                  <em>{item.track.artist} · {item.recentPlayCount} plays in 14 days</em>
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
+        <HomeTrackShelf
+          title="On repeat"
+          testId="home-on-repeat"
+          items={onRepeat}
+          aside={<span className="muted">Past 14 days</span>}
+        />
       ) : null}
 
       {rediscover.length > 0 ? (
@@ -276,36 +264,14 @@ export function HomeView() {
               >
                 <Artwork src={item.track.artworkUrl ?? null} alt={item.track.album || item.track.title} size="xs" />
                 <span>
-                  <strong>{item.track.title}</strong>
-                  <em>{item.track.artist} · {formatLastPlayed(item.lastPlayedAt)}</em>
+                  <MarqueeText as="strong">{item.track.title}</MarqueeText>
+                  <MarqueeText as="em">{item.track.artist} · {formatLastPlayed(item.lastPlayedAt)}</MarqueeText>
                 </span>
               </button>
             ))}
           </div>
         </section>
       ) : null}
-
-      {albums.length > 0 ? (
-        <section className="shelf">
-          <div className="shelf-heading">
-            <h2>Random albums</h2>
-            <button type="button" className="link" onClick={() => navigate({ name: "library", tab: "albums" })}>Show all</button>
-          </div>
-          <div className="card-grid">
-            {albums.map(album => (
-              <AlbumCard key={album.id} album={album} />
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      <section className="shelf">
-        <div className="shelf-heading">
-          <h2>Recently added</h2>
-          <span className="muted">{formatTime(snapshot.counts.duration)} of music</span>
-        </div>
-        <TrackList tracks={recentlyAdded} compact testId="recently-added" />
-      </section>
     </div>
   );
 }

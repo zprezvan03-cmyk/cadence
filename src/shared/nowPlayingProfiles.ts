@@ -3,7 +3,7 @@
  *
  * Built-ins intentionally live here rather than in the settings file: Cadence can refine
  * them between releases, while user-authored copies remain stable. Settings therefore
- * stores only the active id and custom profiles. Written for Cadence.
+ * stores only the selected ids and custom profiles. Written for Cadence.
  */
 
 import type {
@@ -86,6 +86,7 @@ function builtInProfile(
     builtIn: true,
     windowed: profileConfig(windowed),
     fullscreen: profileConfig(fullscreen),
+    lyricsOff: profileConfig(fullscreen),
   };
 }
 
@@ -242,6 +243,7 @@ export function createDefaultNowPlayingProfilesSettings(): NowPlayingProfilesSet
   return {
     version: NOW_PLAYING_PROFILES_VERSION,
     activeProfileId: DEFAULT_NOW_PLAYING_PROFILE_ID,
+    lyricsOffProfileId: DEFAULT_NOW_PLAYING_PROFILE_ID,
     customProfiles: [],
     contextSwitching: {
       enabled: false,
@@ -361,17 +363,16 @@ export function normalizeNowPlayingProfileConfig(
       LYRICS_ALIGNMENTS,
       fallback.lyricsAlignment
     ),
-    fontId: cleanFontId(source.fontId),
-    translationFontId: cleanFontId(source.translationFontId),
-    romanizationFontId: cleanFontId(source.romanizationFontId),
+    fontId: source.fontId === undefined ? fallback.fontId : cleanFontId(source.fontId),
+    translationFontId: source.translationFontId === undefined ? fallback.translationFontId : cleanFontId(source.translationFontId),
+    romanizationFontId: source.romanizationFontId === undefined ? fallback.romanizationFontId : cleanFontId(source.romanizationFontId),
     lyricsWeight:
-      Number(source.lyricsWeight) === 0 || source.lyricsWeight === undefined
-        ? fallback.lyricsWeight
-        : Math.round(clampNumber(source.lyricsWeight, fallback.lyricsWeight, 300, 900) / 10) * 10,
+      source.lyricsWeight === undefined ? fallback.lyricsWeight : Number(source.lyricsWeight) === 0
+        ? 0 : Math.round(clampNumber(source.lyricsWeight, fallback.lyricsWeight, 300, 900) / 10) * 10,
     lineSpacingScale: clampNumber(source.lineSpacingScale, fallback.lineSpacingScale, 0.85, 1.4),
     letterSpacingEm: clampNumber(source.letterSpacingEm, fallback.letterSpacingEm, -0.02, 0.08),
-    activeColor: cleanColor(source.activeColor),
-    inactiveColor: cleanColor(source.inactiveColor),
+    activeColor: source.activeColor === undefined ? fallback.activeColor : cleanColor(source.activeColor),
+    inactiveColor: source.inactiveColor === undefined ? fallback.inactiveColor : cleanColor(source.inactiveColor),
     inactiveOpacityScale: clampNumber(
       source.inactiveOpacityScale,
       fallback.inactiveOpacityScale,
@@ -403,13 +404,17 @@ export function normalizeNowPlayingProfile(
   if (!isRecord(input)) return null;
   const id = cleanProfileId(input.id);
   if (!id) return null;
+  const fullscreen = normalizeNowPlayingProfileConfig(input.fullscreen);
   return {
     id,
     name: cleanText(input.name, "Custom profile", 60),
     description: cleanText(input.description, "", 140),
     builtIn,
     windowed: normalizeNowPlayingProfileConfig(input.windowed),
-    fullscreen: normalizeNowPlayingProfileConfig(input.fullscreen),
+    fullscreen,
+    // Version-one files used the fullscreen values in both layouts. Seed an independent
+    // copy on load/import; subsequent edits to either mode cannot change the other.
+    lyricsOff: isRecord(input.lyricsOff) ? normalizeNowPlayingProfileConfig(input.lyricsOff, fullscreen) : { ...fullscreen },
   };
 }
 
@@ -444,15 +449,23 @@ export function normalizeNowPlayingProfilesSettings(
     return id && usedIds.has(id) ? id : activeProfileId;
   };
 
+  const contextSwitching = {
+    enabled: cleanBoolean(rawContext.enabled, false),
+    windowedProfileId: contextId(rawContext.windowedProfileId),
+    fullscreenProfileId: contextId(rawContext.fullscreenProfileId),
+  };
+  const offId = cleanProfileId(input.lyricsOffProfileId);
+  const previousFullscreenId = contextSwitching.enabled ? contextSwitching.fullscreenProfileId : activeProfileId;
   return {
     version: NOW_PLAYING_PROFILES_VERSION,
     activeProfileId,
+    // Retain the previous effective appearance for older saves; an invalid explicitly
+    // chosen id (e.g. after deleting a profile) falls back to Balanced, not Lyrics On.
+    lyricsOffProfileId: input.lyricsOffProfileId === undefined
+      ? previousFullscreenId
+      : offId && usedIds.has(offId) ? offId : DEFAULT_NOW_PLAYING_PROFILE_ID,
     customProfiles,
-    contextSwitching: {
-      enabled: cleanBoolean(rawContext.enabled, false),
-      windowedProfileId: contextId(rawContext.windowedProfileId),
-      fullscreenProfileId: contextId(rawContext.fullscreenProfileId),
-    },
+    contextSwitching,
   };
 }
 
@@ -499,6 +512,10 @@ export function getEffectiveNowPlayingProfile(
     );
   }
   return getActiveNowPlayingProfile(settings);
+}
+
+export function getLyricsOffNowPlayingProfile(settings?: NowPlayingProfilesSettings | null): NowPlayingProfile {
+  return getNowPlayingProfile(settings, settings?.lyricsOffProfileId ?? getEffectiveNowPlayingProfile(settings, true).id);
 }
 
 export function resolveNowPlayingProfileConfig(

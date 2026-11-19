@@ -189,7 +189,8 @@ export function useBootstrap(): void {
     )?.onMenuAction?.(action => {
       if (action === "add-folder") void useLibrary.getState().addFolder();
       if (action === "rescan") void useLibrary.getState().rescan();
-      if (action === "toggle-fullscreen-lyrics") useUi.getState().toggleFullscreenLyrics();
+      if (document.querySelector("dialog[open]")) return;
+      if (action === "toggle-fullscreen-lyrics") void useUi.getState().toggleNativeNowPlaying();
       if (action === "toggle-mini-player") useUi.getState().toggleMiniPlayer();
     });
 
@@ -335,7 +336,11 @@ export function useBootstrap(): void {
     updateMediaSession();
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (isTypingTarget(event.target)) return;
+      const target = event.target;
+      if (event.defaultPrevented || (target instanceof Element && target.closest("dialog[open]"))) return;
+      // A focused seek/volume slider should still let Escape leave the presentation.
+      const dismissFromSlider = event.key === "Escape" && target instanceof HTMLInputElement && target.type === "range";
+      if (isTypingTarget(target) && !dismissFromSlider) return;
       // Space is the native activation key for focused buttons. Let the control handle it instead
       // of turning every keyboard activation into a global play/pause shortcut.
       if (event.key === " " && event.target instanceof HTMLElement && event.target.closest("button, [role='button']")) return;
@@ -408,15 +413,7 @@ export function useBootstrap(): void {
       }
       if (event.key === "F11") {
         event.preventDefault();
-        ui.toggleFullscreenLyrics();
-        void (async () => {
-          try {
-            const full = await window.cadence?.app?.isFullScreen?.();
-            await window.cadence?.app?.window?.(full ? "exitFullscreen" : "fullscreen");
-          } catch {
-            /* browser harness has no native window */
-          }
-        })();
+        if (!event.repeat) void ui.toggleNativeNowPlaying();
         return;
       }
 
@@ -451,7 +448,7 @@ export function useBootstrap(): void {
           break;
         case "l":
         case "L":
-          ui.navigate({ name: "lyrics" });
+          ui.openNowPlaying();
           break;
         case "q":
         case "Q":
@@ -461,7 +458,7 @@ export function useBootstrap(): void {
         case "N":
         case "f":
         case "F":
-          ui.toggleFullscreenLyrics();
+          if (!event.repeat) ui.toggleNowPlaying();
           break;
         case "s":
         case "S":
@@ -493,18 +490,9 @@ export function useBootstrap(): void {
             ui.setMiniPlayer(false);
             return;
           }
-          if (ui.fullscreenLyrics) {
-            ui.setFullscreenLyrics(false);
-            void (async () => {
-              try {
-                if (await window.cadence?.app?.isFullScreen?.()) {
-                  await window.cadence?.app?.window?.("exitFullscreen");
-                }
-              } catch {
-                /* ignore */
-              }
-            })();
-          }
+          if (ui.nowPlayingOpen) event.preventDefault();
+          // Also cancel a pending native entry before the renderer has mounted Now Playing.
+          ui.closeNowPlaying();
           break;
         default:
           break;

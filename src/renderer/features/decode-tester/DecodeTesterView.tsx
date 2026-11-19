@@ -22,6 +22,7 @@ import type { DecodeProblem, Track } from "../../../shared/types";
 import { DECODE_PROBLEM_KIND_LABELS } from "../../audio/decodeProbe";
 import { bridge } from "../../state/bridge";
 import { useDecodeTester, visibleDecodeProblems } from "../../state/decodeTesterStore";
+import { MarqueeText } from "../../components/MarqueeText";
 import { useLibrary } from "../../state/libraryStore";
 import { useLastNonNull, usePresence } from "../../app/usePresence";
 
@@ -62,16 +63,16 @@ function ProblemRow({
       />
       <div className="decode-row-main">
         <div className="decode-row-title">
-          <strong title={problem.fileName}>{problem.fileName}</strong>
+          <MarqueeText as="strong" title={problem.fileName}>{problem.fileName}</MarqueeText>
           <span className={`badge decode-kind decode-kind-${problem.kind}`}>
             {DECODE_PROBLEM_KIND_LABELS[problem.kind]}
           </span>
           {kept ? <span className="badge decode-kept-badge">Kept</span> : null}
           {problem.codec ? <span className="decode-row-codec">{problem.codec}</span> : null}
         </div>
-        <span className="decode-row-path" title={problem.path}>
+        <MarqueeText className="decode-row-path" title={problem.path}>
           {problem.path}
-        </span>
+        </MarqueeText>
         <span className="decode-row-message">{problem.message}</span>
         {deleteError ? (
           <span className="decode-row-delete-error">Could not delete this file: {deleteError}</span>
@@ -168,8 +169,8 @@ function ConfirmDeleteDialog({
         <ul className="decode-confirm-list" data-testid="decode-confirm-list">
           {renderedPaths.map(path => (
             <li key={path}>
-              <strong>{byPath.get(path)?.fileName ?? path}</strong>
-              <span title={path}>{path}</span>
+              <MarqueeText as="strong">{byPath.get(path)?.fileName ?? path}</MarqueeText>
+              <MarqueeText title={path}>{path}</MarqueeText>
             </li>
           ))}
         </ul>
@@ -285,9 +286,8 @@ export function DecodeTesterView() {
           <p className="eyebrow">Library tools</p>
           <h1>Decode Tester</h1>
           <p className="muted decode-intro">
-            Every file in your library is really decoded — beginning, middle and end — with the same
-            decoder Cadence plays with, so corrupt, truncated and unsupported files are found by trying
-            to play their audio, not by reading their tags. Scanning never modifies your files.
+            Check your library for corrupt, truncated or unsupported audio. Cadence uses its playback
+            decoder to test each file without changing it.
           </p>
         </div>
         <div className="heading-actions">
@@ -310,8 +310,8 @@ export function DecodeTesterView() {
       </header>
 
       <div className="decode-status" data-testid="decode-status" role="status">
-        <Stethoscope size={17} />
-        <span>{statusLine}</span>
+        <span className="decode-status-icon"><Stethoscope size={19} aria-hidden="true" /></span>
+        <div><p className="eyebrow">Scan status</p><strong>{statusLine}</strong></div>
         {problems.length > 0 ? (
           <span className="decode-status-count" data-testid="decode-summary">
             {problems.length} problematic file{problems.length === 1 ? "" : "s"}

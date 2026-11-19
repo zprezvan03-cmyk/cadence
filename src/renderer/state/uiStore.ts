@@ -1,6 +1,8 @@
 import { create } from "zustand";
 
-export type LibraryTab = "songs" | "albums" | "artists" | "playlists" | "favorites";
+export type LibraryTab = "recently-added" | "songs" | "albums" | "artists" | "playlists" | "favorites";
+
+export type SettingsSection = "appearance" | "lyrics" | "library" | "playback" | "cache" | "about";
 
 export type Route =
   | { name: "home" }
@@ -17,8 +19,9 @@ export type Route =
 
 interface UiState {
   route: Route;
+  settingsSection: SettingsSection;
   queueOpen: boolean;
-  fullscreenLyrics: boolean;
+  nowPlayingOpen: boolean;
   searchFocused: boolean;
   playlistPicker: { trackIds: number[] } | null;
   playlistCreateRequested: boolean;
@@ -27,11 +30,14 @@ interface UiState {
   shortcutsHelpOpen: boolean;
   toast: string | null;
   navigate: (route: Route) => void;
+  setSettingsSection: (section: SettingsSection) => void;
   goBack: () => void;
   goForward: () => void;
   toggleQueue: (open?: boolean) => void;
-  toggleFullscreenLyrics: () => void;
-  setFullscreenLyrics: (value: boolean) => void;
+  openNowPlaying: () => void;
+  closeNowPlaying: () => void;
+  toggleNowPlaying: () => void;
+  toggleNativeNowPlaying: () => Promise<void>;
   setSearchFocused: (value: boolean) => void;
   openPlaylistPicker: (trackIds: number[]) => void;
   closePlaylistPicker: () => void;
@@ -81,7 +87,7 @@ export function hashToRoute(hash: string): Route {
   const value = rest.join("/");
   switch (segment) {
     case "library": {
-      const tab = (["songs", "albums", "artists", "playlists", "favorites"] as LibraryTab[]).includes(
+      const tab = (["recently-added", "songs", "albums", "artists", "playlists", "favorites"] as LibraryTab[]).includes(
         value as LibraryTab
       )
         ? (value as LibraryTab)
@@ -111,10 +117,16 @@ export function hashToRoute(hash: string): Route {
   }
 }
 
+// Serialize native fullscreen requests so an Escape during F11 entry cannot leave the
+// window fullscreen after the browsing UI is back. Visual Now Playing does not need IPC.
+let nativeFullscreenPending = false;
+let nativeEntryCancelled = false;
+
 export const useUi = create<UiState>()((set, get) => ({
   route: typeof location !== "undefined" ? hashToRoute(location.hash) : { name: "home" },
+  settingsSection: "appearance",
   queueOpen: false,
-  fullscreenLyrics: false,
+  nowPlayingOpen: false,
   searchFocused: false,
   playlistPicker: null,
   playlistCreateRequested: false,
@@ -125,23 +137,60 @@ export const useUi = create<UiState>()((set, get) => ({
   navigate: route => {
     const hash = routeToHash(route);
     if (location.hash !== hash) location.hash = hash;
+    get().closeNowPlaying();
     set({ route, searchFocused: false });
   },
+  setSettingsSection: settingsSection => set({ settingsSection }),
   goBack: () => history.back(),
   goForward: () => history.forward(),
   toggleQueue: open => set(state => ({ queueOpen: open ?? !state.queueOpen })),
-  // The single fullscreen entry point: fullscreen lives on the Now Playing (lyrics) route, so it
-  // navigates there first when entered from another page.
-  toggleFullscreenLyrics: () => {
-    const state = get();
-    if (state.fullscreenLyrics) {
-      set({ fullscreenLyrics: false });
+  // Now Playing is a presentation of the live player, not a browsing destination.
+  openNowPlaying: () => set({ nowPlayingOpen: true, miniPlayer: false, searchFocused: false }),
+  closeNowPlaying: () => {
+    const wasOpen = get().nowPlayingOpen;
+    if (wasOpen) set({ nowPlayingOpen: false });
+    if (nativeFullscreenPending) {
+      nativeEntryCancelled = true;
       return;
     }
-    if (state.route.name !== "lyrics") state.navigate({ name: "lyrics" });
-    set({ fullscreenLyrics: true });
+    const app = window.cadence?.app;
+    if (!wasOpen || !app?.isFullScreen) return;
+    nativeFullscreenPending = true;
+    void app.isFullScreen()
+      .then(full => full ? app.window("exitFullscreen") : undefined)
+      .catch(() => undefined)
+      .finally(() => { nativeFullscreenPending = false; });
   },
-  setFullscreenLyrics: value => set({ fullscreenLyrics: value }),
+  toggleNowPlaying: () => {
+    const ui = get();
+    if (ui.nowPlayingOpen && !ui.miniPlayer) ui.closeNowPlaying();
+    else ui.openNowPlaying();
+  },
+  toggleNativeNowPlaying: async () => {
+    if (nativeFullscreenPending) return;
+    const app = window.cadence?.app;
+    if (!app?.isFullScreen || !app.window) {
+      get().toggleNowPlaying();
+      return;
+    }
+    nativeFullscreenPending = true;
+    nativeEntryCancelled = false;
+    try {
+      if (await app.isFullScreen()) {
+        set({ nowPlayingOpen: false });
+        await app.window("exitFullscreen");
+      } else if (!nativeEntryCancelled) {
+        get().openNowPlaying();
+        await app.window("fullscreen");
+        // Escape or navigation during the native enter may have dismissed the surface.
+        if (nativeEntryCancelled || !get().nowPlayingOpen || get().miniPlayer) await app.window("exitFullscreen");
+      }
+    } catch {
+      // The renderer still provides Now Playing if the native window action fails.
+    } finally {
+      nativeFullscreenPending = false;
+    }
+  },
   setSearchFocused: value => set({ searchFocused: value }),
   openPlaylistPicker: trackIds => set({ playlistPicker: { trackIds } }),
   closePlaylistPicker: () => set({ playlistPicker: null }),
@@ -162,7 +211,12 @@ export const useUi = create<UiState>()((set, get) => ({
       if (get().toast === message) set({ toast: null });
     }, 2600);
   },
-  syncFromHash: () => set({ route: hashToRoute(location.hash) }),
+  syncFromHash: () => {
+    const route = hashToRoute(location.hash);
+    if (routeToHash(route) === routeToHash(get().route)) return;
+    get().closeNowPlaying();
+    set({ route, searchFocused: false });
+  },
 }));
 
 if (typeof window !== "undefined") {

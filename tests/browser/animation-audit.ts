@@ -23,11 +23,14 @@ import { PNG } from "pngjs";
 import { LibraryStore } from "../../src/main/library/store";
 import { scanLibrary } from "../../src/main/library/scanner";
 import { SettingsStore } from "../../src/main/settings";
+import { auditArtworkResilience, auditMiniHandoff, auditHiddenArtwork, auditLyricFollow, auditQueueRows } from "./playback-motion";
 
 const root = resolve(import.meta.dirname, "../..");
-const outDir = join(root, "dist");
+const profileRun = process.env.CADENCE_MOTION_RUN;
+if (profileRun && !/^[a-z0-9-]+$/i.test(profileRun)) throw new Error("Use a simple profile label, e.g. before or after.");
+const outDir = profileRun && process.env.CADENCE_PROFILE_DIST ? resolve(process.env.CADENCE_PROFILE_DIST) : join(root, "dist");
 const fixtures = join(root, ".artifacts/fixtures/formats");
-const shotDir = join(root, ".artifacts/animation-audit");
+const shotDir = profileRun ? join(root, ".artifacts/motion-quality", profileRun) : join(root, ".artifacts/animation-audit");
 mkdirSync(shotDir, { recursive: true });
 
 if (!existsSync(join(outDir, "index.html"))) throw new Error("Run: npm run build:web");
@@ -58,12 +61,45 @@ const store = new LibraryStore(join(stateDir, "library.db"), artworkDir, path =>
 const scan = await scanLibrary(store, { folders: [musicDir] });
 if (scan.errors.length) console.log("scan errors:", scan.errors);
 
+// Distinct, deterministic covers and metadata for the first few occurrences. The rest of the
+// fixture still exercises many tracks sharing *one* immutable artwork URL.
+const special = [
+  ["Aurora", "Aerials", "amber"],
+  ["Blue Hour", "Blue Lines", "blue"],
+  ["Canopy", "Cloud Study", "slow"],
+  ["Dusk", "Daymark", "broken"],
+  ["Evening", "Echolands", "blue"],
+] as const;
+for (const [name, palette] of [
+  ["amber", [212, 94, 46]], ["blue", [40, 106, 224]], ["slow", [38, 172, 113]],
+] as const) {
+  const image = { width: 256, height: 256, data: Buffer.alloc(256 * 256 * 4) };
+  for (let y = 0; y < image.height; y++) {
+    for (let x = 0; x < image.width; x++) {
+      const radius = Math.hypot(x - 101, y - 98);
+      const ripple = 0.11 * Math.sin(radius / 6) + (radius < 71 ? 0.27 : -0.18);
+      const light = 0.72 + ripple + 0.28 * (1 - y / 255);
+      const at = (y * image.width + x) * 4;
+      for (let c = 0; c < 3; c++) image.data[at + c] = Math.min(255, palette[c] * light);
+      image.data[at + 3] = 255;
+    }
+  }
+  writeFileSync(join(artworkDir, `${name}.png`), PNG.sync.write(image));
+}
+writeFileSync(join(artworkDir, "broken.png"), "not a decodable image");
+
 const snapshot = () => {
-  const tracks = store.getTracks().map(track => ({
-    ...store.toTrack(track),
-    streamUrl: `/audio/${track.id}`,
-    artworkUrl: track.artworkFile ? `/artwork/${encodeURIComponent(track.artworkFile)}` : null,
-  }));
+  const tracks = store.getTracks().map(track => {
+    const number = Number(/Alpha Song (\d+)/.exec(basename(track.path))?.[1]);
+    const sample = special[number - 1];
+    return {
+      ...store.toTrack(track),
+      streamUrl: `/audio/${track.id}`,
+      title: sample ? `Fixture ${number} · ${sample[0]}` : track.title,
+      artist: sample?.[1] ?? track.artist,
+      artworkUrl: sample ? `/artwork/${sample[2]}.png` : track.artworkFile ? `/artwork/${encodeURIComponent(track.artworkFile)}` : null,
+    };
+  });
   return {
     tracks,
     albums: store.getAlbums(),
@@ -76,9 +112,14 @@ const snapshot = () => {
 };
 
 const settings = new SettingsStore(join(stateDir, "settings.json"));
-const tracks = snapshot().tracks;
-const firstId = tracks.find(track => track.title === "Alpha Song 01")?.id ?? tracks[0].id;
-const secondId = tracks[1]?.id ?? firstId;
+// The artwork wash is deterministic under software rendering. test:now-playing separately
+// verifies the production shader and canvas modes.
+settings.patch({
+  shaders: { enabled: false },
+  playback: { autoPlay: false, crossfadeSeconds: 0 },
+  ...(profileRun ? { nowPlayingProfiles: { activeProfileId: "lyrics-focus" }, artistImages: { enabled: false } } : {}),
+});
+const firstId = store.getTrackByPath(join(musicDir, "Alpha Song 01.flac"))!.id;
 
 /* ------------------------------------------------------------------ server */
 
@@ -124,7 +165,8 @@ const server = createServer(async (req, res) => {
           {
             source: "local-lrc",
             provider: "Local LRC",
-            text: "[00:00.30]First line of the alpha song\n[00:01.60]Second line arrives later\n[00:03.20]Third line keeps the pace\n[00:04.60]Fourth line carries the motion",
+            // Wrapped lines make the follow jump measurable even on a full-window scrollport.
+            text: "[00:00.30]First line of the alpha song, where the city meets the ocean and the lights spill out across the water\n[00:01.60]Second line arrives later, while the sun goes down across the rooftops and the shadows fill the streets\n[00:03.20]Third line keeps the pace\n[00:04.60]Fourth line carries the motion",
             syncHint: "synced",
             language: "en",
             songwriters: ["Harness Artist"],
@@ -173,7 +215,7 @@ const server = createServer(async (req, res) => {
       res.writeHead(404).end();
       return;
     }
-    res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream", "cache-control": "no-store" });
+    res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream", "cache-control": "public, max-age=31536000, immutable" });
     createReadStream(file).pipe(res);
     return;
   }
@@ -209,7 +251,7 @@ const logs: string[] = [];
 page.on("console", message => logs.push(`[${message.type()}] ${message.text()}`));
 page.on("pageerror", (error: unknown) => logs.push(`[pageerror] ${String(error)}`));
 
-await page.evaluateOnNewDocument((ids: { first: number; second: number }) => {
+await page.evaluateOnNewDocument((startId: number) => {
   const call = async (path: string, body?: unknown) => {
     const response = await fetch(
       path,
@@ -284,14 +326,15 @@ await page.evaluateOnNewDocument((ids: { first: number; second: number }) => {
       windowChrome: async () => ({ ...chromeInfo }),
       onWindowChromeChange: () => () => {},
     },
+    history: { list: async () => [], add: async () => undefined },
     player: {
-      prepareAlacSource: async () => `/audio/${ids.first}`,
+      prepareAlacSource: async () => `/audio/${startId}`,
       reportState: async () => undefined,
       onCommand: () => () => {},
     },
     decodeTester: { deleteFiles: async () => [], exportFileList: async () => ({ canceled: true }) },
   };
-}, { first: firstId, second: secondId });
+}, firstId);
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -358,7 +401,7 @@ const freezeAt = (at = 110) =>
     }
     return {
       count: held.length,
-      names: held.map(animation => (animation as CSSAnimation).animationName ?? (animation as CSSTransition).transitionProperty ?? "?"),
+      names: held.map(animation => (animation as CSSAnimation).animationName ?? (animation as CSSTransition).transitionProperty ?? animation.id),
     };
   }, at);
 
@@ -396,6 +439,21 @@ const waitForApp = async () => {
 
 /* -------------------------------------------------------------------- boot */
 
+if (profileRun) {
+  try {
+    await page.goto(base, { waitUntil: "networkidle2" });
+    const { profileMotion } = await import("./motion-profile");
+    await profileMotion(page, shotDir);
+    const errors = logs.filter(line => line.startsWith("[pageerror]"));
+    console.log("renderer errors", errors);
+    if (errors.length) process.exitCode = 1;
+  } finally {
+    await browser.close();
+    server.close();
+  }
+  process.exit(process.exitCode ?? 0);
+}
+
 await page.goto(base, { waitUntil: "networkidle2" });
 await waitForApp();
 await shot("00-boot");
@@ -423,6 +481,7 @@ const motionTokens = await page.evaluate(() => {
     dur2: timeToMs(token("--dur-2")),
     dur3: timeToMs(token("--dur-3")),
     dur4: timeToMs(token("--dur-4")),
+    scene: timeToMs(token("--dur-scene")),
     stagger: timeToMs(token("--stagger-step")),
     easeOut: token("--ease-out"),
     easeIn: token("--ease-in"),
@@ -437,7 +496,7 @@ check(
     motionTokens.dur1 === 120 &&
     motionTokens.dur2 === 180 &&
     motionTokens.dur3 === 240 &&
-    motionTokens.dur4 === 320 &&
+    motionTokens.dur4 === 320 && motionTokens.scene === 300 &&
     motionTokens.stagger === 24,
   JSON.stringify(motionTokens)
 );
@@ -475,7 +534,7 @@ const pillProbe = await page.evaluate(async () => {
   };
   const start = performance.now();
   buttons.find(button => button.title === "Albums")!.click();
-  let immediate: { name: string; duration: number | string | null; target: string }[] = [];
+  let immediate: { name: string; duration: number | string | null; target: string; translates: boolean }[] = [];
   await new Promise<void>(done => {
     const tick = () => {
       if (!immediate.length) {
@@ -483,6 +542,7 @@ const pillProbe = await page.evaluate(async () => {
           name: (animation as CSSAnimation).animationName ?? (animation as CSSTransition).transitionProperty ?? "?",
           duration: (animation.effect?.getTiming().duration ?? null) as number | string | null,
           target: String((animation.effect as KeyframeEffect | null)?.target?.className ?? ""),
+          translates: (animation.effect as KeyframeEffect | null)?.getKeyframes().some(frame => "transform" in frame || "translate" in frame) ?? false,
         }));
       }
       samples.push({
@@ -505,12 +565,14 @@ check(
   `${distinct} distinct transforms over ${pillProbe.samples.length} frames; first ${pillProbe.samples[0]?.transform} last ${pillProbe.samples.at(-1)?.transform}`
 );
 const viewAnimation = pillProbe.immediate.find(animation => animation.name === "view-in");
-check("view-enters-with-fade", Number(viewAnimation?.duration) === 240, JSON.stringify(viewAnimation ?? pillProbe.immediate));
+check("view-enters-with-fade-without-moving-the-scrollport", Number(viewAnimation?.duration) === 240 && viewAnimation?.translates === false, JSON.stringify(viewAnimation ?? pillProbe.immediate));
 
 // Mid-transition frame: navigate again, hold the real animation at 110 ms, shoot, resume, then shoot
 // the settled frame. The two images prove an intermediate state exists.
 await navItem("Songs");
-const held = await freezeAt(110);
+const activeViews = await page.$$eval(".content-scroll", panes => panes.length);
+check("navigation-keeps-one-live-view", activeViews === 1, `${activeViews} scrollports during movement`);
+const held = await freezeAt(100);
 await shot("01-nav-albums-mid");
 await resumeAll();
 await wait(340);
@@ -541,11 +603,11 @@ await wait(320);
 const resizedPill = await page.evaluate(() => {
   const pill = document.querySelector(".nav-pill")!.getBoundingClientRect();
   const active = document.querySelector(".nav .nav-item.active")!.getBoundingClientRect();
-  return { deltaTop: Math.abs(pill.top - active.top), deltaHeight: Math.abs(pill.height - active.height), left: Math.round(active.left) };
+  return { deltaTop: Math.abs(pill.top - active.top), deltaHeight: Math.abs(pill.height - active.height), deltaLeft: Math.abs(pill.left - active.left) };
 });
 await page.setViewport({ width: 1440, height: 900 });
 await wait(320);
-check("nav-pill-follows-resize", resizedPill.deltaTop < 1 && resizedPill.deltaHeight < 1 && resizedPill.left === 14, JSON.stringify(resizedPill));
+check("nav-pill-follows-resize", resizedPill.deltaTop < 1 && resizedPill.deltaHeight < 1 && resizedPill.deltaLeft < 1, JSON.stringify(resizedPill));
 
 /* ------------------------------------------------ 2. page state preservation */
 
@@ -592,7 +654,7 @@ await wait(200);
 
 await sidebarItem("Settings");
 await wait(280);
-await clickText(".settings-tabs button", "Appearance");
+await clickText(".settings-tabs button", "Lyrics");
 await wait(200);
 const aiSettingsSections = await page.evaluate(() => ({
   translation: [...document.querySelectorAll(".lyrics-ai-section > h3")].some(node => node.textContent?.trim() === "AI Translation"),
@@ -600,6 +662,24 @@ const aiSettingsSections = await page.evaluate(() => ({
   modelsButtons: document.querySelectorAll(".lyrics-ai-section button").length,
 }));
 check("independent-ai-translation-and-romanization-settings", aiSettingsSections.translation && aiSettingsSections.romanization && aiSettingsSections.modelsButtons >= 4, JSON.stringify(aiSettingsSections));
+const settingsViewport = page.viewport()!;
+for (const [width, height] of [[1440, 900], [1040, 680]]) {
+  await page.setViewport({ width, height });
+  await clickText(".settings-tabs button", "Appearance");
+  await page.$eval(".content-scroll", node => node.scrollTo({ top: 0, behavior: "instant" }));
+  await clickText(".settings-tabs button", "Lyrics");
+  await page.$eval(".content-scroll", node => node.scrollTo({ top: 1250, behavior: "instant" }));
+  await wait(100);
+  const before = await page.$eval(".content-scroll", node => node.scrollTop);
+  await clickText(".settings-tabs button", "Appearance");
+  const appearancePosition = await page.$eval(".content-scroll", node => node.scrollTop);
+  const focusKept = await page.evaluate(() => document.activeElement?.matches('.settings-tabs button[aria-current="location"]'));
+  await clickText(".settings-tabs button", "Lyrics");
+  const returned = await page.$eval(".content-scroll", node => node.scrollTop);
+  check(`settings-categories-keep-independent-scroll-${width}`, before === 1250 && appearancePosition === 0 && returned === before && Boolean(focusKept),
+    JSON.stringify({ before, appearancePosition, returned, focusKept }));
+}
+await page.setViewport(settingsViewport);
 await clickText(".settings-tabs button", "Playback");
 await wait(200);
 await navItem("Home");
@@ -620,8 +700,10 @@ await shot("06-settings-playback");
 await navItem("Songs");
 await page.waitForSelector(".track-row", { timeout: 10_000 });
 await wait(200);
-await page.evaluate(() => (document.querySelector(".track-row") as HTMLElement).click());
-await wait(600);
+await page.select(".sort-select select", "title");
+await page.evaluate((id: number) => document.querySelector<HTMLElement>(`.track-row[data-track-id="${id}"]`)?.click(), firstId);
+await page.waitForSelector('.player-track [data-cover-layer="current"] img[src$="amber.png"]', { timeout: 3000 });
+await wait(400);
 await page.evaluate(() => document.querySelector("audio")?.play());
 await wait(400);
 
@@ -647,44 +729,37 @@ check(
   JSON.stringify(iconToggle)
 );
 
-const swap = await page.evaluate(async () => {
-  const before = document.querySelector(".player-artwork-swap");
-  (document.querySelector('button[aria-label="Next track"]') as HTMLButtonElement).click();
-  await new Promise(done => requestAnimationFrame(() => done(null)));
-  const artwork = document.querySelector(".player-artwork-swap");
-  const meta = document.querySelector(".player-track-meta");
-  const names = (node: Element | null) =>
-    node?.getAnimations().map(animation => (animation as CSSAnimation).animationName ?? "") ?? [];
-  return {
-    artworkAnimations: names(artwork),
-    metaAnimations: names(meta),
-    // The same nodes are reused; the fade must not duplicate the cover in the bar.
-    sameArtworkNode: artwork === before,
-    artworkCount: document.querySelectorAll(".player-track .artwork").length,
-    metaCount: document.querySelectorAll(".player-track-meta").length,
-    artworkLoaded: Boolean(document.querySelector(".player-track .artwork img")),
-  };
+await page.evaluate(() => document.querySelector<HTMLButtonElement>('.player-bar button[aria-label="Next track"]')!.click());
+await page.waitForSelector('.player-track [data-cover-layer="current"] img[src$="blue.png"]', { timeout: 3000 });
+const heldMeta = await freezeAt(78);
+const swap = await page.evaluate(() => {
+  const layers = (selector: string) => [...document.querySelectorAll<HTMLElement>(selector)].map(node => ({
+    opacity: Number(getComputedStyle(node).opacity),
+    img: node.querySelector("img")?.getAttribute("src"),
+    text: node.textContent,
+    hidden: node.getAttribute("aria-hidden"),
+  }));
+  const bar = document.querySelector(".player-bar")!;
+  const wash = getComputedStyle(bar, "::before");
+  const surface = { width: parseFloat(wash.width), filter: wash.filter, backdrop: getComputedStyle(bar).backdropFilter };
+  const root = document.documentElement;
+  const previous = root.dataset.blurArtwork;
+  root.dataset.blurArtwork = "false";
+  const hidden = getComputedStyle(bar, "::before").display === "none";
+  if (previous === undefined) delete root.dataset.blurArtwork;
+  else root.dataset.blurArtwork = previous;
+  return { art: layers(".player-track [data-cover-layer]"), text: layers(".player-track [data-track-layer]"), surface, hidden };
 });
-check(
-  "artwork-fades-on-track-change",
-  swap.artworkAnimations.includes("artwork-in") && swap.artworkCount === 1,
-  JSON.stringify(swap)
-);
-check(
-  "player-meta-fades-on-track-change",
-  swap.metaAnimations.includes("meta-in") && swap.metaCount === 1,
-  JSON.stringify(swap)
-);
-check("player-artwork-not-duplicated", swap.artworkCount === 1 && swap.metaCount === 1 && swap.sameArtworkNode, JSON.stringify(swap));
-check("player-artwork-has-image", swap.artworkLoaded, "cover image rendered");
-
-await wait(80);
-const heldMeta = await freezeAt(90);
+check("track-change-holds-decoded-outgoing-cover", swap.art.length === 2 && swap.art[0]?.img?.endsWith("amber.png") === true && swap.art[0].opacity === 1 && swap.art[1].opacity > 0 && swap.art[1].opacity < 1, JSON.stringify(swap.art));
+check("track-change-coordinates-readable-metadata", swap.text.length === 2 && swap.text[0].text?.includes("Blue Hour") === true && swap.text[1].text?.includes("Aurora") === true && swap.text[1].hidden === "true" && swap.text[0].opacity > 0.35 && swap.text[0].opacity < 1 && swap.text[0].opacity + swap.text[1].opacity > 0.6, JSON.stringify(swap.text));
+check("player-artwork-wash-is-local-neutral-and-optional", swap.surface.width > 0 && swap.surface.width <= 160 && swap.surface.filter.includes("grayscale(1)") && swap.surface.filter.includes("blur(10px)") && swap.surface.backdrop === "none" && swap.hidden && !(await page.$(".artwork-atmosphere")), JSON.stringify(swap.surface));
 await shot("02-player-track-change-mid");
 await resumeAll();
-await wait(300);
+await wait(370);
 await shot("02-player-track-change-settled");
 check("player-mid-frame-differs", heldMeta.count > 0 && frameDelta("02-player-track-change-mid", "02-player-track-change-settled") > 0.0005, `${heldMeta.count} held`);
+check("track-change-cleans-up", await waitForGone(".player-bar [data-cover-layer=outgoing], .player-bar [data-track-layer=outgoing]"));
+await auditArtworkResilience(page, check, shot);
 
 // Seek fill: painted from the audio clock, never transitioned, so the bar cannot lag the song.
 const seekTiming = await page.evaluate(() => {
@@ -752,6 +827,20 @@ await resumeAll();
 await wait(260);
 await shot("03-queue-settled");
 check("queue-mid-frame-differs", heldQueue.count > 0 && frameDelta("03-queue-mid", "03-queue-settled") > 0.002, `${heldQueue.count} held`);
+const queueGeometry = () => page.evaluate(() => {
+  const drawer = document.querySelector(".queue-panel")!.getBoundingClientRect();
+  const content = document.querySelector(".content-scroll")!.getBoundingClientRect();
+  const player = document.querySelector(".player-bar")!.getBoundingClientRect();
+  return {
+    sideBySide: Math.abs(drawer.left - content.right) < 1,
+    overlays: drawer.left < content.right && Math.abs(content.right - innerWidth) < 1,
+    fits: Math.abs(drawer.top - content.top) < 1 && Math.abs(drawer.bottom - player.top) < 1,
+    playerSpans: player.left === 0 && Math.abs(player.right - innerWidth) < 1,
+  };
+});
+const dockedQueue = await queueGeometry();
+check("wide-queue-reserves-content-not-player", dockedQueue.sideBySide && dockedQueue.fits && dockedQueue.playerSpans, JSON.stringify(dockedQueue));
+await auditQueueRows(page, check, shot);
 await page.keyboard.press("q");
 const queueExit = await waitForExit('[data-testid="queue-panel"]');
 check(
@@ -768,13 +857,29 @@ await page.keyboard.press("q");
 await wait(400);
 check("queue-rapid-toggle-settles", !(await page.$('[data-testid="queue-panel"]')), "rapid open/close");
 
-await page.evaluate(() => {
-  const row = document.querySelector(".track-row") as HTMLElement;
-  (row.querySelector('button[aria-label="More actions"]') as HTMLElement | null)?.click();
-});
+const visibleTrackMenuButton = (): HTMLButtonElement => {
+  const scroller = document.querySelector(".content-scroll")!.getBoundingClientRect();
+  return [...document.querySelectorAll<HTMLButtonElement>('.track-row button[aria-label="More actions"]')].reverse().find(button => {
+    const rect = button.getBoundingClientRect();
+    return rect.top >= scroller.top && rect.bottom <= scroller.bottom - 2;
+  })!;
+};
+await page.evaluate(() => { document.querySelector<HTMLElement>(".content-scroll")!.scrollTo({ top: 0, behavior: "instant" }); });
+await wait(100);
+const menuButton = await page.evaluateHandle(visibleTrackMenuButton);
+await menuButton.click();
 await page.waitForSelector(".context-menu", { timeout: 5000 });
 const menuAnimation = await animationsFor(".context-menu");
 check("context-menu-pops-in", Boolean(menuAnimation?.some(animation => animation.name === "pop-in" && Number(animation.duration) === 180)), JSON.stringify(menuAnimation));
+const menuProbe = await page.$eval(".context-menu", menu => {
+  const rect = menu.getBoundingClientRect();
+  return {
+    portaled: menu.parentElement === document.body,
+    fits: rect.top >= 0 && rect.bottom <= innerHeight && rect.left >= 0 && rect.right <= innerWidth,
+    focusMoved: menu.contains(document.activeElement),
+  };
+});
+check("track-menu-fits-and-accepts-keyboard-focus", menuProbe.portaled && menuProbe.fits && menuProbe.focusMoved, JSON.stringify(menuProbe));
 await page.keyboard.press("Escape");
 const menuExit = await waitForExit(".context-menu");
 check(
@@ -783,12 +888,32 @@ check(
   JSON.stringify(menuExit)
 );
 check("context-menu-dismisses-after-exit", await waitForGone(".context-menu"), "menu unmounted after its 120ms exit");
-
+check("escape-returns-focus-to-track-menu-trigger", await menuButton.evaluate(button => button === document.activeElement));
+await menuButton.click();
+await page.waitForSelector(".context-menu:not([inert])", { timeout: 5000 });
 await page.evaluate(() => {
-  const row = document.querySelector(".track-row") as HTMLElement;
-  (row.querySelector('button[aria-label="More actions"]') as HTMLElement | null)?.click();
+  const scroller = document.querySelector<HTMLElement>(".content-scroll")!;
+  scroller.dispatchEvent(new Event("scroll")); // An already-queued event, with no new movement.
 });
-await page.waitForSelector(".context-menu", { timeout: 5000 });
+check("track-menu-ignores-stale-scroll-event", Boolean(await page.$(".context-menu:not([inert])")));
+await page.evaluate(() => {
+  document.querySelector<HTMLElement>(".content-scroll")!.scrollBy({ top: 58, behavior: "instant" });
+});
+check("track-menu-dismisses-after-anchor-scrolls", await waitForGone(".context-menu"));
+
+await page.setViewport({ width: 1040, height: 680 });
+await page.keyboard.press("q");
+await page.waitForSelector(".queue-panel", { timeout: 5000 });
+await wait(300);
+const overlayQueue = await queueGeometry();
+check("minimum-width-queue-overlays-content-not-player", overlayQueue.overlays && overlayQueue.fits && overlayQueue.playerSpans, JSON.stringify(overlayQueue));
+await page.click('button[aria-label="Close queue"]');
+await waitForGone(".queue-panel");
+await page.setViewport({ width: 1440, height: 900 });
+await wait(280);
+const pickerTrigger = await page.evaluateHandle(visibleTrackMenuButton);
+await pickerTrigger.click();
+await page.waitForSelector(".context-menu:not([inert])", { timeout: 5000 });
 await clickText(".context-menu button", "Add to playlist…", false);
 await page.waitForSelector(".modal", { timeout: 5000 });
 const modalAnimation = await animationsFor(".modal");
@@ -828,7 +953,7 @@ check(
 /* --------------------------------------------------------- 5. fullscreen */
 
 await page.evaluate(() => {
-  document.querySelector<HTMLButtonElement>('.player-bar button[aria-label="Fullscreen lyrics"]')!.click();
+  document.querySelector<HTMLButtonElement>('[data-testid="open-now-playing"]')!.click();
 });
 const fsHeld = await freezeAt(120);
 await shot("05-fullscreen-mid");
@@ -843,7 +968,7 @@ const fsState = await page.evaluate(() => {
     controls: Boolean(document.querySelector('[data-testid="fullscreen-controls"]')),
   };
 });
-check("fullscreen-enters-with-fade", fsHeld.names.includes("fs-in"), JSON.stringify(fsHeld));
+check("fullscreen-enters-with-shared-artwork", fsHeld.names.includes("player-artwork-handoff"), JSON.stringify(fsHeld));
 check("fullscreen-covers-window", fsState.rect?.width === 1440 && fsState.rect?.height === 900, JSON.stringify(fsState.rect));
 check("fullscreen-mid-frame-differs", fsHeld.count > 0 && frameDelta("05-fullscreen-mid", "05-fullscreen-settled") > 0.001, `${fsHeld.count} held, ${(frameDelta("05-fullscreen-mid", "05-fullscreen-settled") * 100).toFixed(2)}% changed`);
 
@@ -936,47 +1061,38 @@ check(
   `opacity ${lyricsUpgradeOpacity}`
 );
 
-// A real Next action restarts only the fullscreen artwork entrance.
-await page.evaluate(() => document.querySelector<HTMLButtonElement>('button[aria-label="Next track"]')?.click());
-const fsArtworkSwap = await page
-  .waitForFunction(
-    () => {
-      const art = document.querySelector(".fs-artwork");
-      const animation = art
-        ?.getAnimations()
-        .find(candidate => (candidate as CSSAnimation).animationName === "artwork-in");
-      return animation
-        ? {
-            duration: animation.effect?.getTiming().duration ?? null,
-            currentTime: animation.currentTime,
-            swapping: art?.classList.contains("is-swapping") ?? false,
-          }
-        : false;
-    },
-    { timeout: 3000 }
-  )
-  .then(handle => handle?.jsonValue() as Promise<{ duration: number | string | null; currentTime: number | null; swapping: boolean } | null>)
-  .catch(() => null);
-check(
-  "fullscreen-artwork-track-swap",
-  Boolean(fsArtworkSwap?.swapping && Number(fsArtworkSwap.duration) === 240),
-  JSON.stringify(fsArtworkSwap)
-);
-await wait(300);
-
+// Jump to a known different cover in the queue while fullscreen. Only one Braccato view may exist.
+await page.keyboard.press("q");
+await page.waitForSelector(".queue-list li", { timeout: 3000 });
+await page.evaluate(() => {
+  const src = document.querySelector('.fs-artwork [data-cover-layer="current"] img')?.getAttribute("src");
+  const row = [...document.querySelectorAll<HTMLElement>(".queue-list li:not(.current) .queue-track")].find(row => {
+    const target = row.querySelector("img")?.getAttribute("src");
+    return target && target !== src;
+  });
+  row?.click();
+  document.querySelector<HTMLButtonElement>('button[aria-label="Close queue"]')?.click();
+});
+const fsArtworkSwap = await page.waitForFunction(() => {
+  const cover = document.querySelector('.fs-artwork [data-cover-layer="current"]');
+  return cover?.getAnimations().some(animation => (animation as CSSAnimation).animationName === "cover-dissolve");
+}, { timeout: 2000 }).then(() => true).catch(() => false);
+check("fullscreen-artwork-track-swap", fsArtworkSwap);
+await wait(410);
+await auditLyricFollow(page, check, shot);
 await page.keyboard.press("Escape");
-await wait(120);
+await page.waitForSelector(".player-bar", { timeout: 3000 });
 const exitState = await page.evaluate(() => ({
   fullscreen: Boolean(document.querySelector(".lyrics-view.is-fullscreen")),
-  shell: document.querySelector(".player-bar")?.getAnimations().map(animation => (animation as CSSAnimation).animationName ?? "") ?? [],
+  artReturns: document.getAnimations().some(animation => animation.id === "player-artwork-handoff"),
   sidebar: Boolean(document.querySelector(".sidebar")),
 }));
-check("fullscreen-exits", !exitState.fullscreen, "left fullscreen");
-check("shell-fades-back", exitState.shell.includes("chrome-in") && exitState.sidebar, JSON.stringify(exitState));
-await wait(300);
+check("fullscreen-exits", !exitState.fullscreen && exitState.sidebar, JSON.stringify(exitState));
+check("fullscreen-artwork-returns", exitState.artReturns, JSON.stringify(exitState));
+await wait(400);
 await shot("05-fullscreen-exit-settled");
-
-/* ------------------------------------------------------------- 6. toasts */
+await auditMiniHandoff(page, check, shot);
+await auditHiddenArtwork(page, check);
 
 await sidebarItem("Settings");
 await wait(300);
@@ -1001,7 +1117,8 @@ await page.evaluate(() => {
   });
   observer.observe(document.body, { subtree: true, attributes: true, childList: true, attributeFilter: ["data-presence"] });
 });
-await clickText("button", "Reset all");
+page.once("dialog", dialog => void dialog.accept());
+await page.click('[data-testid="settings-reset-all"]');
 await page.waitForSelector(".toast", { timeout: 5000 });
 const toastState = await animationsFor(".toast");
 check("toast-slides-in", Boolean(toastState?.some(animation => animation.name === "toast-in")), JSON.stringify(toastState));
@@ -1020,9 +1137,11 @@ check("toast-dismisses-on-its-own", await waitForGone(".toast"), "toast removed 
 
 /* --------------------------------------------------- 7. rapid interaction */
 
+await page.click('.nav-section-toggle[title="Playlists"][aria-expanded="false"]');
+await wait(240);
 const rapid = await page.evaluate(async () => {
   const buttons = [...document.querySelectorAll(".nav .nav-item")] as HTMLButtonElement[];
-  const order = ["Songs", "Albums", "Artists", "Playlists", "Liked songs", "Home", "Songs", "Albums", "Home", "Songs", "Artists", "Home"];
+  const order = ["Songs", "Albums", "Artists", "All playlists", "Liked songs", "Home", "Songs", "Albums", "Home", "Songs", "Artists", "Home"];
   for (const label of order) {
     buttons.find(button => button.title === label)!.click();
     await new Promise(done => setTimeout(done, 45));
@@ -1051,9 +1170,48 @@ check("rapid-nav-no-stuck-overlays", rapidState.overlays === 0, `${rapidState.ov
 const geometry = await page.evaluate(() => {
   const player = document.querySelector(".player-bar")!.getBoundingClientRect();
   const content = document.querySelector(".content-scroll")!.getBoundingClientRect();
-  return { playerHeight: Math.round(player.height), contentHeight: Math.round(content.height), contentTop: Math.round(content.top) };
+  const view = getComputedStyle(document.querySelector(".view")!);
+  return { playerHeight: Math.round(player.height), contentHeight: Math.round(content.height), contentTop: Math.round(content.top),
+    playerFullWidth: player.x === 0 && player.width === innerWidth, contentAbovePlayer: Math.abs(player.y - content.bottom) <= 1,
+    sidebarWidth: document.querySelector(".sidebar")!.getBoundingClientRect().width,
+    noTopBar: !document.querySelector(".top-bar"), viewInsets: [view.paddingLeft, view.paddingRight] };
 });
-check("layout-stable", geometry.playerHeight === 92 && geometry.contentHeight === 740, JSON.stringify(geometry));
+check("layout-stable", geometry.playerHeight === 80 && geometry.contentTop === 0 && geometry.contentHeight === 820 && geometry.sidebarWidth === 256 &&
+  geometry.playerFullWidth && geometry.contentAbovePlayer && geometry.noTopBar && geometry.viewInsets.every(value => value === "10px"), JSON.stringify(geometry));
+
+// Keep the layout mounted as the disclosure moves. Hidden destinations must immediately stop
+// receiving focus, and a collapsed subtree must not change the current page.
+await navItem("Recently Added");
+await wait(240);
+for (const [label, id] of [["Library", "library"], ["Playlists", "playlists"]]) {
+  const toggleSelector = `.nav-section-toggle[title="${label}"]`;
+  if (await page.$eval(toggleSelector, node => node.getAttribute("aria-expanded")) === "false") {
+    await page.click(toggleSelector);
+    await wait(240);
+  }
+  const disclosure = await page.evaluate(async (selector, key) => {
+    const toggle = document.querySelector<HTMLButtonElement>(selector)!;
+    const section = document.getElementById(`sidebar-${key}`)!;
+    const sizes = new Set<number>([Math.round(section.getBoundingClientRect().height)]);
+    const before = location.hash;
+    toggle.click();
+    await new Promise(requestAnimationFrame);
+    const inertWhileClosing = section.inert && section.getBoundingClientRect().height > 0;
+    const end = performance.now() + 240;
+    do {
+      await new Promise(requestAnimationFrame);
+      sizes.add(Math.round(section.getBoundingClientRect().height));
+    } while (performance.now() < end);
+    return { sizes: [...sizes], stillOnRoute: before === location.hash && before.endsWith("/recently-added"), inertWhileClosing,
+      collapsed: toggle.getAttribute("aria-expanded") === "false", endedAt: section.getBoundingClientRect().height };
+  }, toggleSelector, id);
+  check(`sidebar-${id}-disclosure-animates-and-is-inert-when-closed`, disclosure.sizes.length > 3 && disclosure.collapsed &&
+    disclosure.endedAt === 0 && disclosure.inertWhileClosing && disclosure.stillOnRoute, JSON.stringify(disclosure));
+  if (id === "library") {
+    await page.click(toggleSelector);
+    await wait(240);
+  }
+}
 await shot("07-after-rapid-nav");
 
 await navItem("Albums");
@@ -1074,10 +1232,10 @@ check(
 await shot("08-albums-grid");
 await navItem("Home");
 await wait(40);
-// The fixture library has a single album card, so the stagger itself is probed on
-// Home's quick grids, which hold several tracks.
+// The fixture library has a single album card. The ranked shelf holds several tracks and
+// must still use the existing capped card entrance in its new horizontal layout.
 const gridStagger = await page.evaluate(() => {
-  const grid = document.querySelector(".quick-grid");
+  const grid = document.querySelector('[data-testid="home-top-tracks"] .home-shelf-track');
   return [...(grid?.children ?? [])].slice(0, 4).map(card => {
     const style = getComputedStyle(card);
     return { name: style.animationName, delay: style.animationDelay, duration: style.animationDuration };
@@ -1098,25 +1256,26 @@ await wait(280);
 
 await sidebarItem("Settings");
 await wait(300);
-const tabUnderline = await page.evaluate(() => {
+const categoryIndicator = await page.evaluate(() => {
   const active = document.querySelector(".settings-tabs button.active");
   const inactive = document.querySelector(".settings-tabs button:not(.active)");
   const activeStyle = active ? getComputedStyle(active, "::after") : null;
   const inactiveStyle = inactive ? getComputedStyle(inactive, "::after") : null;
+  const activeMatrix = new DOMMatrix(activeStyle?.transform ?? "none");
+  const inactiveMatrix = new DOMMatrix(inactiveStyle?.transform ?? "none");
   return {
-    activeTransform: activeStyle?.transform ?? "",
-    inactiveTransform: inactiveStyle?.transform ?? "",
+    activeScale: Math.min(activeMatrix.a, activeMatrix.d),
+    inactiveScale: Math.min(inactiveMatrix.a, inactiveMatrix.d),
     property: activeStyle?.transitionProperty ?? "",
     duration: activeStyle?.transitionDuration ?? "",
   };
 });
 check(
-  "settings-tab-underline-slides",
-  tabUnderline.activeTransform.startsWith("matrix(1") &&
-    tabUnderline.inactiveTransform.startsWith("matrix(0") &&
-    tabUnderline.property.includes("transform") &&
-    tabUnderline.duration === "0.18s",
-  JSON.stringify(tabUnderline)
+  "settings-category-indicator-animates",
+  categoryIndicator.activeScale === 1 && categoryIndicator.inactiveScale === 0 &&
+    categoryIndicator.property.includes("transform") &&
+    categoryIndicator.duration === "0.18s",
+  JSON.stringify(categoryIndicator)
 );
 await clickText(".settings-tabs button", "Appearance");
 await wait(250);
@@ -1231,6 +1390,10 @@ const toggleCompact = () =>
     (label?.querySelector('input[type="checkbox"]') as HTMLInputElement | null)?.click();
   });
 await page.mouse.move(900, 300);
+const sidebarWidths = await page.evaluate(() => {
+  const root = getComputedStyle(document.documentElement);
+  return { expanded: parseFloat(root.getPropertyValue("--sidebar-expanded-width")), compact: parseFloat(root.getPropertyValue("--sidebar-compact-width")) };
+});
 const compactWidthSamples = await page.evaluate(async () => {
   const sidebar = document.querySelector(".sidebar")!;
   const label = [...document.querySelectorAll(".setting-row")].find(row => row.textContent?.includes("Compact sidebar"));
@@ -1250,9 +1413,21 @@ const compactWidthSamples = await page.evaluate(async () => {
 const distinctCompactWidths = new Set(compactWidthSamples).size;
 check(
   "compact-sidebar-width-animates",
-  distinctCompactWidths >= 4 && compactWidthSamples[0] > 200 && compactWidthSamples.at(-1) === 76,
+  distinctCompactWidths >= 4 && compactWidthSamples[0] === sidebarWidths.expanded && compactWidthSamples.at(-1) === sidebarWidths.compact,
   `${distinctCompactWidths} distinct widths, ${compactWidthSamples[0]} -> ${compactWidthSamples.at(-1)}`
 );
+await page.mouse.move(900, 300);
+await wait(460);
+const dropdownState = () => page.$eval(".nav-section-content", node => ({
+  visibility: getComputedStyle(node).visibility,
+  height: node.getBoundingClientRect().height,
+}));
+const collapsedDropdown = await dropdownState();
+check("compact-collapsed-hides-section-dropdowns", collapsedDropdown.visibility === "hidden" && collapsedDropdown.height < 1, JSON.stringify(collapsedDropdown));
+await page.mouse.move(38, 300);
+await wait(560);
+const expandedDropdown = await dropdownState();
+check("compact-expanded-reveals-section-dropdowns", expandedDropdown.visibility === "visible" && expandedDropdown.height > 1, JSON.stringify(expandedDropdown));
 await navItem("Songs");
 await wait(340);
 const compactPill = await page.evaluate(() => {
@@ -1262,6 +1437,17 @@ const compactPill = await page.evaluate(() => {
 });
 await page.mouse.move(900, 300);
 await wait(460);
+const collapsedPill = await page.evaluate(() => {
+  const pill = document.querySelector(".nav-pill")!.getBoundingClientRect();
+  const toggle = document.querySelector('.nav-section-toggle[title="Library"]')!.getBoundingClientRect();
+  const content = document.querySelector(".nav-section-content")!;
+  return {
+    deltaTop: Math.abs(pill.top - toggle.top),
+    deltaHeight: Math.abs(pill.height - toggle.height),
+    hidden: getComputedStyle(content).visibility === "hidden" && content.getBoundingClientRect().height < 1,
+  };
+});
+check("compact-collapsed-pill-falls-back-to-section", collapsedPill.hidden && collapsedPill.deltaTop < 1 && collapsedPill.deltaHeight < 1, JSON.stringify(collapsedPill));
 await shot("09-compact-sidebar");
 
 const sidebarProbe = () =>
@@ -1289,8 +1475,8 @@ await shot("09-compact-hover-expanded");
 const hoverState = await sidebarProbe();
 check(
   "compact-hover-expands-overlay",
-  beforeHover.sidebarWidth === 76 &&
-    hoverState.sidebarWidth === 248 &&
+  beforeHover.sidebarWidth === sidebarWidths.compact &&
+    hoverState.sidebarWidth === sidebarWidths.expanded &&
     hoverState.mainLeft === beforeHover.mainLeft &&
     hoverState.labelOpacity === "1" &&
     hoverState.labelVisibility === "visible" &&
@@ -1302,13 +1488,13 @@ await wait(460);
 const afterHover = await sidebarProbe();
 check(
   "compact-hover-collapses",
-  afterHover.sidebarWidth === 76 && afterHover.labelOpacity === "0" && afterHover.labelVisibility === "hidden",
+  afterHover.sidebarWidth === sidebarWidths.compact && afterHover.labelOpacity === "0" && afterHover.labelVisibility === "hidden",
   JSON.stringify(afterHover)
 );
 await page.keyboard.press("Tab");
 await wait(560);
 const focusState = await sidebarProbe();
-check("compact-focus-expands-overlay", focusState.sidebarWidth === 248 && focusState.mainLeft === beforeHover.mainLeft, JSON.stringify(focusState));
+check("compact-focus-expands-overlay", focusState.sidebarWidth === sidebarWidths.expanded && focusState.mainLeft === beforeHover.mainLeft, JSON.stringify(focusState));
 await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
 await wait(460);
 
@@ -1363,6 +1549,7 @@ check("motion-restored-after-preference", restoredMotion !== "0.001ms", restored
 
 /* ------------------------------------------------------------------ summary */
 
+check("no-unhandled-renderer-errors", !logs.some(line => line.startsWith("[pageerror]")), logs.filter(line => line.startsWith("[pageerror]")).join(" | "));
 const failed = Object.entries(results).filter(([, result]) => !result.value);
 writeFileSync(
   join(shotDir, "summary.json"),

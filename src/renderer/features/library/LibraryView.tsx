@@ -5,6 +5,9 @@
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import {
   Copy,
+  Disc3,
+  ListMusic,
+  Users,
   FolderOpen,
   FolderPlus,
   Layers,
@@ -30,6 +33,7 @@ import { useUi } from "../../state/uiStore";
 import { TrackList } from "../../components/TrackList";
 import { AlbumCard, ArtistCard, PlaylistCard } from "../../components/Cards";
 import { Artwork } from "../../components/Artwork";
+import { MarqueeText } from "../../components/MarqueeText";
 import { useSessionState } from "../../app/useSessionState";
 import { formatTime } from "../../player/queue";
 import { findDuplicateGroups, formatFileSize } from "./duplicates";
@@ -37,6 +41,7 @@ import { findDuplicateGroups, formatFileSize } from "./duplicates";
 type SortKey = "title" | "artist" | "album" | "added" | "duration";
 
 const TITLES: Record<LibraryTab, string> = {
+  "recently-added": "Recently Added",
   songs: "Songs",
   albums: "Albums",
   artists: "Artists",
@@ -60,7 +65,10 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
   // Sort and filter belong to the list, not to the mount: coming back to Songs should show the
   // list the user left, not the default order.
   const [sort, setSort] = useSessionState<SortKey>("library.sort", "title");
-  const [filter, setFilter] = useSessionState("library.filter", "");
+  const [libraryFilter, setLibraryFilter] = useSessionState("library.filter", "");
+  const [recentFilter, setRecentFilter] = useSessionState("library.recent-filter", "");
+  const recentlyAdded = tab === "recently-added";
+  const [filter, setFilter] = recentlyAdded ? [recentFilter, setRecentFilter] : [libraryFilter, setLibraryFilter];
   const deferredFilter = useDeferredValue(filter);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -89,7 +97,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
         [track.title, track.artist, track.album].some(value => value.toLocaleLowerCase().includes(needle))
       );
     }
-    switch (sort) {
+    switch (recentlyAdded ? "added" : sort) {
       case "artist":
         list.sort((a, b) => a.artist.localeCompare(b.artist) || a.album.localeCompare(b.album));
         break;
@@ -106,7 +114,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
         list.sort((a, b) => a.title.localeCompare(b.title));
     }
     return list;
-  }, [snapshot?.tracks, tab, sort, deferredFilter]);
+  }, [snapshot?.tracks, tab, sort, deferredFilter, recentlyAdded]);
 
   const smartPresetInfo = SMART_PLAYLIST_PRESETS[smartPreset];
   const normalizedSmartRule = useMemo(() => {
@@ -136,7 +144,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
     0,
   );
 
-  if (!snapshot) return <div className="view-loading">Loading…</div>;
+  if (!snapshot) return <div className="view-loading" role="status">Loading your library…</div>;
 
   const playAll = () => void playQueue(tracks.map(track => track.id), 0);
 
@@ -167,6 +175,9 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
     }
   };
 
+  const count = tab === "albums" ? snapshot.albums.length : tab === "artists" ? snapshot.artists.length : tab === "playlists" ? snapshot.playlists.length : tracks.length;
+  const itemLabel = tab === "albums" ? "album" : tab === "artists" ? "artist" : tab === "playlists" ? "playlist" : "song";
+
   return (
     <div className="view library-view" data-testid={`library-view-${tab}`}>
       <header className="view-heading">
@@ -174,7 +185,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
           <p className="eyebrow">Your library</p>
           <h1>{TITLES[tab]}</h1>
           <p className="muted">
-            {snapshot.counts.tracks} songs · {snapshot.counts.albums} albums · {snapshot.counts.artists} artists
+            {count} {itemLabel}{count === 1 ? "" : "s"}
           </p>
         </div>
         <div className="heading-actions">
@@ -188,13 +199,43 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
               </button>
             </>
           ) : null}
-          <button type="button" onClick={() => void addFolder()} disabled={scanning}>
-            <FolderPlus size={16} /> Add folder
-          </button>
+          {tab === "playlists" ? (
+            <>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => {
+                  setCreating(true);
+                  setCreatingSmart(false);
+                  setNewName("");
+                }}
+              >
+                <Plus size={16} /> New playlist
+              </button>
+              <button
+                type="button"
+                data-testid="new-smart-playlist"
+                onClick={() => {
+                  setCreatingSmart(true);
+                  setCreating(false);
+                }}
+              >
+                <Sparkles size={16} /> New smart playlist
+              </button>
+              <button type="button" onClick={() => void rescan()} disabled={scanning}>
+                Rescan library
+              </button>
+            </>
+          ) : null}
+          {tab === "playlists" ? null : (
+            <button type="button" onClick={() => void addFolder()} disabled={scanning}>
+              <FolderPlus size={16} /> Add folder
+            </button>
+          )}
         </div>
       </header>
 
-      {tab === "songs" || tab === "favorites" ? (
+      {tab === "songs" || tab === "favorites" || recentlyAdded ? (
         <>
           <div className="list-toolbar">
             <label className="inline-search">
@@ -206,7 +247,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
                 onChange={event => setFilter(event.target.value)}
               />
             </label>
-            <label className="sort-select">
+            {!recentlyAdded ? <label className="sort-select">
               Sort
               <select value={sort} onChange={event => setSort(event.target.value as SortKey)}>
                 <option value="title">Title</option>
@@ -215,7 +256,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
                 <option value="added">Recently added</option>
                 <option value="duration">Duration</option>
               </select>
-            </label>
+            </label> : null}
             <button
               type="button"
               data-testid="find-duplicates"
@@ -223,7 +264,6 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
             >
               <Layers size={15} /> {showDuplicates ? "Hide duplicates" : "Find duplicates"}
             </button>
-            <span className="muted">{tracks.length} songs</span>
           </div>
           {showDuplicates ? (
             <section className="duplicates-panel" data-testid="duplicates-panel">
@@ -257,7 +297,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
                 <article className="duplicate-group" key={group.id} data-testid="duplicate-group">
                   <header className="duplicate-group-header">
                     <div>
-                      <h3>{group.title}</h3>
+                      <MarqueeText as="h3">{group.title}</MarqueeText>
                       <p>
                         {group.artist} · {group.tracks.length} copies · {formatFileSize(group.reclaimableBytes)} in
                         spare copies
@@ -283,19 +323,19 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
                       <div className="duplicate-track-row" key={track.id} data-testid="duplicate-track">
                         <Artwork src={track.artworkUrl} alt={track.album || track.title} size="xs" />
                         <div className="duplicate-track-copy">
-                          <strong>
+                          <MarqueeText as="strong" title={track.title}>
                             {track.title}
                             {track.id === group.keeperId ? (
                               <span className="keeper-badge">Recommended keeper</span>
                             ) : null}
-                          </strong>
-                          <span>
+                          </MarqueeText>
+                          <MarqueeText>
                             {track.album} · {formatTime(track.duration)} · {track.codec || track.container} ·{" "}
                             {formatFileSize(track.fileSize)} · {track.playCount} plays
                             {track.favorite ? " · liked" : ""}
                             {track.metadataEdited ? " · edited in Cadence" : ""}
-                          </span>
-                          <em title={track.path}>{track.path}</em>
+                          </MarqueeText>
+                          <MarqueeText title={track.path}>{track.path}</MarqueeText>
                         </div>
                         <div className="duplicate-track-actions">
                           <button type="button" onClick={() => void playTrack(track.id)}>
@@ -321,49 +361,27 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
       ) : null}
 
       {tab === "albums" ? (
-        <div className="card-grid">
-          {snapshot.albums.map(album => (
-            <AlbumCard key={album.id} album={album} />
-          ))}
-        </div>
+        snapshot.albums.length ? (
+          <div className="card-grid">
+            {snapshot.albums.map(album => <AlbumCard key={album.id} album={album} />)}
+          </div>
+        ) : (
+          <div className="empty-state"><Disc3 size={28} /><h2>No albums yet</h2><p>Add a music folder to see your albums here.</p></div>
+        )
       ) : null}
 
       {tab === "artists" ? (
-        <div className="card-grid artist-grid">
-          {snapshot.artists.map(artist => (
-            <ArtistCard key={artist.id} artist={artist} />
-          ))}
-        </div>
+        snapshot.artists.length ? (
+          <div className="card-grid artist-grid">
+            {snapshot.artists.map(artist => <ArtistCard key={artist.id} artist={artist} />)}
+          </div>
+        ) : (
+          <div className="empty-state"><Users size={28} /><h2>No artists yet</h2><p>Artists will appear here after you add music.</p></div>
+        )
       ) : null}
 
       {tab === "playlists" ? (
         <>
-          <div className="list-toolbar">
-            <button
-              type="button"
-              className="primary"
-              onClick={() => {
-                setCreating(true);
-                setCreatingSmart(false);
-                setNewName("");
-              }}
-            >
-              <Plus size={16} /> New playlist
-            </button>
-            <button
-              type="button"
-              data-testid="new-smart-playlist"
-              onClick={() => {
-                setCreatingSmart(true);
-                setCreating(false);
-              }}
-            >
-              <Sparkles size={16} /> New smart playlist
-            </button>
-            <button type="button" onClick={() => void rescan()} disabled={scanning}>
-              Rescan library
-            </button>
-          </div>
           {creating ? (
             <form
               className="inline-create"
@@ -472,22 +490,17 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
             </form>
           ) : null}
           {snapshot.playlists.length === 0 ? (
-            <div className="empty-state">Create a playlist to collect songs across albums.</div>
+            <div className="empty-state"><ListMusic size={28} /><h2>No playlists yet</h2><p>Create a playlist to collect songs across albums.</p></div>
           ) : (
             <div className="playlist-rows">
               {snapshot.playlists.map(playlist => (
                 <div className="playlist-row" key={playlist.id}>
-                  <button
-                    type="button"
-                    className="playlist-open"
-                    onClick={() => navigate({ name: "playlist", playlistId: playlist.id })}
-                  >
-                    <PlaylistCard playlist={playlist} />
-                  </button>
+                  <PlaylistCard playlist={playlist} />
                   <button
                     type="button"
                     className="icon-button danger"
                     aria-label={`Delete ${playlist.name}`}
+                    title={`Delete ${playlist.name}`}
                     onClick={() => void deletePlaylist(playlist.id)}
                   >
                     <Trash2 size={16} />

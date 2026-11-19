@@ -4,14 +4,16 @@
  * so playback behaviour (gapless, crossfade, shuffle, repeat) is identical.
  */
 
-import { Heart, Maximize2, Minus, X } from "lucide-react";
+import { AudioLines, Heart, Maximize2, Minus, X } from "lucide-react";
 import type { WindowAction } from "../../../shared/types";
 import { useCurrentMediaItem, useCurrentTrack } from "../../app/hooks";
-import { Artwork } from "../../components/Artwork";
 import { SourceBadge } from "../../components/SourceBadge";
+import { MarqueeText } from "../../components/MarqueeText";
 import { useLibrary } from "../../state/libraryStore";
 import { useUi } from "../../state/uiStore";
 import { SeekRow, TransportButtons } from "./PlaybackControls";
+import { PlaybackArtwork, PlaybackText } from "./PlaybackVisuals";
+import { usePlaybackPresentation } from "./usePlaybackPresentation";
 
 function windowAction(action: WindowAction): void {
   void window.cadence?.app.window(action).catch(() => undefined);
@@ -20,21 +22,20 @@ function windowAction(action: WindowAction): void {
 export function MiniPlayer() {
   const track = useCurrentTrack();
   const item = useCurrentMediaItem();
+  const { cover, text } = usePlaybackPresentation(item);
   const setMiniPlayer = useUi(state => state.setMiniPlayer);
-  const navigate = useUi(state => state.navigate);
+  const openNowPlaying = useUi(state => state.openNowPlaying);
   const setFavorite = useLibrary(state => state.setFavorite);
 
   const expand = () => setMiniPlayer(false);
-  const openNowPlaying = () => {
-    setMiniPlayer(false);
-    navigate({ name: "lyrics" });
-  };
 
   return (
     <section className="mini-player" data-testid="mini-player" aria-label="Mini player">
       <div className="mini-player-chrome">
         <div className="mini-player-drag" data-tauri-drag-region>
+          <AudioLines size={15} aria-hidden="true" data-tauri-drag-region />
           <span data-tauri-drag-region>Cadence</span>
+          <span className="mini-mode" data-tauri-drag-region>Mini Player</span>
         </div>
         <div className="mini-player-window-actions">
           <button
@@ -73,32 +74,42 @@ export function MiniPlayer() {
         <button
           type="button"
           className="mini-player-artwork"
+          data-player-part="artwork"
           aria-label="Open Now Playing"
           title="Open Now Playing"
           onClick={openNowPlaying}
         >
-          <Artwork src={item?.artworkUrl} alt={item?.albumLabel ?? item?.title ?? "No track"} size="sm" />
+          <PlaybackArtwork cover={cover} label={item?.albumLabel ?? item?.title ?? "No track"} />
         </button>
-        <div className="mini-player-meta" data-tauri-drag-region>
-          <div className="mini-player-title" title={item?.title} data-tauri-drag-region>
-            {item?.title ?? "Nothing playing"}
+        <div className="mini-player-deck">
+          <div className="mini-player-info">
+            <PlaybackText text={text} className="mini-player-meta" shared draggable>
+              {display => (
+                <>
+                  <MarqueeText as="div" className="mini-player-title" title={display?.title} draggable>
+                    {display?.title ?? "Nothing playing"}
+                  </MarqueeText>
+                  <MarqueeText as="div" className="mini-player-artist" title={display?.artistLabel} draggable>
+                    {display?.artistLabel ?? "Choose a song in the full player"}
+                  </MarqueeText>
+                  {display ? <SourceBadge source={display.source} compact /> : null}
+                </>
+              )}
+            </PlaybackText>
+            {track ? (
+              <button
+                type="button"
+                className={`icon-button heart ${track.favorite ? "active" : ""}`}
+                aria-label={track.favorite ? "Remove from favourites" : "Add to favourites"}
+                aria-pressed={track.favorite}
+                onClick={() => void setFavorite(track.id, !track.favorite)}
+              >
+                <Heart size={16} fill={track.favorite ? "currentColor" : "none"} />
+              </button>
+            ) : null}
           </div>
-          <div className="mini-player-artist" title={item?.artistLabel} data-tauri-drag-region>
-            {item?.artistLabel ?? "Choose a song in the full player"}
-          </div>
-          {item ? <SourceBadge source={item.source} compact /> : null}
+          <TransportButtons />
         </div>
-        {track ? (
-          <button
-            type="button"
-            className={`icon-button heart ${track.favorite ? "active" : ""}`}
-            aria-label={track.favorite ? "Remove from favourites" : "Add to favourites"}
-            onClick={() => void setFavorite(track.id, !track.favorite)}
-          >
-            <Heart size={16} fill={track.favorite ? "currentColor" : "none"} />
-          </button>
-        ) : null}
-        <TransportButtons />
       </div>
 
       <SeekRow />

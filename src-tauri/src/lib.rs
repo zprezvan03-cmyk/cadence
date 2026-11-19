@@ -100,7 +100,7 @@ fn setup_macos_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .item(&prev)
         .build()?;
 
-    let lyrics = MenuItemBuilder::with_id("view:lyrics", "Lyrics Fullscreen")
+    let lyrics = MenuItemBuilder::with_id("view:lyrics", "Fullscreen Now Playing")
         .accelerator("F11")
         .build(app)?;
     let view_menu = SubmenuBuilder::new(app, "View").item(&lyrics).build()?;

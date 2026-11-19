@@ -450,7 +450,6 @@ const harness = {
         item: mediaItemFromLocalTrack(track),
         playing: false,
         fullscreen: false,
-        onToggleFullscreen: () => undefined,
       })
     );
     return { trackId: track.id };

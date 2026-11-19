@@ -96,6 +96,8 @@ export function buildThemeCss(settings: LyricsSettings): string {
   const translationFontSizePx = secondaryFontSizePx(settings.translationFontSizePx, 32);
   const romanizationFontSizePx = secondaryFontSizePx(settings.romanizationFontSizePx, 26);
 
+  // Braccato owns the timing and easing of its line, word, and letter animations. Apply the
+  // selected profile's styling below without substituting the desktop shell's motion tokens.
   const css = `
 ${base}
 /* blyrics-target-scroll-pos-ratio = ${Math.min(0.9, Math.max(0.1, settings.targetScrollRatio))}; */

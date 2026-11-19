@@ -23,6 +23,7 @@ import {
 } from "../../../shared/artistImageProviders";
 import { addProviderToOrder, moveProviderInOrder, removeProviderFromOrder } from "../../../shared/providerOrder";
 import { artistImageKey } from "../../../shared/artistImageCache";
+import { MarqueeText } from "../../components/MarqueeText";
 import { useArtistImages } from "../../state/artistImageStore";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
@@ -330,7 +331,7 @@ export function ArtistImagesSettings() {
           <ul className="artist-provider-capabilities" data-testid="artist-provider-capabilities">
             {providers.map(report => (
               <li key={report.provider} data-feasible={report.feasible}>
-                <strong>{report.name}</strong>
+                <MarqueeText as="strong">{report.name}</MarqueeText>
                 <span className="muted">
                   {report.implemented && report.feasible
                     ? report.available

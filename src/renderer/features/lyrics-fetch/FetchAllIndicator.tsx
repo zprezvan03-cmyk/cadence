@@ -1,13 +1,15 @@
 /**
- * Compact Fetch All progress in the global top bar: visible on every tab while the background
+ * Compact Fetch All progress in the sidebar: visible on every browsing page while the background
  * job runs, turns into a brief checkmark when it completes, then disappears. Clicking opens the
  * job management panel (progress, counts, current track, pause/resume/cancel/retry).
  */
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, Loader2, Pause, Play, RotateCcw, X } from "lucide-react";
 import { useFetchAll } from "../../state/fetchAllStore";
 import { usePresence } from "../../app/usePresence";
+import { MarqueeText } from "../../components/MarqueeText";
 
 const COMPLETED_LINGER_MS = 4000;
 
@@ -21,7 +23,19 @@ export function FetchAllIndicator() {
   const [open, setOpen] = useState(false);
   const [lingerDone, setLingerDone] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const closeRef = useRef<HTMLButtonElement | null>(null);
+  const [anchor, setAnchor] = useState({ left: 10, top: 10 });
   const panelPresence = usePresence(open);
+  const closePanel = () => {
+    setOpen(false);
+    triggerRef.current?.focus({ preventScroll: true });
+  };
+
+  useEffect(() => {
+    if (open && panelPresence.mounted) closeRef.current?.focus({ preventScroll: true });
+  }, [open, panelPresence.mounted]);
 
   // The indicator itself is a floating surface too: it fades in when a job
   // starts and out after the completion linger, instead of popping. While
@@ -53,10 +67,16 @@ export function FetchAllIndicator() {
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !panelRef.current?.contains(target)) setOpen(false);
     };
+    const close = () => setOpen(false);
     window.addEventListener("pointerdown", onPointerDown);
-    return () => window.removeEventListener("pointerdown", onPointerDown);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("resize", close);
+    };
   }, [open]);
 
   if (!indicatorPresence.mounted) return null;
@@ -74,12 +94,19 @@ export function FetchAllIndicator() {
     >
       <button
         type="button"
+        ref={triggerRef}
         className={`fetch-indicator ${state === "completed" ? "is-complete" : ""}`}
         data-testid="fetch-all-indicator"
         data-state={state}
         aria-expanded={open}
+        aria-controls={panelPresence.mounted ? "sidebar-fetch-panel" : undefined}
+        aria-label="Fetch All Lyrics"
         title="Fetch All Lyrics"
-        onClick={() => setOpen(value => !value)}
+        onClick={event => {
+          const { left, bottom } = event.currentTarget.getBoundingClientRect();
+          setAnchor({ left, top: bottom + 8 });
+          setOpen(!open);
+        }}
       >
         {state === "completed" ? (
           <Check size={15} aria-label="Fetch All Lyrics complete" />
@@ -98,17 +125,30 @@ export function FetchAllIndicator() {
         ) : null}
       </button>
 
-      {panelPresence.mounted ? (
+      {panelPresence.mounted ? createPortal(
         <div
+          id="sidebar-fetch-panel"
+          ref={panelRef}
           className={`fetch-panel ${panelPresence.phaseClass}`}
+          style={{
+            left: `min(${anchor.left}px, calc(100vw - min(320px, 86vw) - 10px))`,
+            top: anchor.top,
+            maxHeight: `calc(100vh - ${anchor.top + 10}px)`,
+          }}
+          onKeyDown={event => {
+            if (event.key !== "Escape") return;
+            event.stopPropagation();
+            closePanel();
+          }}
           data-presence={panelPresence.phase}
+          inert={!open}
           data-testid="fetch-all-panel"
           role="dialog"
           aria-label="Fetch All Lyrics"
         >
           <div className="fetch-panel-head">
             <strong>✨ Fetch All Lyrics</strong>
-            <button type="button" className="icon-button" aria-label="Close" onClick={() => setOpen(false)}>
+            <button ref={closeRef} type="button" className="icon-button" aria-label="Close" onClick={closePanel}>
               <X size={15} />
             </button>
           </div>
@@ -139,12 +179,12 @@ export function FetchAllIndicator() {
             </div>
           </dl>
           {renderSnapshot.currentTrack ? (
-            <p className="fetch-panel-current" data-testid="fetch-current-track">
+            <MarqueeText as="p" className="fetch-panel-current" data-testid="fetch-current-track">
               Now fetching: {renderSnapshot.currentTrack.title}
               {renderSnapshot.currentTrack.artist ? ` — ${renderSnapshot.currentTrack.artist}` : ""}
-            </p>
+            </MarqueeText>
           ) : state === "completed" ? (
-            <p className="fetch-panel-current">All eligible tracks have been processed.</p>
+            <MarqueeText as="p" className="fetch-panel-current">All eligible tracks have been processed.</MarqueeText>
           ) : null}
           <div className="fetch-panel-actions">
             {running ? (
@@ -180,7 +220,8 @@ export function FetchAllIndicator() {
               </button>
             ) : null}
           </div>
-        </div>
+        </div>,
+        document.body
       ) : null}
     </div>
   );

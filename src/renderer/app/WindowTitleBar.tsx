@@ -3,14 +3,15 @@
  *
  * On Windows the main window is created undecorated (see `src-tauri/tauri.windows.conf.json`) so the
  * OS frame cannot paint a differently coloured caption strip over the app. This bar takes its place:
- * it continues the sidebar and top bar surfaces, keeps the drag region, and draws the minimize,
+ * it keeps the drag region on a separate strip and draws the minimize,
  * maximize/restore and close controls at the top-right corner. Platforms that keep their native
  * decorations never see it, because the window reports `undecorated: false`.
  */
 
 import { useEffect, useState } from "react";
-import { Copy, Minus, Music2, Square, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, AudioLines, Copy, Minus, Square, X } from "lucide-react";
 import type { WindowAction, WindowChromeState } from "../../shared/types";
+import { useUi } from "../state/uiStore";
 
 const NATIVE_CHROME: WindowChromeState = {
   undecorated: false,
@@ -55,6 +56,9 @@ function runWindowAction(action: WindowAction): void {
 }
 
 export function WindowTitleBar({ chrome }: { chrome: WindowChromeState }) {
+  const goBack = useUi(state => state.goBack);
+  const goForward = useUi(state => state.goForward);
+
   // In native fullscreen the OS owns the whole screen: no caption, no controls, no drag region.
   if (!chrome.undecorated || chrome.fullscreen) return null;
 
@@ -65,11 +69,20 @@ export function WindowTitleBar({ chrome }: { chrome: WindowChromeState }) {
     >
       <div className="title-bar-brand" data-tauri-drag-region>
         <span className="title-bar-mark" aria-hidden="true">
-          <Music2 size={11} strokeWidth={2.2} />
+          <AudioLines size={11} strokeWidth={2.2} />
         </span>
         <span className="title-bar-text" data-tauri-drag-region>
           Cadence
         </span>
+      </div>
+
+      <div className="title-bar-nav" role="group" aria-label="Page navigation">
+        <button type="button" className="icon-button" onClick={goBack} aria-label="Back" title="Back">
+          <ArrowLeft size={15} />
+        </button>
+        <button type="button" className="icon-button" onClick={goForward} aria-label="Forward" title="Forward">
+          <ArrowRight size={15} />
+        </button>
       </div>
 
       <div className="title-bar-drag" data-tauri-drag-region />

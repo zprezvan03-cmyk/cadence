@@ -1,0 +1,114 @@
+diff --git a/dist/engine.js b/dist/engine.js
+--- a/dist/engine.js
++++ b/dist/engine.js
+@@ -768,22 +768,6 @@
+         },
+     ];
+ }
+-function fadeOutTextKeyframes(config, part) {
+-    return [
+-        {
+-            opacity: 1,
+-            filter: part.imageLayers ? "none" : config.highlight.glowTo,
+-            "--lyric-transition-amount-start": config.highlight.swipeStartTo,
+-            "--lyric-transition-amount-end": config.highlight.swipeEndTo,
+-        },
+-        {
+-            opacity: 0,
+-            filter: part.imageLayers ? "none" : config.highlight.glowTo,
+-            "--lyric-transition-amount-start": config.highlight.swipeStartTo,
+-            "--lyric-transition-amount-end": config.highlight.swipeEndTo,
+-        },
+-    ];
+-}
+ // null unless the ramp is linear and forward; planLetterMaskSweep sweeps the whole word instead there.
+ export function computeLetterSwipeWindows(swipe, letterCount, swipeDurationMs) {
+     if (swipe.easing !== "linear" || swipeDurationMs <= 0 || letterCount <= 0) {
+@@ -1137,56 +1121,41 @@
+         startWordAnimations(engine, part, config, currentTime, appliedTimingOffsetMs);
+     }
+ }
+-function startWordExitAnimation(part, config, imagePaint = []) {
+-    resetPartAnimations(part);
++function startWordExitAnimation(part, config, opacity) {
+     const fadeDuration = config.enabled.highlightFade ? config.highlight.fadeOutDurationMs : 1;
+-    const animation = part.highlightElement.animate(fadeOutTextKeyframes(config, part), {
++    // Leave the existing sweep, glow and motion in effect while the outgoing paint fades.
++    // Cancelling them here exposes the default (fully lit) mask and resets glyph positions.
++    const animation = part.highlightElement.animate([{ opacity }, { opacity: 0 }], {
+         duration: fadeDuration,
+         easing: config.enabled.highlightFade ? config.highlight.fadeOutEasing : "linear",
+-        fill: "none",
++        // Hold at zero until cleanup, so the underlying highlight cannot flash back on.
++        fill: "forwards",
+     });
+-    part.animations = [animation, ...mirrorImageHighlightAnimations(part, [animation])];
+-    // Keep the current blur, letter masks and motion visible until the parent fade ends.
+-    for (const { target, frame } of imagePaint) {
+-        part.animations.push(target.animate([frame, frame], { duration: fadeDuration, fill: "none" }));
+-    }
++    part.animations.push(animation, ...mirrorImageHighlightAnimations(part, [animation]));
+     animation.addEventListener("finish", () => {
+-        resetPartAnimations(part);
++        if (part.animations.includes(animation))
++            resetPartAnimations(part);
+     }, { once: true });
+ }
+ function startLineExitAnimations(engine, lineData, config, currentTime) {
+-    // Read the entire line before cancelling any effects, so this does not alternate
+-    // per-word style reads with writes. There are no extra reads during normal ticks.
+-    const imagePaint = new Map();
+-    for (const part of lineData.parts) {
+-        if (!part.imageLayers || currentTime < part.time)
+-            continue;
+-        const style = engine.window.getComputedStyle(part.imageLayers.glow);
+-        const paint = [
+-            { target: part.imageLayers.glow, frame: { opacity: style.opacity, filter: style.filter } },
+-        ];
+-        for (const target of part.letterElements ?? []) {
+-            paint.push({ target, frame: { transform: engine.window.getComputedStyle(target).transform } });
+-        }
+-        for (const target of [...(part.highlightLetterElements ?? []), ...part.imageLayers.glowLetters]) {
+-            const letterStyle = engine.window.getComputedStyle(target);
+-            paint.push({ target, frame: { maskPosition: letterStyle.maskPosition, transform: letterStyle.transform } });
+-        }
+-        imagePaint.set(part, paint);
+-    }
++    // Capture the rendered opacity (possibly still fading in) before starting the new effects.
++    const opacities = lineData.parts.map(part => currentTime < part.time
++        ? null
++        : engine.window.getComputedStyle(part.highlightElement).opacity);
+     startLineExitAnimation(lineData, config);
+     if (lineData.lyricElement.dataset.instrumental === "true") {
+         startInstrumentalExitAnimations(engine, lineData, config, currentTime);
+         return;
+     }
+-    for (const part of lineData.parts) {
+-        if (currentTime >= part.time) {
+-            startWordExitAnimation(part, config, imagePaint.get(part));
++    lineData.parts.forEach((part, index) => {
++        const opacity = opacities[index];
++        if (opacity !== null) {
++            startWordExitAnimation(part, config, opacity);
+         }
+         else {
+             resetPartAnimations(part);
+         }
+-    }
++    });
+ }
+ function animateInstrumentalChild(engine, lineData, selector, keyframes, options, timing) {
+     const element = lineData.lyricElement.querySelector(selector);
+diff --git a/dist/text.js b/dist/text.js
+--- a/dist/text.js
++++ b/dist/text.js
+@@ -1,6 +1,8 @@
+ // Script detection for the text the module renders. Pure string work, no DOM and no host state.
+ export const testRtl = (text) => /[\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}\p{Script=Adlam}\p{Script=Mandaic}\p{Script=Hanifi_Rohingya}\p{Script=Samaritan}\p{Script=Yezidi}\p{Script=Mende_Kikakui}\p{Script=Old_Hungarian}]/u.test(text);
+-export const testJoiningScript = (text) => /[\p{Script_Extensions=Arabic}\p{Script_Extensions=Syriac}\p{Script_Extensions=Nko}\p{Script_Extensions=Mongolian}\p{Script_Extensions=Adlam}\p{Script_Extensions=Mandaic}\p{Script_Extensions=Hanifi_Rohingya}]/u.test(text);
++// The shared Mongolian script extensions include CJK punctuation (、 and 。).
++// Only actual Mongolian characters need joining preserved.
++export const testJoiningScript = (text) => /[\p{Script_Extensions=Arabic}\p{Script_Extensions=Syriac}\p{Script_Extensions=Nko}\p{Script=Mongolian}\p{Script_Extensions=Adlam}\p{Script_Extensions=Mandaic}\p{Script_Extensions=Hanifi_Rohingya}]/u.test(text);
+ /**
+  * This regex is designed to detect any characters that are outside of the
+  * standard "Basic Latin" and "Latin-1 Supplement" Unicode blocks, as well

@@ -159,9 +159,8 @@ fn atomic_write_utf8(target: &Path, content: &str) -> Result<(), String> {
     }
     let tmp = target.with_extension("json.tmp");
     std::fs::write(&tmp, content.as_bytes()).map_err(|e| e.to_string())?;
-    if cfg!(windows) && target.exists() {
-        let _ = std::fs::remove_file(target);
-    }
+    // Replace in place on the same filesystem. Removing the Windows destination
+    // first would lose the last saved settings if the rename fails.
     std::fs::rename(&tmp, target).map_err(|e| e.to_string())
 }
 

@@ -13,6 +13,7 @@ import { basename, join, resolve } from "node:path";
 import { writeFileSync } from "node:fs";
 import { LibraryStore } from "../../src/main/library/store";
 import { scanLibrary } from "../../src/main/library/scanner";
+import { DEFAULT_SETTINGS } from "../../src/main/settingsCore";
 
 const root = resolve(import.meta.dirname, "../..");
 const fixtures = join(root, ".artifacts/fixtures/formats");
@@ -89,7 +90,7 @@ for (const playlist of snapshot.playlists) {
   playlist.artworkUrl = null;
 }
 
-writeFileSync(join(workDir, "library.json"), JSON.stringify({ snapshot, engine: store.engine, scan }, null, 2));
+writeFileSync(join(workDir, "library.json"), JSON.stringify({ snapshot, engine: store.engine, scan, defaultSettings: DEFAULT_SETTINGS }, null, 2));
 console.log(`snapshot: ${snapshot.tracks.length} tracks, engine ${store.engine}`);
 for (const track of snapshot.tracks) {
   console.log(`  #${track.id} ${track.title} — ${track.artist} [${track.codec}] ${track.duration.toFixed(2)}s artwork=${Boolean(track.artworkUrl)}`);

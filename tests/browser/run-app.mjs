@@ -1,15 +1,13 @@
 /**
  * Interactive application harness.
  *
- * Electron's binary cannot be downloaded in this environment, so this script boots the *real*
- * production renderer bundle (`out/renderer`) in headless Chromium with:
- *   - a stub `window.cadence` that speaks the same IPC contract as the preload script, backed by a
+ * Boots the production renderer bundle (`dist`) in headless Chromium with:
+ *   - a stub `window.cadence` that speaks the same contract as the Tauri bridge, backed by a
  *     snapshot produced by the real main-process scanner (`tests/browser/build-library.ts`),
  *   - real generated audio files served with HTTP Range support,
  *   - the real audio engine, lyrics renderer and shader engine.
  *
- * The stub replaces only the Electron IPC transport (dialogs, filesystem and SQLite live in the
- * main process, which cannot run without Electron). Playback, artwork decoding, lyric parsing and
+ * Native window actions and dialogs are simulated. Playback, artwork decoding, lyric parsing and
  * shader rendering are the shipped code paths, not stand-ins.
  *
  * Usage: npx vite-node tests/browser/build-library.ts && node tests/browser/run-app.mjs
@@ -31,7 +29,7 @@ mkdirSync(shotDir, { recursive: true });
 
 const snapshotFile = join(harnessDir, "library.json");
 if (!existsSync(snapshotFile)) throw new Error("Run: npx vite-node tests/browser/build-library.ts");
-const { snapshot } = JSON.parse(readFileSync(snapshotFile, "utf8"));
+const { snapshot, defaultSettings: fixtureDefaults } = JSON.parse(readFileSync(snapshotFile, "utf8"));
 const byTitle = title => snapshot.tracks.find(track => track.title === title);
 
 const PLAIN_LRC = `[ti:Fixture FLAC]
@@ -181,20 +179,22 @@ const audioState = () =>
     };
   });
 
-/* Stub bridge: same contract as src/preload/index.ts, backed by real library data. */
+/* Stub bridge: same contract as src/tauri/bridge.ts, backed by real library data. */
 await page.evaluateOnNewDocument(
   data => {
-    const { snapshot, lyricsByTrack } = data;
+    const { snapshot, lyricsByTrack, fixtureDefaults } = data;
     // Mirrors the Windows shell: undecorated window, so the renderer draws the title bar.
     window.__chrome = { undecorated: true, maximized: false, fullscreen: false, focused: true };
     window.__chromeListeners = new Set();
     window.__cadenceWindowActions = [];
     const SETTINGS_KEY = "cadence.harness.settings.v1";
     const defaultSettings = {
-      version: 1,
-      playback: { volume: 0.85, muted: false, shuffle: false, repeat: "off", playbackRate: 1, resumeOnLaunch: false },
-      appearance: { accent: "#ff3d71", reduceMotion: false, compactSidebar: false, blurArtwork: true },
+      ...fixtureDefaults,
+      playback: { ...fixtureDefaults.playback, resumeOnLaunch: false, autoPlay: false },
+      appearance: { ...fixtureDefaults.appearance, blurArtwork: true },
+      artistImages: { ...fixtureDefaults.artistImages, enabled: false, autoFetch: false },
       lyrics: {
+        ...fixtureDefaults.lyrics,
         providerOrder: ["local-rich", "blyrics-richsynced", "unison-richsynced", "binimum-richsynced", "blyrics-wordsynced", "local-lrc", "blyrics-line", "unison-synced", "blyrics-synced", "qq-line", "lrclib-synced", "lrclib-plain", "embedded-tag"],
         autoFetch: true,
         offsetMs: 0,
@@ -217,6 +217,7 @@ await page.evaluateOnNewDocument(
         showLyricsInFullscreen: true,
       },
       shaders: {
+        ...fixtureDefaults.shaders,
         enabled: true,
         kawarpOpacity: 0.8,
         kawarpWarpIntensity: 1,
@@ -519,7 +520,7 @@ await page.evaluateOnNewDocument(
       onMenuAction: () => () => {},
     };
   },
-  { snapshot, lyricsByTrack }
+  { snapshot, lyricsByTrack, fixtureDefaults }
 );
 
 await page.goto(base, { waitUntil: "networkidle0" });
@@ -548,7 +549,7 @@ const layout = await page.evaluate(() => {
     bar: box(".window-title-bar"),
     brand: box(".title-bar-brand"),
     sidebar: box(".sidebar"),
-    topBar: box(".top-bar"),
+    content: box(".content-scroll"),
     controls: [...document.querySelectorAll(".window-control")].map(node => {
       const rect = node.getBoundingClientRect();
       return {
@@ -572,8 +573,8 @@ check(
 );
 check(
   "titlebar-no-overlap",
-  layout.sidebar.top >= layout.bar.bottom - 1 && layout.topBar.top >= layout.bar.bottom - 1,
-  `sidebar ${layout.sidebar.top}, top bar ${layout.topBar.top}, bar bottom ${layout.bar.bottom}`
+  layout.sidebar.top >= layout.bar.bottom - 1 && layout.content.top >= layout.bar.bottom - 1,
+  `sidebar ${layout.sidebar.top}, content ${layout.content.top}, bar bottom ${layout.bar.bottom}`
 );
 check("titlebar-drag-region", layout.barDragRegion, "title bar is a Tauri drag region");
 check(
@@ -622,7 +623,7 @@ check(
   (await page.evaluate(() => document.querySelectorAll(".window-control")[1].getAttribute("aria-label"))) === "Maximize",
   "restore returns the maximize label"
 );
-await page.hover(".top-bar");
+await page.hover(".app-main");
 await page.screenshot({ path: join(shotDir, "00-title-bar.png"), clip: { x: 0, y: 0, width: 1480, height: 140 } });
 await page.screenshot({ path: join(shotDir, "01-home.png") });
 
@@ -789,7 +790,7 @@ await page.click('aside.sidebar button[title="Songs"]');
 await page.waitForSelector('[data-testid="track-row"]');
 await clickTrack("Fixture FLAC");
 await wait(900);
-await page.click('button[aria-label="Now Playing"]');
+await page.evaluate(() => { location.hash = "#/lyrics"; });
 await page.waitForSelector(".lyrics-view", { timeout: 15_000 });
 // Restart the 6-second fixture and halve its rate for this section: clicking the
 // already-current track does not restart it, so on a slow machine it can be
@@ -808,7 +809,7 @@ await wait(1800);
 const navLabels = await page.$$eval("aside.sidebar .nav-item", nodes => nodes.map(node => node.textContent.trim()));
 check(
   "page-renamed-now-playing",
-  navLabels.includes("Now Playing") && !navLabels.includes("Lyrics") && Boolean(await page.$('.player-right button[aria-label="Now Playing"]')),
+  !navLabels.includes("Now Playing") && !navLabels.includes("Lyrics") && (await page.$$(`.player-right [data-testid="open-now-playing"]`)).length === 1,
   JSON.stringify(navLabels)
 );
 
@@ -848,12 +849,12 @@ check("lyrics-dock-visible", dock.present && dock.visible, JSON.stringify(dock))
 const fullscreenButtonsOn = () =>
   page.evaluate(() =>
     [...document.querySelectorAll("button")]
-      .filter(node => /fullscreen/i.test(`${node.title} ${node.getAttribute("aria-label") ?? ""} ${node.textContent}`))
+      .filter(node => node.matches('[data-testid="open-now-playing"], .fs-exit'))
       .map(node => node.title || node.textContent.trim())
   );
 const normalFullscreen = await fullscreenButtonsOn();
 check("top-fullscreen-removed", !(await page.$(".sync-pill")) && normalFullscreen.length === 1, JSON.stringify(normalFullscreen));
-check("bottom-fullscreen-only", normalFullscreen.length === 1 && normalFullscreen[0].startsWith("Fullscreen lyrics"), JSON.stringify(normalFullscreen));
+check("bottom-fullscreen-only", normalFullscreen.length === 1 && normalFullscreen[0].startsWith("Now Playing"), JSON.stringify(normalFullscreen));
 
 await page.click('button[title="Lyrics source"]');
 await wait(300);
@@ -1075,24 +1076,19 @@ const setSettingsRange = (label, value) =>
 
 // The dock's Style popover was removed; its sliders live in Settings, so the size
 // checks below detour there and back to the lyrics.
+const selectSettingsTab = async (label, panel) => {
+  await page.evaluate(text => [...document.querySelectorAll(".settings-tabs button")]
+    .find(node => node.textContent?.trim() === text)?.click(), label);
+  await page.waitForSelector(`[data-testid="${panel}"]`);
+};
 const openSettingsView = async () => {
   await page.click('aside.sidebar button[title="Settings"]');
   await page.waitForSelector('[data-testid="settings-view"]');
-  await page.evaluate(() => {
-    const appearanceTab = [...document.querySelectorAll(".settings-tabs button")].find(node =>
-      /appearance/i.test(node.textContent ?? "")
-    );
-    appearanceTab?.click();
-  });
+  await selectSettingsTab("Lyrics", "settings-lyrics");
   await wait(400);
 };
 const backToNowPlaying = async () => {
-  await page.evaluate(() => {
-    const item = [...document.querySelectorAll("aside.sidebar .nav-item")].find(node =>
-      node.textContent.includes("Now Playing")
-    );
-    item?.click();
-  });
+  await page.evaluate(() => { location.hash = "#/lyrics"; });
   await page.waitForSelector(".lyrics-view", { timeout: 10_000 }).catch(() => null);
   await wait(500);
 };
@@ -1143,7 +1139,7 @@ check(
 
 // Fullscreen renders through the same theme and settings; its larger content height
 // therefore rescales the same reference sizes instead of replacing them.
-await page.click('button[aria-label="Fullscreen lyrics"]');
+await page.click('[data-testid="open-now-playing"]');
 await page.waitForSelector(".lyrics-view.is-fullscreen", { timeout: 5000 }).catch(() => null);
 await wait(600);
 const fullscreenSizes = await decoFontSizes();
@@ -1193,19 +1189,26 @@ await page.waitForFunction(() => document.querySelectorAll("braccato-lyrics .bly
 
 /* ------------------------------------------------------- unified fullscreen */
 
-// The controls show only while the pointer is over them, so a click first moves the pointer onto its
-// target (which reveals the controls) and waits out the fade-in before clicking.
+// Force a real pointer move after a layout change; moving to the same point does not wake
+// the hover-only controls. Click only after the target can actually receive input.
 const wakeClick = async selector => {
+  await page.waitForSelector(selector, { timeout: 9000 });
+  if (await page.$('.lyrics-view.is-fullscreen') && !selector.startsWith('.queue-panel')) await page.mouse.move(100, 180);
   const point = await page.$eval(selector, node => {
     const rect = node.getBoundingClientRect();
     return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
   });
   await page.mouse.move(point.x, point.y);
-  await wait(350);
+  await page.waitForFunction(sel => {
+    const node = document.querySelector(sel);
+    if (!node) return false;
+    const r = node.getBoundingClientRect();
+    return node.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+  }, { timeout: 8000 }, selector);
   await page.click(selector);
 };
 
-await wakeClick('button[aria-label="Fullscreen lyrics"]');
+await wakeClick('[data-testid="open-now-playing"]');
 await wait(700);
 check("fullscreen-lyrics", Boolean(await page.$(".lyrics-view.is-fullscreen")), "immersive mode");
 
@@ -1229,7 +1232,7 @@ const fsParts = await page.evaluate(() => {
     seek: has(".seek-row input.seek"),
     volume: has(".volume-group input.volume"),
     favourite: has('button[aria-label="Add to favourites"], button[aria-label="Remove from favourites"]'),
-    lyricsToggle: has('[data-testid="fullscreen-lyrics-toggle"]'),
+    lyricsToggle: Boolean(document.querySelector('.fs-mode-tabs [data-testid="lyrics-mode-off"]')),
     queue: has('button[aria-label="Queue"]'),
     lyricsDock: Boolean(document.querySelector('[data-testid="lyrics-dock"]')),
     playerBarHidden: !document.querySelector('[data-testid="player-bar"]'),
@@ -1257,44 +1260,26 @@ await wait(900);
 const fsPlaying = await audioState();
 check("fullscreen-play-button", !fsPlaying.paused && fsPlaying.currentTime > 0.5, `${fsPlaying.currentTime.toFixed(2)}s`);
 
-// The control backdrop must show the shader: not an opaque black fill, and changing frame to frame.
-const glassStyle = await page.evaluate(() => {
-  const node = document.querySelector('[data-testid="fullscreen-controls"]');
+// The desktop redesign uses a stable matte transport, not a backdrop blur over moving lyrics.
+const matteControls = await page.$eval('[data-testid="fullscreen-controls"]', node => {
   const style = getComputedStyle(node);
-  const match = /rgba?\(([^)]+)\)/.exec(style.backgroundColor);
-  const alpha = match ? Number((match[1].split(",")[3] ?? "1").trim()) : 1;
-  return { background: style.backgroundColor, alpha, backdrop: style.backdropFilter };
+  const rgba = style.backgroundColor.match(/rgba?\(([^)]+)\)/)?.[1].split(",").map(Number) ?? [];
+  const rect = node.getBoundingClientRect();
+  const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+  return {
+    background: rgba.slice(0, 3), alpha: rgba[3] ?? 1, backdrop: style.backdropFilter,
+    border: parseFloat(style.borderTopWidth), hittable: node.contains(hit),
+  };
 });
-check("controls-not-black-fill", glassStyle.alpha <= 0.35 && /blur/.test(glassStyle.backdrop), JSON.stringify(glassStyle));
+check("controls-use-a-matte-surface-not-a-backdrop-filter", matteControls.alpha === 1 &&
+  matteControls.background.length === 3 && matteControls.background.every(channel => channel > 16) &&
+  matteControls.backdrop === "none" && matteControls.border > 0, JSON.stringify(matteControls));
+check("controls-layer-over-shader-and-accept-input", matteControls.hittable, JSON.stringify(matteControls));
 
-const regionSamples = async selector => {
-  const box = await page.$eval(selector, node => {
-    const rect = node.getBoundingClientRect();
-    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
-  });
-  const first = PNG.sync.read(await page.screenshot({ clip: box }));
-  await wait(800);
-  const second = PNG.sync.read(await page.screenshot({ clip: box }));
-  let sum = 0;
-  let changed = 0;
-  for (let i = 0; i < first.data.length; i += 4) {
-    const a = first.data[i] + first.data[i + 1] + first.data[i + 2];
-    const b = second.data[i] + second.data[i + 1] + second.data[i + 2];
-    sum += a;
-    if (Math.abs(a - b) > 12) changed += 1;
-  }
-  return { mean: sum / (first.width * first.height), changedRatio: changed / (first.width * first.height) };
-};
-// Animation through the backdrop: the glass must carry the moving shader, and an opaque black fill
-// (the old treatment) must not. Both are measured on the same region, frame to frame.
 const motionOf = async box => {
-  // Audio-reactive shaders have quiet frames; sample several windows and retain the strongest
-  // motion measurement. A static/black control still has no window that can pass the thresholds.
+  // Audio-reactive shaders have quiet frames; retain the strongest motion measurement.
   let strongest = null;
   for (let sample = 0; sample < 3; sample += 1) {
-    // Keep the cursor over the controls so the idle-conceal fade cannot fire mid-sample:
-    // a fade during the black-fill baseline reveals the moving shader and contaminates it.
-    await page.mouse.move(box.x + box.width / 2, box.y + 6);
     const first = PNG.sync.read(await page.screenshot({ clip: box }));
     await wait(800);
     const second = PNG.sync.read(await page.screenshot({ clip: box }));
@@ -1314,51 +1299,13 @@ const motionOf = async box => {
   }
   return strongest;
 };
-const fsBox = await page.$eval('[data-testid="fullscreen-controls"]', node => {
-  const rect = node.getBoundingClientRect();
-  return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
-});
-// Only the backdrop is measured: the controls' own children (seek time, progress) move with playback.
-const hideContents = hidden => page.evaluate(value => {
-  const node = document.querySelector('[data-testid="fullscreen-controls"]');
-  for (const child of node.children) child.style.visibility = value ? "hidden" : "";
-}, hidden);
-await hideContents(true);
-// Pin the bar visible with no fade for the whole measurement: an idle-conceal (or re-show)
-// transition inside a sample window swamps the backdrop signal this check exists to measure.
-await page.evaluate(() => {
-  const node = document.querySelector('[data-testid="fullscreen-controls"]');
-  node.style.opacity = "1";
-  node.style.transition = "none";
-});
-const glassMotion = await motionOf(fsBox);
-await page.evaluate(() => {
-  const node = document.querySelector('[data-testid="fullscreen-controls"]');
-  node.style.background = "#000";
-  node.style.backdropFilter = "none";
-});
-const blackMotion = await motionOf(fsBox);
-await page.evaluate(() => {
-  const node = document.querySelector('[data-testid="fullscreen-controls"]');
-  node.style.background = "";
-  node.style.backdropFilter = "";
-  node.style.opacity = "";
-  node.style.transition = "";
-});
-await hideContents(false);
-check(
-  "controls-show-shader-through-glass",
-  glassMotion.mean > 20 && glassMotion.avgDiff > 2 && glassMotion.avgDiff - blackMotion.avgDiff > 2,
-  `glass: mean ${glassMotion.mean.toFixed(1)}/255, avg frame change ${glassMotion.avgDiff.toFixed(2)}, ${(100 * glassMotion.movedRatio).toFixed(1)}% pixels moved; black fill baseline: avg change ${blackMotion.avgDiff.toFixed(2)}`
-);
-
 // Lyrics on/off: hiding must not stop playback, reset the position, or break sync.
 const lyricsVisibility = () =>
   page.evaluate(() => ({
     bodyHidden: document.querySelector(".lyrics-body")?.classList.contains("is-hidden") ?? null,
     visibility: document.querySelector("braccato-lyrics") ? getComputedStyle(document.querySelector("braccato-lyrics")).visibility : null,
     opacity: getComputedStyle(document.querySelector(".lyrics-body")).opacity,
-    pressed: document.querySelector('[data-testid="fullscreen-lyrics-toggle"]')?.getAttribute("aria-pressed") ?? null,
+    pressed: document.querySelector('[data-testid="lyrics-mode-on"]')?.getAttribute("aria-pressed") ?? null,
     stored: JSON.parse(localStorage.getItem("cadence.harness.settings.v1") ?? "{}")?.lyrics?.showLyricsInFullscreen ?? null,
   }));
 
@@ -1367,7 +1314,7 @@ await page.evaluate(() => {
 });
 await wait(300);
 const beforeHide = await audioState();
-await wakeClick('[data-testid="fullscreen-lyrics-toggle"]');
+await wakeClick('[data-testid="lyrics-mode-off"]');
 await wait(900);
 const hiddenState = await lyricsVisibility();
 const afterHide = await audioState();
@@ -1399,13 +1346,7 @@ const offPanel = await page.evaluate(() => {
     panel: box(".fs-panel"),
     controls: box('[data-testid="fullscreen-controls"]'),
     exit: Boolean(document.querySelector(".lyrics-view .fs-exit")),
-    eyebrow: document.querySelector(".fs-eyebrow")?.textContent?.trim() ?? null,
-    // The toggle sits in the transport row, directly after the repeat button.
-    toggle: (() => {
-      const toggleNode = document.querySelector('[data-testid="fullscreen-controls"] [data-testid="fullscreen-lyrics-toggle"]');
-      const repeatNode = document.querySelector('[data-testid="fullscreen-controls"] button[aria-label^="Repeat"]');
-      return Boolean(toggleNode && repeatNode && repeatNode.nextElementSibling === toggleNode && toggleNode.closest(".transport"));
-    })(),
+    toggle: document.querySelector('.fs-mode-tabs [data-testid="lyrics-mode-off"]')?.getAttribute("aria-pressed") === "true",
     innerWidth: window.innerWidth,
     innerHeight: window.innerHeight,
   };
@@ -1422,8 +1363,7 @@ check(
     offPanel.controls.bottom <= offPanel.innerHeight &&
     offPanel.panel.right <= offPanel.innerWidth &&
     offPanel.exit &&
-    offPanel.toggle &&
-    offPanel.eyebrow === "Now playing",
+    offPanel.toggle,
   JSON.stringify(offPanel)
 );
 
@@ -1441,7 +1381,7 @@ await page.mouse.click(exitTarget.x, exitTarget.y);
 await wait(700);
 const exitClosed = !(await page.$(".lyrics-view.is-fullscreen"));
 check("exit-closes-lyrics-off", exitTarget.hit && exitClosed, `hit ${exitTarget.hit}, fullscreen closed ${exitClosed}`);
-await wakeClick('button[aria-label="Fullscreen lyrics"]');
+await wakeClick('[data-testid="open-now-playing"]');
 await wait(700);
 check("fullscreen-reentered-lyrics-off", Boolean(await page.$(".lyrics-view.is-fullscreen.is-lyrics-off")), "lyrics off kept on re-entry");
 
@@ -1462,7 +1402,7 @@ check(
   `paused ${pausedWhileHidden.paused}, resumed ${resumedWhileHidden.paused} at ${resumedWhileHidden.currentTime.toFixed(2)}s`
 );
 
-await wakeClick('[data-testid="fullscreen-lyrics-toggle"]');
+await wakeClick('[data-testid="lyrics-mode-on"]');
 await wait(700);
 const shownState = await lyricsVisibility();
 check(
@@ -1695,7 +1635,7 @@ check(
 );
 
 // Re-enter fullscreen for the checks below.
-await wakeClick('button[aria-label="Fullscreen lyrics"]');
+await wakeClick('[data-testid="open-now-playing"]');
 await wait(700);
 check("fullscreen-reentry", Boolean(await page.$(".lyrics-view.is-fullscreen")), "fullscreen again");
 
@@ -1833,7 +1773,10 @@ const layoutAtSize = async (width, height) => {
         art.headingTop >= art.artBottom &&
         art.sideTop >= art.headerBottom - 1 &&
         art.sideBottom <= art.footerTop &&
-        Math.abs((art.sideTop + art.sideBottom) / 2 - art.viewport / 2) < 2 &&
+        Math.abs(art.sideTop - Math.max(0, Math.min(
+          (art.viewport - (art.sideBottom - art.sideTop)) / 2,
+          art.footerTop - (art.sideBottom - art.sideTop) - 8
+        ))) < 2 &&
         art.lyricsFaded &&
         Math.abs((art.artLeft + art.bodyRight) / 2 - art.viewportWidth / 2) < 2;
   check(`fullscreen-artwork-${width}x${height}`, artOk, JSON.stringify(art));
@@ -1886,7 +1829,7 @@ if (await page.$('.queue-panel button[aria-label="Close queue"]')) {
 }
 
 // Lyrics stay hidden only in fullscreen: switch them off, leave fullscreen, and the normal page still shows them.
-await wakeClick('[data-testid="fullscreen-lyrics-toggle"]');
+await wakeClick('[data-testid="lyrics-mode-off"]');
 await wait(300);
 await page.keyboard.press("Escape");
 await wait(500);
@@ -1903,9 +1846,9 @@ check(
 );
 
 // Restore the defaults (lyrics on, repeat off) for the rest of the run.
-await wakeClick('button[aria-label="Fullscreen lyrics"]');
+await wakeClick('[data-testid="open-now-playing"]');
 await wait(500);
-await wakeClick('[data-testid="fullscreen-lyrics-toggle"]');
+await wakeClick('[data-testid="lyrics-mode-on"]');
 await wait(300);
 await wakeClick('[data-testid="fullscreen-controls"] button[aria-label="Repeat: one"]');
 await wait(200);
@@ -1918,7 +1861,7 @@ await wait(400);
 await page.click('aside.sidebar button[title="Settings"]');
 await page.waitForSelector('[data-testid="settings-view"]');
 await wait(300);
-await page.click('button[aria-label="Fullscreen lyrics"]');
+await page.click('[data-testid="open-now-playing"]');
 await page.waitForSelector(".lyrics-view.is-fullscreen", { timeout: 5000 }).catch(() => null);
 await wait(900);
 const fromSettings = await page.evaluate(() => ({
@@ -1929,7 +1872,7 @@ const fromSettings = await page.evaluate(() => ({
 }));
 check(
   "player-button-enters-fullscreen",
-  fromSettings.hash === "#/lyrics" && fromSettings.fullscreen && !fromSettings.playerBar && !fromSettings.overlay,
+  fromSettings.hash === "#/settings" && fromSettings.fullscreen && !fromSettings.playerBar && !fromSettings.overlay,
   JSON.stringify(fromSettings)
 );
 await page.screenshot({ path: join(shotDir, "06-fullscreen-from-player.png") });
@@ -1948,19 +1891,15 @@ check("fullscreen-exit-after-n", !(await page.$(".lyrics-view.is-fullscreen")), 
 
 await page.click('aside.sidebar button[title="Settings"]');
 await page.waitForSelector('[data-testid="settings-view"]');
+await selectSettingsTab("Appearance", "settings-appearance");
 await wait(500);
 const settingsTabs = await page.$$eval(".settings-tabs button", buttons => buttons.map(button => button.textContent?.trim()));
-const shaderSection = await page.$('[data-testid="settings-shaders"]');
-const lyricsSection = await page.$('[data-testid="settings-lyrics"]');
-check(
-  "settings-tabs-consolidated",
-  settingsTabs.length === 5 &&
-    ["Appearance", "Library", "Playback", "Cache", "About"].every(tab => settingsTabs.includes(tab)) &&
-    !settingsTabs.includes("Lyrics") &&
-    !settingsTabs.includes("Shaders"),
-  `${settingsTabs.join(", ")}`
-);
-check("settings-appearance-subsections", Boolean(shaderSection) && Boolean(lyricsSection), "lyrics and shader controls in Appearance");
+check("settings-has-a-dedicated-lyrics-tab", settingsTabs.join(", ") === "Appearance, Lyrics, Library, Playback, Cache, About", settingsTabs.join(", "));
+check("settings-appearance-subsections", await page.evaluate(() =>
+  Boolean(document.querySelector('[data-testid="settings-shaders"]')) &&
+  Boolean(document.querySelector('[data-testid="settings-now-playing"]')) &&
+  !document.querySelector('[data-testid="settings-lyrics"], [data-testid="settings-reset-all"]')
+), "Shader and Studio controls stay in Appearance; Lyrics and Reset all do not");
 await page.screenshot({ path: join(shotDir, "07-settings.png") });
 
 await page.evaluate(() => {
@@ -1974,11 +1913,7 @@ const playbackAppearanceControls = await page.evaluate(() => ({
   fontSelect: Boolean(document.querySelector('[data-testid="settings-playback"] [data-testid="font-select"]')),
 }));
 check("playback-appearance-removed", !playbackAppearanceControls.appearanceHeader && !playbackAppearanceControls.fontSelect, JSON.stringify(playbackAppearanceControls));
-await page.evaluate(() => {
-  const appearanceTab = [...document.querySelectorAll(".settings-tabs button")].find(node => /appearance/i.test(node.textContent ?? ""));
-  appearanceTab?.click();
-});
-await wait(400);
+await selectSettingsTab("Lyrics", "settings-lyrics");
 const persisted = await page.evaluate(async () => {
   // Select by label, not "first range in the section": the Not-Found cooldown slider now sits
   // ahead of Font size in the Lyrics settings, and grabbing it would silently set days not rem.
@@ -2012,6 +1947,7 @@ await page.waitForSelector(".sidebar", { timeout: 15_000 }).catch(async () => {
 });
 await page.click('aside.sidebar button[title="Settings"]');
 await page.waitForSelector('[data-testid="settings-view"]');
+await selectSettingsTab("Lyrics", "settings-lyrics");
 await wait(600);
 // Same by-label selection as above: the first range/output in the Lyrics section is now the
 // Not-Found cooldown control, so reading positionally would check days instead of rem.
@@ -2044,7 +1980,11 @@ check(
 // classifications. Runs last: it appends synthetic tracks and deletes library entries in the stub.
 await page.evaluate(() => window.__addDecodeFixtureTracks());
 await wait(500);
-const audioSrcBeforeDecode = await page.$eval("audio", node => node.currentSrc || node.src).catch(() => "");
+await page.evaluate(() => {
+  window.__playbackBeforeDecode = [...document.querySelectorAll('.cadence-audio-deck')].map(node => ({
+    node, src: node.currentSrc || node.src,
+  }));
+});
 
 check(
   "decode-tester-not-in-sidebar",
@@ -2143,9 +2083,12 @@ check(
 );
 check(
   "decode-scan-leaves-player-alone",
-  (await page.$$("audio")).length === 1 &&
-    (await page.$eval("audio", node => node.currentSrc || node.src).catch(() => "")) === audioSrcBeforeDecode,
-  "one shared playback element, source untouched"
+  await page.evaluate(() => {
+    const live = [...document.querySelectorAll('.cadence-audio-deck')];
+    return live.length === 2 && window.__playbackBeforeDecode.length === live.length &&
+      window.__playbackBeforeDecode.every(({ node, src }, i) => node === live[i] && src === (node.currentSrc || node.src));
+  }),
+  "both live playback decks retain their identity and source"
 );
 await page.screenshot({ path: join(shotDir, "08-decode-tester.png") });
 

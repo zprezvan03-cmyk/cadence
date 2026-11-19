@@ -101,6 +101,32 @@ const PLAIN_LRC = `[ti:Remote fixture]
 [00:04.00]Third sung line
 `;
 
+// The reported no-space Japanese line, with all four TTML timings shifted by the same 20 s to
+// fit the harness tone. The surrounding lines and decorations are local fixtures, not AI results.
+const TTML_PAINT = `<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
+  <head><metadata>
+    <translations xml:lang="en">
+      <translation for="L1"><text>It stopped raining.</text></translation>
+      <translation for="L2"><text>That reply won't reach me.</text></translation>
+      <translation for="L3"><text>See you later.</text></translation>
+    </translations>
+    <transliterations>
+      <transliteration xml:lang="ja-Latn">
+        <text for="L1">ame ga yanda</text>
+        <text for="L2"><span begin="1.293" end="2.434">todokimasen</span><span begin="2.434" end="4.172"> ne. sono ripurai</span></text>
+        <text for="L3">mata ne, jaa ne</text>
+      </transliteration>
+    </transliterations>
+  </metadata></head>
+  <body dur="9.000"><div>
+    <p begin="0.500" end="1.220" key="L1"><span begin="0.500" end="1.220">雨が止んだ</span></p>
+    <p begin="1.293" end="4.172" key="L2"><span begin="1.293" end="2.434">届きません</span><span begin="2.434" end="2.784">ね。</span><span begin="2.784" end="3.701">そのリプラ</span><span begin="3.701" end="4.172">イ</span></p>
+    <p begin="4.301" end="5.660" key="L3"><span begin="4.301" end="5.660">またね、じゃあね</span></p>
+    <p begin="6.000" end="8.100" key="L4" xml:lang="mn-Mong"><span begin="6.000" end="8.100">ᠮᠣᠩᠭᠣᠯ</span></p>
+  </div></body>
+</tt>`;
+
 const TTML_SECOND_FILE = `<?xml version="1.0" encoding="UTF-8"?>
 <tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
   <head><metadata>
@@ -267,6 +293,43 @@ const seekPreview = async seconds => {
   await wait(500);
   return result;
 };
+// Inspect the actual Web Animations created by the installed Braccato engine against the media
+// clock. These are not CSS entrance animations on the surrounding Cadence view.
+const sampleBraccatoMotion = async (from, until) => {
+  await seekPreview(from);
+  return page.evaluate(async until => {
+    const host = document.querySelector("braccato-lyrics");
+    const media = host.mediaElement;
+    const found = { scale: false, wobble: false, letterWave: false, sweep: false, glow: false, instrumental: false };
+    const container = host.querySelector(".blyrics-container");
+    const style = getComputedStyle(container);
+    const fades = ["in", "out"].map(side => {
+      const duration = style.getPropertyValue(`--blyrics-lyric-highlight-fade-${side}-duration`).trim();
+      return parseFloat(duration) * (duration.endsWith("ms") ? 1 : 1000);
+    });
+    const start = media.currentTime;
+    await media.play();
+    const deadline = performance.now() + 2400;
+    try {
+      do {
+        await new Promise(requestAnimationFrame);
+        for (const { effect } of host.getAnimations({ subtree: true })) {
+          const frames = effect.getKeyframes();
+          const duration = effect.getTiming().duration;
+          found.scale ||= duration === 166 && frames.some(frame => frame.transform?.includes("scale(0.95)"));
+          found.wobble ||= duration === 1000 && frames.some(frame => frame.transform?.includes("scaleX(1.025)"));
+          found.letterWave ||= frames.some(frame => frame.transform?.includes("translateY(-0.05em)"));
+          found.sweep ||= frames.some(frame => "maskPosition" in frame);
+          found.glow ||= frames.some(frame => "textShadow" in frame || "filter" in frame);
+          found.instrumental ||= duration === 1250 && frames.some(frame => "d" in frame) && effect.getTiming().iterations === Infinity;
+        }
+      } while (media.currentTime < until && !media.paused && performance.now() < deadline);
+      return { ...found, fades, start, end: media.currentTime, skew: Math.abs(host.currentTime - media.currentTime) };
+    } finally {
+      media.pause();
+    }
+  }, until);
+};
 const activeLine = () =>
   page.evaluate(() => {
     const node = document.querySelector("braccato-lyrics .blyrics--active");
@@ -285,6 +348,12 @@ const activeLine = () =>
 
 await page.goto(`${base}/index.html?harness=1`, { waitUntil: "networkidle0" });
 check("harness-boot", await page.evaluate(() => typeof window.__cadenceHarness === "object"));
+// The harness mounts beside the empty app root. Keep the view on-screen and give it the same
+// size-query container it uses in the desktop shell, so motion and screenshots include real paint.
+await page.addStyleTag({ content: `
+  #root:empty { display: none; }
+  #harness-lyrics-view { height: 100vh; container: app-content / size; }
+` });
 
 const track = { id: 701, title: "Lyrics Fixture", duration: 9 };
 
@@ -295,6 +364,10 @@ try {
   let current = await dom();
   check("romanization-off-hides-embedded", current.romanized.every(text => text === null), JSON.stringify(current.romanized));
   check("translation-off-hides-embedded", current.translated.every(text => text === null), JSON.stringify(current.translated));
+
+  const richMotion = await sampleBraccatoMotion(0.26, 0.98);
+  check("braccato-word-and-letter-motion-is-restored", richMotion.scale && richMotion.wobble && richMotion.letterWave && richMotion.skew < 0.08, JSON.stringify(richMotion));
+  check("braccato-retains-karaoke-sweep-and-original-fades", richMotion.sweep && richMotion.glow && richMotion.fades.join() === "330,500", JSON.stringify(richMotion));
 
   await clickTitle("Romanize lyrics");
   current = await dom();
@@ -592,6 +665,9 @@ try {
     ])}`
   );
 
+  const interlude = await sampleBraccatoMotion(3.05, 3.55);
+  check("braccato-keeps-the-timed-instrumental-wave", interlude.instrumental && interlude.skew < 0.08, JSON.stringify(interlude));
+
   // A file that needs generated text must be decorated even when the previous chosen file was
   // fully embedded: the "already decorated" guard is keyed on the parse, not shared by every file.
   await page.evaluate(ttml => window.__cadenceHarness.configureLyrics({ chosenFile: ttml }), TTML_SECOND_FILE);
@@ -749,6 +825,89 @@ try {
   await wait(700);
   current = await dom();
   check("translation-retry-after-failure", current.translated[0] === "[en] First sung line", JSON.stringify(current.translated));
+
+  await mount({
+    track: { id: 714, title: "Lyric paint fixture", duration: 9 },
+    candidates: [candidate("local-ttml", "Local TTML", TTML_PAINT)],
+    settings: { romanization: true, translationLanguage: "en", themeId: "default", passiveScroll: false },
+  });
+  await seekPreview(0.9);
+  const paint = await page.evaluate(async () => {
+    const host = document.querySelector("braccato-lyrics");
+    const media = host.mediaElement;
+    const baseWord = text => host.querySelector(`.blyrics--word:not(.blyrics-word-highlight)[data-content="${text}"]`);
+    const line = baseWord("届きません").closest(".blyrics--line");
+    const parts = [...line.querySelectorAll(":scope > .blyrics-line-main .blyrics--word:not(.blyrics-word-highlight)")];
+    const joining = host.querySelector('.blyrics-word-highlight[data-content="ᠮᠣᠩᠭᠣᠯ"]');
+    const decorations = [...line.querySelectorAll(":scope > :is(.blyrics--romanized, .blyrics--translated)")];
+    const decorationColors = decorations.map(node => getComputedStyle(node).color);
+    const samples = ["届きません", "todokimasen"].map(text => {
+      const word = line.querySelector(`.blyrics-word-highlight[data-content="${text}"]`);
+      const glyph = word.querySelector(".blyrics--letter");
+      return { word, glyph, before: [], retained: false, faded: false };
+    });
+    const summary = {
+      wordTimes: parts.map(word => [Number(word.dataset.time), Number(word.dataset.duration)]),
+      hasLetters: parts.every(word => word.querySelector(".blyrics--letter")) &&
+        Boolean(baseWord("またね、じゃあね").querySelector(".blyrics--letter")),
+      joiningPreserved: !joining.querySelector(".blyrics--letter"),
+      clip: getComputedStyle(joining).backgroundClip,
+      highlightShadow: getComputedStyle(joining).textShadow,
+      baseShadow: getComputedStyle(parts[0]).textShadow,
+      decorationColors,
+      stableDecorations: decorations.length === 2,
+      rebuilt: false,
+      travelled: 0,
+      latestClockSkew: 0,
+    };
+    const nodeObserver = new MutationObserver(() => { summary.rebuilt = true; });
+    nodeObserver.observe(host, { childList: true, subtree: true });
+    const top = line.getBoundingClientRect().top;
+    try {
+      await media.play();
+      const deadline = performance.now() + 6000;
+      while (media.currentTime < 4.9 && performance.now() < deadline) {
+        await new Promise(requestAnimationFrame);
+        summary.travelled = Math.max(summary.travelled, Math.abs(line.getBoundingClientRect().top - top));
+        summary.latestClockSkew = Math.abs(host.currentTime - media.currentTime);
+        summary.stableDecorations &&= decorations.every((node, i) => {
+          const style = getComputedStyle(node);
+          return style.color === decorationColors[i] && style.opacity === "1";
+        }) && getComputedStyle(line).opacity === "1";
+        for (const sample of samples) {
+          const fade = sample.word.getAnimations().find(({ effect }) => effect.getTiming().duration === 500 &&
+            Number(effect.getKeyframes().at(-1)?.opacity) === 0);
+          const tracks = sample.glyph?.getAnimations() ?? [];
+          if (!fade) {
+            if (line.classList.contains("blyrics--animating")) sample.before = tracks;
+            continue;
+          }
+          const alpha = Number(getComputedStyle(sample.word).opacity);
+          if (alpha <= 0.25 || alpha >= 0.9) continue;
+          sample.faded = true;
+          const retained = tracks.filter(track => sample.before.includes(track)).flatMap(track => track.effect.getKeyframes());
+          sample.retained ||= retained.some(frame => "maskPosition" in frame) && retained.some(frame => "transform" in frame);
+        }
+      }
+      return {
+        ...summary,
+        end: media.currentTime,
+        fades: samples.map(({ word, glyph, retained, faded }) => ({
+          retained, faded, cleared: getComputedStyle(word).opacity === "0" && !glyph?.getAnimations().length,
+        })),
+      };
+    } finally {
+      media.pause();
+      nodeObserver.disconnect();
+    }
+  });
+  check("japanese-punctuation-keeps-letter-wave-and-word-times", paint.hasLetters &&
+    JSON.stringify(paint.wordTimes) === JSON.stringify([[1.293, 1.141], [2.434, 0.35], [2.784, 0.917], [3.701, 0.471]]), JSON.stringify(paint));
+  check("joining-text-keeps-shaping-and-its-clipped-highlight-has-no-black-shadow", paint.joiningPreserved &&
+    paint.clip === "text" && paint.highlightShadow === "none" && paint.baseShadow !== "none", JSON.stringify(paint));
+  check("japanese-and-timed-romanization-retain-mask-and-motion-during-fade", paint.fades.every(f => f.faded && f.retained && f.cleared), JSON.stringify(paint));
+  check("decorations-keep-their-colors-on-the-same-nodes-through-the-line-change", paint.end >= 4.9 &&
+    paint.latestClockSkew < 0.08 && paint.travelled > 30 && paint.stableDecorations && !paint.rebuilt, JSON.stringify(paint));
 } catch (error) {
   check("harness-completed", false, error?.stack ?? String(error));
 }

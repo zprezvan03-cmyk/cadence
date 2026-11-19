@@ -1099,12 +1099,12 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         return settings.get();
       },
       async patch(patch) {
-        const next = settings.patch(patch);
+        const next = await settings.patchAndPersist(patch);
         applyLyricsFetchSettings();
         return next;
       },
       async reset() {
-        const next = settings.reset();
+        const next = await settings.resetAndPersist();
         applyLyricsFetchSettings();
         return next;
       },
@@ -1449,10 +1449,12 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
       onWindowChromeChange(listener: (state: WindowChromeState) => void): () => void {
         let active = true;
         const handles: UnlistenFn[] = [];
+        let readRevision = 0;
         const refresh = () => {
+          const revision = ++readRevision;
           void invoke<WindowChromeState>("cmd_window_chrome_state")
             .then(state => {
-              if (active) listener(state);
+              if (active && revision === readRevision) listener(state);
             })
             .catch(() => {
               /* the window went away while the state was being read */

@@ -8,6 +8,7 @@ import {
   createDefaultNowPlayingProfilesSettings,
   getActiveNowPlayingProfile,
   getEffectiveNowPlayingProfile,
+  getLyricsOffNowPlayingProfile,
   getNowPlayingAnimationCacheKey,
   isBuiltInNowPlayingProfileId,
   listNowPlayingProfiles,
@@ -36,6 +37,7 @@ describe("built-in Now Playing profiles", () => {
     const balanced = BUILT_IN_NOW_PLAYING_PROFILES[0];
     expect(balanced.windowed).toEqual(BASE_NOW_PLAYING_PROFILE_CONFIG);
     expect(balanced.fullscreen).toEqual(BASE_NOW_PLAYING_PROFILE_CONFIG);
+    expect(balanced.lyricsOff).toEqual(BASE_NOW_PLAYING_PROFILE_CONFIG);
   });
 
   it("gives every built-in one identity across windowed and fullscreen", () => {
@@ -270,6 +272,25 @@ describe("context switching", () => {
   });
 });
 
+describe("Lyrics Off profile selection", () => {
+  it("keeps an explicit Off selection independent of the active and contextual On profiles", () => {
+    const settings = normalizeNowPlayingProfilesSettings({
+      activeProfileId: "artwork-focus",
+      lyricsOffProfileId: "minimal",
+      contextSwitching: { enabled: true, fullscreenProfileId: "lyrics-focus" },
+    });
+    expect(getEffectiveNowPlayingProfile(settings, true).id).toBe("lyrics-focus");
+    expect(getLyricsOffNowPlayingProfile(settings).id).toBe("minimal");
+    expect(getLyricsOffNowPlayingProfile({ ...settings, activeProfileId: "immersive" }).id).toBe("minimal");
+  });
+
+  it("repairs a deleted Off profile without replacing the On selection", () => {
+    const settings = normalizeNowPlayingProfilesSettings({ activeProfileId: "lyrics-focus", lyricsOffProfileId: "deleted" });
+    expect(getLyricsOffNowPlayingProfile(settings).id).toBe("balanced");
+    expect(settings.activeProfileId).toBe("lyrics-focus");
+  });
+});
+
 describe("animation cache key", () => {
   // The renderer caches CSS values it reads into JS and only re-reads them when a
   // theme is applied; this key is folded into the theme string so a change to any
@@ -318,6 +339,8 @@ describe("profile import / export", () => {
     custom.name = "Stage Layout";
     custom.builtIn = false;
     custom.fullscreen.backgroundMode = "particles";
+    custom.lyricsOff.backgroundMode = "solid";
+    custom.lyricsOff.artworkVisible = false;
 
     const parsed = parseNowPlayingProfileJson(serializeNowPlayingProfile(custom));
     expect(parsed.ok).toBe(true);
@@ -325,6 +348,29 @@ describe("profile import / export", () => {
       expect(parsed.profile).toEqual(custom);
       expect(parsed.profile.builtIn).toBe(false);
     }
+  });
+
+  it("imports an independent Off layout from legacy fullscreen values", () => {
+    const parsed = parseNowPlayingProfileJson(JSON.stringify({
+      kind: "cadence-now-playing-profile", version: 1,
+      profile: { id: "legacy", fullscreen: { artworkScale: 0.72, backgroundMode: "solid", fontId: "georgia" } },
+    }));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.profile.lyricsOff).toEqual(parsed.profile.fullscreen);
+    expect(parsed.profile.lyricsOff).not.toBe(parsed.profile.fullscreen);
+    parsed.profile.lyricsOff.artworkScale = 1.2;
+    expect(parsed.profile.fullscreen.artworkScale).toBe(0.72);
+  });
+
+  it("inherits only missing fields in a partial Off layout and keeps explicit resets", () => {
+    const settings = normalizeNowPlayingProfilesSettings({ customProfiles: [{
+      id: "partial", fullscreen: { fontId: "georgia", lyricsWeight: 750, activeColor: "#aabbcc" },
+      lyricsOff: { lyricsWeight: 0, artworkScale: 99, activeColor: "" },
+    }] });
+    expect(settings.customProfiles[0].lyricsOff).toMatchObject({
+      fontId: "georgia", lyricsWeight: 0, artworkScale: 1.25, activeColor: "",
+    });
   });
 
   it("rejects foreign JSON, broken JSON and newer formats without guessing", () => {

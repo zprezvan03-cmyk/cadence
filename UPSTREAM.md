@@ -1,8 +1,8 @@
 # Upstream attribution
 
-Cadence is GPL-3.0 (see `LICENSE`). It contains code ported from two upstream projects, plus two
-published packages used unmodified. Every ported file carries the upstream repository, commit,
-original path and license in its header.
+Cadence is GPL-3.0 (see `LICENSE`). It contains ported upstream code and uses published renderer
+packages. Every ported file carries the upstream repository, commit, original path and license in
+its header.
 
 ## Pinned upstream revisions
 
@@ -43,7 +43,7 @@ https://docs.betterlyrics.org (`/reference/get-lyrics`, `/unison`).
 | `src/renderer/upstream/shaders/artworkBrightness.ts` | `contents/lib/artworkBrightness.ts` | 32×32 percentile sampling and `(1 − 0.8·strength)/highlight` formula preserved |
 | `src/renderer/features/shaders/KawarpBackground.tsx` | `contents/lib/kawarpManager.ts` | Extension DOM lookups replaced by props; IntersectionObserver replaced by mount lifetime; added `performanceMode` (resolution/blur scaling only) and a CSS fallback |
 
-### Used unmodified from npm
+### Renderer packages from npm
 
 | Package | Version | License | Role |
 | --- | --- | --- | --- |
@@ -52,10 +52,12 @@ https://docs.betterlyrics.org (`/reference/get-lyrics`, `/unison`).
 | `@braccato/types` | 1.0.0 | MIT | Shared lyric types |
 | `@kawarp/core` | 1.3.1 | MIT | The Kawarp WebGL shader renderer |
 
-`@braccato/core` and `@kawarp/core` are the same renderers Better Lyrics and Better Lyrics Shaders
-ship; they are consumed from npm rather than copied so upstream fixes flow in by version bump.
+`@braccato/core` and `@kawarp/core` are the renderers Better Lyrics and Better Lyrics Shaders ship.
 Versions are pinned (not ranged) because the renderer's CSS class names and element properties are
-a public contract.
+a public contract. Vite applies [a local Braccato paint patch](vendor/braccato-core/1.16.11-paint.patch):
+Japanese punctuation no longer disables glyph motion, and a line's existing reveal and motion stay
+in effect through its native highlight fade. The patch does not change lyric timestamps, the
+playback clock, or scroll selection. Recheck it with `npm run test:lyrics-ui` on upgrades.
 
 ## Online lyrics providers (new code, not ports)
 

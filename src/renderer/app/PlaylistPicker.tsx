@@ -3,7 +3,9 @@
  */
 
 import { useState } from "react";
-import { Plus, X } from "lucide-react";
+import { ListMusic, Plus, X } from "lucide-react";
+import { Artwork } from "../components/Artwork";
+import { MarqueeText } from "../components/MarqueeText";
 import { EMPTY_PLAYLISTS, useLibrary } from "../state/libraryStore";
 import { useUi } from "../state/uiStore";
 import { useLastNonNull, usePresence } from "./usePresence";
@@ -24,10 +26,13 @@ export function PlaylistPicker() {
   if (!presence.mounted || !renderedPicker) return null;
 
   return (
-    <div className={`modal-backdrop ${presence.phaseClass}`} data-presence={presence.phase} onClick={close}>
-      <div className="modal compact" onClick={event => event.stopPropagation()}>
+    <div className={`modal-backdrop ${presence.phaseClass}`} data-presence={presence.phase} onClick={close} inert={!picker}>
+      <div className="modal compact playlist-picker" role="dialog" aria-modal="true" aria-labelledby="playlist-picker-title" onClick={event => event.stopPropagation()}>
         <header className="modal-header">
-          <h2>Add to playlist</h2>
+          <div>
+            <h2 id="playlist-picker-title">Add to playlist</h2>
+            <p className="muted">Choose a playlist for {renderedPicker.trackIds.length === 1 ? "this song" : `these ${renderedPicker.trackIds.length} songs`}.</p>
+          </div>
           <button type="button" className="icon-button" onClick={close} aria-label="Close">
             <X size={16} />
           </button>
@@ -44,12 +49,14 @@ export function PlaylistPicker() {
                 close();
               }}
             >
+              <Artwork src={playlist.artworkUrl} alt="" size="xs" fallbackIcon={<ListMusic className="artwork-fallback-icon" aria-hidden="true" />} />
               <span>
-                <strong>{playlist.name}</strong>
-                <em>{playlist.trackCount} songs</em>
+                <MarqueeText as="strong">{playlist.name}</MarqueeText>
+                <MarqueeText as="em">{playlist.trackCount} {playlist.trackCount === 1 ? "song" : "songs"}</MarqueeText>
               </span>
             </button>
           ))}
+          {playlists.length === 0 ? <p className="picker-empty muted">No playlists yet. Create one below.</p> : null}
         </div>
         <form
           className="inline-create"
@@ -62,7 +69,7 @@ export function PlaylistPicker() {
             close();
           }}
         >
-          <input value={name} onChange={event => setName(event.target.value)} placeholder="New playlist name" />
+          <input value={name} onChange={event => setName(event.target.value)} placeholder="New playlist name" aria-label="New playlist name" />
           <button type="submit" className="primary">
             <Plus size={15} /> Create
           </button>

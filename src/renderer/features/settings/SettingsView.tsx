@@ -4,10 +4,11 @@
  */
 
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronUp, FolderMinus, FolderPlus, Keyboard, RotateCcw, Stethoscope, Trash2 } from "lucide-react";
+import { AudioLines, ChevronDown, ChevronUp, Database, FolderMinus, FolderPlus, Info, Keyboard, Library, Mic2, Palette, RotateCcw, Stethoscope, Trash2 } from "lucide-react";
 import type { AppInfo, AppSettings, EqualizerSettings, ReplayGainMode, ShaderSettings } from "../../../shared/types";
 import { FONT_KINDS, FONT_OPTIONS, resolveFontOption } from "../../../shared/fonts";
 import { detectUnavailableFonts } from "../../app/fonts";
+import { MarqueeText } from "../../components/MarqueeText";
 import { useLibrary } from "../../state/libraryStore";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
@@ -30,6 +31,7 @@ import { LastFmSettings } from "./LastFmSettings";
 import { LyricsCachePanel } from "./LyricsCachePanel";
 import { ArtistImagesSettings } from "./ArtistImagesSettings";
 import { FetchAllSettings } from "../lyrics-fetch/FetchAllSettings";
+import { NowPlayingAppearance } from "./NowPlayingAppearance";
 import { useOnboarding } from "../../state/onboardingStore";
 import {
   EQ_BAND_LABELS,
@@ -38,7 +40,6 @@ import {
   normalizeEqBandsDb,
 } from "../../audio/equalizer";
 import type { LyricsFetchConcurrency } from "../../../shared/types";
-import { useSessionState } from "../../app/useSessionState";
 import { LyricsAiSettings } from "./LyricsAiSettings";
 
 /** Tauri's `invoke` rejects with a plain string; Error instances come from the renderer itself. */
@@ -71,7 +72,7 @@ function Toggle({
   return (
     <label className="setting-row">
       <span>
-        <strong>{label}</strong>
+        <MarqueeText as="strong">{label}</MarqueeText>
         {hint ? <em>{hint}</em> : null}
       </span>
       <input type="checkbox" checked={checked} onChange={event => onChange(event.target.checked)} />
@@ -101,7 +102,7 @@ function Range({
   return (
     <label className="setting-row range-row">
       <span>
-        <strong>{label}</strong>
+        <MarqueeText as="strong">{label}</MarqueeText>
         {hint ? <em>{hint}</em> : null}
       </span>
       <span className="range-control">
@@ -129,13 +130,12 @@ export function SettingsView() {
   const rescan = useLibrary(state => state.rescan);
   const scanning = useLibrary(state => state.scanning);
   const [info, setInfo] = useState<AppInfo | null>(null);
-  // Reopening Settings returns to the tab you were on rather than back to Appearance.
-  const [section, setSection] = useSessionState<"library" | "playback" | "appearance" | "cache" | "about">(
-    "settings.section",
-    "appearance"
-  );
+  // Remember the category while browsing and allow the lyrics recovery action to select it.
+  const section = useUi(state => state.settingsSection);
+  const setSection = useUi(state => state.setSettingsSection);
   const [unavailableFonts, setUnavailableFonts] = useState<ReadonlySet<string>>(() => new Set());
   const [clearingCache, setClearingCache] = useState(false);
+  const [resettingSettings, setResettingSettings] = useState(false);
   const showToast = useUi(state => state.showToast);
   const setShortcutsHelpOpen = useUi(state => state.setShortcutsHelpOpen);
   const navigate = useUi(state => state.navigate);
@@ -190,44 +190,37 @@ export function SettingsView() {
     <div className="view settings-view" data-testid="settings-view">
       <header className="view-heading">
         <div>
-          <p className="eyebrow">Settings</p>
-          <h1>Make it yours</h1>
+          <p className="eyebrow">Cadence</p>
+          <h1>Settings</h1>
+          <p className="muted">Manage your library, playback and listening experience.</p>
         </div>
         <div className="heading-actions">
           <button type="button" data-testid="open-shortcuts-help" onClick={() => setShortcutsHelpOpen(true)}>
             <Keyboard size={16} /> Keyboard shortcuts
           </button>
-          <button
-            type="button"
-            onClick={async () => {
-              await resetSettings();
-              showToast("Settings restored to defaults");
-            }}
-          >
-            <RotateCcw size={16} /> Reset all
-          </button>
         </div>
       </header>
 
-      <nav className="settings-tabs">
+      <nav className="settings-tabs" aria-label="Settings categories">
         {([
-          ["appearance", "Appearance"],
-          ["library", "Library"],
-          ["playback", "Playback"],
-          ["cache", "Cache"],
-          ["about", "About"],
-        ] as const).map(([id, label]) => (
+          ["appearance", "Appearance", Palette],
+          ["lyrics", "Lyrics", Mic2],
+          ["library", "Library", Library],
+          ["playback", "Playback", AudioLines],
+          ["cache", "Cache", Database],
+          ["about", "About", Info],
+        ] as const).map(([id, label, Icon]) => (
           <button
             type="button"
             key={id}
             className={section === id ? "active" : ""}
+            aria-current={section === id ? "location" : undefined}
             onClick={() => setSection(id)}
           >
-            {label}
+            <Icon size={16} aria-hidden="true" /> {label}
           </button>
         ))}
       </nav>
-
       {section === "appearance" ? (
         <section className="settings-section" data-testid="settings-appearance">
           <h2>Appearance</h2>
@@ -290,8 +283,54 @@ export function SettingsView() {
               </button>
             </div>
           </div>
-          <div className="settings-subsection" data-testid="settings-lyrics">
-            <h3>Lyrics</h3>
+          <NowPlayingAppearance />
+          <div className="settings-subsection" data-testid="settings-shaders">
+            <h3>Shader background</h3>
+            <p className="muted">
+              The Kawarp engine from Better Lyrics Shaders. Album art drives a Kawase-blurred, domain-warped
+              background that reacts to the audio analyser.
+            </p>
+            <Toggle label="Enable shader background" checked={settings.shaders.enabled} onChange={value => patchShaders({ enabled: value })} />
+            <div className="setting-row">
+              <span>
+                <strong>Performance mode</strong>
+                <em>Lower modes reduce render resolution and blur passes, not the effect itself. “Off” uses a static artwork background.</em>
+              </span>
+              <select
+                value={settings.shaders.performanceMode}
+                onChange={event => patchShaders({ performanceMode: event.target.value as ShaderSettings["performanceMode"] })}
+              >
+                <option value="high">High (Retina)</option>
+                <option value="balanced">Balanced</option>
+                <option value="low">Low (integrated GPUs)</option>
+                <option value="off">Off (static)</option>
+              </select>
+            </div>
+            <Range label="Opacity" value={settings.shaders.kawarpOpacity} min={0} max={1} step={0.01} onChange={value => patchShaders({ kawarpOpacity: value })} />
+            <Range label="Warp intensity" value={settings.shaders.kawarpWarpIntensity} min={0} max={2} step={0.05} onChange={value => patchShaders({ kawarpWarpIntensity: value })} />
+            <Range label="Blur passes" value={settings.shaders.kawarpBlurPasses} min={0} max={40} step={1} onChange={value => patchShaders({ kawarpBlurPasses: value })} format={value => String(Math.round(value))} />
+            <Range label="Animation speed" value={settings.shaders.kawarpAnimationSpeed} min={0} max={4} step={0.05} onChange={value => patchShaders({ kawarpAnimationSpeed: value })} />
+            <Range label="Transition duration" value={settings.shaders.kawarpTransitionDuration} min={0} max={3000} step={50} onChange={value => patchShaders({ kawarpTransitionDuration: value })} format={value => `${Math.round(value)}ms`} />
+            <Range label="Saturation" value={settings.shaders.kawarpSaturation} min={0} max={3} step={0.05} onChange={value => patchShaders({ kawarpSaturation: value })} />
+            <Range label="Dithering" value={settings.shaders.kawarpDithering} min={0} max={0.05} step={0.001} onChange={value => patchShaders({ kawarpDithering: value })} format={value => value.toFixed(3)} />
+
+            <h3>Audio reaction</h3>
+            <Toggle label="React to the audio" checked={settings.shaders.audioResponsive} onChange={value => patchShaders({ audioResponsive: value })} />
+            <Range label="Beat threshold" value={settings.shaders.audioBeatThreshold} min={0.3} max={0.99} step={0.01} onChange={value => patchShaders({ audioBeatThreshold: value })} />
+            <Range label="Beat speed multiplier" value={settings.shaders.audioSpeedMultiplier} min={1} max={12} step={0.5} onChange={value => patchShaders({ audioSpeedMultiplier: value })} />
+            <Range label="Beat zoom boost (%)" value={settings.shaders.kawarpAudioScaleBoost} min={0} max={10} step={0.5} onChange={value => patchShaders({ kawarpAudioScaleBoost: value })} />
+            <Toggle label="Pause when playback stops" checked={settings.shaders.pauseOnInactive} onChange={value => patchShaders({ pauseOnInactive: value })} />
+            <Toggle label="Dim bright artwork" checked={settings.shaders.autoDimBrightArtwork} onChange={value => patchShaders({ autoDimBrightArtwork: value })} />
+            <Range label="Dim strength" value={settings.shaders.autoDimStrength} min={0} max={1} step={0.02} onChange={value => patchShaders({ autoDimStrength: value })} />
+            <Toggle label="Animated artwork" hint="Plays a cover.mp4/cover.webm next to the track through the Kawarp video path." checked={settings.shaders.enableAnimatedArt} onChange={value => patchShaders({ enableAnimatedArt: value })} />
+          </div>
+        </section>
+      ) : null}
+
+      {section === "lyrics" ? (
+        <section className="settings-section" data-testid="settings-lyrics">
+          <h2>Lyrics</h2>
+          <div className="settings-subsection">
             <Toggle
               label="Fetch lyrics online"
               hint="Autofetch: when on, lyrics are looked up automatically the moment a track starts playing. When off, Cadence only uses sidecar files, embedded tags and the cache. Playback never needs the network."
@@ -444,7 +483,9 @@ export function SettingsView() {
                   >
                     <span className="provider-index">{index + 1}</span>
                     <span className="provider-name">
-                      {config?.displayName ?? untoggleProvider(provider)}
+                      <MarqueeText title={config?.displayName ?? untoggleProvider(provider)}>
+                        {config?.displayName ?? untoggleProvider(provider)}
+                      </MarqueeText>
                       <span className="provider-badges">
                         <span className="provider-badge">{SYNC_BADGE[config?.syncType ?? "line"] ?? config?.syncType}</span>
                         {config?.offline ? <span className="provider-badge offline">offline</span> : null}
@@ -484,46 +525,6 @@ export function SettingsView() {
               </div>
             ) : null}
           </div>
-          <div className="settings-subsection" data-testid="settings-shaders">
-            <h3>Shader background</h3>
-            <p className="muted">
-              The Kawarp engine from Better Lyrics Shaders. Album art drives a Kawase-blurred, domain-warped
-              background that reacts to the audio analyser.
-            </p>
-            <Toggle label="Enable shader background" checked={settings.shaders.enabled} onChange={value => patchShaders({ enabled: value })} />
-            <div className="setting-row">
-              <span>
-                <strong>Performance mode</strong>
-                <em>Lower modes reduce render resolution and blur passes, not the effect itself. “Off” uses a static artwork background.</em>
-              </span>
-              <select
-                value={settings.shaders.performanceMode}
-                onChange={event => patchShaders({ performanceMode: event.target.value as ShaderSettings["performanceMode"] })}
-              >
-                <option value="high">High (Retina)</option>
-                <option value="balanced">Balanced</option>
-                <option value="low">Low (integrated GPUs)</option>
-                <option value="off">Off (static)</option>
-              </select>
-            </div>
-            <Range label="Opacity" value={settings.shaders.kawarpOpacity} min={0} max={1} step={0.01} onChange={value => patchShaders({ kawarpOpacity: value })} />
-            <Range label="Warp intensity" value={settings.shaders.kawarpWarpIntensity} min={0} max={2} step={0.05} onChange={value => patchShaders({ kawarpWarpIntensity: value })} />
-            <Range label="Blur passes" value={settings.shaders.kawarpBlurPasses} min={0} max={40} step={1} onChange={value => patchShaders({ kawarpBlurPasses: value })} format={value => String(Math.round(value))} />
-            <Range label="Animation speed" value={settings.shaders.kawarpAnimationSpeed} min={0} max={4} step={0.05} onChange={value => patchShaders({ kawarpAnimationSpeed: value })} />
-            <Range label="Transition duration" value={settings.shaders.kawarpTransitionDuration} min={0} max={3000} step={50} onChange={value => patchShaders({ kawarpTransitionDuration: value })} format={value => `${Math.round(value)}ms`} />
-            <Range label="Saturation" value={settings.shaders.kawarpSaturation} min={0} max={3} step={0.05} onChange={value => patchShaders({ kawarpSaturation: value })} />
-            <Range label="Dithering" value={settings.shaders.kawarpDithering} min={0} max={0.05} step={0.001} onChange={value => patchShaders({ kawarpDithering: value })} format={value => value.toFixed(3)} />
-
-            <h3>Audio reaction</h3>
-            <Toggle label="React to the audio" checked={settings.shaders.audioResponsive} onChange={value => patchShaders({ audioResponsive: value })} />
-            <Range label="Beat threshold" value={settings.shaders.audioBeatThreshold} min={0.3} max={0.99} step={0.01} onChange={value => patchShaders({ audioBeatThreshold: value })} />
-            <Range label="Beat speed multiplier" value={settings.shaders.audioSpeedMultiplier} min={1} max={12} step={0.5} onChange={value => patchShaders({ audioSpeedMultiplier: value })} />
-            <Range label="Beat zoom boost (%)" value={settings.shaders.kawarpAudioScaleBoost} min={0} max={10} step={0.5} onChange={value => patchShaders({ kawarpAudioScaleBoost: value })} />
-            <Toggle label="Pause when playback stops" checked={settings.shaders.pauseOnInactive} onChange={value => patchShaders({ pauseOnInactive: value })} />
-            <Toggle label="Dim bright artwork" checked={settings.shaders.autoDimBrightArtwork} onChange={value => patchShaders({ autoDimBrightArtwork: value })} />
-            <Range label="Dim strength" value={settings.shaders.autoDimStrength} min={0} max={1} step={0.02} onChange={value => patchShaders({ autoDimStrength: value })} />
-            <Toggle label="Animated artwork" hint="Plays a cover.mp4/cover.webm next to the track through the Kawarp video path." checked={settings.shaders.enableAnimatedArt} onChange={value => patchShaders({ enableAnimatedArt: value })} />
-          </div>
         </section>
       ) : null}
 
@@ -534,7 +535,7 @@ export function SettingsView() {
             {snapshot?.folders.length ? (
               snapshot.folders.map(folder => (
                 <div className="folder-row" key={folder}>
-                  <span title={folder}>{folder}</span>
+                  <MarqueeText title={folder}>{folder}</MarqueeText>
                   <button type="button" className="icon-button" onClick={() => void removeFolder(folder)} aria-label="Remove folder">
                     <FolderMinus size={16} />
                   </button>
@@ -850,6 +851,32 @@ export function SettingsView() {
           >
             <Trash2 size={16} /> {clearingCache ? "Clearing lyrics cache…" : "Clear lyrics cache"}
           </button>
+          <div className="setting-row">
+            <span>
+              <strong>Restore default settings</strong>
+              <em>Resets preferences and custom Now Playing profiles. Your music and playlists are not changed.</em>
+            </span>
+            <button
+              type="button"
+              className="ghost-button danger setting-action"
+              data-testid="settings-reset-all"
+              disabled={resettingSettings}
+              onClick={async () => {
+                if (!window.confirm("Reset all settings and remove custom Now Playing profiles? Your music and playlists are not changed.")) return;
+                setResettingSettings(true);
+                try {
+                  await resetSettings();
+                  showToast("Settings restored to defaults");
+                } catch (error) {
+                  showToast(`Could not reset settings: ${describeError(error)}`);
+                } finally {
+                  setResettingSettings(false);
+                }
+              }}
+            >
+              <RotateCcw size={16} /> {resettingSettings ? "Resetting…" : "Reset all"}
+            </button>
+          </div>
         </section>
       ) : null}
     </div>

@@ -14,7 +14,7 @@ import { PlaylistPicker } from "./app/PlaylistPicker";
 import { ShortcutsHelp } from "./app/ShortcutsHelp";
 import { TrackEditor } from "./features/library/TrackEditor";
 import { Sidebar } from "./app/Sidebar";
-import { TopBar } from "./app/TopBar";
+import { useReducedMotion } from "./app/useMotionPreference";
 import { useWindowChrome, WindowTitleBar } from "./app/WindowTitleBar";
 import { useBootstrap } from "./app/useBootstrap";
 import { useLastNonNull, usePresence } from "./app/usePresence";
@@ -26,21 +26,41 @@ import { HistoryView } from "./features/history/HistoryView";
 import { LyricsView } from "./features/lyrics/LyricsView";
 import { MiniPlayer } from "./features/player/MiniPlayer";
 import { PlayerBar } from "./features/player/PlayerBar";
+import { PlayerLayoutMotion, type PlayerLayout } from "./features/player/PlayerLayoutMotion";
+import { useMiniWindow } from "./features/player/useMiniWindow";
 import { QueuePanel } from "./features/player/QueuePanel";
 import { SettingsView } from "./features/settings/SettingsView";
 import { StatsView } from "./features/stats/StatsView";
 import { usePlayer } from "./state/playerStore";
-import { useUi } from "./state/uiStore";
+import { useUi, type Route, type SettingsSection } from "./state/uiStore";
 
-function RouteContent() {
-  const route = useUi(state => state.route);
+const scrollMemory = new Map<string, number>();
+const settingsScrollKey = (section: SettingsSection) => `settings:${section}`;
+
+function NowPlayingRoute({ fullscreen = false }: { fullscreen?: boolean }) {
   const track = useCurrentTrack();
   const item = useCurrentMediaItem();
-  const isPlaying = usePlayer(state => state.isPlaying);
-  const fullscreenLyrics = useUi(state => state.fullscreenLyrics);
-  const setFullscreenLyrics = useUi(state => state.setFullscreenLyrics);
+  const playing = usePlayer(state => state.isPlaying);
+  const close = useUi(state => state.closeNowPlaying);
   const navigate = useUi(state => state.navigate);
+  return (
+    <LyricsView
+      track={track}
+      item={item}
+      playing={playing}
+      fullscreen={fullscreen}
+      onExit={close}
+      onOpenLyricsSettings={() => {
+        // The recovery action should reveal the online-fetch switch, not a previously read row.
+        scrollMemory.delete(settingsScrollKey("lyrics"));
+        useUi.getState().setSettingsSection("lyrics");
+        navigate({ name: "settings" });
+      }}
+    />
+  );
+}
 
+function renderRoute(route: Route) {
   switch (route.name) {
     case "home":
       return <HomeView />;
@@ -59,16 +79,7 @@ function RouteContent() {
     case "playlist":
       return <PlaylistView playlistId={route.playlistId} />;
     case "lyrics":
-      return (
-        <LyricsView
-          track={track}
-          item={item}
-          playing={isPlaying}
-          fullscreen={fullscreenLyrics}
-          onToggleFullscreen={() => setFullscreenLyrics(!fullscreenLyrics)}
-          onOpenSearch={() => navigate({ name: "settings" })}
-        />
-      );
+      return <NowPlayingRoute />;
     case "decode-tester":
       return <DecodeTesterView />;
     case "settings":
@@ -97,13 +108,6 @@ function AppToast() {
   );
 }
 
-/**
- * Scroll offsets per view, kept for the session. Views remount on navigation (that is what gives
- * each one its entering animation), so without this the list you were halfway down would throw you
- * back to the top every time you looked at an album and came back.
- */
-const scrollMemory = new Map<string, number>();
-
 export function App() {
   useBootstrap();
   // Autofetch: lyrics lookup begins on every track change, whichever tab is open.
@@ -120,91 +124,98 @@ export function App() {
       maybeAutoShowOnboarding(folderCount, trackCount);
     }
   }, [settingsLoaded, folderCount, trackCount, maybeAutoShowOnboarding]);
-  const fullscreenLyrics = useUi(state => state.fullscreenLyrics);
-  const miniPlayer = useUi(state => state.miniPlayer);
+  const immersive = useUi(state => state.nowPlayingOpen);
+  const miniRequested = useUi(state => state.miniPlayer);
+  const reducedMotion = useReducedMotion();
+  const { mini: miniPlayer, staging } = useMiniWindow(miniRequested, reducedMotion);
   const route = useUi(state => state.route);
+  const settingsSection = useUi(state => state.route.name === "settings" && !state.nowPlayingOpen ? state.settingsSection : null);
   const error = usePlayer(state => state.error);
   const chrome = useWindowChrome();
 
-  // One key per view instance. The search query is deliberately not part of it: typing in the
-  // global search is not a page change, and remounting the results on every keystroke made them
-  // flicker. Library tabs keep separate keys so switching Songs → Albums still animates.
-  const viewKey = route.name === "search" ? "search" : `${route.name}-${JSON.stringify(route)}`;
-  const contentRef = useRef<HTMLDivElement | null>(null);
-  const miniWindowSyncStarted = useRef(false);
-
-  // The renderer state owns mini mode; the native layer only follows it to
-  // resize/pin the OS window. Skip the initial `false` so a normal launch
-  // never issues a redundant restore-size command.
+  const wasNativeFullscreen = useRef(chrome.fullscreen);
   useEffect(() => {
-    if (!miniWindowSyncStarted.current) {
-      miniWindowSyncStarted.current = true;
-      return;
+    const justLeftNativeFullscreen = wasNativeFullscreen.current && !chrome.fullscreen;
+    wasNativeFullscreen.current = chrome.fullscreen;
+    // The OS can also exit fullscreen. Mini's native resize deliberately leaves fullscreen,
+    // but its Restore action should still return to the same app presentation.
+    if (justLeftNativeFullscreen && immersive && !miniRequested && !miniPlayer) {
+      useUi.getState().closeNowPlaying();
     }
-    void (async () => {
-      try {
-        await window.cadence?.app?.setMiniPlayer?.(miniPlayer);
-      } catch {
-        /* Browser tests and older bridges render mini mode without resizing. */
-      }
-    })();
-  }, [miniPlayer]);
-
-  useLayoutEffect(() => {
-    const node = contentRef.current;
-    if (!node) return;
-    const saved = scrollMemory.get(viewKey) ?? 0;
-    if (!saved) return;
-    // `scroll-behavior: smooth` is for user scrolling; a restored position must be immediate.
-    node.style.scrollBehavior = "auto";
-    node.scrollTop = saved;
-    node.style.scrollBehavior = "";
-  }, [viewKey]);
-
-  const immersive = fullscreenLyrics && route.name === "lyrics";
+  }, [chrome.fullscreen, immersive, miniRequested, miniPlayer]);
   // The title bar is only drawn when the OS frame is off (Windows); immersive and native fullscreen
   // hand the whole window to the content.
   const titleBar = chrome.undecorated && !chrome.fullscreen && !immersive;
 
-  if (miniPlayer) {
-    return (
-      <div className="mini-shell">
-        <MiniPlayer />
-        <AppToast />
-      </div>
-    );
-  }
+  const browseKey = route.name === "search" ? "search" : `${route.name}-${JSON.stringify(route)}`;
+  const viewKey = immersive ? "now-playing-fullscreen" : browseKey;
+  const mainRef = useRef<HTMLElement>(null);
+  const playerReturnKey = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (miniPlayer) return;
+    if (immersive) {
+      playerReturnKey.current = browseKey;
+      mainRef.current?.focus({ preventScroll: true });
+    } else if (playerReturnKey.current !== null) {
+      if (playerReturnKey.current === browseKey) {
+        document.querySelector<HTMLElement>('[data-testid="open-now-playing"]')?.focus({ preventScroll: true });
+      }
+      playerReturnKey.current = null;
+    }
+  }, [browseKey, immersive, miniPlayer]);
+  // Settings categories share the route and scrollport, not each other's scroll position.
+  // Keep the viewport mounted so the active tab keeps focus during a category change.
+  const scrollKey = settingsSection ? settingsScrollKey(settingsSection) : viewKey;
+  const contentRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const top = scrollMemory.get(scrollKey);
+    if (top || settingsSection) contentRef.current?.scrollTo({ top: top ?? 0, behavior: "instant" });
+  }, [scrollKey, settingsSection, miniPlayer]);
 
+  const layout: PlayerLayout = miniPlayer ? "mini" : immersive ? "fullscreen" : route.name === "lyrics" ? "now-playing" : "library";
   return (
-    <div className={`app-shell ${immersive ? "is-immersive" : ""} ${titleBar ? "has-title-bar" : ""}`}>
-      {titleBar ? <WindowTitleBar chrome={chrome} /> : null}
-      {!immersive ? <Sidebar /> : null}
-      <main className="app-main">
-        {!immersive ? <TopBar /> : null}
-        {error && !immersive ? (
-          <div className="error-banner" role="alert">
-            {error}
-            <button type="button" onClick={() => usePlayer.getState().setError(null)}>
-              Dismiss
-            </button>
-          </div>
-        ) : null}
-        <div
-          className="content-scroll"
-          key={viewKey}
-          ref={contentRef}
-          onScroll={event => scrollMemory.set(viewKey, event.currentTarget.scrollTop)}
-        >
-          <RouteContent />
+    <PlayerLayoutMotion layout={layout} reducedMotion={reducedMotion}>
+      {miniPlayer ? (
+        <div className="mini-shell" data-mini-staging={staging || undefined}>
+          <MiniPlayer />
+          <AppToast />
         </div>
-        {!immersive ? <PlayerBar /> : null}
-      </main>
-      <QueuePanel />
-      <PlaylistPicker />
-      <TrackEditor />
-      <ShortcutsHelp />
-      <AppToast />
-      <Onboarding />
-    </div>
+      ) : (
+        <div className={`app-shell ${immersive ? "is-immersive" : ""} ${titleBar ? "has-title-bar" : ""}`} data-route={route.name}>
+          {titleBar ? <WindowTitleBar chrome={chrome} /> : null}
+          {!immersive ? <Sidebar showHistory={!titleBar} /> : null}
+          <main
+            ref={mainRef}
+            className="app-main"
+            tabIndex={immersive ? -1 : undefined}
+            aria-label={immersive ? "Now Playing" : undefined}
+          >
+            {error && !immersive ? (
+              <div className="error-banner" role="alert">
+                {error}
+                <button type="button" onClick={() => usePlayer.getState().setError(null)}>
+                  Dismiss
+                </button>
+              </div>
+            ) : null}
+            <div
+              className="content-scroll"
+              key={viewKey}
+              ref={contentRef}
+              onScroll={event => scrollMemory.set(scrollKey, event.currentTarget.scrollTop)}
+            >
+              {immersive ? <NowPlayingRoute fullscreen /> : renderRoute(route)}
+            </div>
+          </main>
+          {!immersive ? <PlayerBar /> : null}
+          <QueuePanel />
+          <PlaylistPicker />
+          <TrackEditor />
+          <ShortcutsHelp />
+          <AppToast />
+          <Onboarding />
+        </div>
+      )}
+    </PlayerLayoutMotion>
   );
 }

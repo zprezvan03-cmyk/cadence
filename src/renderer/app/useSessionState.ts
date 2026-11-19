@@ -2,8 +2,8 @@
  * View state that should survive navigating away and back.
  *
  * Views remount when the route changes (each one replays its entering animation), which would
- * otherwise throw away a sort order, a filter or the selected Settings tab every time the user
- * looked at something else. This keeps those few values in memory for the session — nothing is
+ * otherwise throw away a sort order or filter every time the user looked at something else.
+ * This keeps those few values in memory for the session — nothing is
  * written to disk, so a restart starts clean and no state can outlive its data.
  */
 
