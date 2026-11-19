@@ -2,9 +2,10 @@
  * React mount for the upstream lyrics renderer.
  *
  * The renderer is the published `@braccato/core` custom element — the same `<braccato-lyrics>`
- * Better Lyrics builds its lyrics view from — used unmodified. This file binds it to Cadence's
- * audio element, pushes settings into its public properties, and hangs each line's translation and
- * romanization off its built element with the renderer's own injectors, as upstream does.
+ * Better Lyrics builds its lyrics view from — with a render-only patch documented in UPSTREAM.md.
+ * This file binds it to Cadence's audio element, pushes settings into its public properties, and
+ * hangs each line's translation and romanization off its built element with the renderer's own
+ * injectors, as upstream does.
  * Written for Cadence.
  */
 

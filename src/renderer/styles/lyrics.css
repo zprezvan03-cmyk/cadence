@@ -600,14 +600,19 @@ braccato-lyrics {
   max-width: var(--np-lyrics-max-width);
   margin: 0 auto;
   min-height: 100%;
-  /* A close shadow keeps words readable without rasterizing a halo around every moving line.
-     The selected karaoke treatment still owns the active words' color/glow. */
+}
+
+/* Shadow the readable base text, not the duplicate karaoke paint. On background-clip: text
+   highlights, an inherited dark text-shadow is painted over the bright fill, not behind it. */
+:where(
+  braccato-lyrics .blyrics-bidi-run:not(.blyrics-highlight-run),
+  braccato-lyrics .blyrics--romanized:not(:has(> .blyrics-line-main)),
+  braccato-lyrics .blyrics--translated,
+  braccato-lyrics .blyrics-credits
+) {
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45);
 }
 
-/* A same-track source upgrade is the only lyrics replacement that dips. The attribute is
-   present for exactly one 180ms surface beat; the renderer remains mounted throughout, so
-   its playback clock, active line, decorations and scroll position are never reset. */
 /* Profile-driven lyric appearance. Blur is opt-in only: the filter exists solely under
    the data attribute the view sets when the profile asks for it. Custom colours use a
    higher-specificity rule so they layer over whichever theme is active, and are simply
@@ -631,6 +636,9 @@ braccato-lyrics {
   );
 }
 
+/* A same-track source upgrade is the only lyrics replacement that dips. The attribute is
+   present for exactly one 180ms surface beat; the renderer remains mounted throughout, so
+   its playback clock, active line, decorations and scroll position are never reset. */
 braccato-lyrics[data-upgrading="true"] {
   animation: lyrics-upgrade var(--dur-2) var(--ease-in-out);
 }
