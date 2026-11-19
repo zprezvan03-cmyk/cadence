@@ -22,6 +22,7 @@ import type { DecodeProblem, Track } from "../../../shared/types";
 import { DECODE_PROBLEM_KIND_LABELS } from "../../audio/decodeProbe";
 import { bridge } from "../../state/bridge";
 import { useDecodeTester, visibleDecodeProblems } from "../../state/decodeTesterStore";
+import { MarqueeText } from "../../components/MarqueeText";
 import { useLibrary } from "../../state/libraryStore";
 import { useLastNonNull, usePresence } from "../../app/usePresence";
 
@@ -62,16 +63,16 @@ function ProblemRow({
       />
       <div className="decode-row-main">
         <div className="decode-row-title">
-          <strong title={problem.fileName}>{problem.fileName}</strong>
+          <MarqueeText as="strong" title={problem.fileName}>{problem.fileName}</MarqueeText>
           <span className={`badge decode-kind decode-kind-${problem.kind}`}>
             {DECODE_PROBLEM_KIND_LABELS[problem.kind]}
           </span>
           {kept ? <span className="badge decode-kept-badge">Kept</span> : null}
           {problem.codec ? <span className="decode-row-codec">{problem.codec}</span> : null}
         </div>
-        <span className="decode-row-path" title={problem.path}>
+        <MarqueeText className="decode-row-path" title={problem.path}>
           {problem.path}
-        </span>
+        </MarqueeText>
         <span className="decode-row-message">{problem.message}</span>
         {deleteError ? (
           <span className="decode-row-delete-error">Could not delete this file: {deleteError}</span>
@@ -168,8 +169,8 @@ function ConfirmDeleteDialog({
         <ul className="decode-confirm-list" data-testid="decode-confirm-list">
           {renderedPaths.map(path => (
             <li key={path}>
-              <strong>{byPath.get(path)?.fileName ?? path}</strong>
-              <span title={path}>{path}</span>
+              <MarqueeText as="strong">{byPath.get(path)?.fileName ?? path}</MarqueeText>
+              <MarqueeText title={path}>{path}</MarqueeText>
             </li>
           ))}
         </ul>

@@ -14,6 +14,7 @@ import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
 import { Artwork } from "../../components/Artwork";
 import { SourceBadge } from "../../components/SourceBadge";
+import { MarqueeText } from "../../components/MarqueeText";
 import { formatTime } from "../../player/queue";
 import { QueueMotionList } from "./QueueMotionList";
 
@@ -139,7 +140,10 @@ const QueueRow = memo(function QueueRow({ entry, track, position, current, jumpT
     >
       <button type="button" className="queue-track" onClick={() => void jumpTo(position)}>
         <Artwork src={item.artworkUrl} alt={item.albumLabel ?? item.title} size="xs" />
-        <span className="queue-track-copy"><strong title={item.title}>{item.title}</strong><em title={item.artistLabel}>{item.artistLabel}</em></span>
+        <span className="queue-track-copy">
+          <MarqueeText as="strong" title={item.title}>{item.title}</MarqueeText>
+          <MarqueeText as="em" title={item.artistLabel}>{item.artistLabel}</MarqueeText>
+        </span>
         {entry.origin === "autoplay" ? (
           <span className="pill subtle" data-testid="queue-origin-badge">AutoPlay</span>
         ) : entry.origin === "manual" ? (

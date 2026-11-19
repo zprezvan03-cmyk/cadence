@@ -9,6 +9,7 @@ import { createPortal } from "react-dom";
 import { Check, Loader2, Pause, Play, RotateCcw, X } from "lucide-react";
 import { useFetchAll } from "../../state/fetchAllStore";
 import { usePresence } from "../../app/usePresence";
+import { MarqueeText } from "../../components/MarqueeText";
 
 const COMPLETED_LINGER_MS = 4000;
 
@@ -178,12 +179,12 @@ export function FetchAllIndicator() {
             </div>
           </dl>
           {renderSnapshot.currentTrack ? (
-            <p className="fetch-panel-current" data-testid="fetch-current-track">
+            <MarqueeText as="p" className="fetch-panel-current" data-testid="fetch-current-track">
               Now fetching: {renderSnapshot.currentTrack.title}
               {renderSnapshot.currentTrack.artist ? ` — ${renderSnapshot.currentTrack.artist}` : ""}
-            </p>
+            </MarqueeText>
           ) : state === "completed" ? (
-            <p className="fetch-panel-current">All eligible tracks have been processed.</p>
+            <MarqueeText as="p" className="fetch-panel-current">All eligible tracks have been processed.</MarqueeText>
           ) : null}
           <div className="fetch-panel-actions">
             {running ? (

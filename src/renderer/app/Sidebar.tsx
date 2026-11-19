@@ -24,6 +24,7 @@ import { useSettings } from "../state/settingsStore";
 import { useUi, type Route } from "../state/uiStore";
 import { SidebarTools } from "./SidebarTools";
 import { useSessionState } from "./useSessionState";
+import { MarqueeText } from "../components/MarqueeText";
 
 type Destination = { label: string; icon: ReactNode; route: Route };
 const LISTEN: Destination[] = [
@@ -280,7 +281,7 @@ function NavSection({ id, label, icon, current, open, onToggle, children }: {
         title={label}
         onClick={onToggle}
       >
-        {icon}<span>{label}</span><ChevronDown size={14} className="nav-chevron" aria-hidden="true" />
+        {icon}<MarqueeText>{label}</MarqueeText><ChevronDown size={14} className="nav-chevron" aria-hidden="true" />
       </button>
       <div className="nav-section-content" id={`sidebar-${id}`} data-open={open} inert={!open} aria-hidden={!open}>
         <div className="nav-section-inner">{children}</div>
@@ -305,7 +306,7 @@ function NavEntry({ item, active, navigate, className = "" }: {
       aria-current={active ? "location" : undefined}
     >
       {item.icon}
-      <span>{item.label}</span>
+      <MarqueeText>{item.label}</MarqueeText>
     </button>
   );
 }

@@ -18,6 +18,7 @@ import { fontStack } from "../../../shared/fonts";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
 import { SourceBadge } from "../../components/SourceBadge";
+import { MarqueeText } from "../../components/MarqueeText";
 import { BraccatoLyrics } from "./BraccatoLyrics";
 import { LyricsDock } from "./LyricsDock";
 import { FullscreenControls } from "./FullscreenControls";
@@ -281,13 +282,13 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
     <PlaybackText text={text} className="lyrics-heading" shared={fullscreen}>
       {display => (
         <>
-          <h1>{display?.title ?? "Nothing playing"}</h1>
-          <p>
+          <MarqueeText as="h1" auto title={display?.title}>{display?.title ?? "Nothing playing"}</MarqueeText>
+          <MarqueeText as="p" auto title={display?.artistLabel}>
             {display ? (
               fullscreen ? [display.artistLabel, display.albumLabel].filter(Boolean).join(" · ") : display.artistLabel
             ) : "Pick a song from your library"}
-          </p>
-          {!fullscreen && display?.albumLabel ? <p className="lyrics-album-label">{display.albumLabel}</p> : null}
+          </MarqueeText>
+          {!fullscreen && display?.albumLabel ? <MarqueeText as="p" auto className="lyrics-album-label" title={display.albumLabel}>{display.albumLabel}</MarqueeText> : null}
           {display ? (
             <div className="lyrics-heading-source">
               <SourceBadge source={display} />

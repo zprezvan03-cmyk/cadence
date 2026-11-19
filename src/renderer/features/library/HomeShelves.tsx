@@ -2,6 +2,7 @@
 import { useId, useRef, type ReactNode, type Ref } from "react";
 import { Heart, MoreHorizontal, Pause, Play } from "lucide-react";
 import { Artwork } from "../../components/Artwork";
+import { MarqueeText } from "../../components/MarqueeText";
 import { useTrackMenu } from "../../components/useTrackMenu";
 import { formatTime } from "../../player/queue";
 import { useLibrary } from "../../state/libraryStore";
@@ -74,8 +75,8 @@ export function HomeTrackShelf({ items, rankedQueue, ...shelf }: HomeShelfProps 
             <article key={track.id} className="media-card home-track-card" data-testid={rankedQueue ? "top-track-item" : "on-repeat-item"} data-track-id={track.id}>
               <button type="button" className="card-open" aria-label={`${pause ? "Pause" : "Play"} ${track.title}`} onClick={play}>
                 <Artwork src={track.artworkUrl} alt="" size="md" />
-                <strong className="card-title" title={track.title}>{track.title}</strong>
-                <span className="card-subtitle" title={subtitle}>{subtitle}</span>
+                <MarqueeText as="strong" className="card-title" title={track.title}>{track.title}</MarqueeText>
+                <MarqueeText className="card-subtitle" title={subtitle}>{subtitle}</MarqueeText>
                 <span className="card-overlay" aria-hidden="true">
                   <span className="card-play">{pause ? <Pause size={19} fill="currentColor" /> : <Play size={19} fill="currentColor" />}</span>
                 </span>

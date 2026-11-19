@@ -6,6 +6,7 @@ import type { Track } from "../../shared/types";
 import { usePlayer } from "../state/playerStore";
 import { useUi } from "../state/uiStore";
 import { useLastNonNull, usePresence } from "../app/usePresence";
+import { MarqueeText } from "./MarqueeText";
 
 interface MenuState {
   track: Track;
@@ -99,7 +100,7 @@ export function useTrackMenu(listRef: RefObject<HTMLDivElement | null>, onRemove
         role="group"
         aria-label={`Actions for ${renderedMenu.track.title}`}
       >
-        <div className="context-menu-title" title={renderedMenu.track.title}>{renderedMenu.track.title}</div>
+        <MarqueeText as="div" className="context-menu-title" title={renderedMenu.track.title}>{renderedMenu.track.title}</MarqueeText>
         <button type="button" onClick={() => { playNext([renderedMenu.track.id]); closeMenuAndRestoreFocus(); }}>
           <Play size={15} /> Play next
         </button>

@@ -125,8 +125,8 @@
 .lyrics-view:not(.is-fullscreen) > .lyrics-footer { grid-row: 3; }
 .lyrics-view:not(.is-fullscreen)[data-profile-metadata="hidden"] > .lyrics-header { display: none; }
 .lyrics-view:not(.is-fullscreen) .lyrics-heading { width: 100%; min-width: 0; }
-.lyrics-view:not(.is-fullscreen) .lyrics-heading h1 { line-height: 1.12; letter-spacing: -0.045em; overflow-wrap: anywhere; }
-.lyrics-view:not(.is-fullscreen) .lyrics-heading p { line-height: 1.4; overflow-wrap: anywhere; }
+.lyrics-view:not(.is-fullscreen) .lyrics-heading h1 { line-height: 1.12; letter-spacing: -0.045em; white-space: nowrap; }
+.lyrics-view:not(.is-fullscreen) .lyrics-heading p { line-height: 1.4; white-space: nowrap; }
 .lyrics-view:not(.is-fullscreen) .lyrics-heading .lyrics-album-label { margin-top: 3px; font-size: 0.85em; }
 .lyrics-view:not(.is-fullscreen) .lyrics-heading-source:empty { display: none; }
 
@@ -417,7 +417,7 @@
 .lyrics-heading h1 {
   font-size: var(--np-title-size);
   line-height: 1.12;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
 }
 
 .fs-panel .lyrics-heading p {

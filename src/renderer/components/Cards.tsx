@@ -9,6 +9,7 @@ import { usePlayer } from "../state/playerStore";
 import { useUi } from "../state/uiStore";
 import { Artwork } from "./Artwork";
 import { ArtistAvatar } from "./ArtistAvatar";
+import { MarqueeText } from "./MarqueeText";
 
 export function AlbumCard({ album }: { album: Album }) {
   const navigate = useUi(state => state.navigate);
@@ -19,10 +20,10 @@ export function AlbumCard({ album }: { album: Album }) {
     <article className="media-card" data-testid="album-card">
       <button type="button" className="card-open" onClick={() => navigate({ name: "album", albumId: album.id })}>
         <Artwork src={album.artworkUrl} alt="" size="md" />
-        <span className="card-title" title={album.name}>{album.name}</span>
-        <span className="card-subtitle" title={album.albumArtist}>
+        <MarqueeText className="card-title" title={album.name}>{album.name}</MarqueeText>
+        <MarqueeText className="card-subtitle" title={album.albumArtist}>
           {album.albumArtist}{album.year ? ` · ${album.year}` : ""}
-        </span>
+        </MarqueeText>
       </button>
       <div className="card-overlay">
         <button
@@ -50,10 +51,10 @@ export function ArtistCard({ artist }: { artist: Artist }) {
   return (
     <button type="button" className="media-card card-open artist-card" onClick={() => navigate({ name: "artist", artistId: artist.id })}>
       <ArtistAvatar name={artist.name} size="md" />
-      <span className="card-title" title={artist.name}>{artist.name}</span>
-      <span className="card-subtitle">
+      <MarqueeText className="card-title" title={artist.name}>{artist.name}</MarqueeText>
+      <MarqueeText className="card-subtitle">
         {artist.albumCount} {artist.albumCount === 1 ? "album" : "albums"} · {artist.trackCount} {artist.trackCount === 1 ? "song" : "songs"}
-      </span>
+      </MarqueeText>
     </button>
   );
 }
@@ -68,11 +69,11 @@ export function PlaylistCard({ playlist }: { playlist: Playlist }) {
       onClick={() => navigate({ name: "playlist", playlistId: playlist.id })}
     >
       <Artwork src={playlist.artworkUrl} alt="" size="md" fallbackIcon={<ListMusic className="artwork-fallback-icon" aria-hidden="true" />} />
-      <span className="card-title" title={playlist.name}>{playlist.name}</span>
-      <span className="card-subtitle">
+      <MarqueeText className="card-title" title={playlist.name}>{playlist.name}</MarqueeText>
+      <MarqueeText className="card-subtitle">
         {playlist.kind === "smart" ? "Smart · " : ""}
         {playlist.trackCount} {playlist.trackCount === 1 ? "song" : "songs"}
-      </span>
+      </MarqueeText>
     </button>
   );
 }

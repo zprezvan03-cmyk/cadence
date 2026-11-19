@@ -9,6 +9,7 @@ import { useLibrary } from "../../state/libraryStore";
 import { usePlayer } from "../../state/playerStore";
 import { useUi } from "../../state/uiStore";
 import { SourceBadge } from "../../components/SourceBadge";
+import { MarqueeText } from "../../components/MarqueeText";
 import { SeekRow, TransportButtons, VolumeControl } from "./PlaybackControls";
 import { PlaybackArtwork, PlaybackText } from "./PlaybackVisuals";
 import { usePlaybackPresentation } from "./usePlaybackPresentation";
@@ -54,11 +55,11 @@ export function PlayerBar() {
           <PlaybackText text={text}>
             {display => (
               <>
-                <div className="player-title" title={display?.title}>
+                <MarqueeText as="div" auto className="player-title" title={display?.title}>
                   {display?.title ?? "Nothing playing"}
-                </div>
+                </MarqueeText>
                 <div className="player-artist" title={display?.artistLabel}>
-                  <span className="player-artist-name">{display?.artistLabel ?? "Choose a song to begin"}</span>
+                  <MarqueeText className="player-artist-name">{display?.artistLabel ?? "Choose a song to begin"}</MarqueeText>
                   {display ? <SourceBadge source={display.source} compact /> : null}
                 </div>
               </>

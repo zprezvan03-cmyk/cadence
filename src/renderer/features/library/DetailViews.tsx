@@ -20,6 +20,7 @@ import { usePresence } from "../../app/usePresence";
 import { AlbumCard, ArtistCard } from "../../components/Cards";
 import { Artwork } from "../../components/Artwork";
 import { ArtistAvatar, ArtistImageCredit } from "../../components/ArtistAvatar";
+import { MarqueeText } from "../../components/MarqueeText";
 import { useArtistImages } from "../../state/artistImageStore";
 
 function Hero({
@@ -54,7 +55,7 @@ function Hero({
           <ChevronLeft size={16} /> {collection[0].toUpperCase() + collection.slice(1)}
         </button>
         <ChevronRight size={13} aria-hidden="true" />
-        <span title={title}>{title}</span>
+        <MarqueeText title={title}>{title}</MarqueeText>
       </div>
       <header className="detail-hero" data-testid="detail-hero">
         {artistName ? (
@@ -64,8 +65,8 @@ function Hero({
         )}
         <div className="detail-meta">
           <p className="eyebrow">{eyebrow}</p>
-          <h1>{title}</h1>
-          {subtitle ? <p className="detail-artist">{subtitle}</p> : null}
+          <MarqueeText as="h1" auto={collection === "albums"} title={title}>{title}</MarqueeText>
+          {subtitle ? <MarqueeText as="p" className="detail-artist" title={subtitle}>{subtitle}</MarqueeText> : null}
           <p className="muted">{meta}</p>
           {artistName ? <ArtistImageCredit name={artistName} /> : null}
           <div className="heading-actions">
@@ -546,10 +547,10 @@ export function PlaylistView({ playlistId }: { playlistId: number }) {
                 >
                   <Artwork src={track.artworkUrl} alt={track.album} size="xs" />
                   <span>
-                    <strong>{track.title}</strong>
-                    <em>
+                    <MarqueeText as="strong">{track.title}</MarqueeText>
+                    <MarqueeText as="em">
                       {track.artist} · {track.album}
-                    </em>
+                    </MarqueeText>
                   </span>
                   <Clock3 size={14} />
                   <span className="muted">{formatTime(track.duration)}</span>

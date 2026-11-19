@@ -90,11 +90,8 @@
   line-height: 1.1;
   color: var(--text);
   text-transform: none;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
   overflow: hidden;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
   margin: 0 0 5px;
 }
 .spotlight-artist { font-weight: 550; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -883,7 +880,7 @@
 }
 
 .detail-meta { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.detail-meta h1 { font-size: clamp(30px, 4.8cqi, 60px); letter-spacing: -0.055em; line-height: 1.04; overflow-wrap: anywhere; }
+.detail-meta h1 { font-size: clamp(30px, 4.8cqi, 60px); letter-spacing: -0.055em; line-height: 1.04; white-space: nowrap; }
 .detail-meta .eyebrow { margin-bottom: 0; }
 .detail-meta .detail-artist { font-size: clamp(16px, 1.7cqi, 21px); font-weight: 550; color: var(--text-dim); }
 .detail-meta .heading-actions { margin-top: 10px; }
@@ -1500,7 +1497,7 @@
   background: var(--surface);
   border: 1px solid var(--border);
   font-size: 12.5px;
-  word-break: break-all;
+  white-space: nowrap;
 }
 
 .scan-errors {
@@ -1708,7 +1705,7 @@
 
 .decode-row-title strong {
   font-size: 13.5px;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
 }
 
 .decode-row-codec {

@@ -8,6 +8,7 @@ import { ChartColumn, Clock3, Flame, History, Music2, Play } from "lucide-react"
 import { Artwork } from "../../components/Artwork";
 import { ArtistAvatar } from "../../components/ArtistAvatar";
 import { SourceBadge } from "../../components/SourceBadge";
+import { MarqueeText } from "../../components/MarqueeText";
 import { useHistory } from "../../state/historyStore";
 import { useLibrary } from "../../state/libraryStore";
 import { usePlayer } from "../../state/playerStore";
@@ -299,8 +300,8 @@ export function StatsView() {
                 <span className="stats-rank-number">{index + 1}</span>
                 <Artwork src={ranked.artworkUrl} alt={ranked.album || ranked.title} size="xs" />
                 <span className="stats-rank-copy">
-                  <strong>{ranked.title}</strong>
-                  <em>{ranked.artist}</em>
+                  <MarqueeText as="strong">{ranked.title}</MarqueeText>
+                  <MarqueeText as="em">{ranked.artist}</MarqueeText>
                 </span>
                 <SourceBadge source={ranked.source} />
                 <span className="stats-rank-count">
@@ -331,10 +332,10 @@ export function StatsView() {
                 <span className="stats-rank-number">{index + 1}</span>
                 <ArtistAvatar name={ranked.artist} size="xs" />
                 <span className="stats-rank-copy">
-                  <strong>{ranked.artist}</strong>
-                  <em>
+                  <MarqueeText as="strong">{ranked.artist}</MarqueeText>
+                  <MarqueeText as="em">
                     {formatCount(ranked.uniqueTrackCount)} tracks · last {formatDate(ranked.lastPlayedAt)}
-                  </em>
+                  </MarqueeText>
                 </span>
                 <span className="stats-rank-count">
                   <strong>{playLabel(ranked.playCount)}</strong>
@@ -362,10 +363,10 @@ export function StatsView() {
                 <span className="stats-rank-number">{index + 1}</span>
                 <Artwork src={ranked.artworkUrl} alt={ranked.album} size="xs" />
                 <span className="stats-rank-copy">
-                  <strong>{ranked.album}</strong>
-                  <em>
+                  <MarqueeText as="strong">{ranked.album}</MarqueeText>
+                  <MarqueeText as="em">
                     {ranked.albumArtist} · {formatCount(ranked.uniqueTrackCount)} tracks
-                  </em>
+                  </MarqueeText>
                 </span>
                 <span className="stats-rank-count">
                   <strong>{playLabel(ranked.playCount)}</strong>
@@ -387,7 +388,7 @@ export function StatsView() {
         <div className="stats-genre-list">
           {stats.genres.map(genre => (
             <div className="stats-genre-row" key={genre.genre.toLocaleLowerCase()}>
-              <span>{genre.genre}</span>
+              <MarqueeText>{genre.genre}</MarqueeText>
               <span className="stats-genre-track" aria-hidden="true">
                 <span style={{ width: `${Math.max(3, (genre.playCount / maxGenrePlays) * 100)}%` }} />
               </span>

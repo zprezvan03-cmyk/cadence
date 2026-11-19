@@ -17,6 +17,7 @@ import { currentTrackId, usePlayer } from "../state/playerStore";
 import { codecSupport } from "../audio/codecs";
 import { useTrackMenu } from "./useTrackMenu";
 import { Artwork } from "./Artwork";
+import { MarqueeText } from "./MarqueeText";
 
 const ROW_HEIGHT_PX = 58;
 const HEADER_HEIGHT_PX = 40;
@@ -93,8 +94,8 @@ const TrackRow = memo(function TrackRow({
       <span className="col-title">
         {showArtwork ? <Artwork src={track.artworkUrl} alt={track.album} size="xs" /> : null}
         <span className="title-block">
-          <span className="title-text" title={track.title}>{track.title}</span>
-          <span className="subtitle-text" title={track.artist}>{track.artist}</span>
+          <MarqueeText className="title-text" title={track.title}>{track.title}</MarqueeText>
+          <MarqueeText className="subtitle-text" title={track.artist}>{track.artist}</MarqueeText>
         </span>
         {!track.playable || codecSupport(track) === "unsupported" ? (
           <span
@@ -110,7 +111,7 @@ const TrackRow = memo(function TrackRow({
           </span>
         ) : null}
       </span>
-      {showAlbum ? <span className="col-album" title={track.album}>{track.album}</span> : null}
+      {showAlbum ? <MarqueeText className="col-album" title={track.album}>{track.album}</MarqueeText> : null}
       <span className="col-duration">{formatTime(track.duration)}</span>
       <span className="col-actions" onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
         <button

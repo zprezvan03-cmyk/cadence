@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { ListMusic, Plus, X } from "lucide-react";
 import { Artwork } from "../components/Artwork";
+import { MarqueeText } from "../components/MarqueeText";
 import { EMPTY_PLAYLISTS, useLibrary } from "../state/libraryStore";
 import { useUi } from "../state/uiStore";
 import { useLastNonNull, usePresence } from "./usePresence";
@@ -50,8 +51,8 @@ export function PlaylistPicker() {
             >
               <Artwork src={playlist.artworkUrl} alt="" size="xs" fallbackIcon={<ListMusic className="artwork-fallback-icon" aria-hidden="true" />} />
               <span>
-                <strong>{playlist.name}</strong>
-                <em>{playlist.trackCount} {playlist.trackCount === 1 ? "song" : "songs"}</em>
+                <MarqueeText as="strong">{playlist.name}</MarqueeText>
+                <MarqueeText as="em">{playlist.trackCount} {playlist.trackCount === 1 ? "song" : "songs"}</MarqueeText>
               </span>
             </button>
           ))}

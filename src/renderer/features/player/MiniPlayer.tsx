@@ -8,6 +8,7 @@ import { AudioLines, Heart, Maximize2, Minus, X } from "lucide-react";
 import type { WindowAction } from "../../../shared/types";
 import { useCurrentMediaItem, useCurrentTrack } from "../../app/hooks";
 import { SourceBadge } from "../../components/SourceBadge";
+import { MarqueeText } from "../../components/MarqueeText";
 import { useLibrary } from "../../state/libraryStore";
 import { useUi } from "../../state/uiStore";
 import { SeekRow, TransportButtons } from "./PlaybackControls";
@@ -85,12 +86,12 @@ export function MiniPlayer() {
             <PlaybackText text={text} className="mini-player-meta" shared draggable>
               {display => (
                 <>
-                  <div className="mini-player-title" title={display?.title} data-tauri-drag-region>
+                  <MarqueeText as="div" className="mini-player-title" title={display?.title} draggable>
                     {display?.title ?? "Nothing playing"}
-                  </div>
-                  <div className="mini-player-artist" title={display?.artistLabel} data-tauri-drag-region>
+                  </MarqueeText>
+                  <MarqueeText as="div" className="mini-player-artist" title={display?.artistLabel} draggable>
                     {display?.artistLabel ?? "Choose a song in the full player"}
-                  </div>
+                  </MarqueeText>
                   {display ? <SourceBadge source={display.source} compact /> : null}
                 </>
               )}

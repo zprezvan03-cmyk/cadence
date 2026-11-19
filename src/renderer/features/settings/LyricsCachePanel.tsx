@@ -19,6 +19,7 @@ import type {
   LyricsCacheListResult,
 } from "../../../shared/types";
 import { bridge } from "../../state/bridge";
+import { MarqueeText } from "../../components/MarqueeText";
 import { useUi } from "../../state/uiStore";
 import { parseLyricsText, type ParsedLyrics } from "../lyrics/parseLyrics";
 import { invalidateLyricsResolution } from "../lyrics/useLyrics";
@@ -260,15 +261,15 @@ export function LyricsCachePanel() {
                 onClick={() => void inspect(entry.key)}
                 aria-label={`Inspect ${entryTitle(entry)}`}
               >
-                <span className="cache-row-title">
+                <MarqueeText className="cache-row-title" title={entryTitle(entry)}>
                   {entryTitle(entry)}
                   {entry.artist ? <em> — {entry.artist}</em> : null}
-                </span>
+                </MarqueeText>
                 <span className="cache-row-meta">
-                  {entry.album ? <span>{entry.album}</span> : null}
-                  <span>{entry.sources.join(", ") || (entry.negative ? "No lyrics found" : "—")}</span>
-                  <span>{entry.formats.map(formatLabel).join(", ") || "—"}</span>
-                  <span>{timestamp(entry.savedAt)}</span>
+                  {entry.album ? <MarqueeText title={entry.album}>{entry.album}</MarqueeText> : null}
+                  <MarqueeText>{entry.sources.join(", ") || (entry.negative ? "No lyrics found" : "—")}</MarqueeText>
+                  <MarqueeText>{entry.formats.map(formatLabel).join(", ") || "—"}</MarqueeText>
+                  <MarqueeText>{timestamp(entry.savedAt)}</MarqueeText>
                   {entry.negative ? <span className="cache-badge muted-badge">nothing found</span> : null}
                   {entry.kind === "search" ? <span className="cache-badge">search</span> : null}
                 </span>
@@ -335,7 +336,7 @@ function CacheInspector({
       >
         <header className="modal-header">
           <div>
-            <h2 id="cache-inspector-title">{entryTitle(detail)}</h2>
+            <MarqueeText as="h2" id="cache-inspector-title" title={entryTitle(detail)}>{entryTitle(detail)}</MarqueeText>
             <p className="cache-inspector-sub">
               {[detail.artist, detail.album].filter(Boolean).join(" · ") || "No artist or album tags"} · cached{" "}
               {timestamp(detail.savedAt)}
@@ -400,9 +401,9 @@ function CachedCandidateView({
         </span>
       </header>
       {candidate.sourceHref ? (
-        <p className="cache-candidate-path" title={candidate.sourceHref}>
+        <MarqueeText as="p" className="cache-candidate-path" title={candidate.sourceHref}>
           {candidate.sourceHref}
-        </p>
+        </MarqueeText>
       ) : null}
       {open ? (
         parsed ? (

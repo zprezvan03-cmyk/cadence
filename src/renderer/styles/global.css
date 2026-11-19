@@ -215,6 +215,65 @@ a {
   font-size: 13px;
 }
 
+/* ------------------------------------------------------------ marquee text */
+
+/* Opt-in single-line labels. The wrapper clips while the inner span is the layer that moves,
+   so neighbouring badges and icons stay put. MarqueeText measures the overflow and drives the
+   movement with WAAPI; CSS only owns clipping and the reduced-motion fallback. */
+.marquee {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  /* Legacy per-selector ellipsis rules are more specific; the moving layer must never show one. */
+  text-overflow: clip !important;
+}
+
+/* Tight line-heights can put a descender (the tail of a "g") below the line box; overflow:hidden
+   would shave it off. Give the clip box a few extra pixels below, then take the space back so
+   surrounding layout keeps its original height. Bordered rows are excluded so their borders
+   do not grow. */
+.marquee:not(.folder-row) {
+  padding-block-end: 3px;
+  margin-block-end: -3px !important;
+}
+
+/* Legacy descendant selectors such as `.history-info span` also match the inner span. Give this
+   rule enough specificity to undo their overflow/ellipsis so only the wrapper clips. */
+.marquee .marquee__inner {
+  display: inline-block;
+  flex: none;
+  min-width: 0;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+/* Movement is handled by MarqueeText via the Web Animations API so the end-of-line pause and
+   travel speed stay exact. CSS here only owns clipping and the reduced-motion fallback. */
+
+/* With motion off the label cannot scroll, so fall back to the familiar clipped ellipsis.
+   The inner span becomes inline so the ellipsis belongs to the wrapper's inline content. */
+[data-reduce-motion="true"] .marquee {
+  text-overflow: ellipsis !important;
+}
+
+[data-reduce-motion="true"] .marquee .marquee__inner {
+  display: inline !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee {
+    text-overflow: ellipsis !important;
+  }
+
+  .marquee .marquee__inner {
+    display: inline !important;
+  }
+}
+
 /* ------------------------------------------------------------------ shell */
 
 .app-shell {

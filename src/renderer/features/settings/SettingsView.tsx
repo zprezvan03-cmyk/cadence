@@ -8,6 +8,7 @@ import { AudioLines, ChevronDown, ChevronUp, Database, FolderMinus, FolderPlus, 
 import type { AppInfo, AppSettings, EqualizerSettings, ReplayGainMode, ShaderSettings } from "../../../shared/types";
 import { FONT_KINDS, FONT_OPTIONS, resolveFontOption } from "../../../shared/fonts";
 import { detectUnavailableFonts } from "../../app/fonts";
+import { MarqueeText } from "../../components/MarqueeText";
 import { useLibrary } from "../../state/libraryStore";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
@@ -71,7 +72,7 @@ function Toggle({
   return (
     <label className="setting-row">
       <span>
-        <strong>{label}</strong>
+        <MarqueeText as="strong">{label}</MarqueeText>
         {hint ? <em>{hint}</em> : null}
       </span>
       <input type="checkbox" checked={checked} onChange={event => onChange(event.target.checked)} />
@@ -101,7 +102,7 @@ function Range({
   return (
     <label className="setting-row range-row">
       <span>
-        <strong>{label}</strong>
+        <MarqueeText as="strong">{label}</MarqueeText>
         {hint ? <em>{hint}</em> : null}
       </span>
       <span className="range-control">
@@ -482,7 +483,9 @@ export function SettingsView() {
                   >
                     <span className="provider-index">{index + 1}</span>
                     <span className="provider-name">
-                      {config?.displayName ?? untoggleProvider(provider)}
+                      <MarqueeText title={config?.displayName ?? untoggleProvider(provider)}>
+                        {config?.displayName ?? untoggleProvider(provider)}
+                      </MarqueeText>
                       <span className="provider-badges">
                         <span className="provider-badge">{SYNC_BADGE[config?.syncType ?? "line"] ?? config?.syncType}</span>
                         {config?.offline ? <span className="provider-badge offline">offline</span> : null}
@@ -532,7 +535,7 @@ export function SettingsView() {
             {snapshot?.folders.length ? (
               snapshot.folders.map(folder => (
                 <div className="folder-row" key={folder}>
-                  <span title={folder}>{folder}</span>
+                  <MarqueeText title={folder}>{folder}</MarqueeText>
                   <button type="button" className="icon-button" onClick={() => void removeFolder(folder)} aria-label="Remove folder">
                     <FolderMinus size={16} />
                   </button>

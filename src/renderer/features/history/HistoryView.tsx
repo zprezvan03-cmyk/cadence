@@ -13,6 +13,7 @@ import { useUi } from "../../state/uiStore";
 import { formatTime } from "../../player/queue";
 import { Artwork } from "../../components/Artwork";
 import { SourceBadge } from "../../components/SourceBadge";
+import { MarqueeText } from "../../components/MarqueeText";
 
 const dayLabel = new Intl.DateTimeFormat(undefined, { weekday: "long", month: "short", day: "numeric", year: "numeric" });
 const timeLabel = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
@@ -136,10 +137,10 @@ export function HistoryView() {
                   <Artwork src={payload.artworkUrl ?? null} alt={payload.album || title} size="xs" />
                 </div>
                 <div className="history-info">
-                  <strong title={title}>{title}</strong>
-                  <span>
+                  <MarqueeText as="strong" title={title}>{title}</MarqueeText>
+                  <MarqueeText>
                     {payload.artist}{payload.album ? ` · ${payload.album}` : ""}
-                  </span>
+                  </MarqueeText>
                 </div>
                 <SourceBadge source={entry.source} />
                 <span className="history-time" title="Track length">{formatTime(payload.duration)}</span>

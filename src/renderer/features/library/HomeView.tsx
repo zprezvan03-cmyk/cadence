@@ -13,6 +13,7 @@ import { useUi } from "../../state/uiStore";
 import { AlbumCard } from "../../components/Cards";
 import { Artwork } from "../../components/Artwork";
 import { SourceBadge } from "../../components/SourceBadge";
+import { MarqueeText } from "../../components/MarqueeText";
 import { shuffle } from "../../player/queue";
 import { onRepeatTracks, rediscoverTracks, topLibraryTracks } from "../stats/listeningStats";
 import { HomeShelf, HomeTrackShelf } from "./HomeShelves";
@@ -165,8 +166,8 @@ export function HomeView() {
             <div className="spotlight-feature">
               <Artwork src={spotlight.artworkUrl} alt={spotlight.name} />
               <div className="spotlight-copy">
-                <h3 title={spotlight.name}>{spotlight.name}</h3>
-                <p className="spotlight-artist" title={spotlight.albumArtist}>{spotlight.albumArtist}</p>
+                <MarqueeText as="h3" auto title={spotlight.name}>{spotlight.name}</MarqueeText>
+                <MarqueeText as="p" className="spotlight-artist" title={spotlight.albumArtist}>{spotlight.albumArtist}</MarqueeText>
                 <p className="muted">{spotlight.year ? `${spotlight.year} · ` : ""}{spotlight.trackCount} {spotlight.trackCount === 1 ? "song" : "songs"}</p>
                 <div className="heading-actions">
                   <button type="button" className="primary" onClick={playSpotlight}>
@@ -204,8 +205,8 @@ export function HomeView() {
                 >
                   <Artwork src={track.artworkUrl ?? null} alt={track.album || track.title} size="xs" />
                   <span>
-                    <strong>{track.title}</strong>
-                    <em>{track.artist}</em>
+                    <MarqueeText as="strong">{track.title}</MarqueeText>
+                    <MarqueeText as="em">{track.artist}</MarqueeText>
                   </span>
                   <SourceBadge source={track.source} compact />
                   <Play size={15} className="recent-play" aria-hidden="true" />
@@ -263,8 +264,8 @@ export function HomeView() {
               >
                 <Artwork src={item.track.artworkUrl ?? null} alt={item.track.album || item.track.title} size="xs" />
                 <span>
-                  <strong>{item.track.title}</strong>
-                  <em>{item.track.artist} · {formatLastPlayed(item.lastPlayedAt)}</em>
+                  <MarqueeText as="strong">{item.track.title}</MarqueeText>
+                  <MarqueeText as="em">{item.track.artist} · {formatLastPlayed(item.lastPlayedAt)}</MarqueeText>
                 </span>
               </button>
             ))}

@@ -33,6 +33,7 @@ import { useUi } from "../../state/uiStore";
 import { TrackList } from "../../components/TrackList";
 import { AlbumCard, ArtistCard, PlaylistCard } from "../../components/Cards";
 import { Artwork } from "../../components/Artwork";
+import { MarqueeText } from "../../components/MarqueeText";
 import { useSessionState } from "../../app/useSessionState";
 import { formatTime } from "../../player/queue";
 import { findDuplicateGroups, formatFileSize } from "./duplicates";
@@ -296,7 +297,7 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
                 <article className="duplicate-group" key={group.id} data-testid="duplicate-group">
                   <header className="duplicate-group-header">
                     <div>
-                      <h3>{group.title}</h3>
+                      <MarqueeText as="h3">{group.title}</MarqueeText>
                       <p>
                         {group.artist} · {group.tracks.length} copies · {formatFileSize(group.reclaimableBytes)} in
                         spare copies
@@ -322,19 +323,19 @@ export function LibraryView({ tab }: { tab: LibraryTab }) {
                       <div className="duplicate-track-row" key={track.id} data-testid="duplicate-track">
                         <Artwork src={track.artworkUrl} alt={track.album || track.title} size="xs" />
                         <div className="duplicate-track-copy">
-                          <strong>
+                          <MarqueeText as="strong" title={track.title}>
                             {track.title}
                             {track.id === group.keeperId ? (
                               <span className="keeper-badge">Recommended keeper</span>
                             ) : null}
-                          </strong>
-                          <span>
+                          </MarqueeText>
+                          <MarqueeText>
                             {track.album} · {formatTime(track.duration)} · {track.codec || track.container} ·{" "}
                             {formatFileSize(track.fileSize)} · {track.playCount} plays
                             {track.favorite ? " · liked" : ""}
                             {track.metadataEdited ? " · edited in Cadence" : ""}
-                          </span>
-                          <em title={track.path}>{track.path}</em>
+                          </MarqueeText>
+                          <MarqueeText title={track.path}>{track.path}</MarqueeText>
                         </div>
                         <div className="duplicate-track-actions">
                           <button type="button" onClick={() => void playTrack(track.id)}>
