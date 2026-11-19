@@ -1416,6 +1416,18 @@ check(
   distinctCompactWidths >= 4 && compactWidthSamples[0] === sidebarWidths.expanded && compactWidthSamples.at(-1) === sidebarWidths.compact,
   `${distinctCompactWidths} distinct widths, ${compactWidthSamples[0]} -> ${compactWidthSamples.at(-1)}`
 );
+await page.mouse.move(900, 300);
+await wait(460);
+const dropdownState = () => page.$eval(".nav-section-content", node => ({
+  visibility: getComputedStyle(node).visibility,
+  height: node.getBoundingClientRect().height,
+}));
+const collapsedDropdown = await dropdownState();
+check("compact-collapsed-hides-section-dropdowns", collapsedDropdown.visibility === "hidden" && collapsedDropdown.height < 1, JSON.stringify(collapsedDropdown));
+await page.mouse.move(38, 300);
+await wait(560);
+const expandedDropdown = await dropdownState();
+check("compact-expanded-reveals-section-dropdowns", expandedDropdown.visibility === "visible" && expandedDropdown.height > 1, JSON.stringify(expandedDropdown));
 await navItem("Songs");
 await wait(340);
 const compactPill = await page.evaluate(() => {
@@ -1425,6 +1437,17 @@ const compactPill = await page.evaluate(() => {
 });
 await page.mouse.move(900, 300);
 await wait(460);
+const collapsedPill = await page.evaluate(() => {
+  const pill = document.querySelector(".nav-pill")!.getBoundingClientRect();
+  const toggle = document.querySelector('.nav-section-toggle[title="Library"]')!.getBoundingClientRect();
+  const content = document.querySelector(".nav-section-content")!;
+  return {
+    deltaTop: Math.abs(pill.top - toggle.top),
+    deltaHeight: Math.abs(pill.height - toggle.height),
+    hidden: getComputedStyle(content).visibility === "hidden" && content.getBoundingClientRect().height < 1,
+  };
+});
+check("compact-collapsed-pill-falls-back-to-section", collapsedPill.hidden && collapsedPill.deltaTop < 1 && collapsedPill.deltaHeight < 1, JSON.stringify(collapsedPill));
 await shot("09-compact-sidebar");
 
 const sidebarProbe = () =>

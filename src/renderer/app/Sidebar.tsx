@@ -2,7 +2,7 @@
  * Navigation sidebar. Written for Cadence.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
   Album as AlbumIcon,
   ChartColumn,
@@ -20,6 +20,7 @@ import {
   Users,
 } from "lucide-react";
 import { EMPTY_PLAYLISTS, useLibrary } from "../state/libraryStore";
+import { useSettings } from "../state/settingsStore";
 import { useUi, type Route } from "../state/uiStore";
 import { SidebarTools } from "./SidebarTools";
 import { useSessionState } from "./useSessionState";
@@ -38,6 +39,8 @@ const LIBRARY: Destination[] = [
 ];
 const LIKED: Destination = { label: "Liked songs", icon: <Heart size={18} />, route: { name: "library", tab: "favorites" } };
 const ALL_PLAYLISTS: Destination = { label: "All playlists", icon: <ListMusic size={16} />, route: { name: "library", tab: "playlists" } };
+
+type SectionId = "library" | "playlists";
 
 export function Sidebar({ showHistory = false }: { showHistory?: boolean }) {
   const route = useUi(state => state.route);
@@ -64,13 +67,58 @@ export function Sidebar({ showHistory = false }: { showHistory?: boolean }) {
   const inPlaylists = route.name === "playlist" || isActive(ALL_PLAYLISTS.route);
   const [libraryOpen, setLibraryOpen] = useSessionState("sidebar.library-open", true);
   const [playlistsOpen, setPlaylistsOpen] = useSessionState("sidebar.playlists-open", false);
+  const compact = useSettings(state => state.settings?.appearance.compactSidebar ?? false);
+  const hoverExpand = useSettings(state => state.settings?.appearance.compactSidebarHoverExpand ?? true);
+  // A collapsed compact rail cannot reveal nested destinations, and without hover expansion it
+  // has no other way to widen. Pin both disclosures open in that combination so every destination
+  // is one peek away; the remembered user state is left untouched for when either setting changes.
+  const sectionsAlwaysOpen = compact && !hoverExpand;
+  const libraryExpanded = sectionsAlwaysOpen || libraryOpen;
+  const playlistsExpanded = sectionsAlwaysOpen || playlistsOpen;
+  // The section toggle only widens the rail in this mode; the disclosure itself stays open.
+  const [peek, setPeek] = useState<SectionId | null>(null);
+  const peeking = sectionsAlwaysOpen && peek !== null;
+  const sidebarRef = useRef<HTMLElement | null>(null);
   // Deep links and browser history reveal the destination. The disclosure is still free to
   // collapse while looking at that same page; it does not change the route.
   const routeKey = route.name === "library" ? route.tab : route.name === "playlist" ? route.playlistId : route.name;
   useLayoutEffect(() => {
+    setPeek(null);
+    // Pinned disclosures are already open; don't overwrite the preferences they will restore.
+    if (sectionsAlwaysOpen) return;
     if (inLibrary) setLibraryOpen(true);
     if (inPlaylists) setPlaylistsOpen(true);
-  }, [routeKey, inLibrary, inPlaylists, setLibraryOpen, setPlaylistsOpen]);
+  }, [routeKey, inLibrary, inPlaylists, sectionsAlwaysOpen, setLibraryOpen, setPlaylistsOpen]);
+
+  useEffect(() => {
+    if (!sectionsAlwaysOpen) setPeek(null);
+  }, [sectionsAlwaysOpen]);
+
+  useEffect(() => {
+    if (!peek) return;
+    const dismissPointer = (event: PointerEvent) => {
+      if (sidebarRef.current?.contains(event.target as Node)) return;
+      setPeek(null);
+    };
+    const dismissKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPeek(null);
+    };
+    document.addEventListener("pointerdown", dismissPointer, true);
+    document.addEventListener("keydown", dismissKey);
+    return () => {
+      document.removeEventListener("pointerdown", dismissPointer, true);
+      document.removeEventListener("keydown", dismissKey);
+    };
+  }, [peek]);
+
+  const toggleSection = (id: SectionId, open: boolean, setOpen: (open: boolean) => void) => {
+    if (sectionsAlwaysOpen) {
+      // The disclosure is pinned open, so this button only widens or dismisses the rail.
+      setPeek(current => (current === id ? null : id));
+      return;
+    }
+    setOpen(!open);
+  };
 
   const navRef = useRef<HTMLElement | null>(null);
   const pillRef = useRef<HTMLSpanElement | null>(null);
@@ -93,7 +141,17 @@ export function Sidebar({ showHistory = false }: { showHistory?: boolean }) {
     const nav = navRef.current;
     const pill = pillRef.current;
     if (!nav || !pill) return;
-    const button = nav.querySelector<HTMLButtonElement>(".nav-item.active");
+    let button = nav.querySelector<HTMLButtonElement>(".nav-item.active");
+    // Compact rails clip nested destinations. Park the pill on the section toggle so the rail still
+    // shows where the current page lives instead of measuring a hidden child. Skip this during a
+    // peek expansion, where the content starts at zero height but is already becoming visible.
+    if (button) {
+      const content = button.closest<HTMLElement>(".nav-section-content");
+      const collapsed = content?.offsetHeight === 0 && !sidebarRef.current?.classList.contains("is-compact-peek");
+      if (button.offsetParent === null || collapsed) {
+        button = button.closest(".nav-section")?.querySelector<HTMLButtonElement>(".nav-section-toggle") ?? null;
+      }
+    }
     if (!button) {
       pill.classList.remove("is-visible");
       return;
@@ -122,10 +180,10 @@ export function Sidebar({ showHistory = false }: { showHistory?: boolean }) {
     // callback immediately and cancel the very transition it was about to animate.
   }, []);
 
-  useLayoutEffect(measureSlots, [measureSlots, libraryOpen, playlistsOpen, playlists]);
+  useLayoutEffect(measureSlots, [measureSlots, libraryExpanded, playlistsExpanded, playlists, peek]);
   useLayoutEffect(() => {
     placePill(navRef.current?.dataset.pill !== "ready");
-  }, [placePill, route, libraryOpen, playlistsOpen, playlists]);
+  }, [placePill, route, libraryExpanded, playlistsExpanded, playlists, peek]);
 
   // The nav can move under the pill without a route change: a resized window, a compact sidebar, or
   // playlists appearing above the footer. Re-place instantly instead of sliding from a stale spot.
@@ -152,7 +210,7 @@ export function Sidebar({ showHistory = false }: { showHistory?: boolean }) {
   }, [measureSlots, placePill]);
 
   return (
-    <aside className="sidebar">
+    <aside ref={sidebarRef} className={`sidebar${peeking ? " is-compact-peek" : ""}`}>
       <button type="button" className="brand" onClick={() => navigate({ name: "home" })} aria-label="Cadence home">
         <span className="brand-mark" aria-hidden="true"><AudioLines size={20} /></span>
         <span className="brand-text"><strong>Cadence</strong></span>
@@ -165,15 +223,15 @@ export function Sidebar({ showHistory = false }: { showHistory?: boolean }) {
           <span className="nav-pill" ref={pillRef} aria-hidden="true" />
           <p className="nav-group" aria-hidden="true">Listen</p>
           {LISTEN.map(item => <NavEntry key={item.label} item={item} active={isActive(item.route)} navigate={navigate} />)}
-          <NavSection id="library" icon={<Library size={18} />} label="Library" current={inLibrary} open={libraryOpen} onToggle={() => setLibraryOpen(!libraryOpen)}>
-            {LIBRARY.map(item => <NavEntry key={item.label} item={item} active={libraryOpen && isActive(item.route)} navigate={navigate} />)}
+          <NavSection id="library" icon={<Library size={18} />} label="Library" current={inLibrary} open={libraryExpanded} onToggle={() => toggleSection("library", libraryOpen, setLibraryOpen)}>
+            {LIBRARY.map(item => <NavEntry key={item.label} item={item} active={libraryExpanded && isActive(item.route)} navigate={navigate} />)}
           </NavSection>
           <NavEntry item={LIKED} active={isActive(LIKED.route)} navigate={navigate} />
-          <NavSection id="playlists" icon={<ListMusic size={18} />} label="Playlists" current={inPlaylists} open={playlistsOpen} onToggle={() => setPlaylistsOpen(!playlistsOpen)}>
-            <NavEntry item={ALL_PLAYLISTS} active={playlistsOpen && isActive(ALL_PLAYLISTS.route)} navigate={navigate} />
+          <NavSection id="playlists" icon={<ListMusic size={18} />} label="Playlists" current={inPlaylists} open={playlistsExpanded} onToggle={() => toggleSection("playlists", playlistsOpen, setPlaylistsOpen)}>
+            <NavEntry item={ALL_PLAYLISTS} active={playlistsExpanded && isActive(ALL_PLAYLISTS.route)} navigate={navigate} />
             {playlists.map(playlist => {
               const item: Destination = { label: playlist.name, icon: <ListMusic size={16} />, route: { name: "playlist", playlistId: playlist.id } };
-              return <NavEntry key={playlist.id} item={item} active={playlistsOpen && isActive(item.route)} navigate={navigate} className="sidebar-link" />;
+              return <NavEntry key={playlist.id} item={item} active={playlistsExpanded && isActive(item.route)} navigate={navigate} className="sidebar-link" />;
             })}
             <button type="button" className="nav-item" onClick={requestPlaylistCreate} aria-label="New playlist" title="New playlist">
               <Plus size={16} /> <span>New playlist</span>

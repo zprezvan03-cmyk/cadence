@@ -542,7 +542,7 @@ a {
 }
 
 [data-compact-sidebar="true"] .nav-group { opacity: 0; }
-[data-compact-sidebar="true"] .sidebar:is(:has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .nav-group { opacity: 1; }
+[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .nav-group { opacity: 1; }
 
 [data-compact-sidebar="true"] .sidebar {
   padding-inline: 10px;
@@ -587,30 +587,31 @@ a {
 /* Hover expansion (separate setting, default on) is an overlay, not a layout mode: the shell
    column stays at its compact width and the content never reflows while the sidebar itself widens above it.
    The dur-0 delay is hover intent — a pointer merely crossing the rail does not expand it,
-   while collapse on leave is immediate. Keyboard focus expands it the same way. */
-[data-compact-sidebar="true"] .sidebar:is(:has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) {
+   while collapse on leave is immediate. Keyboard focus expands it the same way, and a temporary
+   peek reuses these rules when hover expansion is off. */
+[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) {
   --sidebar-width: var(--sidebar-expanded-width);
   padding-inline: 14px;
   box-shadow: 24px 0 60px rgba(0, 0, 0, 0.38);
   transition-delay: var(--dur-0);
 }
 
-[data-compact-sidebar="true"] .sidebar:is(:has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .brand {
+[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .brand {
   justify-content: flex-start;
   gap: 11px;
   padding-inline: 8px;
   transition-delay: var(--dur-0);
 }
 
-[data-compact-sidebar="true"] .sidebar:is(:has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .nav-item {
+[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .nav-item {
   justify-content: flex-start;
   gap: 12px;
   padding-inline: 12px;
   transition-delay: 0s, 0s, var(--dur-0), var(--dur-0);
 }
 
-[data-compact-sidebar="true"] .sidebar:is(:has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .brand-text,
-[data-compact-sidebar="true"] .sidebar:is(:has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .nav-item span {
+[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .brand-text,
+[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .nav-item span {
   max-width: 180px;
   opacity: 1;
   transform: none;
@@ -618,7 +619,7 @@ a {
   transition-delay: var(--dur-0);
 }
 
-[data-compact-sidebar="true"] .sidebar:is(:has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .sidebar-stats {
+[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .sidebar-stats {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
@@ -831,9 +832,20 @@ a {
 
 /* The compact search input is still a focus target. It expands into the ordinary field when
    clicked or focused with Ctrl/Cmd+K, without reflowing the page. */
-[data-compact-sidebar="true"] .sidebar:not(:has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) {
+[data-compact-sidebar="true"] .sidebar:not(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) {
   .global-search { justify-content: center; padding-inline: 0; }
   .global-search input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
+  /* Nested destinations are unavailable until the rail expands. Collapse them with the same
+     grid-row transition as a normal disclosure click, and let visibility follow after the rows
+     finish so the collapse is actually seen. */
+  .nav-section-content {
+    grid-template-rows: 0fr;
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+      grid-template-rows var(--dur-2) var(--ease-out),
+      visibility 0s linear var(--dur-2);
+  }
   :is(.search-shortcut, .global-search .icon-button, .scan-indicator span, .nav-chevron, .fetch-indicator-count, .fetch-indicator-bar) { display: none; }
   .sidebar-tools .history-buttons .icon-button { width: 50%; }
 }

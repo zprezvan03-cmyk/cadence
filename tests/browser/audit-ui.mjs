@@ -1618,12 +1618,102 @@ await runSection("expanded-sidebar-search-completes", async () => {
   await page.evaluate(() => window.__audit.state.finishAddFolder());
   await page.waitForSelector(".sidebar-tools .scan-indicator", { hidden: true });
   await nav("Settings"); await settingsTab("Appearance");
+  const disclosureState = () => page.evaluate(() => ({
+    library: document.querySelector("#sidebar-library")?.getAttribute("data-open") === "true",
+    playlists: document.querySelector("#sidebar-playlists")?.getAttribute("data-open") === "true",
+  }));
+  const originalDisclosures = await disclosureState();
+  for (const title of ["Library", "Playlists"]) {
+    const expanded = await page.$eval(`.nav-section-toggle[title="${title}"]`, node => node.getAttribute("aria-expanded") === "true");
+    if (expanded) { await page.click(`.nav-section-toggle[title="${title}"]`); await wait(260); }
+  }
+  const disclosuresBeforeCompact = await disclosureState();
   await toggleSetting("Compact sidebar");
   await toggleSetting("Expand compact sidebar on hover");
   await page.mouse.move(700, 400);
   await page.evaluate(() => document.activeElement?.blur());
   await wait(400);
+  const forcedDisclosures = await disclosureState();
+  check(
+    "compact-no-hover-pins-section-disclosures-open",
+    !disclosuresBeforeCompact.library && !disclosuresBeforeCompact.playlists && forcedDisclosures.library && forcedDisclosures.playlists,
+    JSON.stringify({ before: disclosuresBeforeCompact, forced: forcedDisclosures })
+  );
   const collapsedWidth = await page.$eval(".sidebar", node => node.getBoundingClientRect().width);
+  const isCollapsed = width => Math.abs(width - collapsedWidth) < 1;
+  const settleCollapsed = async () => {
+    await page.waitForFunction(
+      width => Math.abs(document.querySelector(".sidebar").getBoundingClientRect().width - width) < 1,
+      { timeout: 3000 },
+      collapsedWidth
+    );
+    return page.$eval(".sidebar", node => node.getBoundingClientRect().width);
+  };
+  const dropdownState = () => page.$eval(".nav-section-content", node => ({
+    visibility: getComputedStyle(node).visibility,
+    height: node.getBoundingClientRect().height,
+  }));
+  const collapsedDropdown = await dropdownState();
+  check("compact-collapsed-hides-section-dropdowns", collapsedDropdown.visibility === "hidden" && collapsedDropdown.height < 1, JSON.stringify(collapsedDropdown));
+  const expansionSamples = await page.evaluate(async () => {
+    const content = document.querySelector(".nav-section-content");
+    document.querySelector('.nav-section-toggle[title="Library"]').click();
+    const samples = [];
+    const start = performance.now();
+    await new Promise(done => {
+      const tick = () => {
+        samples.push(Math.round(content.getBoundingClientRect().height));
+        if (performance.now() - start < 320) requestAnimationFrame(tick);
+        else done();
+      };
+      requestAnimationFrame(tick);
+    });
+    return samples;
+  });
+  const distinctExpansionHeights = new Set(expansionSamples).size;
+  check("compact-peek-animates-section-dropdowns", distinctExpansionHeights >= 3 && expansionSamples.at(-1) > 1, `${distinctExpansionHeights} heights, ${expansionSamples.join(",")}`);
+  const peekState = await page.evaluate(() => ({
+    width: document.querySelector(".sidebar").getBoundingClientRect().width,
+    visibility: getComputedStyle(document.querySelector(".nav-section-content")).visibility,
+    height: document.querySelector(".nav-section-content").getBoundingClientRect().height,
+    expanded: document.querySelector('.nav-section-toggle[title="Library"]').getAttribute("aria-expanded"),
+  }));
+  check("compact-section-click-peeks", peekState.width > collapsedWidth && peekState.visibility === "visible" && peekState.height > 1 && peekState.expanded === "true", JSON.stringify(peekState));
+  await page.evaluate(() => {
+    const content = document.querySelector(".nav-section-content");
+    window.__dropdownCollapseSamples = [];
+    const start = performance.now();
+    const tick = () => {
+      window.__dropdownCollapseSamples.push(Math.round(content.getBoundingClientRect().height));
+      if (performance.now() - start < 320) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  await page.keyboard.press("Escape");
+  const escapeWidth = await settleCollapsed();
+  const collapseSamples = await page.evaluate(() => window.__dropdownCollapseSamples);
+  const distinctCollapseHeights = new Set(collapseSamples).size;
+  check("compact-peek-collapse-animates-section-dropdowns", distinctCollapseHeights >= 3 && collapseSamples.at(-1) === 0, `${distinctCollapseHeights} heights, ${collapseSamples.join(",")}`);
+  check("compact-peek-escape-collapses", isCollapsed(escapeWidth), `${escapeWidth}px`);
+  await page.click('.nav-section-toggle[title="Library"]'); await wait(450);
+  await page.click('.nav-section-toggle[title="Library"]');
+  const toggleDismissState = await page.evaluate(() => ({
+    expanded: document.querySelector('.nav-section-toggle[title="Library"]').getAttribute("aria-expanded"),
+  }));
+  toggleDismissState.width = await settleCollapsed();
+  check("compact-section-toggle-dismiss-keeps-disclosure-open", isCollapsed(toggleDismissState.width) && toggleDismissState.expanded === "true", JSON.stringify(toggleDismissState));
+  await page.click('.nav-section-toggle[title="Library"]'); await wait(450);
+  await page.evaluate(() => document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })));
+  const outsideWidth = await settleCollapsed();
+  check("compact-peek-outside-collapses", isCollapsed(outsideWidth), `${outsideWidth}px`);
+  await page.click('.nav-section-toggle[title="Library"]'); await wait(450);
+  await page.click('.nav-section-content .nav-item[title="Recently Added"]'); await wait(500);
+  const routeState = await page.evaluate(() => ({
+    expanded: document.querySelector('.nav-section-toggle[title="Library"]').getAttribute("aria-expanded"),
+    hash: location.hash,
+  }));
+  routeState.width = await settleCollapsed();
+  check("compact-peek-route-change-collapses", isCollapsed(routeState.width) && routeState.expanded === "true" && routeState.hash.startsWith("#/library/recently-added"), JSON.stringify(routeState));
   await page.keyboard.down("Control"); await page.keyboard.press("K"); await page.keyboard.up("Control");
   await page.waitForFunction(() => document.activeElement?.id === "global-search" && document.querySelector(".sidebar").getBoundingClientRect().width > 215);
   await page.keyboard.type("Fixture");
@@ -1632,9 +1722,21 @@ await runSection("expanded-sidebar-search-completes", async () => {
     main: document.querySelector(".app-main").getBoundingClientRect().left, value: document.querySelector("#global-search").value }));
   check("compact-search-expands-without-hover-or-content-reflow", collapsedWidth === 68 && compactSearch.main === 68 &&
     compactSearch.rail > compactSearch.main && compactSearch.value === "Fixture", JSON.stringify({ collapsedWidth, ...compactSearch }));
+  await wait(250);
   await nav("Settings"); await settingsTab("Appearance");
   await toggleSetting("Expand compact sidebar on hover");
+  const restoredDisclosures = await disclosureState();
+  check(
+    "compact-disclosures-return-to-user-state",
+    !restoredDisclosures.library && !restoredDisclosures.playlists,
+    JSON.stringify({ before: disclosuresBeforeCompact, restored: restoredDisclosures })
+  );
   await toggleSetting("Compact sidebar");
+  for (const title of ["Library", "Playlists"]) {
+    const shouldOpen = title === "Library" ? originalDisclosures.library : originalDisclosures.playlists;
+    const expanded = await page.$eval(`.nav-section-toggle[title="${title}"]`, node => node.getAttribute("aria-expanded") === "true");
+    if (expanded !== shouldOpen) { await page.click(`.nav-section-toggle[title="${title}"]`); await wait(260); }
+  }
 });
 
 await runSection("expanded-player-controls-completes", async () => {
