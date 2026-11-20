@@ -100,6 +100,14 @@ Tanggal: 2026-11-19 — 2026-11-20
 - Helper `scrollByCards` diganti `scrollByPage`; perhitungan jarak dari kartu pertama/ketiga dibuang. Perilaku ujung scroll dan `prefersReducedMotion()` tidak berubah, begitu juga posisi tombol floating dan ref viewport track.
 - Entry `5132bf6` tetap mencatat perilaku dua kartu pada commit itu; `93f257b` menggantikannya di HEAD.
 
+## `06e3373` - feat(ui): unify Now Playing footer glass and icon-only lyrics dock
+
+- Dua pill kaca (`.fs-controls` + `.lyrics-dock`) diganti jadi **satu permukaan kaca `.lyrics-footer` selebar viewport**. Kedua bar tetap mempertahankan posisi dan ukuran relatifnya, tapi background/border/radius individualnya dihapus — glass kini milik strip penuh tersebut.
+- Popover dock di-anchor ke **footer** (bukan dock), jadi muncul 10px di atas seluruh strip dan tetap nempel ke tombol masing-masing (kiri untuk Source/Profile/Translate, kanan untuk Save/Regenerate). `z-index`-nya dinaikkan supaya berada di atas playbar.
+- Strip kaca ikut hide/show bersama kontrol lewat kelas `.is-concealed`; kalau ada popover yang terbuka, strip tetap nyala (pinned).
+- Enam trigger dock (Source, Profile, Translate, Romanize, Regenerate, Save) jadi **icon-only** lewat modifier `.dock-button--icon`, dengan `title` + `aria-label` (Romanize juga `aria-pressed`). Ikon yang kurang nyambung diganti: `Sparkles` → `ListMusic`, `LayoutGrid` → `Palette`, `Wand2` → `Type`.
+- Satu selector di `tests/browser/audit-ui.mjs` disesuaikan ke `button[title="Lyrics source"]`; assertion yang ada tidak dilemahkan.
+
 ## Verifikasi
 
 - `f3a4ce0`: `npm run build` lolos (CSS-only); sudah dicek visual di `npm run dev`.
@@ -112,6 +120,7 @@ Tanggal: 2026-11-19 — 2026-11-20
 - `5132bf6`: `npm run typecheck` dan `npm run build` lolos. Di browser harness, tombol berada di edge viewport dan satu klik menggeser `320px` (dua kartu `148px` + dua gap `12px`).
 - `c11501b`: `npm run typecheck` dan `npm run build` lolos. Di browser harness: klik di dalam popover tidak menutup, klik di luar menutup, pindah trigger menutup popover lama, dan klik luar berikutnya mengosongkan semua popover.
 - `93f257b`: `npm run typecheck` dan `npm run build` lolos. Di browser harness dengan viewport shelf `708px`, satu klik menggeser tepat `708px`.
+- `06e3373`: `npm run typecheck` dan `npm run build` lolos. Di browser harness: footer selebar viewport (800px), glass aktif saat hover dan tetap pinned saat popover terbuka, kelima popover 10px di atas strip serta ter-align ke trigger, outside-click menutup semua, dan nol teks pada tombol dock.
 - `npm run typecheck` lolos.
 - `npm run build` lolos.
 - `npm test`: 615/616 test lolos. Dua kegagalan yang sudah ada sebelum perubahan ini tetap ada (file DB terkunci di Windows saat cleanup `library.test.ts` dan threshold benchmark Smart Shuffle); `_matasaburo_full.test.ts` lolos pada run ini. Tidak ada kegagalan baru dari perubahan ini — total test turun dari 630 karena suite `lyricsFetchAll.test.ts` (14 test) ikut dihapus bersama fiturnya.
