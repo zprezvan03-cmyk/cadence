@@ -4,7 +4,7 @@
  */
 
 import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Minimize2, Music4, RefreshCw, Search } from "lucide-react";
+import { Minimize2, Music4, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
 import { trackSourceKey } from "../../../shared/media";
 import type { AppSettings, MediaItem, NowPlayingLayoutMode, NowPlayingProfile, Track } from "../../../shared/types";
 import { DEFAULT_PROVIDER_ORDER } from "../../../shared/upstream/better-lyrics/constants";
@@ -59,6 +59,8 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
   const [slowLoading, setSlowLoading] = useState(false);
   const [syncLabel, setSyncLabel] = useState("No lyrics");
   const [dockPopoverOpen, setDockPopoverOpen] = useState(false);
+  // The lyrics tools live in one expandable row at the top-right in fullscreen; the trigger stays put.
+  const [dockExpanded, setDockExpanded] = useState(false);
   const queueOpen = useUi(state => state.queueOpen);
   const isRemote = Boolean(item && item.source.kind !== "local");
   const itemIdentity = item ? trackSourceKey(item.source) : null;
@@ -70,6 +72,11 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
   const footerPresent = fullscreen && showLyricsSetting;
   const panelMode = fullscreen && !showLyricsSetting;
   const controlsVisible = useControlsHover(footerPresent, dockPopoverOpen || queueOpen || Boolean(preview), footerRef);
+  const toolsInHeader = fullscreen && !preview && !panelMode && Boolean(item && track);
+
+  useEffect(() => {
+    if (!toolsInHeader) setDockExpanded(false);
+  }, [toolsInHeader]);
 
   // Fullscreen only: the controls overlay the bottom of the lyrics body instead of taking space from it.
   // The footer's measured height is published to the view as --fs-footer-height, so the body keeps its
@@ -318,6 +325,41 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
   const headingInHeader = profileConfig.metadataVisible && (!fullscreen || profileConfig.metadataSlot === "top");
   const panelDetailsVisible = (profileConfig.metadataVisible && !headingInHeader) || profileConfig.controlsVisible;
 
+  // One instance of the dock, mounted either in the top-right inline row (fullscreen) or in the footer
+  // (windowed / studio preview). In fullscreen it does not follow the footer hover timer — the row's
+  // own collapsed state controls visibility, while the play button still uses hover.
+  const lyricsDock = item && track ? (
+    <LyricsDock
+      settings={lyricsSettings ?? fallbackLyricsSettings}
+      onPatch={patchLyrics}
+      nowPlayingProfiles={availableNowPlayingProfiles}
+      activeNowPlayingProfileId={activeNowPlayingProfile.id}
+      onSelectNowPlayingProfile={handleSelectNowPlayingProfile}
+      candidates={lyrics.candidates}
+      activeSource={lyrics.activeSource}
+      onSelectSource={lyrics.selectSource}
+      providerStatus={lyrics.providerStatus}
+      onReload={lyrics.reload}
+      onRegenerateTranslation={lyrics.regenerateTranslation}
+      onRegenerateRomanization={lyrics.regenerateRomanization}
+      onSaveSidecar={(format) => void handleSave(format)}
+      onChooseFile={() => void lyrics.chooseFile()}
+      trackDuration={track.duration ?? 0}
+      searchDraft={lyrics.searchDraft}
+      onDraftChange={lyrics.patchDraft}
+      onClearSearch={lyrics.clearSearch}
+      manualSearchState={lyrics.manualSearchState}
+      youtubeState={lyrics.youtubeState}
+      onManualSearch={input => void lyrics.manualSearch(input)}
+      onResolveYouTube={handleResolveYouTube}
+      onSelectSearchResult={lyrics.selectSearchResult}
+      syncLabel={syncLabel}
+      busy={lyrics.status === "loading" || lyrics.translating || lyrics.romanizing}
+      concealed={!toolsInHeader && !controlsVisible}
+      onPopoverChange={setDockPopoverOpen}
+    />
+  ) : null;
+
   return (
     <LyricsModeMotion mode={showLyricsSetting ? "on" : "off"} active={fullscreen && !preview}>
     <div
@@ -372,6 +414,25 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
         {headingInHeader ? heading : null}
         {fullscreen && !preview ? (
           <div className="fs-page-actions">
+            {toolsInHeader ? (
+              <div className={`lyrics-tools ${dockExpanded ? "is-open" : ""}`}>
+                <div id="lyrics-tools-dock" className="lyrics-tools-dock" inert={!dockExpanded}>
+                  {lyricsDock}
+                </div>
+                <button
+                  type="button"
+                  className={`icon-button lyrics-tools-trigger ${dockExpanded ? "active" : ""}`}
+                  aria-label="Lyrics tools"
+                  aria-expanded={dockExpanded}
+                  aria-controls="lyrics-tools-dock"
+                  title="Lyrics tools"
+                  onClick={() => setDockExpanded(open => !open)}
+                  data-testid="lyrics-tools-trigger"
+                >
+                  <SlidersHorizontal size={18} />
+                </button>
+              </div>
+            ) : null}
             <div className="fs-mode-tabs" role="group" aria-label="Lyrics display">
               <button type="button" data-testid="lyrics-mode-on" aria-pressed={showLyricsSetting} onClick={() => !showLyricsSetting && patchLyrics({ showLyricsInFullscreen: true })}>
                 Lyrics On
@@ -491,37 +552,7 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
             <FullscreenControls track={track} cover={cover} text={text} concealed={!controlsVisible} />
           ) : null}
 
-          {item && track ? (
-            <LyricsDock
-              settings={lyricsSettings ?? fallbackLyricsSettings}
-              onPatch={patchLyrics}
-              nowPlayingProfiles={availableNowPlayingProfiles}
-              activeNowPlayingProfileId={activeNowPlayingProfile.id}
-              onSelectNowPlayingProfile={handleSelectNowPlayingProfile}
-              candidates={lyrics.candidates}
-              activeSource={lyrics.activeSource}
-              onSelectSource={lyrics.selectSource}
-              providerStatus={lyrics.providerStatus}
-              onReload={lyrics.reload}
-              onRegenerateTranslation={lyrics.regenerateTranslation}
-              onRegenerateRomanization={lyrics.regenerateRomanization}
-              onSaveSidecar={(format) => void handleSave(format)}
-              onChooseFile={() => void lyrics.chooseFile()}
-              trackDuration={track.duration ?? 0}
-              searchDraft={lyrics.searchDraft}
-              onDraftChange={lyrics.patchDraft}
-              onClearSearch={lyrics.clearSearch}
-              manualSearchState={lyrics.manualSearchState}
-              youtubeState={lyrics.youtubeState}
-              onManualSearch={input => void lyrics.manualSearch(input)}
-              onResolveYouTube={handleResolveYouTube}
-              onSelectSearchResult={lyrics.selectSearchResult}
-              syncLabel={syncLabel}
-              busy={lyrics.status === "loading" || lyrics.translating || lyrics.romanizing}
-              concealed={!controlsVisible}
-              onPopoverChange={setDockPopoverOpen}
-            />
-          ) : null}
+          {!toolsInHeader ? lyricsDock : null}
         </div>
       ) : null}
 

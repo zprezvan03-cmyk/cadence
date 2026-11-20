@@ -1,12 +1,12 @@
 /**
- * Hover visibility for the fullscreen controls (the control bar and the lyrics dock). Written for Cadence.
+ * Hover visibility for the fullscreen playbar. Written for Cadence.
  *
- * The controls show while the pointer is over their area and fade out when it leaves. The area is the
- * box around the footer's children, so the gap between the control bar and the dock counts as inside and
- * moving between them does not flicker. Hidden controls take no pointer input (pointer-events: none), so
- * they cannot receive hover themselves. The pointer is therefore tracked by position on the window, and
- * the lyrics under hidden controls stay clickable. React state changes only when the pointer crosses the
- * area's edge. Listeners exist only while fullscreen is active.
+ * The controls show while the pointer is over their band and fade out when it leaves. The band spans the
+ * full viewport width — only its vertical limits come from the footer's children — so hovering anywhere
+ * along the bottom edge reveals the bar instead of just the centred strip under the lyrics. Hidden
+ * controls take no pointer input (pointer-events: none), so the pointer is tracked by position on the
+ * window and the lyrics under hidden controls stay clickable. React state changes only when the pointer
+ * crosses the band's edge. Listeners exist only while fullscreen is active.
  */
 
 import { useEffect, useState, type RefObject } from "react";
@@ -18,7 +18,7 @@ interface Bounds {
   bottom: number;
 }
 
-/** The smallest box that holds every child of the footer, the gaps between them included. */
+/** The footer's vertical band, widened to the whole viewport and down to its bottom edge. */
 function footerBounds(footer: HTMLElement): Bounds | null {
   let bounds: Bounds | null = null;
   for (const child of Array.from(footer.children)) {
@@ -33,7 +33,8 @@ function footerBounds(footer: HTMLElement): Bounds | null {
         }
       : { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
   }
-  return bounds;
+  if (!bounds) return null;
+  return { left: 0, top: bounds.top, right: window.innerWidth, bottom: window.innerHeight };
 }
 
 /** Returns whether the controls should be shown. Always `true` when `active` is false. */

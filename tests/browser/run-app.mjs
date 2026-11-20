@@ -1470,7 +1470,7 @@ const controlState = () =>
       opacity: style ? Number(style.opacity) : null,
       visibility: style?.visibility ?? null,
       pointerEvents: style?.pointerEvents ?? null,
-      dockConcealed: document.querySelector('[data-testid="lyrics-dock"]')?.classList.contains("is-concealed") ?? null,
+      toolsOpen: document.querySelector('[data-testid="lyrics-tools-trigger"]')?.getAttribute("aria-expanded") ?? null,
     };
   });
 // True when the play button's centre is hit-tested onto the control bar (i.e. the controls take input).
@@ -1559,14 +1559,17 @@ check(
   JSON.stringify({ ...revealedState, hitsControls: revealedHit })
 );
 
-// Moving across the control bar, the gap between it and the dock, and the dock keeps them shown.
+// Moving across the playbar's band — including both far edges of the viewport — keeps it shown.
+const controlsBandY = await page.$eval('[data-testid="fullscreen-controls"]', node => {
+  const rect = node.getBoundingClientRect();
+  return Math.round(rect.top + rect.height / 2);
+});
+const viewportWidth = await page.evaluate(() => window.innerWidth);
 const seekPoint = await centreOf('[data-testid="fullscreen-controls"] .seek-row');
-const dockPoint = await centreOf('[data-testid="lyrics-dock"]');
-const controlsBottom = await page.$eval('[data-testid="fullscreen-controls"]', node => node.getBoundingClientRect().bottom);
-const dockTop = await page.$eval('[data-testid="lyrics-dock"]', node => node.getBoundingClientRect().top);
-const gapPoint = { x: dockPoint.x, y: (controlsBottom + dockTop) / 2 };
+const farLeft = { x: 24, y: controlsBandY };
+const farRight = { x: viewportWidth - 24, y: controlsBandY };
 const withinStates = [];
-for (const point of [seekPoint, gapPoint, dockPoint]) {
+for (const point of [seekPoint, farLeft, farRight]) {
   await page.mouse.move(point.x, point.y);
   await wait(60);
   withinStates.push(await controlState());
@@ -1577,12 +1580,28 @@ check(
   `opacity ${withinStates.map(state => state.opacity).join(", ")}`
 );
 
+// From a hidden state, hovering either far edge of the full-width band reveals the bar on its own.
+await pointerAway();
+await settleOpacity(0);
+await page.mouse.move(farLeft.x, farLeft.y);
+const leftEdgeRevealed = await settleOpacity(1);
+await pointerAway();
+await settleOpacity(0);
+await page.mouse.move(farRight.x, farRight.y);
+const rightEdgeRevealed = await settleOpacity(1);
+check(
+  "hover-full-width-edge-reveals-controls",
+  leftEdgeRevealed.concealed === false && leftEdgeRevealed.opacity > 0.95 &&
+    rightEdgeRevealed.concealed === false && rightEdgeRevealed.opacity > 0.95,
+  JSON.stringify({ left: leftEdgeRevealed, right: rightEdgeRevealed })
+);
+
 // Leaving the area fades the controls out again.
 await pointerAway();
 const leftState = await settleOpacity(0);
 check(
   "hover-leave-hides-controls",
-  leftState.concealed === true && leftState.opacity < 0.02 && leftState.visibility === "hidden" && leftState.dockConcealed === true,
+  leftState.concealed === true && leftState.opacity < 0.02 && leftState.visibility === "hidden" && leftState.toolsOpen === "false",
   JSON.stringify(leftState)
 );
 
@@ -1599,6 +1618,10 @@ check(
 );
 
 // An open dock popover keeps the controls visible while the pointer is elsewhere; closing it lets them go.
+// The dock now lives in the top-right inline row, so expand it before driving the source button.
+const toolsTrigger = '[data-testid="lyrics-tools-trigger"]';
+await wakeClick(toolsTrigger);
+await page.waitForSelector('button[title="Lyrics source"]');
 await wakeClick('button[title="Lyrics source"]');
 await pointerAway();
 await wait(400);
@@ -1606,10 +1629,11 @@ const pinnedState = await controlState();
 const sourcesOpen = Boolean(await page.$(".dock-sources"));
 check(
   "hover-popover-pins-controls",
-  sourcesOpen && pinnedState.concealed === false && pinnedState.opacity > 0.95 && pinnedState.dockConcealed === false,
-  `popover open=${sourcesOpen}; concealed=${pinnedState.concealed}, dock concealed=${pinnedState.dockConcealed}`
+  sourcesOpen && pinnedState.concealed === false && pinnedState.opacity > 0.95 && pinnedState.toolsOpen === "true",
+  `popover open=${sourcesOpen}; concealed=${pinnedState.concealed}, tools open=${pinnedState.toolsOpen}`
 );
 await wakeClick('button[title="Lyrics source"]');
+await wakeClick(toolsTrigger);
 await pointerAway();
 const closedState = await settleOpacity(0);
 check(
@@ -1670,11 +1694,7 @@ const fullscreenLayout = () =>
       return { top: box.top, bottom: box.bottom, height: box.height };
     };
     const controls = document.querySelector('[data-testid="fullscreen-controls"]');
-    const dock = document.querySelector('[data-testid="lyrics-dock"]');
-    const footerTop = Math.min(
-      controls?.getBoundingClientRect().top ?? Infinity,
-      dock?.getBoundingClientRect().top ?? Infinity
-    );
+    const footerTop = controls?.getBoundingClientRect().top ?? Infinity;
     const active = document.querySelector(".blyrics--active")?.getBoundingClientRect() ?? null;
     return {
       viewport: window.innerHeight,
@@ -1775,10 +1795,7 @@ const layoutAtSize = async (width, height) => {
       inactiveLeft: inactiveLine ? inactiveLine.left : null,
       bodyPaddingRight: parseFloat(getComputedStyle(document.querySelector(".lyrics-body")).paddingRight),
       activeLeft: activeLine ? activeLine.left : null,
-      footerTop: Math.min(
-        document.querySelector('[data-testid="fullscreen-controls"]')?.getBoundingClientRect().top ?? Infinity,
-        document.querySelector('[data-testid="lyrics-dock"]')?.getBoundingClientRect().top ?? Infinity
-      ),
+      footerTop: document.querySelector('[data-testid="fullscreen-controls"]')?.getBoundingClientRect().top ?? Infinity,
     };
   });
   const artOk =
