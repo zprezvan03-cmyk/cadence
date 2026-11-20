@@ -108,8 +108,18 @@ Tanggal: 2026-11-19 — 2026-11-20
 - Enam trigger dock (Source, Profile, Translate, Romanize, Regenerate, Save) jadi **icon-only** lewat modifier `.dock-button--icon`, dengan `title` + `aria-label` (Romanize juga `aria-pressed`). Ikon yang kurang nyambung diganti: `Sparkles` → `ListMusic`, `LayoutGrid` → `Palette`, `Wand2` → `Type`.
 - Satu selector di `tests/browser/audit-ui.mjs` disesuaikan ke `button[title="Lyrics source"]`; assertion yang ada tidak dilemahkan.
 
+## `4cdf617` — feat(ui): mirror home playbar in fullscreen Now Playing
+
+- Bar fullscreen sekarang memakai tiga zona persis seperti playbar Home: `.player-track` (thumbnail + judul/artis + Like) di kiri, `.player-center` (transport di atas seek row) di tengah, dan `.player-right` (volume + Queue + Mini player) di kanan. Satu-satunya yang beda tetap background dinamis yang live.
+- Artwork dan metadata di footer adalah duplikat dekoratif: `PlaybackArtwork shared={false}` dan tanpa `data-player-part`, supaya hanya artwork + judul hero di badan view yang ikut handoff. Slot handoff footer tetap satu-satunya di `.transport`.
+- Tombol **Now Playing** sengaja tidak ditambahkan di footer supaya assertion `single-fullscreen-button-in-fullscreen` tetap lolos; Queue dan Mini player tetap tersedia di kanan.
+- `TransportButtons` tidak diekstrak — shuffle/repeat tetap bersama transport seperti di Home.
+- `tests/browser/run-app.mjs`: assertion lama `transportLeft` / `trackCentre` / `rightModes` diganti cek struktur baru `trackLeft` / `transportCentre` / `rightTools` (termasuk ketiadaan slot handoff duplikat dan tombol Now Playing kedua). Assertion lain tidak dilemahkan.
+- Grid CSS memakai `minmax(0, 1fr) clamp(248px, 30vw, 400px) minmax(0, 1fr)` dengan lebar volume mengikuti `vw`, bukan `cqi` (container query tidak terpakai di sini), dan zona ditumpuk saat lebar `< 900px`.
+
 ## Verifikasi
 
+- `4cdf617`: `npm run typecheck` dan `npm run build` lolos. `npm test`: 615/616 lolos; dua kegagalan yang sudah ada tetap ada (DB lock `library.test.ts` di Windows dan threshold `smartShuffleBenchmark.test.ts`), tidak ada kegagalan baru. Di browser harness (setelah rebuild): fullscreen terbuka, kolom terukur `164.264px 283.458px 164.278px`, semua cek `fsParts` baru true, dan satu-satunya `data-player-part` di footer adalah `transport`. Audit `npm run test:animation` masih gagal sebelum eksekusi karena binary Chromium `...\AppData\Local\Temp\chromium` tidak ada (ENOENT).
 - `f3a4ce0`: `npm run build` lolos (CSS-only); sudah dicek visual di `npm run dev`.
 - `884a22d`: `npm run typecheck` dan `npm run build` lolos; sudah dicek visual di `npm run dev`.
 - `ddf785e`: `npm run typecheck` dan `npm run build` lolos; `tests/unit/homeSelection.test.ts` (5 test) dan 3 test normalisasi settings baru lolos.
