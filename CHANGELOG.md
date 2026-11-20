@@ -3,6 +3,15 @@
 Branch: `feat/ui` (dibuat dari `main` @ `1615d5b`)
 Tanggal: 2026-11-19 — 2026-11-20
 
+## `5b56df9` — feat(ui): expand lyrics tools inline in fullscreen header
+
+- Kontrol lyrics Now Playing sekarang jadi **satu baris di ujung kanan header**: tombol trigger tetap di posisinya, lalu toolbar dock-nya melebar ke kiri lewat transisi `max-width` + `opacity` + `translateX`. Tidak ada permukaan popup baru.
+- `LyricsView` memasang satu instance `LyricsDock`: di header saat fullscreen, di footer saat windowed / studio preview. State `dockExpanded` di-reset saat mode berubah, dan playbar bawah tetap memakai hover visibility seperti sebelumnya.
+- Popover dock (Source, Profile, Translate, dll.) kini jatuh ke bawah baris header, dan reservasi ruang header disesuaikan supaya judul tidak tertimpa saat toolbar terbuka.
+- Area hover playbar fullscreen sekarang mencakup **seluruh lebar viewport** sampai tepi bawah, bukan hanya strip tengah. Pemeriksaan di browser (`http://localhost:4792/?v=5`) mengonfirmasi bar muncul dari ujung kiri/kanan dan tetap sembunyi saat pointer di area lirik.
+- Audit browser diperbarui untuk membuka trigger terlebih dahulu sebelum memakai tombol dock, plus assertion baru `hover-full-width-edge-reveals-controls`; assertion lama tidak dilemahkan.
+- Verifikasi: `npm run typecheck` dan `npm run build` lolos. `npm test` lolos 615/616 dengan dua kegagalan yang sudah ada sebelumnya (lock file DB di `library.test.ts` dan benchmark `smartShuffleBenchmark`); audit browser nyata masih terblokir karena binary Chromium tidak tersedia.
+
 ## `e41e7f6` — fix(ui): decouple title bar brand from sidebar
 
 - Segmen brand titlebar memakai lebar tetap `256px` dan tidak lagi mengikuti `--sidebar-width`.
