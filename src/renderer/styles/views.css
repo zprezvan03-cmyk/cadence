@@ -209,6 +209,38 @@
 .home-view .shelf-heading h2 { font-size: clamp(18px, 1.8cqi, 22px); }
 .home-view .shelf-heading .link { padding-inline-end: 0; }
 .home-shelf .shelf-heading { border-top: 1px solid var(--border); padding-top: 10px; }
+.home-shelf-viewport { position: relative; }
+.shelf-scroll-controls {
+  position: absolute;
+  inset-block: 3px 10px;
+  inset-inline: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: none;
+}
+.shelf-scroll-controls .icon-button {
+  width: 32px;
+  height: 32px;
+  margin-inline: 6px;
+  margin-block-end: 48px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(8, 8, 12, 0.72);
+  color: var(--text);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  opacity: 1;
+  pointer-events: auto;
+  transition:
+    opacity var(--dur-1) var(--ease-out),
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+.shelf-scroll-controls .icon-button:hover:not(:disabled) { background: rgba(26, 26, 34, 0.94); }
+.shelf-scroll-controls .icon-button:disabled { opacity: 0; pointer-events: none; }
 .home-shelf .card-grid.home-shelf-track {
   grid-template-columns: none;
   grid-auto-flow: column;
