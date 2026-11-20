@@ -94,6 +94,12 @@ Tanggal: 2026-11-19 — 2026-11-20
 - Trigger popover kini memakai helper `closePopovers` / `togglePanel` / `toggleLanguage` / `toggleSave` / `toggleRegenerate`, sehingga membuka satu popover menutup popover lain yang masih terbuka. Klik tombol yang sama tetap berfungsi sebagai toggle tutup.
 - Row aksi (pilih source, profile, hasil pencarian, dan navigasi Search ↔ Sources) juga ikut menutup popover lewat helper yang sama. Animasi presence `pop-in` / `pop-out` tidak diubah.
 
+## `93f257b` — feat(ui): scroll Home shelves by viewport width
+
+- Scroll Home shelf sekarang bergerak **satu layar penuh** per klik, bukan dua kartu tetap. Langkahnya `node.clientWidth`, jadi mengikuti lebar jendela: kalau yang terlihat 5,5 artwork, gesernya juga 5,5 artwork.
+- Helper `scrollByCards` diganti `scrollByPage`; perhitungan jarak dari kartu pertama/ketiga dibuang. Perilaku ujung scroll dan `prefersReducedMotion()` tidak berubah, begitu juga posisi tombol floating dan ref viewport track.
+- Entry `5132bf6` tetap mencatat perilaku dua kartu pada commit itu; `93f257b` menggantikannya di HEAD.
+
 ## Verifikasi
 
 - `f3a4ce0`: `npm run build` lolos (CSS-only); sudah dicek visual di `npm run dev`.
@@ -105,6 +111,7 @@ Tanggal: 2026-11-19 — 2026-11-20
 - `ac9f6a0`: YAML workflow divalidasi lokal dengan PyYAML. Build Linux belum dijalankan lokal (tapi akan berjalan di runner `ubuntu-latest` saat workflow ini di-push).
 - `5132bf6`: `npm run typecheck` dan `npm run build` lolos. Di browser harness, tombol berada di edge viewport dan satu klik menggeser `320px` (dua kartu `148px` + dua gap `12px`).
 - `c11501b`: `npm run typecheck` dan `npm run build` lolos. Di browser harness: klik di dalam popover tidak menutup, klik di luar menutup, pindah trigger menutup popover lama, dan klik luar berikutnya mengosongkan semua popover.
+- `93f257b`: `npm run typecheck` dan `npm run build` lolos. Di browser harness dengan viewport shelf `708px`, satu klik menggeser tepat `708px`.
 - `npm run typecheck` lolos.
 - `npm run build` lolos.
 - `npm test`: 615/616 test lolos. Dua kegagalan yang sudah ada sebelum perubahan ini tetap ada (file DB terkunci di Windows saat cleanup `library.test.ts` dan threshold benchmark Smart Shuffle); `_matasaburo_full.test.ts` lolos pada run ini. Tidak ada kegagalan baru dari perubahan ini — total test turun dari 630 karena suite `lyricsFetchAll.test.ts` (14 test) ikut dihapus bersama fiturnya.
