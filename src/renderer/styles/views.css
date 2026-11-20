@@ -208,16 +208,6 @@
 .home-view .shelf-heading { align-items: center; min-height: 26px; margin-bottom: 10px; }
 .home-view .shelf-heading h2 { font-size: clamp(18px, 1.8cqi, 22px); }
 .home-view .shelf-heading .link { padding-inline-end: 0; }
-.shelf-heading-actions { display: inline-flex; align-items: center; gap: 8px; }
-.shelf-scroll-controls { display: inline-flex; gap: 4px; }
-.shelf-scroll-controls .icon-button {
-  width: 26px;
-  height: 26px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface-2);
-}
-.shelf-scroll-controls .icon-button:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
 .home-shelf .shelf-heading { border-top: 1px solid var(--border); padding-top: 10px; }
 .home-shelf .card-grid.home-shelf-track {
   grid-template-columns: none;
