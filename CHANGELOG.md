@@ -44,13 +44,23 @@ Tanggal: 2026-11-19 — 2026-11-20
 - Animasi dibatalkan otomatis lewat `finishMotion` saat selesai, resize, pergantian tab cepat, atau reduced motion; inline style dikembalikan ke CSS setelahnya. Komponen baru `LyricsModeMotion.tsx` hanya membungkus children, tidak menambah DOM node.
 - Studio preview dan transisi masuk/keluar fullscreen tidak tersentuh — keduanya punya jalur animasi sendiri.
 
+## `ddf785e` — fix(ui): keep Home album rotation stable until daily or manual refresh
+
+- Akar masalah: `HomeView` memilih 10 album dengan `shuffle(unique)` memakai `Math.random` saat mount. Karena `App.tsx` mengganti `key` `.content-scroll` tiap pindah route, Home di-unmount/remount dan **Featured album** plus **Explore your albums** ikut teracak ulang.
+- Seleksi dipindah ke helper murni `homeSelection.ts`: dedup By `album.name` (sama seperti sebelumnya), Fisher–Yates dengan RNG ber-seed mulberry32, lalu `slice(0, 10)`. Seed yang sama selalu menghasilkan urutan yang sama, jadi nav bolak-balik tidak mengubah apa pun.
+- Seed harian berasal dari hash FNV-1a atas kunci tanggal lokal `YYYY-MM-DD`, sehingga rotasi berganti otomatis tiap hari tanpa perlu write pengaturan saat tengah malam.
+- Tombol **Refresh featured albums** ditambahkan di Settings → Library (dekat *Rescan now*). Tombol menyimpan seed acak 32-bit + hari pembuatannya lewat `useSettings.patch`, lalu toast; seed manual hanya berlaku di hari itu, besok kembali ke seed tanggal.
+- Field `AppSettings.home` (`featuredSeed`, `featuredSeedDay`) ditambahkan ke default dan dinormalisasi saat load/patch (seed harus finite, day key `YYYY-MM-DD`), jadi file settings lama atau hasil edit manual tidak bikin crash. Home menunggu settings termuat sebelum pick pertama agar seed manual yang tersimpan tidak memicu shuffle ulang saat startup.
+- Shelf lain yang bergantung pada waktu (`topTracks`, `onRepeat`, `rediscover`) sengaja tidak disentuh; scope perubahan hanya dua shelf album.
+
 ## Verifikasi
 
 - `f3a4ce0`: `npm run build` lolos (CSS-only); sudah dicek visual di `npm run dev`.
 - `884a22d`: `npm run typecheck` dan `npm run build` lolos; sudah dicek visual di `npm run dev`.
+- `ddf785e`: `npm run typecheck` dan `npm run build` lolos; `tests/unit/homeSelection.test.ts` (5 test) dan 3 test normalisasi settings baru lolos.
 - `npm run typecheck` lolos.
 - `npm run build` lolos.
-- `npm test`: 621/622 test lolos. Dua kegagalan yang sudah ada sebelum perubahan ini tetap ada (file DB terkunci di Windows saat cleanup dan threshold benchmark Smart Shuffle), tidak ada kegagalan baru.
+- `npm test`: 628/630 test lolos. Kegagalan yang sudah ada sebelum perubahan ini tetap ada (file DB terkunci di Windows saat cleanup `library.test.ts` dan threshold benchmark Smart Shuffle); `_matasaburo_full.test.ts` sempat gagal karena respons AI jaringan lalu lolos saat dijalankan ulang. Tidak ada kegagalan baru dari perubahan ini.
 - Audit browser (`npm run test:animation`) masih gagal sebelum eksekusi: `@sparticuz/chromium` mengembalikan path `...\AppData\Local\Temp\chromium` tanpa `.exe`, sehingga puppeteer gagal `spawn ... ENOENT` di Windows. Untuk `884a22d`, audit dijalankan lewat salinan sementara yang memakai Chrome lokal: keempat id `lyrics-mode-*` terdeteksi saat masuk maupun keluar mode. Salinan tersebut sudah dihapus; test asli tidak diubah.
 
 > Dua file schema yang sudah modified sebelum perubahan ini tidak masuk ke commit mana pun.
