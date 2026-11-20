@@ -3,6 +3,13 @@
 Branch: `feat/ui` (dibuat dari `main` @ `1615d5b`)
 Tanggal: 2026-11-19 — 2026-11-20
 
+## `78cba44` — fix(ui): keep lyrics tools inside the inline bubble
+
+- Toolbar lyrics yang terbuka tidak lagi memotong tombol di ujung kanan: `max-width` warisan `.lyrics-dock` dinonaktifkan di baris header dan batas lebar row diperlebar, sehingga `scrollWidth` pill sama dengan kontennya.
+- Jarak antar grup dan tombol diperketat supaya semua kontrol tetap muat dalam satu baris tanpa tombol keluar dari bubble.
+- Tinggi pill, wrapper, dan trigger kini sama persis `38px`, dengan tombol di dalamnya tetap tercentre; popover tetap jatuh ke bawah dan tidak keluar viewport.
+- Verifikasi: `npm run typecheck`, `npm run build`, dan `npm test` statusnya tidak berubah dari commit sebelumnya (dua failure lama yang unrelated). Pemeriksaan browser: pill `w=547`, `h=38`, tombol terjauh `right=697` masih di dalam pill `right=706`.
+
 ## `5b56df9` — feat(ui): expand lyrics tools inline in fullscreen header
 
 - Kontrol lyrics Now Playing sekarang jadi **satu baris di ujung kanan header**: tombol trigger tetap di posisinya, lalu toolbar dock-nya melebar ke kiri lewat transisi `max-width` + `opacity` + `translateX`. Tidak ada permukaan popup baru.
