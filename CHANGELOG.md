@@ -53,14 +53,22 @@ Tanggal: 2026-11-19 — 2026-11-20
 - Field `AppSettings.home` (`featuredSeed`, `featuredSeedDay`) ditambahkan ke default dan dinormalisasi saat load/patch (seed harus finite, day key `YYYY-MM-DD`), jadi file settings lama atau hasil edit manual tidak bikin crash. Home menunggu settings termuat sebelum pick pertama agar seed manual yang tersimpan tidak memicu shuffle ulang saat startup.
 - Shelf lain yang bergantung pada waktu (`topTracks`, `onRepeat`, `rediscover`) sengaja tidak disentuh; scope perubahan hanya dua shelf album.
 
+## `b5f54f8` — feat(ui): add General settings section for featured refresh
+
+- Tab **General** baru ditambahkan di `SettingsView` (setelah **Appearance**), dengan `SettingsSection = "general"` di `uiStore`. Default buka Settings sengaja tetap **Appearance** supaya perilaku cold-start tidak berubah.
+- Tombol **Refresh featured albums** dipindah dari Settings → Library ke Settings → General (`data-testid="settings-refresh-featured"` tetap dipakai). Logika seed, toast, dan penanganan error tidak berubah; Library kembali hanya berisi folder, rescan, dan Decode Tester.
+- Section General memakai styling `.settings-section` / `.heading-actions` / `.muted` yang sudah ada, tanpa CSS baru. Konten Appearance, Lyrics, Library, dan About tidak disentuh.
+- Assertion daftar tab di `tests/browser/run-app.mjs` diperbarui menjadi `Appearance, General, Lyrics, Library, Playback, Cache, About`. Assertion lama lainnya tetap utuh, termasuk posisi **Reset all** di About dan **Replay onboarding** di Appearance.
+
 ## Verifikasi
 
 - `f3a4ce0`: `npm run build` lolos (CSS-only); sudah dicek visual di `npm run dev`.
 - `884a22d`: `npm run typecheck` dan `npm run build` lolos; sudah dicek visual di `npm run dev`.
 - `ddf785e`: `npm run typecheck` dan `npm run build` lolos; `tests/unit/homeSelection.test.ts` (5 test) dan 3 test normalisasi settings baru lolos.
+- `b5f54f8`: `npm run typecheck` dan `npm run build` lolos; `tests/unit/homeSelection.test.ts` + `tests/unit/settings.test.ts` (31 test) lolos.
 - `npm run typecheck` lolos.
 - `npm run build` lolos.
-- `npm test`: 628/630 test lolos. Kegagalan yang sudah ada sebelum perubahan ini tetap ada (file DB terkunci di Windows saat cleanup `library.test.ts` dan threshold benchmark Smart Shuffle); `_matasaburo_full.test.ts` sempat gagal karena respons AI jaringan lalu lolos saat dijalankan ulang. Tidak ada kegagalan baru dari perubahan ini.
+- `npm test`: 629/630 test lolos. Dua kegagalan yang sudah ada sebelum perubahan ini tetap ada (file DB terkunci di Windows saat cleanup `library.test.ts` dan threshold benchmark Smart Shuffle); `_matasaburo_full.test.ts` lolos pada run ini. Tidak ada kegagalan baru dari perubahan ini.
 - Audit browser (`npm run test:animation`) masih gagal sebelum eksekusi: `@sparticuz/chromium` mengembalikan path `...\AppData\Local\Temp\chromium` tanpa `.exe`, sehingga puppeteer gagal `spawn ... ENOENT` di Windows. Untuk `884a22d`, audit dijalankan lewat salinan sementara yang memakai Chrome lokal: keempat id `lyrics-mode-*` terdeteksi saat masuk maupun keluar mode. Salinan tersebut sudah dihapus; test asli tidak diubah.
 
 > Dua file schema yang sudah modified sebelum perubahan ini tidak masuk ke commit mana pun.
