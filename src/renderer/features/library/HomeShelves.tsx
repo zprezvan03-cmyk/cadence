@@ -56,16 +56,11 @@ export function HomeShelf({ title, aside, className = "", testId, viewportRef, c
     };
   }, [measure, childCount]);
 
-  const scrollByCards = (direction: -1 | 1) => {
+  const scrollByPage = (direction: -1 | 1) => {
     const node = scrollRef.current;
     if (!node) return;
-    const cards = [...node.children] as HTMLElement[];
-    const first = cards[0]?.getBoundingClientRect();
-    const second = cards[1]?.getBoundingClientRect();
-    const third = cards[2]?.getBoundingClientRect();
-    const cardStep = first && second ? second.left - first.left : Math.max(1, node.clientWidth * 0.8);
-    // Advance by two artworks, measured first-to-third so the gap is included too.
-    const step = first && third ? third.left - first.left : cardStep * 2;
+    // One click advances by exactly the visible viewport, however many artworks fit in it.
+    const step = Math.max(1, node.clientWidth);
     node.scrollBy({ left: direction * step, behavior: prefersReducedMotion() ? "auto" : "smooth" });
   };
 
@@ -99,7 +94,7 @@ export function HomeShelf({ title, aside, className = "", testId, viewportRef, c
             data-testid="shelf-scroll-prev"
             aria-label={`Scroll ${title} left`}
             disabled={atStart}
-            onClick={() => scrollByCards(-1)}
+            onClick={() => scrollByPage(-1)}
           >
             <ChevronLeft size={17} />
           </button>
@@ -109,7 +104,7 @@ export function HomeShelf({ title, aside, className = "", testId, viewportRef, c
             data-testid="shelf-scroll-next"
             aria-label={`Scroll ${title} right`}
             disabled={atEnd}
-            onClick={() => scrollByCards(1)}
+            onClick={() => scrollByPage(1)}
           >
             <ChevronRight size={17} />
           </button>
