@@ -68,6 +68,13 @@ Tanggal: 2026-11-19 — 2026-11-20
 - Autofetch tetap berjalan seperti biasa; hanya panggilan `promote()` ke job yang sudah tidak ada yang dicabut. Onboarding sekarang 4 langkah (Welcome → Library → Preferences → Ready), clamp step di `settingsCore.ts` jadi `3`, dan fixture/test browser mengikuti.
 - CSS khusus fitur (`.fetch-*`, `@keyframes count-in`, `.onboarding-stats`, `.onboarding-actions-inline`) dan selector `.fetch-panel` di `MarqueeText` dibersihkan. Dokumentasi arsitektur dipangkas menjadi catatan Autofetch + Onboarding.
 
+## `eb82f79` — feat(ui): lead Settings with General and align action buttons
+
+- Tab Settings sekarang urutannya **General → Appearance → Lyrics → Library → Playback → Cache → About**; **General** juga jadi section default saat membuka Settings (`uiStore.settingsSection`). Sebelumnya General nomor 2 dan default tetap Appearance.
+- Tombol **Replay Onboarding** (Appearance) dan **Customize** (Now Playing) yang sebelumnya cuma teks polos sekarang memakai `.ghost-button setting-action`, mengikuti gaya tombol **Restore default settings**: persegi panjang dengan background/border dan hover.
+- Di About, **Clear lyrics cache** tidak lagi berdiri sendiri di tengah. Sekarang memakai `.setting-row` seperti **Restore default settings**: label + deskripsi di kiri, tombol `ghost-button danger setting-action` di kanan. Teks, konfirmasi, dan logika clear tidak berubah; Reset all tetap elemen terakhir di About.
+- Assertion urutan tab di `tests/browser/run-app.mjs` disesuaikan. `provider-identity.ts` sekarang mengklik tab Appearance secara eksplisit setelah reload sebelum memeriksa font, karena default sudah bergeser ke General. Assertion lain tidak dilemahkan.
+
 ## Verifikasi
 
 - `f3a4ce0`: `npm run build` lolos (CSS-only); sudah dicek visual di `npm run dev`.
@@ -75,6 +82,7 @@ Tanggal: 2026-11-19 — 2026-11-20
 - `ddf785e`: `npm run typecheck` dan `npm run build` lolos; `tests/unit/homeSelection.test.ts` (5 test) dan 3 test normalisasi settings baru lolos.
 - `b5f54f8`: `npm run typecheck` dan `npm run build` lolos; `tests/unit/homeSelection.test.ts` + `tests/unit/settings.test.ts` (31 test) lolos.
 - `6e9672d`: `npm run typecheck`, `npm run build`, dan `cargo check --manifest-path src-tauri/Cargo.toml` lolos; 61 test targeted (`lyricsAutomationStores`, `settings`, `lyricsAutofetch`, `lyricsAudit`) lolos.
+- `eb82f79`: `npm run typecheck` dan `npm run build` lolos. Perubahan hanya markup/kelas tombol dan urutan tab; assertion browser yang bergantung pada urutan/default disesuaikan, tidak dilemahkan.
 - `npm run typecheck` lolos.
 - `npm run build` lolos.
 - `npm test`: 615/616 test lolos. Dua kegagalan yang sudah ada sebelum perubahan ini tetap ada (file DB terkunci di Windows saat cleanup `library.test.ts` dan threshold benchmark Smart Shuffle); `_matasaburo_full.test.ts` lolos pada run ini. Tidak ada kegagalan baru dari perubahan ini — total test turun dari 630 karena suite `lyricsFetchAll.test.ts` (14 test) ikut dihapus bersama fiturnya.
