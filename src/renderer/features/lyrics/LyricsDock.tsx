@@ -4,7 +4,7 @@
  * React components. Written for Cadence.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Album,
   AlertCircle,
@@ -115,6 +115,7 @@ export function LyricsDock({
   const [languageOpen, setLanguageOpen] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
   const [regenerateOpen, setRegenerateOpen] = useState(false);
+  const dockRef = useRef<HTMLDivElement>(null);
   // Popovers close the instant their state flips; presence only keeps each mounted for
   // its fast pop-out. Switching panels crossfades for one 120ms beat instead of cutting.
   const sourcesPresence = usePresence(panel === "sources");
@@ -125,6 +126,48 @@ export function LyricsDock({
     nowPlayingProfiles.find(profile => profile.id === activeNowPlayingProfileId) ??
     nowPlayingProfiles[0];
   const { title: searchTitle, artist: searchArtist, album: searchAlbum, youtubeUrl } = searchDraft;
+
+  const closePopovers = () => {
+    setPanel("none");
+    setLanguageOpen(false);
+    setSaveOpen(false);
+    setRegenerateOpen(false);
+  };
+  const togglePanel = (next: Exclude<typeof panel, "none">) => {
+    const opening = panel !== next;
+    closePopovers();
+    if (opening) setPanel(next);
+  };
+  const toggleLanguage = () => {
+    const opening = !languageOpen;
+    closePopovers();
+    if (opening) setLanguageOpen(true);
+  };
+  const toggleSave = () => {
+    const opening = !saveOpen;
+    closePopovers();
+    if (opening) setSaveOpen(true);
+  };
+  const toggleRegenerate = () => {
+    const opening = !regenerateOpen;
+    closePopovers();
+    if (opening) setRegenerateOpen(true);
+  };
+
+  // A pointer press anywhere outside the dock dismisses its popovers. Clicks on the dock itself
+  // stay here: its triggers and rows close or switch panels explicitly.
+  useEffect(() => {
+    if (panel === "none" && !languageOpen && !saveOpen && !regenerateOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && dockRef.current?.contains(event.target)) return;
+      setPanel("none");
+      setLanguageOpen(false);
+      setSaveOpen(false);
+      setRegenerateOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [panel, languageOpen, saveOpen, regenerateOpen]);
 
   useEffect(() => {
     onPopoverChange?.(panel !== "none" || languageOpen || saveOpen || regenerateOpen);
@@ -170,7 +213,7 @@ export function LyricsDock({
   };
 
   return (
-    <div className={`lyrics-dock ${concealed ? "is-concealed" : ""}`} data-testid="lyrics-dock">
+    <div ref={dockRef} className={`lyrics-dock ${concealed ? "is-concealed" : ""}`} data-testid="lyrics-dock">
       <div className="dock-group dock-status" title={syncLabel} data-testid="sync-label">
         <span className={`sync-dot sync-${syncLabel.toLowerCase().replace(/\s+/g, "-")}`} />
         {syncLabel}
@@ -180,7 +223,7 @@ export function LyricsDock({
         <button
           type="button"
           className="dock-button"
-          onClick={() => setPanel(panel === "sources" ? "none" : "sources")}
+          onClick={() => togglePanel("sources")}
           title="Lyrics source"
           aria-expanded={panel === "sources"}
         >
@@ -189,7 +232,7 @@ export function LyricsDock({
         <button
           type="button"
           className="dock-button"
-          onClick={() => setPanel(panel === "profiles" ? "none" : "profiles")}
+          onClick={() => togglePanel("profiles")}
           title={`Now Playing profile: ${activeNowPlayingProfile?.name ?? "Balanced"}`}
           aria-expanded={panel === "profiles"}
           aria-haspopup="true"
@@ -200,7 +243,7 @@ export function LyricsDock({
         <button
           type="button"
           className="dock-button"
-          onClick={() => setLanguageOpen(open => !open)}
+          onClick={toggleLanguage}
           title="Translate lyrics"
           aria-expanded={languageOpen}
         >
@@ -219,7 +262,7 @@ export function LyricsDock({
             <button
               type="button"
               className="dock-button"
-              onClick={() => setRegenerateOpen(open => !open)}
+              onClick={toggleRegenerate}
               disabled={busy}
               title="Regenerate lyrics"
               aria-expanded={regenerateOpen}
@@ -275,7 +318,7 @@ export function LyricsDock({
               <button
                 type="button"
                 className="dock-button"
-                onClick={() => setSaveOpen(open => !open)}
+                onClick={toggleSave}
                 title="Save lyrics next to the track"
                 aria-expanded={saveOpen}
               >
@@ -315,7 +358,7 @@ export function LyricsDock({
               className={`source-row ${activeSource === candidate.source ? "active" : ""}`}
               onClick={() => {
                 onSelectSource(candidate.source);
-                setPanel("none");
+                closePopovers();
               }}
             >
               <span>
@@ -334,7 +377,7 @@ export function LyricsDock({
             </div>
           ))}
           <div className="popover-divider" />
-          <button type="button" className="source-row manual-search-entry" onClick={() => setPanel("search")}>
+          <button type="button" className="source-row manual-search-entry" onClick={() => togglePanel("search")}>
             <span>
               <strong>
                 <Search size={13} /> Search Manually
@@ -364,7 +407,7 @@ export function LyricsDock({
                 className={`profile-row ${active ? "active" : ""}`}
                 onClick={() => {
                   onSelectNowPlayingProfile(profile.id);
-                  setPanel("none");
+                  closePopovers();
                 }}
                 aria-pressed={active}
                 data-profile-id={profile.id}
@@ -394,7 +437,7 @@ export function LyricsDock({
       {searchPresence.mounted ? (
         <div className={`dock-popover dock-search ${searchPresence.phaseClass}`} data-presence={searchPresence.phase} data-testid="manual-search">
           <div className="search-panel-head">
-            <button type="button" className="dock-icon" title="Back to sources" onClick={() => setPanel("sources")}>
+            <button type="button" className="dock-icon" title="Back to sources" onClick={() => togglePanel("sources")}>
               <ArrowLeft size={15} />
             </button>
             <div className="popover-title">Search lyrics</div>
@@ -574,7 +617,7 @@ export function LyricsDock({
                   }
                   onClick={() => {
                     onSelectSearchResult(candidate);
-                    setPanel("none");
+                    closePopovers();
                   }}
                 >
                   <span>
