@@ -973,6 +973,7 @@ const existingSettings = JSON.stringify({
 writeFileSync(settingsFile, existingSettings, "utf8");
 coldStart();
 await page.reload({ waitUntil: "networkidle0" });
+await clickText(".settings-tabs button", "Appearance");
 await page.waitForSelector('[data-testid="settings-appearance"]');
 const font = await page.$eval('[data-testid="font-select"]', node => (node as HTMLSelectElement).value);
 const existingOrder = await providerOrderUi();

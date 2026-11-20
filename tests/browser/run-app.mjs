@@ -1894,7 +1894,7 @@ await page.waitForSelector('[data-testid="settings-view"]');
 await selectSettingsTab("Appearance", "settings-appearance");
 await wait(500);
 const settingsTabs = await page.$$eval(".settings-tabs button", buttons => buttons.map(button => button.textContent?.trim()));
-check("settings-has-a-dedicated-lyrics-tab", settingsTabs.join(", ") === "Appearance, General, Lyrics, Library, Playback, Cache, About", settingsTabs.join(", "));
+check("settings-has-a-dedicated-lyrics-tab", settingsTabs.join(", ") === "General, Appearance, Lyrics, Library, Playback, Cache, About", settingsTabs.join(", "));
 check("settings-appearance-subsections", await page.evaluate(() =>
   Boolean(document.querySelector('[data-testid="settings-shaders"]')) &&
   Boolean(document.querySelector('[data-testid="settings-now-playing"]')) &&

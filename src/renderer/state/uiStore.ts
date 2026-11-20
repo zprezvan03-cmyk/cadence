@@ -124,7 +124,7 @@ let nativeEntryCancelled = false;
 
 export const useUi = create<UiState>()((set, get) => ({
   route: typeof location !== "undefined" ? hashToRoute(location.hash) : { name: "home" },
-  settingsSection: "appearance",
+  settingsSection: "general",
   queueOpen: false,
   nowPlayingOpen: false,
   searchFocused: false,

@@ -203,8 +203,8 @@ export function SettingsView() {
 
       <nav className="settings-tabs" aria-label="Settings categories">
         {([
-          ["appearance", "Appearance", Palette],
           ["general", "General", SlidersHorizontal],
+          ["appearance", "Appearance", Palette],
           ["lyrics", "Lyrics", Mic2],
           ["library", "Library", Library],
           ["playback", "Playback", AudioLines],
@@ -277,6 +277,7 @@ export function SettingsView() {
               </span>
               <button
                 type="button"
+                className="ghost-button setting-action"
                 data-testid="replay-onboarding"
                 onClick={() => useOnboarding.getState().replay()}
               >
@@ -849,37 +850,43 @@ export function SettingsView() {
             Better Lyrics and Better Lyrics Shaders are GPL-3.0; Cadence is distributed under the same license.
             Upstream commit hashes and the file mapping are recorded in <code>UPSTREAM.md</code>.
           </p>
-          <button
-            type="button"
-            className="danger"
-            disabled={clearingCache}
-            onClick={async () => {
-              if (
-                !confirm(
-                  "Clear the whole lyrics cache? Songs will be looked up again. Your audio files, lyrics files and library are not touched."
+          <div className="setting-row">
+            <span>
+              <strong>Clear lyrics cache</strong>
+              <em>Removes cached lyrics so songs are looked up again. Your audio files, lyrics files and library are not touched.</em>
+            </span>
+            <button
+              type="button"
+              className="ghost-button danger setting-action"
+              disabled={clearingCache}
+              onClick={async () => {
+                if (
+                  !confirm(
+                    "Clear the whole lyrics cache? Songs will be looked up again. Your audio files, lyrics files and library are not touched."
+                  )
                 )
-              )
-                return;
-              setClearingCache(true);
-              try {
-                // Resolves only once the emptied cache file has been written to disk; a
-                // filesystem error rejects here instead of being reported as a success.
-                const { removedEntries } = await window.cadence.lyrics.clearCache();
-                if (removedEntries > 0) invalidateLyricsResolution();
-                showToast(
-                  removedEntries > 0
-                    ? `Lyrics cache cleared (${removedEntries} cached ${removedEntries === 1 ? "song" : "songs"} removed)`
-                    : "Lyrics cache was already empty"
-                );
-              } catch (error) {
-                showToast(`Could not clear the lyrics cache: ${describeError(error)}`);
-              } finally {
-                setClearingCache(false);
-              }
-            }}
-          >
-            <Trash2 size={16} /> {clearingCache ? "Clearing lyrics cache…" : "Clear lyrics cache"}
-          </button>
+                  return;
+                setClearingCache(true);
+                try {
+                  // Resolves only once the emptied cache file has been written to disk; a
+                  // filesystem error rejects here instead of being reported as a success.
+                  const { removedEntries } = await window.cadence.lyrics.clearCache();
+                  if (removedEntries > 0) invalidateLyricsResolution();
+                  showToast(
+                    removedEntries > 0
+                      ? `Lyrics cache cleared (${removedEntries} cached ${removedEntries === 1 ? "song" : "songs"} removed)`
+                      : "Lyrics cache was already empty"
+                  );
+                } catch (error) {
+                  showToast(`Could not clear the lyrics cache: ${describeError(error)}`);
+                } finally {
+                  setClearingCache(false);
+                }
+              }}
+            >
+              <Trash2 size={16} /> {clearingCache ? "Clearing lyrics cache…" : "Clear lyrics cache"}
+            </button>
+          </div>
           <div className="setting-row">
             <span>
               <strong>Restore default settings</strong>
