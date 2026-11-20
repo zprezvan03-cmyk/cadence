@@ -1229,6 +1229,23 @@ const fsParts = await page.evaluate(() => {
   return {
     present: Boolean(root),
     transport: has(".transport .play-button") && has('.transport button[aria-label="Next track"]'),
+    // The fullscreen bar mirrors the home playbar's three zones; only the background differs.
+    trackLeft: has(".fs-controls-row > .player-track.fs-player-track > .playback-cover") &&
+      has(".fs-player-track .player-track-meta .player-title") &&
+      has(".fs-player-track .player-track-meta .player-artist-name") &&
+      has(".fs-player-track button.heart") &&
+      !root.querySelector(".fs-controls [data-player-part='artwork']") &&
+      !root.querySelector(".fs-controls [data-player-part='metadata']"),
+    transportCentre: has(".fs-controls-row > .player-center.fs-player-center > .transport") &&
+      has(".fs-player-center > .transport button[aria-label='Shuffle']") &&
+      has(".fs-player-center > .transport button[aria-label^='Repeat:']") &&
+      has(".fs-player-center > .seek-row input.seek") &&
+      !root.querySelector(".fs-controls-row > .transport") &&
+      !root.querySelector(".fs-track"),
+    rightTools: has(".fs-controls-row > .player-right.fs-player-right > .volume-group") &&
+      has(".fs-player-right button[aria-label='Queue']") &&
+      has(".fs-player-right button[aria-label='Mini player']") &&
+      !root.querySelector('[data-testid="open-now-playing"]'),
     seek: has(".seek-row input.seek"),
     volume: has(".volume-group input.volume"),
     favourite: has('button[aria-label="Add to favourites"], button[aria-label="Remove from favourites"]'),
@@ -1240,7 +1257,8 @@ const fsParts = await page.evaluate(() => {
 });
 check(
   "fullscreen-audio-and-lyrics-controls",
-  fsParts.present && fsParts.transport && fsParts.seek && fsParts.volume && fsParts.lyricsToggle && fsParts.queue && fsParts.lyricsDock && fsParts.playerBarHidden,
+  fsParts.present && fsParts.transport && fsParts.trackLeft && fsParts.transportCentre && fsParts.rightTools &&
+  fsParts.seek && fsParts.volume && fsParts.lyricsToggle && fsParts.queue && fsParts.lyricsDock && fsParts.playerBarHidden,
   JSON.stringify(fsParts)
 );
 const playCentre = await page.$eval('[data-testid="fullscreen-controls"] .play-button', node => {

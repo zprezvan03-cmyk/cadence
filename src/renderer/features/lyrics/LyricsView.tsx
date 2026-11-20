@@ -393,7 +393,7 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
           {panelDetailsVisible ? (
             <div className="fs-panel">
               {profileConfig.metadataVisible && !headingInHeader ? heading : null}
-              {profileConfig.controlsVisible ? <FullscreenControls variant="panel" track={track} /> : null}
+              {profileConfig.controlsVisible ? <FullscreenControls variant="panel" track={track} cover={cover} text={text} /> : null}
             </div>
           ) : null}
         </div>
@@ -488,7 +488,7 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
       {!panelMode ? (
         <div ref={footerRef} className={`lyrics-footer ${controlsVisible ? "" : "is-concealed"}`}>
           {fullscreen ? (
-            <FullscreenControls track={track} concealed={!controlsVisible} />
+            <FullscreenControls track={track} cover={cover} text={text} concealed={!controlsVisible} />
           ) : null}
 
           {item && track ? (

@@ -890,11 +890,13 @@ braccato-lyrics[data-upgrading="true"] {
   font-size: clamp(11px, calc(0.4cqi + 0.55cqh), 16px);
 }
 
+/* The fullscreen bar uses the home playbar's three zones: track identity, transport + seek,
+   then volume and view tools. Only the living background behind it is different. */
 .fs-controls-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) clamp(248px, 30vw, 400px) minmax(0, 1fr);
   align-items: center;
-  gap: clamp(10px, 1.4cqi, 20px);
+  gap: clamp(14px, 1.6vw, 24px);
 }
 
 .fs-group {
@@ -906,6 +908,51 @@ braccato-lyrics[data-upgrading="true"] {
 
 .fs-group-end {
   justify-content: flex-end;
+}
+
+.fs-player-track {
+  width: min(100%, 274px);
+}
+
+.fs-player-track > .playback-cover {
+  width: clamp(44px, 4.6cqh, 56px);
+  height: clamp(44px, 4.6cqh, 56px);
+}
+
+.fs-player-meta .playback-text > div {
+  min-width: 0;
+}
+
+.fs-player-center {
+  width: 100%;
+}
+
+.fs-player-center .transport {
+  gap: 8px;
+}
+
+.fs-player-center .play-button {
+  box-shadow: none;
+}
+
+.fs-player-center .seek-row {
+  gap: 6px;
+}
+
+.fs-player-center .time {
+  width: 34px;
+}
+
+.fs-player-right {
+  justify-content: flex-end;
+}
+
+.fs-player-right .volume-group {
+  width: clamp(84px, 8vw, 124px);
+}
+
+.fs-player-right .volume-group input[type="range"].volume {
+  min-width: 36px;
 }
 
 .fs-controls .icon-button {
@@ -930,11 +977,12 @@ braccato-lyrics[data-upgrading="true"] {
 }
 
 .fs-controls .volume-group {
-  width: clamp(120px, 12cqi, 190px);
+  width: clamp(84px, 8vw, 124px);
 }
 
 .fs-controls .volume-group input[type="range"].volume {
-  width: clamp(80px, 8cqi, 140px);
+  width: clamp(60px, 6vw, 100px);
+  min-width: 36px;
 }
 
 /* Fullscreen hover visibility: opacity only. The hidden state also removes the controls from hit-testing and
@@ -1577,6 +1625,12 @@ braccato-lyrics[data-upgrading="true"] {
     grid-template-columns: minmax(0, 1fr);
     justify-items: center;
   }
+  .fs-player-track,
+  .fs-player-center,
+  .fs-player-right {
+    width: 100%;
+  }
+  .fs-player-right,
   .fs-group,
   .fs-group-end {
     justify-content: center;

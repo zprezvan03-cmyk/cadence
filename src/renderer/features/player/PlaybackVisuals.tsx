@@ -5,13 +5,15 @@ import type { Dissolve } from "../../app/useDissolve";
 import { artworkFallbackTone } from "../../components/Artwork";
 import type { Cover } from "./usePlaybackPresentation";
 
-export function PlaybackArtwork({ cover, label, size = "sm" }: {
+export function PlaybackArtwork({ cover, label, size = "sm", shared = true }: {
   cover: Dissolve<Cover>;
   label: string;
   size?: "sm" | "hero";
+  /** The fullscreen footer thumbnail is decorative — only the hero slot joins the layout handoff. */
+  shared?: boolean;
 }) {
   return (
-    <div className={`artwork artwork-${size} rounded-md playback-cover`} data-player-part="artwork" role="img" aria-label={label}>
+    <div className={`artwork artwork-${size} rounded-md playback-cover`} data-player-part={shared ? "artwork" : undefined} role="img" aria-label={label}>
       {[cover.back, cover.front].map(layer => layer && (
         <div
           key={layer.key}
