@@ -348,3 +348,31 @@ describe("desktop settings writes", () => {
     });
   });
 });
+
+describe("Home featured album rotation settings", () => {
+  it("migrates files written before the seed existed", () => {
+    const file = join(workDir, "legacy-home.json");
+    writeFileSync(file, JSON.stringify({ appearance: { accent: "#123456" } }), "utf8");
+    expect(new SettingsStore(file).get().home).toEqual({ featuredSeed: null, featuredSeedDay: null });
+  });
+
+  it("persists a manual refresh across a restart", () => {
+    const file = join(workDir, "home-refresh.json");
+    const first = new SettingsStore(file);
+    first.patch({ home: { featuredSeed: 123456, featuredSeedDay: "2026-11-20" } });
+    expect(new SettingsStore(file).get().home).toEqual({
+      featuredSeed: 123456,
+      featuredSeedDay: "2026-11-20",
+    });
+  });
+
+  it("discards malformed seeds and day keys from hand-edited settings", () => {
+    const file = join(workDir, "home-malformed.json");
+    writeFileSync(
+      file,
+      JSON.stringify({ home: { featuredSeed: "oops", featuredSeedDay: "20-11-2026" } }),
+      "utf8",
+    );
+    expect(new SettingsStore(file).get().home).toEqual({ featuredSeed: null, featuredSeedDay: null });
+  });
+});

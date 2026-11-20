@@ -206,6 +206,7 @@ function harnessAppSettings(lyrics?: Partial<LyricsSettings>): AppSettings {
       providerOrder: ["lastfm", "wikidata", "deezer"],
       refreshAfterDays: 30,
     },
+    home: { featuredSeed: null, featuredSeedDay: null },
     advanced: { showLogs: false },
     general: { onboardingCompleted: true, onboardingStep: 0 },
     scrobbling: { enabled: false, apiKey: "", apiSecret: "", sessionKey: "", username: "" },

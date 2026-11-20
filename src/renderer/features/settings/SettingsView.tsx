@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { AudioLines, ChevronDown, ChevronUp, Database, FolderMinus, FolderPlus, Info, Keyboard, Library, Mic2, Palette, RotateCcw, Stethoscope, Trash2 } from "lucide-react";
+import { AudioLines, ChevronDown, ChevronUp, Database, FolderMinus, FolderPlus, Info, Keyboard, Library, Mic2, Palette, RefreshCw, RotateCcw, Stethoscope, Trash2 } from "lucide-react";
 import type { AppInfo, AppSettings, EqualizerSettings, ReplayGainMode, ShaderSettings } from "../../../shared/types";
 import { FONT_KINDS, FONT_OPTIONS, resolveFontOption } from "../../../shared/fonts";
 import { detectUnavailableFonts } from "../../app/fonts";
@@ -33,6 +33,7 @@ import { ArtistImagesSettings } from "./ArtistImagesSettings";
 import { FetchAllSettings } from "../lyrics-fetch/FetchAllSettings";
 import { NowPlayingAppearance } from "./NowPlayingAppearance";
 import { useOnboarding } from "../../state/onboardingStore";
+import { createRefreshSeed, localDayKey } from "../library/homeSelection";
 import {
   EQ_BAND_LABELS,
   EQ_PRESETS,
@@ -551,6 +552,22 @@ export function SettingsView() {
             </button>
             <button type="button" onClick={() => void rescan()} disabled={scanning}>
               {scanning ? "Scanning…" : "Rescan now"}
+            </button>
+            <button
+              type="button"
+              data-testid="settings-refresh-featured"
+              onClick={async () => {
+                try {
+                  await patchSettings({
+                    home: { featuredSeed: createRefreshSeed(), featuredSeedDay: localDayKey() },
+                  });
+                  showToast("Featured albums refreshed");
+                } catch (error) {
+                  showToast(`Could not refresh featured albums: ${describeError(error)}`);
+                }
+              }}
+            >
+              <RefreshCw size={16} /> Refresh featured albums
             </button>
             <button type="button" onClick={() => navigate({ name: "decode-tester" })}>
               <Stethoscope size={16} /> Open Decode Tester

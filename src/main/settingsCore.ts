@@ -94,6 +94,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
     providerOrder: [...DEFAULT_ARTIST_IMAGE_PROVIDER_ORDER],
     refreshAfterDays: 30,
   },
+  home: {
+    featuredSeed: null,
+    featuredSeedDay: null,
+  },
   advanced: {
     showLogs: false,
   },
@@ -229,6 +233,20 @@ function normalizeSettings(settings: AppSettings, rawProfiles: unknown = setting
     refreshAfterDays: Math.round(
       clampNumber(artistImageSource.refreshAfterDays, DEFAULT_SETTINGS.artistImages.refreshAfterDays, 0, 365)
     ),
+  };
+  const homeSource: AnyRecord = isPlainObject(settings.home) ? settings.home : {};
+  const featuredSeed = Number(homeSource.featuredSeed);
+  settings.home = {
+    featuredSeed:
+      homeSource.featuredSeed === null ||
+      homeSource.featuredSeed === undefined ||
+      !Number.isFinite(featuredSeed)
+        ? null
+        : Math.abs(Math.trunc(featuredSeed)) % 0x100000000,
+    featuredSeedDay:
+      typeof homeSource.featuredSeedDay === "string" && /^\d{4}-\d{2}-\d{2}$/.test(homeSource.featuredSeedDay)
+        ? homeSource.featuredSeedDay
+        : null,
   };
   const scrobblingSource: AnyRecord = isPlainObject(settings.scrobbling) ? settings.scrobbling : {};
   const credential = (value: unknown): string =>

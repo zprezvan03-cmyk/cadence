@@ -719,6 +719,7 @@ export interface AppSettings {
   nowPlayingProfiles: NowPlayingProfilesSettings;
   shaders: ShaderSettings;
   artistImages: ArtistImageSettings;
+  home: HomeSettings;
   advanced: { showLogs: boolean };
   general: {
     /** True once the first-launch onboarding has been finished or skipped. */
@@ -727,6 +728,14 @@ export interface AppSettings {
     onboardingStep: number;
   };
   scrobbling: LastFmSettings;
+}
+
+/** Rotation seed for the Home album shelves. A stale day key rolls over to a date-derived seed. */
+export interface HomeSettings {
+  /** Seed from the manual "Refresh featured albums" action; null until the first refresh. */
+  featuredSeed: number | null;
+  /** Local day key (`YYYY-MM-DD`) the seed was generated for. */
+  featuredSeedDay: string | null;
 }
 
 /**

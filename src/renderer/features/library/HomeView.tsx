@@ -9,14 +9,15 @@ import type { HistoryPayload } from "../../../shared/types";
 import { useLibrary } from "../../state/libraryStore";
 import { useHistory } from "../../state/historyStore";
 import { usePlayer } from "../../state/playerStore";
+import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
 import { AlbumCard } from "../../components/Cards";
 import { Artwork } from "../../components/Artwork";
 import { SourceBadge } from "../../components/SourceBadge";
 import { MarqueeText } from "../../components/MarqueeText";
-import { shuffle } from "../../player/queue";
 import { onRepeatTracks, rediscoverTracks, topLibraryTracks } from "../stats/listeningStats";
 import { HomeShelf, HomeTrackShelf } from "./HomeShelves";
+import { localDayKey, pickFeaturedAlbums, resolveFeaturedSeed } from "./homeSelection";
 
 function greeting(): string {
   const hour = new Date().getHours();
@@ -45,6 +46,8 @@ export function HomeView() {
   const playShuffled = usePlayer(state => state.playShuffled);
   const playTrack = usePlayer(state => state.playTrack);
   const { entries: historyEntries, load: loadHistory } = useHistory(state => state);
+  const homeSettings = useSettings(state => state.settings?.home);
+  const settingsLoaded = useSettings(state => state.loaded);
   const [now] = useState(() => Date.now());
 
   // Recently played is a read-only view of the same persistent listening history the History tab
@@ -69,19 +72,14 @@ export function HomeView() {
     return result;
   }, [historyEntries]);
 
-  const albums = useMemo(() => {
-    const list = snapshot?.albums ?? [];
-    const seen = new Set<string>();
-    const unique: typeof list = [];
-    for (const album of list) {
-      if (seen.has(album.name)) continue;
-      seen.add(album.name);
-      unique.push(album);
-    }
-    // Shuffled once per homepage initialization: stable across re-renders, randomized again when
-    // the library snapshot changes or the view is (re)mounted.
-    return shuffle(unique).slice(0, 10);
-  }, [snapshot?.albums]);
+  // The view remounts on every navigation; the seed (not the mount) decides the rotation so the
+  // featured album and "Explore your albums" stay put until the next day or a manual refresh.
+  // Wait for settings before the first pick so a stored manual seed cannot reshuffle mid-paint.
+  const featuredSeed = resolveFeaturedSeed(settingsLoaded ? homeSettings : undefined, localDayKey());
+  const albums = useMemo(
+    () => pickFeaturedAlbums(snapshot?.albums ?? [], featuredSeed),
+    [featuredSeed, snapshot?.albums],
+  );
 
   const topTracks = useMemo(
     () => topLibraryTracks(snapshot?.tracks ?? [], historyEntries, { now, limit: 10 }),
@@ -98,7 +96,7 @@ export function HomeView() {
     [historyEntries, now, snapshot?.tracks],
   );
 
-  if (!snapshot) {
+  if (!snapshot || !settingsLoaded) {
     return <div className="view-loading" role="status">Loading your library…</div>;
   }
 
