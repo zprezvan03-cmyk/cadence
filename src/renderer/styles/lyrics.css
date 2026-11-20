@@ -498,6 +498,9 @@
   flex-direction: column;
 }
 
+/* In fullscreen the transport and the lyrics tools share ONE glass surface spanning the whole
+   viewport (the footer is already edge-to-edge); the two bars keep their size and sit inside it.
+   `is-concealed` follows the same hover timer as the bars so the surface fades with its content. */
 .lyrics-view.is-fullscreen .lyrics-footer {
   position: absolute;
   left: 0;
@@ -505,6 +508,39 @@
   bottom: 0;
   z-index: 3;
   pointer-events: none;
+  background: color-mix(in srgb, var(--bg-elevated) 58%, transparent);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  transition:
+    background-color var(--dur-3) var(--ease-out),
+    backdrop-filter var(--dur-3) var(--ease-out),
+    border-color var(--dur-3) var(--ease-out);
+}
+
+.lyrics-view.is-fullscreen .lyrics-footer.is-concealed {
+  background-color: transparent;
+  backdrop-filter: blur(0px) saturate(1);
+  -webkit-backdrop-filter: blur(0px) saturate(1);
+}
+
+/* Remove the individual pill fills — the glass now belongs to the full-width footer. */
+.lyrics-view.is-fullscreen .fs-controls,
+.lyrics-view.is-fullscreen .lyrics-dock {
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 0;
+  border-radius: 0;
+}
+
+/* Static dock in fullscreen makes the footer the popovers' containing block, so they rise above
+   the whole strip instead of stopping between the two bars. */
+.lyrics-view.is-fullscreen .lyrics-dock {
+  position: static;
+}
+
+.lyrics-view.is-fullscreen .dock-popover {
+  z-index: 5;
 }
 
 .lyrics-footer > * {
@@ -960,6 +996,14 @@ braccato-lyrics[data-upgrading="true"] {
   padding-block: 0;
 }
 
+/* Icon-only dock triggers: compact, square-ish hit targets that line up with the dock-icon group. */
+.lyrics-dock .dock-button--icon {
+  min-width: var(--dock-control-size);
+  justify-content: center;
+  gap: 3px;
+  padding-inline: clamp(5px, 0.7cqi, 9px);
+}
+
 .dock-button:hover {
   background: rgba(255, 255, 255, 0.08);
   color: #fff;
@@ -997,6 +1041,8 @@ braccato-lyrics[data-upgrading="true"] {
   color: rgba(255, 255, 255, 0.75);
 }
 
+/* Popovers are direct children of the dock; LyricsDock pins left/right to the trigger that
+   opened each one so they rise above the correct button instead of stacking at one edge. */
 .dock-popover {
   position: absolute;
   bottom: calc(100% + 10px);
@@ -1006,13 +1052,23 @@ braccato-lyrics[data-upgrading="true"] {
   overflow-y: auto;
   padding: 12px;
   border-radius: var(--radius);
-  background: var(--surface-2);
-  border: 1px solid var(--border-strong);
+  /* Same glass as the full-width footer strip so popovers read as part of one floating surface. */
+  background: color-mix(in srgb, var(--bg-elevated) 58%, transparent);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  border: 1px solid var(--border);
   box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
   gap: 4px;
   animation: pop-in var(--dur-2) var(--ease-out);
+}
+
+/* Keep the trigger + popover wrappers shrink-wrapped to their buttons now that the popover is
+   anchored to the dock/footer rather than to the wrapper itself. */
+.dock-save-wrap,
+.dock-regenerate-wrap {
+  display: inline-flex;
 }
 
 /* Presence exit (see `app/usePresence.ts`): same fast pop-out as the context menu. */
@@ -1372,11 +1428,6 @@ braccato-lyrics[data-upgrading="true"] {
 
 .dock-profiles {
   width: min(360px, calc(100cqi - 32px));
-  /* This five-row popover extends across the fullscreen controls when it opens upward.
-     Unlike the shorter glass dock panels, it uses an opaque menu fill so seek/volume
-     lines cannot cross the last profile rows or the note beneath them. */
-  background: #0b0b14;
-  backdrop-filter: none;
   z-index: 4;
 }
 

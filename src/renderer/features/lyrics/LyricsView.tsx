@@ -486,7 +486,7 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
       </div>
 
       {!panelMode ? (
-        <div ref={footerRef} className="lyrics-footer">
+        <div ref={footerRef} className={`lyrics-footer ${controlsVisible ? "" : "is-concealed"}`}>
           {fullscreen ? (
             <FullscreenControls track={track} concealed={!controlsVisible} />
           ) : null}

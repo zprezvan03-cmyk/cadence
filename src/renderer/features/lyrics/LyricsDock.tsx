@@ -4,7 +4,7 @@
  * React components. Written for Cadence.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Album,
   AlertCircle,
@@ -15,13 +15,13 @@ import {
   Download,
   FolderOpen,
   Languages,
-  LayoutGrid,
+  ListMusic,
   Minus,
+  Palette,
   Plus,
   RefreshCw,
   Search,
-  Sparkles,
-  Wand2,
+  Type,
   XCircle,
   Youtube,
 } from "lucide-react";
@@ -116,6 +116,14 @@ export function LyricsDock({
   const [saveOpen, setSaveOpen] = useState(false);
   const [regenerateOpen, setRegenerateOpen] = useState(false);
   const dockRef = useRef<HTMLDivElement>(null);
+  const anchorsRef = useRef<Record<string, HTMLElement | null>>({});
+  const popoversRef = useRef<Record<string, HTMLElement | null>>({});
+  const setAnchor = (key: string) => (node: HTMLElement | null) => {
+    anchorsRef.current[key] = node;
+  };
+  const setPopover = (key: string) => (node: HTMLElement | null) => {
+    popoversRef.current[key] = node;
+  };
   // Popovers close the instant their state flips; presence only keeps each mounted for
   // its fast pop-out. Switching panels crossfades for one 120ms beat instead of cutting.
   const sourcesPresence = usePresence(panel === "sources");
@@ -169,6 +177,43 @@ export function LyricsDock({
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
   }, [panel, languageOpen, saveOpen, regenerateOpen]);
 
+  // Each popover is a direct child of the dock, so pin its horizontal edge to the button that
+  // opened it instead of letting every panel pile up at the dock's right edge. Presence-mounted
+  // panels appear one render after their state flips, so their `mounted` flags are deps too.
+  useLayoutEffect(() => {
+    const openKeys: string[] = [];
+    if (panel !== "none") openKeys.push(panel);
+    if (languageOpen) openKeys.push("languages");
+    if (saveOpen) openKeys.push("save");
+    if (regenerateOpen) openKeys.push("regenerate");
+    if (!openKeys.length) return;
+    const place = () => {
+      for (const key of openKeys) {
+        const anchor = anchorsRef.current[key];
+        const popover = popoversRef.current[key];
+        // Fullscreen popovers resolve against the full-width footer; windowed ones against the dock.
+        const container = popover?.offsetParent as HTMLElement | null;
+        if (!anchor || !popover || !container) continue;
+        const box = container.getBoundingClientRect();
+        const maxInset = Math.max(0, container.clientWidth);
+        const anchorRect = anchor.getBoundingClientRect();
+        const width = popover.getBoundingClientRect().width;
+        if (key === "save" || key === "regenerate") {
+          const right = Math.min(Math.max(0, box.right - anchorRect.right), Math.max(0, maxInset - width));
+          popover.style.left = "auto";
+          popover.style.right = `${right}px`;
+        } else {
+          const left = Math.min(Math.max(0, anchorRect.left - box.left), Math.max(0, maxInset - width));
+          popover.style.left = `${left}px`;
+          popover.style.right = "auto";
+        }
+      }
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [panel, languageOpen, saveOpen, regenerateOpen, sourcesPresence.mounted, searchPresence.mounted, profilesPresence.mounted, languagesPresence.mounted]);
+
   useEffect(() => {
     onPopoverChange?.(panel !== "none" || languageOpen || saveOpen || regenerateOpen);
   }, [panel, languageOpen, saveOpen, regenerateOpen, onPopoverChange]);
@@ -221,56 +266,68 @@ export function LyricsDock({
 
       <div className="dock-group">
         <button
+          ref={node => {
+            anchorsRef.current.sources = node;
+            anchorsRef.current.search = node;
+          }}
           type="button"
-          className="dock-button"
+          className="dock-button dock-button--icon"
           onClick={() => togglePanel("sources")}
           title="Lyrics source"
+          aria-label="Lyrics source"
           aria-expanded={panel === "sources"}
         >
-          <Sparkles size={16} /> Source <ChevronDown size={14} />
+          <ListMusic size={17} /> <ChevronDown size={13} />
         </button>
         <button
+          ref={setAnchor("profiles")}
           type="button"
-          className="dock-button"
+          className="dock-button dock-button--icon"
           onClick={() => togglePanel("profiles")}
           title={`Now Playing profile: ${activeNowPlayingProfile?.name ?? "Balanced"}`}
+          aria-label={`Now Playing profile: ${activeNowPlayingProfile?.name ?? "Balanced"}`}
           aria-expanded={panel === "profiles"}
           aria-haspopup="true"
           data-testid="now-playing-profile-button"
         >
-          <LayoutGrid size={16} /> Profile
+          <Palette size={17} />
         </button>
         <button
+          ref={setAnchor("languages")}
           type="button"
-          className="dock-button"
+          className="dock-button dock-button--icon"
           onClick={toggleLanguage}
           title="Translate lyrics"
+          aria-label={translateTarget ? `Translate lyrics → ${languageLabel(translateTarget)}` : "Translate lyrics"}
           aria-expanded={languageOpen}
         >
-          <Languages size={16} /> {translateTarget ? languageLabel(translateTarget) : "Translate"}
+          <Languages size={17} />
         </button>
         <button
           type="button"
-          className={`dock-button ${settings.romanization ? "active" : ""}`}
+          className={`dock-button dock-button--icon ${settings.romanization ? "active" : ""}`}
           onClick={() => onPatch({ romanization: !settings.romanization })}
           title="Romanize lyrics"
+          aria-label="Romanize lyrics"
+          aria-pressed={settings.romanization}
         >
-          <Wand2 size={16} /> Romanize
+          <Type size={17} />
         </button>
         {(settings.aiTranslation?.enabled || settings.translationLanguage || settings.romanization) ? (
-          <div className="dock-regenerate-wrap" style={{ position: "relative" }}>
+          <div ref={setAnchor("regenerate")} className="dock-regenerate-wrap">
             <button
               type="button"
-              className="dock-button"
+              className="dock-button dock-button--icon"
               onClick={toggleRegenerate}
               disabled={busy}
               title="Regenerate lyrics"
+              aria-label="Regenerate lyrics"
               aria-expanded={regenerateOpen}
             >
-              <RefreshCw size={15} /> Regenerate <ChevronDown size={14} />
+              <RefreshCw size={16} /> <ChevronDown size={13} />
             </button>
             {regenerateOpen ? (
-              <div className="dock-popover dock-regenerate-popover">
+              <div ref={setPopover("regenerate")} className="dock-popover dock-regenerate-popover">
                 {(settings.aiTranslation?.enabled || settings.translationLanguage) ? (
                   <button
                     type="button"
@@ -314,18 +371,19 @@ export function LyricsDock({
             <button type="button" className="dock-icon" onClick={onChooseFile} title="Open a lyrics file">
               <FolderOpen size={16} />
             </button>
-            <div className="dock-save-wrap" style={{ position: "relative", display: "inline-flex" }}>
+            <div ref={setAnchor("save")} className="dock-save-wrap">
               <button
                 type="button"
-                className="dock-button"
+                className="dock-button dock-button--icon"
                 onClick={toggleSave}
                 title="Save lyrics next to the track"
+                aria-label="Save lyrics next to the track"
                 aria-expanded={saveOpen}
               >
-                <Download size={16} /> Save <ChevronDown size={14} />
+                <Download size={17} /> <ChevronDown size={13} />
               </button>
               {saveOpen ? (
-                <div className="dock-popover dock-save-popover">
+                <div ref={setPopover("save")} className="dock-popover dock-save-popover">
                   <button
                     type="button"
                     className="source-row"
@@ -348,7 +406,7 @@ export function LyricsDock({
       </div>
 
       {sourcesPresence.mounted ? (
-        <div className={`dock-popover dock-sources ${sourcesPresence.phaseClass}`} data-presence={sourcesPresence.phase}>
+        <div ref={setPopover("sources")} className={`dock-popover dock-sources ${sourcesPresence.phaseClass}`} data-presence={sourcesPresence.phase}>
           <div className="popover-title">Lyrics source</div>
           {candidates.length === 0 ? <div className="muted">No lyrics found for this track.</div> : null}
           {candidates.map(candidate => (
@@ -391,6 +449,7 @@ export function LyricsDock({
 
       {profilesPresence.mounted ? (
         <div
+          ref={setPopover("profiles")}
           className={`dock-popover dock-profiles ${profilesPresence.phaseClass}`}
           data-presence={profilesPresence.phase}
           data-testid="now-playing-profile-switcher"
@@ -435,7 +494,7 @@ export function LyricsDock({
       ) : null}
 
       {searchPresence.mounted ? (
-        <div className={`dock-popover dock-search ${searchPresence.phaseClass}`} data-presence={searchPresence.phase} data-testid="manual-search">
+        <div ref={setPopover("search")} className={`dock-popover dock-search ${searchPresence.phaseClass}`} data-presence={searchPresence.phase} data-testid="manual-search">
           <div className="search-panel-head">
             <button type="button" className="dock-icon" title="Back to sources" onClick={() => togglePanel("sources")}>
               <ArrowLeft size={15} />
@@ -643,7 +702,7 @@ export function LyricsDock({
       ) : null}
 
       {languagesPresence.mounted ? (
-        <div className={`dock-popover dock-languages ${languagesPresence.phaseClass}`} data-presence={languagesPresence.phase}>
+        <div ref={setPopover("languages")} className={`dock-popover dock-languages ${languagesPresence.phaseClass}`} data-presence={languagesPresence.phase}>
           <div className="popover-title">Translate to</div>
           <button
             type="button"

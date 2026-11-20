@@ -738,7 +738,8 @@ const closeQueue = async () => {
   await page.waitForSelector(queuePanel, { hidden: true });
 };
 const openLyricsSources = async () => {
-  await clickText(".dock-button", "Source", false);
+  // The trigger is icon-only now; target it by its stable label instead of rendered text.
+  await page.click('.lyrics-dock button[title="Lyrics source"]');
   await page.waitForSelector('.dock-sources[data-presence="entered"]', { timeout: 4000 });
 };
 const openManualLyricsSearch = async () => {
