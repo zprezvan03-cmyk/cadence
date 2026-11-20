@@ -1,6 +1,7 @@
 /** One-row artwork shelves for Home. */
-import { useId, useRef, type ReactNode, type Ref } from "react";
-import { Heart, MoreHorizontal, Pause, Play } from "lucide-react";
+import { Children, useCallback, useEffect, useId, useRef, useState, type MutableRefObject, type ReactNode, type Ref } from "react";
+import { ChevronLeft, ChevronRight, Heart, MoreHorizontal, Pause, Play } from "lucide-react";
+import { prefersReducedMotion } from "../../app/motion";
 import { Artwork } from "../../components/Artwork";
 import { MarqueeText } from "../../components/MarqueeText";
 import { useTrackMenu } from "../../components/useTrackMenu";
@@ -21,18 +22,86 @@ export function HomeShelf({ title, aside, className = "", testId, viewportRef, c
   children: ReactNode;
 }) {
   const heading = useId();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [atStart, setAtStart] = useState(true);
+  const [atEnd, setAtEnd] = useState(false);
+  const childCount = Children.count(children);
+
+  const assignViewport = useCallback((node: HTMLDivElement | null) => {
+    scrollRef.current = node;
+    if (typeof viewportRef === "function") viewportRef(node);
+    else if (viewportRef) (viewportRef as MutableRefObject<HTMLDivElement | null>).current = node;
+  }, [viewportRef]);
+
+  const measure = useCallback(() => {
+    const node = scrollRef.current;
+    if (!node) return;
+    const max = Math.max(0, node.scrollWidth - node.clientWidth);
+    setAtStart(node.scrollLeft <= 1);
+    setAtEnd(node.scrollLeft >= max - 1);
+  }, []);
+
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (!node) return;
+    measure();
+    node.addEventListener("scroll", measure, { passive: true });
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    observer?.observe(node);
+    window.addEventListener("resize", measure);
+    return () => {
+      node.removeEventListener("scroll", measure);
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [measure, childCount]);
+
+  const scrollByCard = (direction: -1 | 1) => {
+    const node = scrollRef.current;
+    if (!node) return;
+    const cards = [...node.children] as HTMLElement[];
+    const first = cards[0]?.getBoundingClientRect();
+    const second = cards[1]?.getBoundingClientRect();
+    const step = first && second ? second.left - first.left : Math.max(1, node.clientWidth * 0.8);
+    node.scrollBy({ left: direction * step, behavior: prefersReducedMotion() ? "auto" : "smooth" });
+  };
+
   return (
     <section className={`shelf home-shelf ${className}`} data-testid={testId}>
       <div className="shelf-heading">
         <h2 id={heading}>{title}</h2>
-        {aside}
+        <div className="shelf-heading-actions">
+          <div className="shelf-scroll-controls">
+            <button
+              type="button"
+              className="icon-button"
+              data-testid="shelf-scroll-prev"
+              aria-label={`Scroll ${title} left`}
+              disabled={atStart}
+              onClick={() => scrollByCard(-1)}
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              data-testid="shelf-scroll-next"
+              aria-label={`Scroll ${title} right`}
+              disabled={atEnd}
+              onClick={() => scrollByCard(1)}
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+          {aside}
+        </div>
       </div>
       <div
         className="card-grid home-shelf-track"
         role="region"
         aria-labelledby={heading}
         tabIndex={0}
-        ref={viewportRef}
+        ref={assignViewport}
         onKeyDown={event => {
           // The playback shortcuts also use arrow keys. When the shelf itself is focused,
           // leave the browser's default horizontal scrolling in charge instead.
