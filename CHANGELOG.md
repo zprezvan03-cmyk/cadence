@@ -81,6 +81,19 @@ Tanggal: 2026-11-19 — 2026-11-20
 - Job berjalan di `ubuntu-latest`: Node 22 + Rust stable + `rust-cache`, install dependensi Tauri Linux (`webkit2gtk-4.1`, `appindicator3`, `librsvg2`, `patchelf`, dll), lalu `npm run typecheck` dan `npm run package:linux` (`tauri build --bundles appimage,deb`).
 - Artefak di-upload sebagai `Cadence-<stage>-linux`, berisi `.AppImage`, `.deb`, binary `cadence`, dan `SHA256SUMS`. Tidak ada commit balik ke branch seperti di workflow Windows.
 
+## `5132bf6` — feat(ui): add floating Home shelf scroll controls
+
+- Tombol `<` / `>` untuk shelf horizontal Home tidak lagi duduk di heading, melainkan **melayang di ujung kiri/kanan viewport artwork**. Keduanya sejajar dengan tengah cover, memakai background gelap transparan + blur + shadow, dan otomatis hilang saat shelf sudah berada di ujung scroll.
+- Satu klik menggeser **dua artwork**: jarak dihitung dari kartu pertama ke kartu ketiga supaya gap ikut terhitung; fallback memakai dua kali langkah kartu bila kartu kurang dari tiga. `prefersReducedMotion()` tetap dipakai untuk memilih `smooth` atau `auto`.
+- Track dibungkus `.home-shelf-viewport` sebagai anchor overlay. Ref viewport milik `HomeTrackShelf` disambung lewat callback ref, jadi menu track tidak putus; struktur `.card-grid.home-shelf-track` yang dipakai audit stagger tidak diubah.
+- Versi tombol di heading (commit `8516259`) sudah direvert lebih dulu lewat `f793d39`; implementasi ini menggantikannya dengan posisi floating sesuai espek.
+
+## `c11501b` — fix(ui): dismiss lyrics dock popovers outside the dock
+
+- Popover di lyrics dock Now Playing (**Source**, **Profile**, **Translate**, **Save**, **Regenerate**) sekarang auto-hide saat ada `pointerdown` di luar area dock. Klik di dalam popover tidak menutupnya, dan klik luar langsung menutup semua popover yang sedang terbuka.
+- Trigger popover kini memakai helper `closePopovers` / `togglePanel` / `toggleLanguage` / `toggleSave` / `toggleRegenerate`, sehingga membuka satu popover menutup popover lain yang masih terbuka. Klik tombol yang sama tetap berfungsi sebagai toggle tutup.
+- Row aksi (pilih source, profile, hasil pencarian, dan navigasi Search ↔ Sources) juga ikut menutup popover lewat helper yang sama. Animasi presence `pop-in` / `pop-out` tidak diubah.
+
 ## Verifikasi
 
 - `f3a4ce0`: `npm run build` lolos (CSS-only); sudah dicek visual di `npm run dev`.
@@ -90,6 +103,8 @@ Tanggal: 2026-11-19 — 2026-11-20
 - `6e9672d`: `npm run typecheck`, `npm run build`, dan `cargo check --manifest-path src-tauri/Cargo.toml` lolos; 61 test targeted (`lyricsAutomationStores`, `settings`, `lyricsAutofetch`, `lyricsAudit`) lolos.
 - `eb82f79`: `npm run typecheck` dan `npm run build` lolos. Perubahan hanya markup/kelas tombol dan urutan tab; assertion browser yang bergantung pada urutan/default disesuaikan, tidak dilemahkan.
 - `ac9f6a0`: YAML workflow divalidasi lokal dengan PyYAML. Build Linux belum dijalankan lokal (tapi akan berjalan di runner `ubuntu-latest` saat workflow ini di-push).
+- `5132bf6`: `npm run typecheck` dan `npm run build` lolos. Di browser harness, tombol berada di edge viewport dan satu klik menggeser `320px` (dua kartu `148px` + dua gap `12px`).
+- `c11501b`: `npm run typecheck` dan `npm run build` lolos. Di browser harness: klik di dalam popover tidak menutup, klik di luar menutup, pindah trigger menutup popover lama, dan klik luar berikutnya mengosongkan semua popover.
 - `npm run typecheck` lolos.
 - `npm run build` lolos.
 - `npm test`: 615/616 test lolos. Dua kegagalan yang sudah ada sebelum perubahan ini tetap ada (file DB terkunci di Windows saat cleanup `library.test.ts` dan threshold benchmark Smart Shuffle); `_matasaburo_full.test.ts` lolos pada run ini. Tidak ada kegagalan baru dari perubahan ini — total test turun dari 630 karena suite `lyricsFetchAll.test.ts` (14 test) ikut dihapus bersama fiturnya.
