@@ -75,6 +75,12 @@ Tanggal: 2026-11-19 — 2026-11-20
 - Di About, **Clear lyrics cache** tidak lagi berdiri sendiri di tengah. Sekarang memakai `.setting-row` seperti **Restore default settings**: label + deskripsi di kiri, tombol `ghost-button danger setting-action` di kanan. Teks, konfirmasi, dan logika clear tidak berubah; Reset all tetap elemen terakhir di About.
 - Assertion urutan tab di `tests/browser/run-app.mjs` disesuaikan. `provider-identity.ts` sekarang mengklik tab Appearance secara eksplisit setelah reload sebelum memeriksa font, karena default sudah bergeser ke General. Assertion lain tidak dilemahkan.
 
+## `ac9f6a0` — ci: add Linux AppImage and deb build workflow
+
+- Menambahkan `.github/workflows/build-linux.yml` sebagai pasangan `build-windows.yml`: jalan manual lewat **workflow_dispatch** (input `stage`, default `7` dari `.github/stage-build.txt`) dan otomatis saat push ke `feat/ui` yang menyentuh workflow ini atau `stage-build.txt`.
+- Job berjalan di `ubuntu-latest`: Node 22 + Rust stable + `rust-cache`, install dependensi Tauri Linux (`webkit2gtk-4.1`, `appindicator3`, `librsvg2`, `patchelf`, dll), lalu `npm run typecheck` dan `npm run package:linux` (`tauri build --bundles appimage,deb`).
+- Artefak di-upload sebagai `Cadence-<stage>-linux`, berisi `.AppImage`, `.deb`, binary `cadence`, dan `SHA256SUMS`. Tidak ada commit balik ke branch seperti di workflow Windows.
+
 ## Verifikasi
 
 - `f3a4ce0`: `npm run build` lolos (CSS-only); sudah dicek visual di `npm run dev`.
@@ -83,6 +89,7 @@ Tanggal: 2026-11-19 — 2026-11-20
 - `b5f54f8`: `npm run typecheck` dan `npm run build` lolos; `tests/unit/homeSelection.test.ts` + `tests/unit/settings.test.ts` (31 test) lolos.
 - `6e9672d`: `npm run typecheck`, `npm run build`, dan `cargo check --manifest-path src-tauri/Cargo.toml` lolos; 61 test targeted (`lyricsAutomationStores`, `settings`, `lyricsAutofetch`, `lyricsAudit`) lolos.
 - `eb82f79`: `npm run typecheck` dan `npm run build` lolos. Perubahan hanya markup/kelas tombol dan urutan tab; assertion browser yang bergantung pada urutan/default disesuaikan, tidak dilemahkan.
+- `ac9f6a0`: YAML workflow divalidasi lokal dengan PyYAML. Build Linux belum dijalankan lokal (tapi akan berjalan di runner `ubuntu-latest` saat workflow ini di-push).
 - `npm run typecheck` lolos.
 - `npm run build` lolos.
 - `npm test`: 615/616 test lolos. Dua kegagalan yang sudah ada sebelum perubahan ini tetap ada (file DB terkunci di Windows saat cleanup `library.test.ts` dan threshold benchmark Smart Shuffle); `_matasaburo_full.test.ts` lolos pada run ini. Tidak ada kegagalan baru dari perubahan ini — total test turun dari 630 karena suite `lyricsFetchAll.test.ts` (14 test) ikut dihapus bersama fiturnya.
