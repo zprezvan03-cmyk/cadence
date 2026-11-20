@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { AudioLines, ChevronDown, ChevronUp, Database, FolderMinus, FolderPlus, Info, Keyboard, Library, Mic2, Palette, RefreshCw, RotateCcw, Stethoscope, Trash2 } from "lucide-react";
+import { AudioLines, ChevronDown, ChevronUp, Database, FolderMinus, FolderPlus, Info, Keyboard, Library, Mic2, Palette, RefreshCw, RotateCcw, SlidersHorizontal, Stethoscope, Trash2 } from "lucide-react";
 import type { AppInfo, AppSettings, EqualizerSettings, ReplayGainMode, ShaderSettings } from "../../../shared/types";
 import { FONT_KINDS, FONT_OPTIONS, resolveFontOption } from "../../../shared/fonts";
 import { detectUnavailableFonts } from "../../app/fonts";
@@ -205,6 +205,7 @@ export function SettingsView() {
       <nav className="settings-tabs" aria-label="Settings categories">
         {([
           ["appearance", "Appearance", Palette],
+          ["general", "General", SlidersHorizontal],
           ["lyrics", "Lyrics", Mic2],
           ["library", "Library", Library],
           ["playback", "Playback", AudioLines],
@@ -325,6 +326,35 @@ export function SettingsView() {
             <Range label="Dim strength" value={settings.shaders.autoDimStrength} min={0} max={1} step={0.02} onChange={value => patchShaders({ autoDimStrength: value })} />
             <Toggle label="Animated artwork" hint="Plays a cover.mp4/cover.webm next to the track through the Kawarp video path." checked={settings.shaders.enableAnimatedArt} onChange={value => patchShaders({ enableAnimatedArt: value })} />
           </div>
+        </section>
+      ) : null}
+
+      {section === "general" ? (
+        <section className="settings-section" data-testid="settings-general">
+          <h2>General</h2>
+          <p className="muted">App-wide actions that do not belong to the library, playback or appearance.</p>
+          <div className="heading-actions">
+            <button
+              type="button"
+              data-testid="settings-refresh-featured"
+              onClick={async () => {
+                try {
+                  await patchSettings({
+                    home: { featuredSeed: createRefreshSeed(), featuredSeedDay: localDayKey() },
+                  });
+                  showToast("Featured albums refreshed");
+                } catch (error) {
+                  showToast(`Could not refresh featured albums: ${describeError(error)}`);
+                }
+              }}
+            >
+              <RefreshCw size={16} /> Refresh featured albums
+            </button>
+          </div>
+          <p className="muted">
+            Picks a new set of Featured albums and Explore your albums for today. The choice stays put until
+            the next day or until you refresh it again.
+          </p>
         </section>
       ) : null}
 
@@ -552,22 +582,6 @@ export function SettingsView() {
             </button>
             <button type="button" onClick={() => void rescan()} disabled={scanning}>
               {scanning ? "Scanning…" : "Rescan now"}
-            </button>
-            <button
-              type="button"
-              data-testid="settings-refresh-featured"
-              onClick={async () => {
-                try {
-                  await patchSettings({
-                    home: { featuredSeed: createRefreshSeed(), featuredSeedDay: localDayKey() },
-                  });
-                  showToast("Featured albums refreshed");
-                } catch (error) {
-                  showToast(`Could not refresh featured albums: ${describeError(error)}`);
-                }
-              }}
-            >
-              <RefreshCw size={16} /> Refresh featured albums
             </button>
             <button type="button" onClick={() => navigate({ name: "decode-tester" })}>
               <Stethoscope size={16} /> Open Decode Tester
