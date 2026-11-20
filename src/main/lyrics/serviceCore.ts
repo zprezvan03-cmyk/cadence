@@ -107,35 +107,6 @@ interface NetworkResult {
   queriedModules?: string[];
 }
 
-/**
- * Whether a library track still needs provider work, used to build the Fetch All queue and the
- * onboarding/Settings coverage statistics without issuing any request.
- */
-export interface TrackLyricsAssessment {
-  needsWork: boolean;
-  reason:
-    | "invalid-metadata"
-    | "never-queried"
-    | "providers-unchecked"
-    | "stale"
-    | "not-found-cooldown"
-    | "fully-processed";
-  /** Some usable lyrics already exist (local file/tag, manual choice or cached remote). */
-  hasLyrics: boolean;
-  /** Every currently-enabled provider module has a fresh cached answer. */
-  fullyProcessed: boolean;
-}
-
-export interface AssessableTrack {
-  id: number;
-  title: string;
-  artist: string;
-  album: string;
-  duration: number;
-  hasSidecarLyrics?: boolean;
-  hasEmbeddedLyrics?: boolean;
-}
-
 /** One locally sourced candidate plus the format and provenance it should be cached with. */
 interface LocalHit {
   candidate: LyricsCandidate;
@@ -255,8 +226,8 @@ export class LyricsServiceCore {
   private readonly searchInFlight = new Map<string, InFlightEntry<LyricsSearchResponse>>();
   private readonly rateLimitedUntil = new Map<string, number>();
   /**
-   * The one central limiter every provider module run passes through — Autofetch, Fetch All and
-   * manual searches alike — so total provider concurrency is bounded globally, never per caller.
+   * The one central limiter every provider module run passes through — Autofetch and manual
+   * searches alike — so total provider concurrency is bounded globally, never per caller.
    */
   private readonly providerLimiter = new ConcurrencyLimiter(
     FETCH_CONCURRENCY_PRESETS.balanced.providerRequests
@@ -737,109 +708,6 @@ export class LyricsServiceCore {
     return disabledStatus.length ? { ...result, status: [...result.status, ...disabledStatus] } : result;
   }
 
-  /**
-   * Cache-only assessment for Fetch All queue generation and coverage statistics. Mirrors the
-   * freshness/coverage rules `resolveNetwork` applies, without touching the network or local
-   * files (sidecar/embedded presence comes from the library row's flags).
-   */
-  assessTrack(track: AssessableTrack, providerOrder?: string[]): TrackLyricsAssessment {
-    if (!track.title?.trim()) {
-      return { needsWork: false, reason: "invalid-metadata", hasLyrics: false, fullyProcessed: false };
-    }
-    const order = this.orderFor(providerOrder);
-    const enabledKeys = new Set<string>(order.filter(key => !key.startsWith("d_")));
-    const activeModules = NETWORK_MODULES.filter(module =>
-      module.keys.some(key => enabledKeys.has(key))
-    );
-    const identity: CachedTrackIdentity = {
-      id: track.id,
-      title: track.title,
-      artist: track.artist,
-      album: track.album,
-      duration: track.duration,
-    };
-    const entry = this.cachedTrackEntry(LyricsCacheCore.trackKey(track.id, identity), identity);
-    const hasLyrics = Boolean(
-      track.hasSidecarLyrics ||
-        track.hasEmbeddedLyrics ||
-        (entry && entry.candidates.length > 0) ||
-        (entry?.network && entry.network.candidates.length > 0)
-    );
-    if (activeModules.length === 0) {
-      return { needsWork: false, reason: "fully-processed", hasLyrics, fullyProcessed: true };
-    }
-    if (!entry?.network) {
-      return { needsWork: true, reason: "never-queried", hasLyrics, fullyProcessed: false };
-    }
-    const covered = this.coveredModuleIds(entry.network, activeModules);
-    const missing = activeModules.filter(module => !covered.has(module.id));
-    const fresh = this.cache.networkFresh(entry.network);
-    if (fresh && missing.length === 0) {
-      return {
-        needsWork: false,
-        reason: entry.network.negative ? "not-found-cooldown" : "fully-processed",
-        hasLyrics,
-        fullyProcessed: true,
-      };
-    }
-    return {
-      needsWork: true,
-      reason: missing.length > 0 ? "providers-unchecked" : "stale",
-      hasLyrics,
-      fullyProcessed: false,
-    };
-  }
-
-  /**
-   * Shares one recording's definitive network answer with a duplicate library file (same
-   * normalized metadata + duration cluster), so the duplicate needs no provider requests of its
-   * own. Local files/tags and manual choices stay per-file and are never copied.
-   */
-  shareRecordingResult(fromTrackId: number, toTrack: AssessableTrack): boolean {
-    const fromTrack = this.store.getTrack(fromTrackId);
-    const fromIdentity: CachedTrackIdentity = {
-      id: fromTrackId,
-      title: fromTrack?.title ?? "",
-      artist: fromTrack?.artist ?? "",
-      album: fromTrack?.album ?? "",
-      duration: fromTrack?.duration ?? 0,
-    };
-    const source = this.cachedTrackEntry(
-      LyricsCacheCore.trackKey(fromTrackId, fromIdentity),
-      fromIdentity
-    );
-    if (!source?.network) return false;
-    const toIdentity: CachedTrackIdentity = {
-      id: toTrack.id,
-      title: toTrack.title,
-      artist: toTrack.artist,
-      album: toTrack.album,
-      duration: toTrack.duration,
-    };
-    const toKey = LyricsCacheCore.trackKey(toTrack.id, toIdentity);
-    const existing = this.cachedTrackEntry(toKey, toIdentity);
-    if (existing?.network && this.cache.networkFresh(existing.network)) return false;
-    this.cache.putTrack(
-      toKey,
-      toIdentity,
-      (existing?.candidates ?? []).map(candidate => ({
-        candidate: stripCacheMeta(candidate),
-        format: candidate.format,
-        origin: candidate.origin,
-      })),
-      {
-        candidates: source.network.candidates.map(candidate => ({
-          candidate: stripCacheMeta(candidate),
-          origin: "network" as const,
-        })),
-        negative: source.network.negative,
-        ...(source.network.queriedModules ? { queriedModules: source.network.queriedModules } : {}),
-        ...(source.network.enabledKeys ? { enabledKeys: source.network.enabledKeys } : {}),
-      }
-    );
-    return true;
-  }
-
   private inFlightKey(cacheKey: string, enabledKeys: ReadonlySet<string>): string {
     return `${cacheKey}::${[...enabledKeys].sort().join(",")}`;
   }
@@ -1057,7 +925,7 @@ export class LyricsServiceCore {
   ): Promise<NetworkResult> {
     // The flight key includes the module subset, so a full fan-out and a "newly enabled
     // providers only" pass never masquerade as each other, while identical concurrent asks
-    // (Autofetch + Fetch All + manual) share one underlying request set.
+    // (Autofetch + manual) share one underlying request set.
     const moduleKeys = new Set(modules.flatMap(module => module.keys.filter(key => enabledKeys.has(key))));
     const flightKey = this.inFlightKey(cacheKey, moduleKeys);
     return shareInFlight(this.inFlight, flightKey, signal, sharedSignal =>

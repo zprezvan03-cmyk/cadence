@@ -1,7 +1,6 @@
 /**
- * Renderer-side automation state: seamless same-track refresh in the lyrics store, the
- * onboarding auto-show/step rules, and the Fetch All store's explicit-start contract
- * (Fetch All must only ever start from a user action, never from rendering or subscribing).
+ * Renderer-side automation state: seamless same-track refresh in the lyrics store and the
+ * onboarding auto-show/step rules.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -87,7 +86,7 @@ describe("onboarding rules", () => {
       shouldAutoShowOnboarding({ settingsLoaded: true, onboardingCompleted: true, folderCount: 5, trackCount: 9, replayRequested: true })
     ).toBe(true);
     expect(clampOnboardingStep(-2)).toBe(0);
-    expect(clampOnboardingStep(99)).toBe(4);
+    expect(clampOnboardingStep(99)).toBe(3);
     expect(clampOnboardingStep(2.4)).toBe(2);
   });
 
@@ -102,71 +101,10 @@ describe("onboarding rules", () => {
     useOnboarding.getState().next();
     expect(useOnboarding.getState().step).toBe(1);
     useOnboarding.getState().goTo(99);
-    expect(useOnboarding.getState().step).toBe(4);
-    useOnboarding.getState().back();
     expect(useOnboarding.getState().step).toBe(3);
+    useOnboarding.getState().back();
+    expect(useOnboarding.getState().step).toBe(2);
     useOnboarding.getState().finish();
     expect(useOnboarding.getState()).toMatchObject({ visible: false, step: 0 });
-  });
-});
-
-describe("Fetch All store contract", () => {
-  it("never starts a job from init/subscription; start is an explicit action that returns at once", async () => {
-    vi.resetModules();
-    const idle = {
-      jobId: null,
-      state: "idle",
-      total: 0,
-      processed: 0,
-      found: 0,
-      notFound: 0,
-      failed: 0,
-      skipped: 0,
-      currentTrack: null,
-      startedAt: null,
-      finishedAt: null,
-    };
-    let progressListener: ((snapshot: never) => void) | null = null;
-    const fetchAll = {
-      getState: vi.fn(async () => idle),
-      start: vi.fn(async () => ({ ...idle, jobId: "job-1", state: "running", total: 3 })),
-      pause: vi.fn(async () => idle),
-      resume: vi.fn(async () => idle),
-      cancel: vi.fn(async () => idle),
-      retryFailed: vi.fn(async () => idle),
-      stats: vi.fn(async () => ({ totalTracks: 3, withLyrics: 1, needsSearch: 2, fullyProcessed: 1 })),
-      promote: vi.fn(async () => undefined),
-      onProgress: vi.fn((listener: (snapshot: unknown) => void) => {
-        progressListener = listener;
-        return () => undefined;
-      }),
-    };
-    vi.stubGlobal("window", { cadence: { lyrics: { fetchAll } } });
-
-    const { useFetchAll } = await import("../../src/renderer/state/fetchAllStore");
-    useFetchAll.getState().init();
-    await new Promise(resolve => setTimeout(resolve, 10));
-    expect(fetchAll.start).not.toHaveBeenCalled();
-    expect(useFetchAll.getState().snapshot.state).toBe("idle");
-
-    // The onboarding button's action: kicks the job off and resolves immediately with the
-    // running snapshot — the caller advances without waiting for any fetching to finish.
-    await useFetchAll.getState().start();
-    expect(fetchAll.start).toHaveBeenCalledTimes(1);
-    expect(useFetchAll.getState().snapshot).toMatchObject({ state: "running", total: 3 });
-
-    // Progress snapshots from the bridge are mirrored verbatim (top bar reads this state).
-    (progressListener as ((snapshot: unknown) => void) | null)?.({
-      ...idle,
-      jobId: "job-1",
-      state: "running",
-      total: 3,
-      processed: 2,
-      found: 2,
-    });
-    expect(useFetchAll.getState().snapshot).toMatchObject({ processed: 2, found: 2 });
-
-    await useFetchAll.getState().refreshStats();
-    expect(useFetchAll.getState().stats).toEqual({ totalTracks: 3, withLyrics: 1, needsSearch: 2, fullyProcessed: 1 });
   });
 });

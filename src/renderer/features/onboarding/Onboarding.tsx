@@ -1,18 +1,16 @@
 /**
- * First-launch onboarding: Welcome → Music Library Setup → ✨ Fetch All Lyrics ✨ →
- * Preferences → Ready. Optional steps can be skipped, progress is persisted in settings, and
- * starting Fetch All advances immediately while the background job continues on its own.
+ * First-launch onboarding: Welcome → Music Library Setup → Preferences → Ready.
+ * Optional steps can be skipped and progress is persisted in settings.
  */
 
-import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, FolderPlus, Music2, Sparkles } from "lucide-react";
+import { useState } from "react";
+import { ArrowLeft, ArrowRight, Check, FolderPlus, Music2 } from "lucide-react";
 import type { LyricsFetchConcurrency } from "../../../shared/types";
 import { useLibrary } from "../../state/libraryStore";
 import { ONBOARDING_STEPS, useOnboarding } from "../../state/onboardingStore";
-import { useFetchAll } from "../../state/fetchAllStore";
 import { useSettings } from "../../state/settingsStore";
 
-const STEP_TITLES = ["Welcome", "Music Library Setup", "✨ Fetch All Lyrics ✨", "Preferences", "Ready"] as const;
+const STEP_TITLES = ["Welcome", "Music Library Setup", "Preferences", "Ready"] as const;
 
 export function Onboarding() {
   const visible = useOnboarding(state => state.visible);
@@ -27,12 +25,6 @@ export function Onboarding() {
   const scanning = useLibrary(state => state.scanning);
   const addFolder = useLibrary(state => state.addFolder);
 
-  const stats = useFetchAll(state => state.stats);
-  const jobState = useFetchAll(state => state.snapshot.state);
-  const initFetchAll = useFetchAll(state => state.init);
-  const refreshStats = useFetchAll(state => state.refreshStats);
-  const startFetchAll = useFetchAll(state => state.start);
-
   // Direction of the last step change, so pages slide in from the side the
   // user is travelling towards. Adjusted during render (React's recommended
   // pattern for deriving state from a changed value) so the entering page
@@ -44,25 +36,12 @@ export function Onboarding() {
     setDirection(step > lastStep ? "forward" : "back");
   }
 
-  useEffect(() => {
-    if (!visible) return;
-    initFetchAll();
-    if (ONBOARDING_STEPS[step] === "fetch-all") void refreshStats();
-  }, [visible, step, initFetchAll, refreshStats]);
-
   if (!visible) return null;
 
   const stepName = ONBOARDING_STEPS[step];
   const trackCount = snapshot?.counts.tracks ?? 0;
   const folderCount = snapshot?.folders.length ?? 0;
   const lyrics = settings?.lyrics;
-
-  const startFetchAndContinue = () => {
-    // Explicit user action only: start the persistent background job, then advance at once —
-    // onboarding never waits for fetching to finish.
-    void startFetchAll();
-    next();
-  };
 
   return (
     <div className="onboarding-overlay" data-testid="onboarding" role="dialog" aria-label="Cadence setup">
@@ -101,57 +80,6 @@ export function Onboarding() {
             <button type="button" className="primary" onClick={() => void addFolder()} disabled={scanning}>
               <FolderPlus size={16} /> Add music folder
             </button>
-          </section>
-        ) : null}
-
-        {stepName === "fetch-all" ? (
-          <section className="onboarding-page" data-testid="onboarding-fetch-all">
-            <Sparkles size={40} className="onboarding-icon" />
-            <h2>✨ FETCH ALL LYRICS ✨</h2>
-            <p>
-              Cadence can search for lyrics across your entire music library now, in the
-              background — recently played songs first. Everything found is cached per provider,
-              so lyrics are simply there when a song plays. You can keep using Cadence while it
-              works, and pause or cancel any time from the sidebar.
-            </p>
-            {stats ? (
-              <dl className="onboarding-stats" data-testid="onboarding-fetch-stats">
-                <div>
-                  <dt>Total tracks</dt>
-                  <dd>{stats.totalTracks}</dd>
-                </div>
-                <div>
-                  <dt>Already have lyrics</dt>
-                  <dd>{stats.withLyrics}</dd>
-                </div>
-                <div>
-                  <dt>To search</dt>
-                  <dd>{stats.needsSearch}</dd>
-                </div>
-                <div>
-                  <dt>Fully processed</dt>
-                  <dd>{stats.fullyProcessed}</dd>
-                </div>
-              </dl>
-            ) : (
-              <p className="onboarding-stat">Checking your library…</p>
-            )}
-            <div className="onboarding-actions-inline">
-              <button
-                type="button"
-                className="primary"
-                data-testid="onboarding-fetch-all-start"
-                onClick={startFetchAndContinue}
-              >
-                <Sparkles size={16} /> Fetch All Lyrics
-              </button>
-              <button type="button" data-testid="onboarding-fetch-all-skip" onClick={next}>
-                Skip for now
-              </button>
-            </div>
-            {jobState === "running" || jobState === "paused" ? (
-              <p className="onboarding-stat">Fetching has started — progress appears in the sidebar.</p>
-            ) : null}
           </section>
         ) : null}
 
@@ -226,11 +154,7 @@ export function Onboarding() {
               {trackCount > 0
                 ? `Your ${trackCount} tracks are ready. `
                 : "You can add music any time from the sidebar. "}
-              Lyrics fetch automatically as songs play
-              {jobState === "running" || jobState === "paused"
-                ? ", and Fetch All keeps working in the background"
-                : ""}
-              . Enjoy!
+              Lyrics fetch automatically as songs play. Enjoy!
             </p>
           </section>
         ) : null}
@@ -250,7 +174,7 @@ export function Onboarding() {
               <button type="button" className="primary" data-testid="onboarding-finish" onClick={finish}>
                 Start listening
               </button>
-            ) : stepName === "fetch-all" ? null : (
+            ) : (
               <button type="button" className="primary" data-testid="onboarding-next" onClick={next}>
                 {stepName === "library" && folderCount === 0 ? "Skip for now" : "Next"}{" "}
                 <ArrowRight size={15} />

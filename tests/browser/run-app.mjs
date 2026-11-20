@@ -261,7 +261,7 @@ await page.evaluateOnNewDocument(
         performanceMode: "balanced",
       },
       advanced: { showLogs: false },
-      general: { onboardingCompleted: true, onboardingStep: 4 },
+      general: { onboardingCompleted: true, onboardingStep: 3 },
       scrobbling: { enabled: false, apiKey: "", apiSecret: "", sessionKey: "", username: "" },
     };
     const loadSettings = () => {

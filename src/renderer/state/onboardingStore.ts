@@ -11,7 +11,7 @@
 import { create } from "zustand";
 import { useSettings } from "./settingsStore";
 
-export const ONBOARDING_STEPS = ["welcome", "library", "fetch-all", "preferences", "ready"] as const;
+export const ONBOARDING_STEPS = ["welcome", "library", "preferences", "ready"] as const;
 export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
 
 /** Pure auto-show decision, kept separate so it can be unit-tested without the stores. */

@@ -30,7 +30,6 @@ import { invalidateLyricsResolution } from "../lyrics/useLyrics";
 import { LastFmSettings } from "./LastFmSettings";
 import { LyricsCachePanel } from "./LyricsCachePanel";
 import { ArtistImagesSettings } from "./ArtistImagesSettings";
-import { FetchAllSettings } from "../lyrics-fetch/FetchAllSettings";
 import { NowPlayingAppearance } from "./NowPlayingAppearance";
 import { useOnboarding } from "../../state/onboardingStore";
 import { createRefreshSeed, localDayKey } from "../library/homeSelection";
@@ -274,7 +273,7 @@ export function SettingsView() {
             <div className="setting-row">
               <span>
                 <strong>Replay Onboarding</strong>
-                <em>Run the first-launch setup again (library, ✨ Fetch All Lyrics ✨, preferences).</em>
+                <em>Run the first-launch setup again (library, preferences, ready).</em>
               </span>
               <button
                 type="button"
@@ -368,7 +367,6 @@ export function SettingsView() {
               checked={settings.lyrics.autoFetch}
               onChange={value => patchLyrics({ autoFetch: value })}
             />
-            <FetchAllSettings />
             <Range
               label="Not Found cooldown"
               hint="Days before a track no provider had lyrics for is searched again automatically. Manual retries in Now Playing always search immediately."
@@ -383,8 +381,8 @@ export function SettingsView() {
               <span>
                 <strong>Lyrics Fetch Concurrency</strong>
                 <em>
-                  One global limit for provider requests across Autofetch, Fetch All and manual
-                  search. Lower is gentler on slow connections and low-memory systems.
+                  One global limit for provider requests across Autofetch and manual search.
+                  Lower is gentler on slow connections and low-memory systems.
                 </em>
               </span>
               <select

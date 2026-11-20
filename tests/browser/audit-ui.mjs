@@ -795,50 +795,6 @@ await runSection("sidebar-disclosures-complete", async () => {
   await nav("Home");
 });
 
-await runSection("sidebar-fetch-all-completes", async () => {
-  await page.evaluate(() => {
-    const build = state => ({ jobId: "sidebar-audit", state, total: 10, processed: 5, found: 3, notFound: 1, failed: 1, skipped: 0,
-      currentTrack: { id: 3, title: "Fixture MP3", artist: "Harness Artist" }, startedAt: Date.now(), finishedAt: null });
-    window.cadence.lyrics.fetchAll = {
-      stats: async () => ({ totalTracks: 10, withLyrics: 3, needsSearch: 7, fullyProcessed: 5 }),
-      // Autofetch calls this during playback, including when provider priority changes.
-      promote: async () => undefined,
-    };
-    for (const [action, state] of Object.entries({ start: "running", pause: "paused", resume: "running", retryFailed: "running", cancel: "canceled" })) {
-      window.cadence.lyrics.fetchAll[action] = async () => {
-        window.__audit.state.calls.push([`fetch-${action}`]);
-        return build(state);
-      };
-    }
-  });
-  await page.setViewport({ width: 1040, height: 680 });
-  await nav("Settings"); await settingsTab("Lyrics");
-  await page.click('[data-testid="fetch-all-start"]');
-  await page.waitForSelector('.sidebar-tools [data-testid="fetch-all-indicator"][data-state="running"]');
-  await nav("Home");
-  await page.click('[data-testid="fetch-all-indicator"]');
-  await page.waitForSelector('.fetch-panel:not([inert])'); await wait(210);
-  const bounds = await page.$eval(".fetch-panel", node => {
-    const { left, right, top, bottom } = node.getBoundingClientRect();
-    return { left, right, top, bottom, room: left >= 0 && right <= innerWidth && top >= 0 && bottom < innerHeight };
-  });
-  check("sidebar-fetch-all-popover-not-clipped", bounds.room && Boolean(await page.$('[data-testid="fetch-count-found"]')), JSON.stringify(bounds));
-  await page.keyboard.press("Escape");
-  await page.waitForSelector('[data-testid="fetch-all-panel"]', { hidden: true });
-  check("sidebar-fetch-all-keyboard-focus-returns", await page.evaluate(() => document.activeElement?.matches('[data-testid="fetch-all-indicator"]')));
-  await page.keyboard.press("Enter");
-  await page.waitForSelector('.fetch-panel:not([inert])');
-  await clickText(".fetch-panel button", "Pause");
-  await clickText(".fetch-panel button", "Resume");
-  await clickText(".fetch-panel button", "Pause");
-  await page.click('[data-testid="fetch-retry-failed"]');
-  await page.click('[data-testid="fetch-cancel"]');
-  await page.waitForSelector('[data-testid="fetch-all-panel"]', { hidden: true });
-  const actions = await page.evaluate(() => window.__audit.state.calls.filter(call => call[0].startsWith("fetch-")).map(call => call[0]));
-  check("sidebar-fetch-all-commands", actions.join(",") === "fetch-start,fetch-pause,fetch-resume,fetch-pause,fetch-retryFailed,fetch-cancel", actions.join(","));
-  await page.setViewport({ width: 1480, height: 900 });
-});
-
 await runSection("sidebar-new-playlist-completes", async () => {
   await nav("Playlists");
   await page.click('.sidebar button[aria-label="New playlist"]');

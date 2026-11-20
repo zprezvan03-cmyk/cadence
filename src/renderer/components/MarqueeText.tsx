@@ -56,7 +56,6 @@ const MARQUEE_HOST_SELECTOR = [
   ".player-track-meta",
   ".detail-hero",
   ".spotlight-feature",
-  ".fetch-panel",
   ".decode-row",
   ".duplicate-track-row",
   ".mini-player-main",

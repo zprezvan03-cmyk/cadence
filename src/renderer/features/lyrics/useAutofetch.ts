@@ -2,12 +2,10 @@
  * App-level Autofetch driver: starts a lyrics lookup the moment a track starts playing,
  * without waiting for the user to open Now Playing. It only *triggers* the shared
  * `ensureLyricsForTrack` pipeline (same store, same bridge resolve, same service-side request
- * coordination as the lyrics view and Fetch All) and promotes the track inside any running
- * Fetch All job. Mounted once in `App`.
+ * coordination as the lyrics view). Mounted once in `App`.
  */
 
 import { useEffect } from "react";
-import { bridge, hasBridge } from "../../state/bridge";
 import { useLibrary } from "../../state/libraryStore";
 import { currentTrackId, usePlayer } from "../../state/playerStore";
 import { useSettings } from "../../state/settingsStore";
@@ -34,11 +32,6 @@ export function useAutofetchLyrics(): void {
       if (key === lastKey) return;
       lastKey = key;
 
-      // If a Fetch All job is running, this track jumps the queue; if it is already being
-      // processed there, the service-level in-flight sharing makes this resolve reuse it.
-      if (hasBridge()) {
-        void bridge.lyrics.fetchAll?.promote(track.id).catch(() => undefined);
-      }
       void ensureLyricsForTrack(track, lyrics);
     };
 

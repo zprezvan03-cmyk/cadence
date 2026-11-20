@@ -212,7 +212,7 @@ function normalizeSettings(settings: AppSettings, rawProfiles: unknown = setting
   const step = Number(settings.general?.onboardingStep);
   settings.general = {
     onboardingCompleted: Boolean(settings.general?.onboardingCompleted),
-    onboardingStep: Number.isFinite(step) ? Math.min(4, Math.max(0, Math.round(step))) : 0,
+    onboardingStep: Number.isFinite(step) ? Math.min(3, Math.max(0, Math.round(step))) : 0,
   };
   settings.nowPlayingProfiles = normalizeNowPlayingProfilesSettings(rawProfiles);
   const artistImageSource: AnyRecord = isPlainObject(settings.artistImages) ? settings.artistImages : {};

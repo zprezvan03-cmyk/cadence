@@ -40,7 +40,7 @@ The extended audit covers sidebar destinations, playlist actions, playback setti
 
 Visual checks at **1440×900** and **1040×680** covered the sidebar disclosures, one-row Home shelves, Lyrics and About settings, both Now Playing modes, and both editor previews. They also checked that closing Now Playing reveals the same browse route and scroll position, and that Settings actions fit on one line at the minimum window size.
 
-During the Settings split, the audit reproduced two earlier provider-order failures. The Fetch All fixture lacked the `promote` bridge method called by Autofetch during playback, which aborted the first settings write. The fixture now supplies the method and the audit fails on unhandled renderer errors. Provider moves, removal and re-addition are also tested with a real settings file.
+During the Settings split, the audit reproduced two earlier provider-order failures around a stale bridge fixture. The audit now fails on unhandled renderer errors. Provider moves, removal and re-addition are also tested with a real settings file.
 
 See the [test commands in the README](../README.md#tests). After `npm run test:ui` builds the bundle and library fixtures, run `node tests/browser/audit-ui.mjs` for the extended interaction audit. Run `npm run test:cache:clear` for the disk-backed cache checks. The offline unit suite excludes `_matasaburo_full.test.ts`, which needs a private local fixture and live AI access.
 

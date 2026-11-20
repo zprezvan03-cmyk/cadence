@@ -807,7 +807,7 @@ a {
       grid-template-rows var(--dur-2) var(--ease-out),
       visibility 0s linear var(--dur-2);
   }
-  :is(.search-shortcut, .global-search .icon-button, .scan-indicator span, .nav-chevron, .fetch-indicator-count, .fetch-indicator-bar) { display: none; }
+  :is(.search-shortcut, .global-search .icon-button, .scan-indicator span, .nav-chevron) { display: none; }
   .sidebar-tools .history-buttons .icon-button { width: 50%; }
 }
 
