@@ -60,15 +60,24 @@ Tanggal: 2026-11-19 — 2026-11-20
 - Section General memakai styling `.settings-section` / `.heading-actions` / `.muted` yang sudah ada, tanpa CSS baru. Konten Appearance, Lyrics, Library, dan About tidak disentuh.
 - Assertion daftar tab di `tests/browser/run-app.mjs` diperbarui menjadi `Appearance, General, Lyrics, Library, Playback, Cache, About`. Assertion lama lainnya tetap utuh, termasuk posisi **Reset all** di About dan **Replay onboarding** di Appearance.
 
+## `6e9672d` — refactor: remove Fetch All Lyrics feature
+
+- Fitur **✨ FETCH ALL LYRICS ✨** dihapus penuh: engine job (`fetchAllCore.ts`), klaster duplikat (`recordingIdentity.ts`), store renderer, komponen Settings/Sidebar, dan suite test khusus tidak ada lagi. Tombol, panel progres, indikator sidebar, serta teks onboarding yang menyebutnya ikut hilang.
+- Bridge Tauri tidak lagi membuat/mengembalikan job, memanggil `restore()`/`flush()`, atau mengekspos `bridge.lyrics.fetchAll`; `BootstrapPayload`, `cmd_bootstrap`, dan `cmd_write_user_json` tidak lagi membawa `lyricsFetchJob`. File `lyrics-fetch-job.json` lama sengaja dibiarkan di disk tanpa migrasi.
+- `assessTrack`/`shareRecordingResult` dan tipe-tipe job dihapus, tetapi mekanisme yang dipakai bersama tetap ada: `ConcurrencyLimiter` + `providerRequests`, `shareInFlight`, coverage cache (`queriedModules`/`enabledKeys`), `notFoundCooldownDays`, provider order, history, dan `cmd_write_user_json` generik.
+- Autofetch tetap berjalan seperti biasa; hanya panggilan `promote()` ke job yang sudah tidak ada yang dicabut. Onboarding sekarang 4 langkah (Welcome → Library → Preferences → Ready), clamp step di `settingsCore.ts` jadi `3`, dan fixture/test browser mengikuti.
+- CSS khusus fitur (`.fetch-*`, `@keyframes count-in`, `.onboarding-stats`, `.onboarding-actions-inline`) dan selector `.fetch-panel` di `MarqueeText` dibersihkan. Dokumentasi arsitektur dipangkas menjadi catatan Autofetch + Onboarding.
+
 ## Verifikasi
 
 - `f3a4ce0`: `npm run build` lolos (CSS-only); sudah dicek visual di `npm run dev`.
 - `884a22d`: `npm run typecheck` dan `npm run build` lolos; sudah dicek visual di `npm run dev`.
 - `ddf785e`: `npm run typecheck` dan `npm run build` lolos; `tests/unit/homeSelection.test.ts` (5 test) dan 3 test normalisasi settings baru lolos.
 - `b5f54f8`: `npm run typecheck` dan `npm run build` lolos; `tests/unit/homeSelection.test.ts` + `tests/unit/settings.test.ts` (31 test) lolos.
+- `6e9672d`: `npm run typecheck`, `npm run build`, dan `cargo check --manifest-path src-tauri/Cargo.toml` lolos; 61 test targeted (`lyricsAutomationStores`, `settings`, `lyricsAutofetch`, `lyricsAudit`) lolos.
 - `npm run typecheck` lolos.
 - `npm run build` lolos.
-- `npm test`: 629/630 test lolos. Dua kegagalan yang sudah ada sebelum perubahan ini tetap ada (file DB terkunci di Windows saat cleanup `library.test.ts` dan threshold benchmark Smart Shuffle); `_matasaburo_full.test.ts` lolos pada run ini. Tidak ada kegagalan baru dari perubahan ini.
-- Audit browser (`npm run test:animation`) masih gagal sebelum eksekusi: `@sparticuz/chromium` mengembalikan path `...\AppData\Local\Temp\chromium` tanpa `.exe`, sehingga puppeteer gagal `spawn ... ENOENT` di Windows. Untuk `884a22d`, audit dijalankan lewat salinan sementara yang memakai Chrome lokal: keempat id `lyrics-mode-*` terdeteksi saat masuk maupun keluar mode. Salinan tersebut sudah dihapus; test asli tidak diubah.
+- `npm test`: 615/616 test lolos. Dua kegagalan yang sudah ada sebelum perubahan ini tetap ada (file DB terkunci di Windows saat cleanup `library.test.ts` dan threshold benchmark Smart Shuffle); `_matasaburo_full.test.ts` lolos pada run ini. Tidak ada kegagalan baru dari perubahan ini — total test turun dari 630 karena suite `lyricsFetchAll.test.ts` (14 test) ikut dihapus bersama fiturnya.
+- Audit browser (`npm run test:animation`, juga `npm run test:ui`) masih gagal sebelum eksekusi: `@sparticuz/chromium` mengembalikan path `...\AppData\Local\Temp\chromium` tanpa `.exe`, sehingga puppeteer gagal `spawn ... ENOENT` di Windows. Untuk `884a22d`, audit dijalankan lewat salinan sementara yang memakai Chrome lokal: keempat id `lyrics-mode-*` terdeteksi saat masuk maupun keluar mode. Salinan tersebut sudah dihapus; test asli tidak diubah.
 
 > Dua file schema yang sudah modified sebelum perubahan ini tidak masuk ke commit mana pun.
