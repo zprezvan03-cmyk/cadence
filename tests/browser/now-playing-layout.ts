@@ -655,7 +655,7 @@ const openProfileSwitcher = async () => {
   const trigger = '[data-testid="lyrics-tools-trigger"]';
   const expanded = await page.$eval(trigger, node => node.getAttribute("aria-expanded")).catch(() => null);
   if (expanded === "false") {
-    await page.click(trigger);
+    await page.hover(trigger);
     await page.waitForFunction(
       () => document.querySelector('[data-testid="lyrics-tools-trigger"]')?.getAttribute("aria-expanded") === "true"
     );

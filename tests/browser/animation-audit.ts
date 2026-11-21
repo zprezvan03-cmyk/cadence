@@ -1016,7 +1016,7 @@ check("fs-controls-return", controlsBack === "1", `opacity ${controlsBack}`);
 
 // Dock popovers share the presence language: pop-in on open, fast pop-out on close.
 // The dock is collapsed in the top-right tools row, so expand it before driving its trigger.
-await page.evaluate(() => document.querySelector<HTMLButtonElement>('[data-testid="lyrics-tools-trigger"]')?.click());
+await page.hover('[data-testid="lyrics-tools-trigger"]');
 await page.waitForSelector('button[title="Lyrics source"]');
 await page.evaluate(() => document.querySelector<HTMLButtonElement>('button[title="Lyrics source"]')?.click());
 await page.waitForSelector(".dock-popover.dock-sources", { timeout: 5000 });

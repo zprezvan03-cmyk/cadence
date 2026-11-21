@@ -296,22 +296,42 @@
 .fs-page-actions .fs-exit:hover { background: var(--surface-3); }
 .fs-mode-tabs button[aria-pressed="true"] { background: var(--surface-3); color: var(--text); }
 
-/* Lyrics tools: one row at the top-right. The trigger stays put while its dock slides out to the
-   left, so the whole control stays a single pill instead of opening a second popup surface. */
+/* Lyrics tools: the button itself is the surface. Collapsed it is the 38px icon pill; expanding it
+   widens that same pill to the left and reveals the controls inside it — no second bubble. */
 .lyrics-tools {
+  --dur-pill: 300ms;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex: none;
+  width: max-content;
   min-width: 0;
+  height: 38px;
+  max-width: calc(100vw - 240px);
+  border: 1px solid rgba(255, 255, 255, 0.17);
+  border-radius: 999px;
+  background: rgba(20, 20, 23, 0.8);
+  overflow: hidden;
+}
+
+/* Keep clipping on while the pill grows/shrinks: content is revealed from behind the trigger
+   instead of sliding across it. Only an open popover needs the surface to let content escape. */
+.lyrics-tools.has-popover,
+.lyrics-tools.has-popover .lyrics-tools-dock-inner {
+  overflow: visible;
+}
+
+.lyrics-tools:hover {
+  background: rgba(32, 32, 36, 0.92);
 }
 
 .lyrics-tools-trigger {
   flex: none;
   width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.17);
-  background: rgba(20, 20, 23, 0.8);
+  height: 36px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
   color: rgba(255, 255, 255, 0.78);
   display: grid;
   place-items: center;
@@ -319,47 +339,54 @@
 
 .lyrics-tools-trigger:hover,
 .lyrics-tools-trigger.active {
-  background: var(--surface-3);
+  background: rgba(255, 255, 255, 0.1);
   color: #fff;
 }
 
+/* A 0fr → 1fr grid track is the only CSS length that interpolates all the way to an intrinsic
+   max-content width. Animating `width` to `max-content` just snaps in Chromium, which made the pill
+   appear instantly despite the transition. */
 .lyrics-tools-dock {
-  height: 38px;
-  max-width: 0;
+  flex: none;
+  display: grid;
+  grid-template-columns: 0fr;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  overflow: hidden;
-  transform: translateX(14px);
   transition:
-    max-width var(--dur-2) var(--ease-out),
-    opacity var(--dur-2) var(--ease-out),
-    transform var(--dur-2) var(--ease-out),
-    visibility var(--dur-2) var(--ease-out);
+    grid-template-columns var(--dur-pill) var(--ease-out),
+    opacity var(--dur-pill) var(--ease-out),
+    visibility var(--dur-pill) var(--ease-out);
 }
 
 .lyrics-tools.is-open .lyrics-tools-dock {
-  max-width: min(600px, calc(100vw - 300px));
+  grid-template-columns: 1fr;
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
-  overflow: visible;
-  transform: translateX(0);
 }
 
-/* The dock keeps its own pill, exactly as tall as the trigger, with every button inside it. */
+.lyrics-tools-dock-inner {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.lyrics-tools.is-open .lyrics-tools-dock-inner {
+  margin-right: 8px;
+}
+
+/* The dock is now just the controls inside the expanded button, with no surface of its own. */
 .lyrics-view.is-fullscreen .lyrics-tools-dock .lyrics-dock {
-  box-sizing: border-box;
   width: max-content;
-  height: 38px;
+  height: 36px;
   max-width: none;
   flex-wrap: nowrap;
   margin: 0;
-  padding: 0 8px;
+  padding: 0;
   gap: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.17);
-  border-radius: 999px;
-  background: rgba(20, 20, 23, 0.8);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
@@ -367,6 +394,11 @@
 .lyrics-view.is-fullscreen .lyrics-tools-dock .lyrics-dock .dock-group {
   gap: 4px;
   padding-left: 4px;
+}
+
+/* Extra breathing room on the left end only, right before the status label. */
+.lyrics-view.is-fullscreen .lyrics-tools-dock .lyrics-dock .dock-status {
+  padding-left: 20px;
 }
 
 /* Its popovers rise above a bottom bar; from the top row they must fall below it. */

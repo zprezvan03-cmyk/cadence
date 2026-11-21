@@ -60,7 +60,10 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
   const [syncLabel, setSyncLabel] = useState("No lyrics");
   const [dockPopoverOpen, setDockPopoverOpen] = useState(false);
   // The lyrics tools live in one expandable row at the top-right in fullscreen; the trigger stays put.
+  // Hover expands it; an open dock popover keeps it expanded while the pointer is elsewhere.
   const [dockExpanded, setDockExpanded] = useState(false);
+  const [toolsFocused, setToolsFocused] = useState(false);
+  const collapseTimer = useRef<number | null>(null);
   const queueOpen = useUi(state => state.queueOpen);
   const isRemote = Boolean(item && item.source.kind !== "local");
   const itemIdentity = item ? trackSourceKey(item.source) : null;
@@ -73,10 +76,39 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
   const panelMode = fullscreen && !showLyricsSetting;
   const controlsVisible = useControlsHover(footerPresent, dockPopoverOpen || queueOpen || Boolean(preview), footerRef);
   const toolsInHeader = fullscreen && !preview && !panelMode && Boolean(item && track);
+  const toolsOpen = dockExpanded || dockPopoverOpen || toolsFocused;
+
+  // A short grace period lets the pointer cross the gap between the pill and a dock popover — both are
+  // descendants of the tools surface, so entering the popover cancels the pending collapse.
+  const cancelToolsCollapse = () => {
+    if (collapseTimer.current !== null) {
+      window.clearTimeout(collapseTimer.current);
+      collapseTimer.current = null;
+    }
+  };
+  const expandTools = () => {
+    cancelToolsCollapse();
+    setDockExpanded(true);
+  };
+  const collapseTools = () => {
+    cancelToolsCollapse();
+    collapseTimer.current = window.setTimeout(() => {
+      collapseTimer.current = null;
+      setDockExpanded(false);
+    }, 180);
+  };
 
   useEffect(() => {
-    if (!toolsInHeader) setDockExpanded(false);
+    if (!toolsInHeader) {
+      cancelToolsCollapse();
+      setDockExpanded(false);
+      setToolsFocused(false);
+    }
   }, [toolsInHeader]);
+
+  useEffect(() => () => {
+    if (collapseTimer.current !== null) window.clearTimeout(collapseTimer.current);
+  }, []);
 
   // Fullscreen only: the controls overlay the bottom of the lyrics body instead of taking space from it.
   // The footer's measured height is published to the view as --fs-footer-height, so the body keeps its
@@ -415,18 +447,33 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
         {fullscreen && !preview ? (
           <div className="fs-page-actions">
             {toolsInHeader ? (
-              <div className={`lyrics-tools ${dockExpanded ? "is-open" : ""}`}>
-                <div id="lyrics-tools-dock" className="lyrics-tools-dock" inert={!dockExpanded}>
-                  {lyricsDock}
+              <div
+                className={`lyrics-tools ${toolsOpen ? "is-open" : ""} ${dockPopoverOpen ? "has-popover" : ""}`}
+                onPointerEnter={expandTools}
+                onPointerLeave={collapseTools}
+                onFocusCapture={event => {
+                  // Mouse clicks inside the pill must not pin it open after the pointer leaves; only
+                  // keyboard focus (Tab) should keep the controls reachable without a hover.
+                  setToolsFocused(event.target instanceof Element && event.target.matches(":focus-visible"));
+                  expandTools();
+                }}
+                onBlurCapture={event => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    setToolsFocused(false);
+                    collapseTools();
+                  }
+                }}
+              >
+                <div id="lyrics-tools-dock" className="lyrics-tools-dock" inert={!toolsOpen}>
+                  <div className="lyrics-tools-dock-inner">{lyricsDock}</div>
                 </div>
                 <button
                   type="button"
-                  className={`icon-button lyrics-tools-trigger ${dockExpanded ? "active" : ""}`}
+                  className={`icon-button lyrics-tools-trigger ${toolsOpen ? "active" : ""}`}
                   aria-label="Lyrics tools"
-                  aria-expanded={dockExpanded}
+                  aria-expanded={toolsOpen}
                   aria-controls="lyrics-tools-dock"
                   title="Lyrics tools"
-                  onClick={() => setDockExpanded(open => !open)}
                   data-testid="lyrics-tools-trigger"
                 >
                   <SlidersHorizontal size={18} />
