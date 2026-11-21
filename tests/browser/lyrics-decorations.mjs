@@ -587,7 +587,8 @@ try {
 
   // Choosing a second file must decorate it too (fresh parse, not a skipped cached id).
   await page.evaluate(ttml => window.__cadenceHarness.configureLyrics({ chosenFile: ttml }), TTML_SECOND_FILE);
-  await clickTitle("Open a lyrics file");
+  await clickTitle("Choose file");
+  await clickPopoverRow(".dock-choose-popover", "Lyrics file");
   await wait(700);
   current = await dom();
   check(
@@ -596,7 +597,8 @@ try {
     `translated=${JSON.stringify(current.translated)}`
   );
   await page.evaluate(ttml => window.__cadenceHarness.configureLyrics({ chosenFile: ttml }), TTML_FULL);
-  await clickTitle("Open a lyrics file");
+  await clickTitle("Choose file");
+  await clickPopoverRow(".dock-choose-popover", "Lyrics file");
   await wait(700);
   current = await dom();
   check(
@@ -671,10 +673,12 @@ try {
   // A file that needs generated text must be decorated even when the previous chosen file was
   // fully embedded: the "already decorated" guard is keyed on the parse, not shared by every file.
   await page.evaluate(ttml => window.__cadenceHarness.configureLyrics({ chosenFile: ttml }), TTML_SECOND_FILE);
-  await clickTitle("Open a lyrics file");
+  await clickTitle("Choose file");
+  await clickPopoverRow(".dock-choose-popover", "Lyrics file");
   await wait(600);
   await page.evaluate(ttml => window.__cadenceHarness.configureLyrics({ chosenFile: ttml }), TTML_PARTIAL);
-  await clickTitle("Open a lyrics file");
+  await clickTitle("Choose file");
+  await clickPopoverRow(".dock-choose-popover", "Lyrics file");
   await wait(800);
   current = await dom();
   pipeline = await state();

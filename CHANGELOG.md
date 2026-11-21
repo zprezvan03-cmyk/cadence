@@ -11,12 +11,17 @@ Tanggal: 2026-11-19 — 2026-11-21
 - Toggle ada di dock fullscreen (tombol clapperboard) dan di Settings, memakai satu setting yang sama. File rusak/auto-detect gagal fallback ke background lama dengan satu toast per lagu.
 - Verifikasi: `npm run typecheck`, `npm run build`, `cargo check` lolos. `npm test` 622 lolos dengan dua failure baseline (benchmark `smartShuffleBenchmark` dan lock `library.test.ts`). Harness browser `tests/browser/mv-background.ts` sudah ditambahkan tapi belum bisa dijalankan karena binary Chromium tidak tersedia (`spawn ...\chromium ENOENT`).
 
-## Belum di-commit — feat(ui): dropdown pilih file di lyrics dock
+## `4889d60` — feat(ui): dropdown pilih file di lyrics dock (early development)
 
-- Tombol `Open a lyrics file` kini jadi split button: klik ikon folder tetap langsung memilih file lyrics (perilaku lama dipertahankan), sementara chevron di sampingnya membuka dropdown berisi **Lyrics file** dan **Music video**.
+- Tombol pilih file di dock kini membuka dropdown berisi **Lyrics file** dan **Music video**, mengikuti pola popover tombol Save (satu tombol berisi ikon folder + chevron).
 - Opsi **Music video** memanggil picker MV, menyimpan binding `local:<id>`, mengaktifkan background MV, lalu menampilkan toast. User tidak perlu membuka Settings hanya untuk mengganti/attach MV.
 - Dropdown mengikuti pola popover dock yang ada: tertutup saat klik di luar, ikut expanded state toolbar fullscreen, dan tidak menimpa tombol Save.
-- Harness `tests/browser/mv-background.ts` mendapat asersi untuk menu dua opsi, binding dari dock, dan keberadaan tombol lyrics lama. `npm run typecheck` dan `npm run build` lolos.
+- Harness `tests/browser/mv-background.ts` mendapat asersi untuk menu dua opsi dan binding dari dock. `npm run typecheck` dan `npm run build` lolos.
+
+## Belum di-commit — unify tombol pilih file di lyrics dock
+
+- Split button (folder + chevron terpisah) disatukan jadi satu tombol, supaya tidak ada dua kontrol berdampingan. Klik tombol membuka dropdown dua opsi seperti tombol Save.
+- Test browser yang memakai `Open a lyrics file` kini masuk lewat dropdown (`Choose file` → **Lyrics file**). `npm run typecheck` dan `npm run build` lolos.
 
 ## `b271dc7` — fix(ui): match fullscreen header buttons to glass material
 

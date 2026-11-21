@@ -1299,10 +1299,14 @@ await runSection("expanded-lyrics-completes", async () => {
   await clickText(".dock-save-popover .source-row", "LRC", false);
   check("lyrics-save-sidecar", await page.evaluate(() => window.__audit.state.calls.some(call => call[0] === "save-sidecar" && String(call[2]).includes("Alternate"))), "selected text saved");
   await page.evaluate(() => { window.__audit.state.chooseLyricsResult = { canceled: true }; });
-  await page.click('button[title="Open a lyrics file"]'); await wait(100);
+  await page.click('button[title="Choose file"]');
+  await page.waitForSelector(".dock-choose-popover .source-row");
+  await clickText(".dock-choose-popover .source-row", "Lyrics file", false); await wait(100);
   check("lyrics-file-cancel", (await page.$eval(".lyrics-body", node => node.textContent)).includes("Alternate first line"), "cancel leaves lyrics unchanged");
   await page.evaluate(() => { window.__audit.state.chooseLyricsResult = { canceled: false, path: "/chosen.lrc", text: "[au:Audit Writer]\n[00:00.30]Chosen file line\n[00:01.60]Chosen second line" }; });
-  await page.click('button[title="Open a lyrics file"]'); await wait(180);
+  await page.click('button[title="Choose file"]');
+  await page.waitForSelector(".dock-choose-popover .source-row");
+  await clickText(".dock-choose-popover .source-row", "Lyrics file", false); await wait(180);
   check("lyrics-file-open", (await page.$eval(".lyrics-body", node => node.textContent)).includes("Chosen file line"), "chosen file rendered");
 
   // The dock Style popover was removed; its sliders/toggles are audited via Settings below.

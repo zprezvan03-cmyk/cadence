@@ -1246,14 +1246,6 @@ braccato-lyrics[data-upgrading="true"] {
   align-items: center;
 }
 
-.dock-choose-wrap {
-  gap: 2px;
-}
-
-.lyrics-dock .dock-choose-toggle {
-  width: calc(var(--dock-control-size) * 0.7);
-}
-
 .dock-choose-popover .source-row strong {
   display: flex;
   align-items: center;

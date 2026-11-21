@@ -397,19 +397,16 @@ export function LyricsDock({
         {localFileActions ? (
           <>
             <div ref={setAnchor("choose")} className="dock-choose-wrap">
-              <button type="button" className="dock-icon" onClick={onChooseFile} title="Open a lyrics file">
-                <FolderOpen size={16} />
-              </button>
               <button
                 type="button"
-                className="dock-icon dock-choose-toggle"
+                className="dock-button dock-button--icon"
                 onClick={toggleChoose}
                 title="Choose file"
                 aria-label="Choose file"
                 aria-expanded={chooseOpen}
                 data-testid="dock-file-menu-button"
               >
-                <ChevronDown size={14} />
+                <FolderOpen size={16} /> <ChevronDown size={13} />
               </button>
               {chooseOpen ? (
                 <div ref={setPopover("choose")} className="dock-popover dock-choose-popover" data-testid="dock-file-menu">

@@ -180,10 +180,10 @@ try {
   });
   check("mv-recorder-produced-clip", videoUrl.startsWith("blob:"));
 
-  const directLyricsButton = await page.evaluate(() =>
-    Boolean(document.querySelector('button[title="Open a lyrics file"]'))
+  const fileButtonCount = await page.evaluate(() =>
+    document.querySelectorAll(".dock-choose-wrap > button").length
   );
-  check("mv-dock-file-menu-keeps-direct-lyrics-button", directLyricsButton);
+  check("mv-dock-file-menu-is-single-button", fileButtonCount === 1, String(fileButtonCount));
 
   await page.evaluate(url => window.__cadenceHarness!.setMvFile(url), videoUrl);
   await page.evaluate(() => document.querySelector<HTMLElement>('[data-testid="dock-file-menu-button"]')?.click());
