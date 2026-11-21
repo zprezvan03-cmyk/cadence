@@ -3,6 +3,17 @@
 Branch: `feat/ui` (dibuat dari `main` @ `1615d5b`)
 Tanggal: 2026-11-19 — 2026-11-21
 
+## `b271dc7` — fix(ui): match fullscreen header buttons to glass material
+
+- Tombol di baris atas fullscreen (`.fs-mode-tabs`, `.fs-exit`, dan pill `.lyrics-tools`) sekarang memakai material glass yang sama dengan footer dan popover: `color-mix(in srgb, var(--bg-elevated) 58%, transparent)`, `backdrop-filter: blur(18px) saturate(1.3)`, border `var(--border)`, dan `box-shadow: var(--shadow-lg)`.
+- State hover (`78%`) dan tab terpilih (`82%`) juga ikut glass, tidak lagi memakai `var(--surface-3)` yang solid.
+- Playbar jendela utama (`.player-bar`) sengaja **tidak** diubah: masih solid `var(--chrome-surface)` dengan `border-top`, jadi glass ini khusus permukaan melayang di fullscreen.
+- Verifikasi: `npm run build` lolos. Computed style background, border, dan shadow ketiga tombol identik dengan popover/footer. `backdropFilter` terbaca `none` di browser headless, tapi popover dan footer lama juga begitu — keterbatasan environment render, bukan CSS.
+
+## `936348e` — Removed that one Linux artifact
+
+- Menghapus artifact build `Cadence-7-linux.zip` (~95 MB) dari repository.
+
 ## `1f43597` — fix(ui): refine lyrics tools hover expansion and animation
 
 - Toolbar lyrics Now Playing sekarang **expand saat hover**, bukan klik: trigger tetap di posisinya dan kontrol muncul di dalam pill yang sama. Klik pada trigger tidak lagi dipakai untuk toggle.
