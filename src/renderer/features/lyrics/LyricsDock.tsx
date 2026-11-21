@@ -14,6 +14,7 @@ import {
   Clapperboard,
   Clock,
   Download,
+  FileText,
   FolderOpen,
   Languages,
   ListMusic,
@@ -50,6 +51,7 @@ interface LyricsDockProps {
   onRegenerateRomanization: () => void;
   onSaveSidecar: (format?: "ttml" | "lrc") => void;
   onChooseFile: () => void;
+  onChooseMvFile: () => void;
   /** Remote queue items have no local file/sidecar; all other dock controls still apply. */
   localFileActions?: boolean;
   mvEnabled: boolean;
@@ -99,6 +101,7 @@ export function LyricsDock({
   onRegenerateRomanization,
   onSaveSidecar,
   onChooseFile,
+  onChooseMvFile,
   localFileActions = true,
   mvEnabled,
   onToggleMv,
@@ -120,6 +123,7 @@ export function LyricsDock({
   const [languageOpen, setLanguageOpen] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
   const [regenerateOpen, setRegenerateOpen] = useState(false);
+  const [chooseOpen, setChooseOpen] = useState(false);
   const dockRef = useRef<HTMLDivElement>(null);
   const anchorsRef = useRef<Record<string, HTMLElement | null>>({});
   const popoversRef = useRef<Record<string, HTMLElement | null>>({});
@@ -145,6 +149,7 @@ export function LyricsDock({
     setLanguageOpen(false);
     setSaveOpen(false);
     setRegenerateOpen(false);
+    setChooseOpen(false);
   };
   const togglePanel = (next: Exclude<typeof panel, "none">) => {
     const opening = panel !== next;
@@ -166,21 +171,27 @@ export function LyricsDock({
     closePopovers();
     if (opening) setRegenerateOpen(true);
   };
+  const toggleChoose = () => {
+    const opening = !chooseOpen;
+    closePopovers();
+    if (opening) setChooseOpen(true);
+  };
 
   // A pointer press anywhere outside the dock dismisses its popovers. Clicks on the dock itself
   // stay here: its triggers and rows close or switch panels explicitly.
   useEffect(() => {
-    if (panel === "none" && !languageOpen && !saveOpen && !regenerateOpen) return;
+    if (panel === "none" && !languageOpen && !saveOpen && !regenerateOpen && !chooseOpen) return;
     const onPointerDown = (event: PointerEvent) => {
       if (event.target instanceof Node && dockRef.current?.contains(event.target)) return;
       setPanel("none");
       setLanguageOpen(false);
       setSaveOpen(false);
       setRegenerateOpen(false);
+      setChooseOpen(false);
     };
     document.addEventListener("pointerdown", onPointerDown, true);
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
-  }, [panel, languageOpen, saveOpen, regenerateOpen]);
+  }, [panel, languageOpen, saveOpen, regenerateOpen, chooseOpen]);
 
   // Each popover is a direct child of the dock, so pin its horizontal edge to the button that
   // opened it instead of letting every panel pile up at the dock's right edge. Presence-mounted
@@ -191,6 +202,7 @@ export function LyricsDock({
     if (languageOpen) openKeys.push("languages");
     if (saveOpen) openKeys.push("save");
     if (regenerateOpen) openKeys.push("regenerate");
+    if (chooseOpen) openKeys.push("choose");
     if (!openKeys.length) return;
     const place = () => {
       for (const key of openKeys) {
@@ -203,7 +215,7 @@ export function LyricsDock({
         const maxInset = Math.max(0, container.clientWidth);
         const anchorRect = anchor.getBoundingClientRect();
         const width = popover.getBoundingClientRect().width;
-        if (key === "save" || key === "regenerate") {
+        if (key === "save" || key === "regenerate" || key === "choose") {
           const right = Math.min(Math.max(0, box.right - anchorRect.right), Math.max(0, maxInset - width));
           popover.style.left = "auto";
           popover.style.right = `${right}px`;
@@ -217,11 +229,11 @@ export function LyricsDock({
     place();
     window.addEventListener("resize", place);
     return () => window.removeEventListener("resize", place);
-  }, [panel, languageOpen, saveOpen, regenerateOpen, sourcesPresence.mounted, searchPresence.mounted, profilesPresence.mounted, languagesPresence.mounted]);
+  }, [panel, languageOpen, saveOpen, regenerateOpen, chooseOpen, sourcesPresence.mounted, searchPresence.mounted, profilesPresence.mounted, languagesPresence.mounted]);
 
   useEffect(() => {
-    onPopoverChange?.(panel !== "none" || languageOpen || saveOpen || regenerateOpen);
-  }, [panel, languageOpen, saveOpen, regenerateOpen, onPopoverChange]);
+    onPopoverChange?.(panel !== "none" || languageOpen || saveOpen || regenerateOpen || chooseOpen);
+  }, [panel, languageOpen, saveOpen, regenerateOpen, chooseOpen, onPopoverChange]);
 
   // Debounce link pastes so typing a URL does not fire a lookup per keystroke. The lookup itself
   // is main-process and keyless; an empty field resets the resolved card immediately.
@@ -384,9 +396,42 @@ export function LyricsDock({
         </button>
         {localFileActions ? (
           <>
-            <button type="button" className="dock-icon" onClick={onChooseFile} title="Open a lyrics file">
-              <FolderOpen size={16} />
-            </button>
+            <div ref={setAnchor("choose")} className="dock-choose-wrap">
+              <button type="button" className="dock-icon" onClick={onChooseFile} title="Open a lyrics file">
+                <FolderOpen size={16} />
+              </button>
+              <button
+                type="button"
+                className="dock-icon dock-choose-toggle"
+                onClick={toggleChoose}
+                title="Choose file"
+                aria-label="Choose file"
+                aria-expanded={chooseOpen}
+                data-testid="dock-file-menu-button"
+              >
+                <ChevronDown size={14} />
+              </button>
+              {chooseOpen ? (
+                <div ref={setPopover("choose")} className="dock-popover dock-choose-popover" data-testid="dock-file-menu">
+                  <button
+                    type="button"
+                    className="source-row"
+                    data-testid="dock-choose-lyrics"
+                    onClick={() => { setChooseOpen(false); onChooseFile(); }}
+                  >
+                    <span><strong><FileText size={15} /> Lyrics file</strong><em>Load an .lrc, .ttml or .srt from disk</em></span>
+                  </button>
+                  <button
+                    type="button"
+                    className="source-row"
+                    data-testid="dock-choose-mv"
+                    onClick={() => { setChooseOpen(false); onChooseMvFile(); }}
+                  >
+                    <span><strong><Clapperboard size={15} /> Music video</strong><em>Attach a local video to this track</em></span>
+                  </button>
+                </div>
+              ) : null}
+            </div>
             <div ref={setAnchor("save")} className="dock-save-wrap">
               <button
                 type="button"

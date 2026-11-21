@@ -180,6 +180,35 @@ try {
   });
   check("mv-recorder-produced-clip", videoUrl.startsWith("blob:"));
 
+  const directLyricsButton = await page.evaluate(() =>
+    Boolean(document.querySelector('button[title="Open a lyrics file"]'))
+  );
+  check("mv-dock-file-menu-keeps-direct-lyrics-button", directLyricsButton);
+
+  await page.evaluate(url => window.__cadenceHarness!.setMvFile(url), videoUrl);
+  await page.evaluate(() => document.querySelector<HTMLElement>('[data-testid="dock-file-menu-button"]')?.click());
+  await page.waitForSelector('[data-testid="dock-file-menu"]', { timeout: 5000 });
+  const menu = await page.evaluate(() => ({
+    lyrics: Boolean(document.querySelector('[data-testid="dock-choose-lyrics"]')),
+    mv: Boolean(document.querySelector('[data-testid="dock-choose-mv"]')),
+  }));
+  check("mv-dock-file-menu-offers-lyrics-and-mv", menu.lyrics && menu.mv, JSON.stringify(menu));
+  await page.evaluate(() => document.querySelector<HTMLElement>('[data-testid="dock-choose-mv"]')?.click());
+  await wait(300);
+  const dockPick = await page.evaluate(async () => {
+    const settings = await window.cadence!.settings.get();
+    return {
+      enabled: settings.mvBackground.enabled,
+      binding: settings.mvBackground.bindings["local:1"],
+      layer: Boolean(document.querySelector(".np-mv-bg")),
+    };
+  });
+  check(
+    "mv-dock-file-menu-binds-video",
+    dockPick.enabled && dockPick.binding === videoUrl && dockPick.layer,
+    JSON.stringify({ ...dockPick, binding: dockPick.binding === videoUrl ? videoUrl : dockPick.binding })
+  );
+
   await page.evaluate(url => window.__cadenceHarness!.setMvFile(url), videoUrl);
   await page.evaluate(
     url => window.__cadenceHarness!.patchMvSettings({ bindings: { "local:1": url }, enabled: true }),

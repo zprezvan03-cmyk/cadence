@@ -299,6 +299,26 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
     window.setTimeout(() => setToast(null), 3200);
   }, []);
 
+  const handleChooseMvFile = useCallback(() => {
+    if (!itemIdentity) return;
+    void (async () => {
+      try {
+        const picked = await window.cadence.app.chooseMvFile(track?.id ?? 0);
+        if (picked.canceled || !picked.url) return;
+        await patchSettings({
+          mvBackground: {
+            enabled: true,
+            bindings: { ...(mvSettings?.bindings ?? {}), [itemIdentity]: picked.url },
+          },
+        });
+        mvErrorUrls.current.delete(picked.url);
+        flash("Music video set for this track");
+      } catch {
+        flash("Could not set the music video");
+      }
+    })();
+  }, [flash, itemIdentity, mvSettings?.bindings, patchSettings, track?.id]);
+
   // Stable identity so the dock's debounced YouTube lookup doesn't reset on unrelated re-renders.
   const handleResolveYouTube = useCallback(
     (url: string) => {
@@ -382,6 +402,7 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
       onRegenerateRomanization={lyrics.regenerateRomanization}
       onSaveSidecar={(format) => void handleSave(format)}
       onChooseFile={() => void lyrics.chooseFile()}
+      onChooseMvFile={handleChooseMvFile}
       mvEnabled={Boolean(mvSettings?.enabled)}
       onToggleMv={() => void patchSettings({ mvBackground: { enabled: !mvSettings?.enabled } })}
       trackDuration={track.duration ?? 0}

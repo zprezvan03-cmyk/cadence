@@ -3,13 +3,20 @@
 Branch: `feat/ui` (dibuat dari `main` @ `1615d5b`)
 Tanggal: 2026-11-19 — 2026-11-21
 
-## Belum di-commit — feat(ui): MV sebagai background fullscreen Now Playing
+## `0bdd36d` — feat(ui): MV sebagai background fullscreen Now Playing (early development)
 
 - Video lokal (`.mp4/.webm/.mov/.m4v`) kini bisa jadi background full-bleed di balik UI Now Playing. Decode memakai `<video>` bawaan Chromium, selalu mute, dan tidak menambah dependency. Audio tetap memakai engine yang ada.
 - Asosiasi video: sidecar otomatis `<base>-mv.*` didahulukan, lalu `<base>.*`, plus override manual per lagu lewat `trackSourceKey`. Sidecar video tidak lagi ikut terindeks sebagai lagu. MV aktif menggantikan background Kawarp/artwork (termasuk animated art), jadi hanya satu decoder video yang hidup.
 - Posisi video mengikuti clock audio: seek, pause/resume, perubahan tab, dan playback rate. Video lebih pendek dari lagu di-loop; video lebih panjang berhenti bareng audio. Scrim gelap bisa diatur lewat setting `mvBackground.scrimOpacity` (default `0.45`), tanpa blur pada video.
 - Toggle ada di dock fullscreen (tombol clapperboard) dan di Settings, memakai satu setting yang sama. File rusak/auto-detect gagal fallback ke background lama dengan satu toast per lagu.
 - Verifikasi: `npm run typecheck`, `npm run build`, `cargo check` lolos. `npm test` 622 lolos dengan dua failure baseline (benchmark `smartShuffleBenchmark` dan lock `library.test.ts`). Harness browser `tests/browser/mv-background.ts` sudah ditambahkan tapi belum bisa dijalankan karena binary Chromium tidak tersedia (`spawn ...\chromium ENOENT`).
+
+## Belum di-commit — feat(ui): dropdown pilih file di lyrics dock
+
+- Tombol `Open a lyrics file` kini jadi split button: klik ikon folder tetap langsung memilih file lyrics (perilaku lama dipertahankan), sementara chevron di sampingnya membuka dropdown berisi **Lyrics file** dan **Music video**.
+- Opsi **Music video** memanggil picker MV, menyimpan binding `local:<id>`, mengaktifkan background MV, lalu menampilkan toast. User tidak perlu membuka Settings hanya untuk mengganti/attach MV.
+- Dropdown mengikuti pola popover dock yang ada: tertutup saat klik di luar, ikut expanded state toolbar fullscreen, dan tidak menimpa tombol Save.
+- Harness `tests/browser/mv-background.ts` mendapat asersi untuk menu dua opsi, binding dari dock, dan keberadaan tombol lyrics lama. `npm run typecheck` dan `npm run build` lolos.
 
 ## `b271dc7` — fix(ui): match fullscreen header buttons to glass material
 

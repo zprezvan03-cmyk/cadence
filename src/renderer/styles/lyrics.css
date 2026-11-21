@@ -1240,8 +1240,24 @@ braccato-lyrics[data-upgrading="true"] {
 /* Keep the trigger + popover wrappers shrink-wrapped to their buttons now that the popover is
    anchored to the dock/footer rather than to the wrapper itself. */
 .dock-save-wrap,
-.dock-regenerate-wrap {
+.dock-regenerate-wrap,
+.dock-choose-wrap {
   display: inline-flex;
+  align-items: center;
+}
+
+.dock-choose-wrap {
+  gap: 2px;
+}
+
+.lyrics-dock .dock-choose-toggle {
+  width: calc(var(--dock-control-size) * 0.7);
+}
+
+.dock-choose-popover .source-row strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* Presence exit (see `app/usePresence.ts`): same fast pop-out as the context menu. */

@@ -365,10 +365,9 @@ export function SettingsView() {
                 <strong>MV for the current track</strong>
                 <em data-testid="settings-mv-status">{mvStatus}</em>
               </span>
-              <span className="heading-actions">
+              <span className="heading-actions setting-action">
                 <button
                   type="button"
-                  className="icon-button"
                   title="Choose MV file"
                   aria-label="Choose MV file"
                   data-testid="settings-choose-mv"
@@ -394,7 +393,6 @@ export function SettingsView() {
                 {mvBinding ? (
                   <button
                     type="button"
-                    className="icon-button"
                     title="Clear MV override"
                     aria-label="Clear MV override"
                     onClick={() => {
