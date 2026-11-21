@@ -672,6 +672,7 @@ describe("6, 7 & 8. Provider ordering, caching, Retry-After backoff, deduplicati
       bitrate: 900,
       artworkFile: null,
       animatedArtPath: null,
+      mvPath: null,
       accentColor: null,
       hasEmbeddedLyrics: false,
       hasSidecarLyrics: true,

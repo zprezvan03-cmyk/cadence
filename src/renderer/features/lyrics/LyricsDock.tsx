@@ -11,6 +11,7 @@ import {
   ArrowLeft,
   Check,
   ChevronDown,
+  Clapperboard,
   Clock,
   Download,
   FolderOpen,
@@ -51,6 +52,8 @@ interface LyricsDockProps {
   onChooseFile: () => void;
   /** Remote queue items have no local file/sidecar; all other dock controls still apply. */
   localFileActions?: boolean;
+  mvEnabled: boolean;
+  onToggleMv: () => void;
   syncLabel: string;
   busy: boolean;
   /** Playing track's duration, used for the effective-search preview and provider matching. */
@@ -97,6 +100,8 @@ export function LyricsDock({
   onSaveSidecar,
   onChooseFile,
   localFileActions = true,
+  mvEnabled,
+  onToggleMv,
   syncLabel,
   busy,
   trackDuration,
@@ -302,6 +307,17 @@ export function LyricsDock({
           aria-expanded={languageOpen}
         >
           <Languages size={17} />
+        </button>
+        <button
+          type="button"
+          className={`dock-button dock-button--icon ${mvEnabled ? "active" : ""}`}
+          onClick={onToggleMv}
+          title="Music video background"
+          aria-label="Music video background"
+          aria-pressed={mvEnabled}
+          data-testid="now-playing-mv-button"
+        >
+          <Clapperboard size={17} />
         </button>
         <button
           type="button"

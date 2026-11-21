@@ -67,6 +67,12 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
   const queueOpen = useUi(state => state.queueOpen);
   const isRemote = Boolean(item && item.source.kind !== "local");
   const itemIdentity = item ? trackSourceKey(item.source) : null;
+  const mvSettings = settings?.mvBackground;
+  const mvUrl =
+    Boolean(item) && mvSettings?.enabled
+      ? (itemIdentity && mvSettings.bindings[itemIdentity]) || (track?.mvUrl ?? null)
+      : null;
+  const mvErrorUrls = useRef(new Set<string>());
   const viewRef = useRef<HTMLDivElement | null>(null);
   const footerRef = useRef<HTMLDivElement | null>(null);
   // Lyrics On keeps the hover-only footer over the lyrics unless a popover or queue is open.
@@ -376,6 +382,8 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
       onRegenerateRomanization={lyrics.regenerateRomanization}
       onSaveSidecar={(format) => void handleSave(format)}
       onChooseFile={() => void lyrics.chooseFile()}
+      mvEnabled={Boolean(mvSettings?.enabled)}
+      onToggleMv={() => void patchSettings({ mvBackground: { enabled: !mvSettings?.enabled } })}
       trackDuration={track.duration ?? 0}
       searchDraft={lyrics.searchDraft}
       onDraftChange={lyrics.patchDraft}
@@ -433,6 +441,16 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
         density={profileConfig.effectDensity}
         accentColor={track?.accentColor ?? null}
         fallbackAccent={settings.appearance.accent}
+        mvUrl={mvUrl}
+        mvEnabled={Boolean(mvSettings?.enabled)}
+        mvScrimOpacity={mvSettings?.scrimOpacity ?? 0.45}
+        mvRate={settings.playback.playbackRate}
+        songDuration={item?.durationSeconds ?? track?.duration ?? 0}
+        onMvError={(url) => {
+          if (mvErrorUrls.current.has(url)) return;
+          mvErrorUrls.current.add(url);
+          flash("Music video unavailable — showing the regular background.");
+        }}
       />
 
       {showSide ? (

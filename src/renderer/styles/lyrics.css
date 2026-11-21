@@ -1797,6 +1797,29 @@ braccato-lyrics[data-upgrading="true"] {
   height: 100%;
 }
 
+/* Music-video background: full-bleed, original colours, no blur. */
+.np-mv-bg {
+  background: #000;
+}
+
+.np-mv-video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  filter: none;
+}
+
+.np-mv-scrim {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  pointer-events: none;
+}
+
 .lyrics-view[data-profile-dock="hidden"] .lyrics-dock {
   display: none;
 }

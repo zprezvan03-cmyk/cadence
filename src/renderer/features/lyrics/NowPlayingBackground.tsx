@@ -9,9 +9,10 @@
  * animation frame and listeners go with it. Written for Cadence.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { NowPlayingBackgroundMode, ShaderSettings } from "../../../shared/types";
 import { audioEngine } from "../../audio/engine";
+import { MvVideoLayer } from "../player/MvVideoLayer";
 import { KawarpBackground } from "../shaders/KawarpBackground";
 
 export interface NowPlayingBackgroundProps {
@@ -29,6 +30,13 @@ export interface NowPlayingBackgroundProps {
   accentColor?: string | null;
   /** App accent, used when the track has no artwork colour. */
   fallbackAccent: string;
+  /** Muted music video shown full-bleed instead of the regular background when enabled. */
+  mvUrl?: string | null;
+  mvEnabled?: boolean;
+  mvScrimOpacity?: number;
+  mvRate?: number;
+  songDuration?: number;
+  onMvError?: (url: string) => void;
 }
 
 function safeAccent(value: string | null | undefined, fallback: string): string {
@@ -48,8 +56,33 @@ export function NowPlayingBackground({
   density,
   accentColor,
   fallbackAccent,
+  mvUrl,
+  mvEnabled,
+  mvScrimOpacity,
+  mvRate,
+  songDuration,
+  onMvError,
 }: NowPlayingBackgroundProps) {
   const accent = safeAccent(accentColor, safeAccent(fallbackAccent, "#ff3d71"));
+  const [failedMvUrl, setFailedMvUrl] = useState<string | null>(null);
+  const mvActive = Boolean(mvEnabled && mvUrl && mvUrl !== failedMvUrl);
+
+  if (mvActive && mvUrl) {
+    return (
+      <MvVideoLayer
+        url={mvUrl}
+        playing={playing}
+        rate={mvRate ?? 1}
+        scrimOpacity={mvScrimOpacity ?? 0.45}
+        songDuration={songDuration ?? 0}
+        onError={(url) => {
+          if (failedMvUrl === url) return;
+          setFailedMvUrl(url);
+          onMvError?.(url);
+        }}
+      />
+    );
+  }
 
   if (mode === "fluid") {
     return (

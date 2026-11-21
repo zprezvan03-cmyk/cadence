@@ -83,6 +83,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     fullscreenOnOpen: false,
     showLyricsInFullscreen: true,
   },
+  mvBackground: { enabled: false, scrimOpacity: 0.45, bindings: {} },
   nowPlayingProfiles: createDefaultNowPlayingProfilesSettings(),
   shaders: {
     ...DEFAULT_GRADIENT_SETTINGS,
@@ -209,6 +210,20 @@ function normalizeSettings(settings: AppSettings, rawProfiles: unknown = setting
   if (!["low", "balanced", "high"].includes(settings.lyrics.fetchConcurrency)) {
     settings.lyrics.fetchConcurrency = DEFAULT_SETTINGS.lyrics.fetchConcurrency;
   }
+  const mvSource: AnyRecord = isPlainObject(settings.mvBackground) ? settings.mvBackground : {};
+  const mvBindings: Record<string, string> = {};
+  const rawBindings: AnyRecord = isPlainObject(mvSource.bindings) ? mvSource.bindings : {};
+  for (const [key, value] of Object.entries(rawBindings)) {
+    if (key && key.length <= 128 && typeof value === "string" && value.trim()) {
+      mvBindings[key] = value.slice(0, 4096);
+    }
+  }
+  settings.mvBackground = {
+    enabled:
+      typeof mvSource.enabled === "boolean" ? mvSource.enabled : DEFAULT_SETTINGS.mvBackground.enabled,
+    scrimOpacity: clampNumber(mvSource.scrimOpacity, DEFAULT_SETTINGS.mvBackground.scrimOpacity, 0, 1),
+    bindings: mvBindings,
+  };
   const step = Number(settings.general?.onboardingStep);
   settings.general = {
     onboardingCompleted: Boolean(settings.general?.onboardingCompleted),

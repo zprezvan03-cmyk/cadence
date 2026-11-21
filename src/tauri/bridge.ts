@@ -540,6 +540,9 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         if (file.animatedArtPath && candidate.toLowerCase() === file.animatedArtPath.toLowerCase()) {
           return true;
         }
+        if (file.mvPath && candidate.toLowerCase() === file.mvPath.toLowerCase()) {
+          return true;
+        }
         if (file.hasSidecarLyrics) {
           const lower = candidate.toLowerCase();
           if (
@@ -624,6 +627,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
           artworkFile:
             parsed.artworkFile ?? existing?.metadataOverride?.original.artworkFile ?? existing?.artworkFile ?? null,
           animatedArtPath: parsed.animatedArtPath ?? existing?.animatedArtPath ?? null,
+          mvPath: parsed.mvPath ?? existing?.mvPath ?? null,
           accentColor: existing?.accentColor ?? null,
         });
       }
@@ -1314,6 +1318,16 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         const picked = await invoke<{ path: string; text: string } | null>("cmd_pick_lyrics_file");
         if (!picked) return { canceled: true };
         return { canceled: false, path: picked.path, text: picked.text };
+      },
+
+      async chooseMvFile(_trackId: number) {
+        const picked = await invoke<{ path: string } | null>("cmd_pick_mv_file");
+        if (!picked) return { canceled: true };
+        return {
+          canceled: false,
+          path: picked.path,
+          url: toTauriMediaUrl(picked.path, "file", pathPlatform),
+        };
       },
 
       async window(action) {

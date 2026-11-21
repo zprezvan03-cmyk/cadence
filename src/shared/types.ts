@@ -38,6 +38,8 @@ export interface Track {
   artworkUrl: string | null;
   /** Local animated cover (`cover.mp4`/`cover.webm` beside the track), when one exists. */
   animatedArtUrl: string | null;
+  /** Local music-video sidecar (`<name>-mv.mp4` etc. beside the track), when one exists. */
+  mvUrl: string | null;
   /** Dominant colour of the artwork as `#rrggbb`, computed while scanning. */
   accentColor: string | null;
   hasEmbeddedLyrics: boolean;
@@ -679,11 +681,21 @@ export interface NowPlayingProfilesSettings {
   };
 }
 
+/** Per-track manual MV bindings are keyed by `trackSourceKey` (e.g. `local:12`). */
+export interface MvBackgroundSettings {
+  enabled: boolean;
+  /** Dark layer over the video, 0 (none) to 1 (fully black). */
+  scrimOpacity: number;
+  bindings: Record<string, string>;
+}
+
 export interface AppSettings {
   version: number;
   playback: PlaybackSettings;
   appearance: AppearanceSettings;
   lyrics: LyricsSettings;
+  /** Muted music-video background for fullscreen Now Playing. */
+  mvBackground: MvBackgroundSettings;
   nowPlayingProfiles: NowPlayingProfilesSettings;
   shaders: ShaderSettings;
   artistImages: ArtistImageSettings;
@@ -1055,6 +1067,8 @@ export interface CadenceApi {
     openExternal(url: string): Promise<void>;
     openPath(path: string): Promise<void>;
     chooseLyricsFile(trackId: number): Promise<{ canceled: boolean; path?: string; text?: string }>;
+    /** Picks a local video file and returns a playable media URL for it. */
+    chooseMvFile(trackId: number): Promise<{ canceled: boolean; path?: string; url?: string }>;
     window(action: WindowAction): Promise<void>;
     /** Resize the OS window into (or out of) the compact always-on-top mini-player. */
     setMiniPlayer(enabled: boolean): Promise<void>;

@@ -376,3 +376,51 @@ describe("Home featured album rotation settings", () => {
     expect(new SettingsStore(file).get().home).toEqual({ featuredSeed: null, featuredSeedDay: null });
   });
 });
+
+describe("music-video background settings", () => {
+  it("ships disabled defaults with an adjustable scrim", () => {
+    expect(DEFAULT_SETTINGS.mvBackground).toEqual({
+      enabled: false,
+      scrimOpacity: 0.45,
+      bindings: {},
+    });
+  });
+
+  it("migrates settings files written before MV backgrounds existed", () => {
+    const file = join(workDir, "legacy-mv.json");
+    writeFileSync(file, JSON.stringify({ lyrics: { fontSizeRem: 2.4 } }), "utf8");
+    expect(new SettingsStore(file).get().mvBackground).toEqual(DEFAULT_SETTINGS.mvBackground);
+  });
+
+  it("drops invalid bindings and clamps the scrim on load", () => {
+    const file = join(workDir, "mv-invalid.json");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        mvBackground: {
+          enabled: true,
+          scrimOpacity: 7,
+          bindings: { "local:12": "cadence-media://file/abc", "local:13": 42, "": "bad-key" },
+        },
+      }),
+      "utf8",
+    );
+    expect(new SettingsStore(file).get().mvBackground).toEqual({
+      enabled: true,
+      scrimOpacity: 1,
+      bindings: { "local:12": "cadence-media://file/abc" },
+    });
+  });
+
+  it("persists enabled state, scrim and manual bindings across a restart", () => {
+    const file = join(workDir, "mv-persist.json");
+    const first = new SettingsStore(file);
+    first.patch({ mvBackground: { enabled: true, scrimOpacity: 0.2 } });
+    first.patch({ mvBackground: { bindings: { "local:9": "cadence-media://file/xyz" } } });
+    expect(new SettingsStore(file).get().mvBackground).toEqual({
+      enabled: true,
+      scrimOpacity: 0.2,
+      bindings: { "local:9": "cadence-media://file/xyz" },
+    });
+  });
+});

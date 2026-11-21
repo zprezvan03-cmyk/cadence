@@ -4,12 +4,14 @@
  */
 
 import { useEffect, useState } from "react";
-import { AudioLines, ChevronDown, ChevronUp, Database, FolderMinus, FolderPlus, Info, Keyboard, Library, Mic2, Palette, RefreshCw, RotateCcw, SlidersHorizontal, Stethoscope, Trash2 } from "lucide-react";
+import { AudioLines, ChevronDown, ChevronUp, Clapperboard, Database, FolderMinus, FolderPlus, Info, Keyboard, Library, Mic2, Palette, RefreshCw, RotateCcw, SlidersHorizontal, Stethoscope, Trash2 } from "lucide-react";
 import type { AppInfo, AppSettings, EqualizerSettings, ReplayGainMode, ShaderSettings } from "../../../shared/types";
+import { trackSourceKey } from "../../../shared/media";
 import { FONT_KINDS, FONT_OPTIONS, resolveFontOption } from "../../../shared/fonts";
 import { detectUnavailableFonts } from "../../app/fonts";
 import { MarqueeText } from "../../components/MarqueeText";
 import { useLibrary } from "../../state/libraryStore";
+import { currentMediaItem, usePlayer } from "../../state/playerStore";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
 import {
@@ -125,6 +127,8 @@ export function SettingsView() {
   const patchSettings = useSettings(state => state.patch);
   const resetSettings = useSettings(state => state.reset);
   const snapshot = useLibrary(state => state.snapshot);
+  const tracksById = useLibrary(state => state.tracksById);
+  const currentItem = usePlayer(currentMediaItem);
   const addFolder = useLibrary(state => state.addFolder);
   const removeFolder = useLibrary(state => state.removeFolder);
   const rescan = useLibrary(state => state.rescan);
@@ -157,6 +161,16 @@ export function SettingsView() {
 
   const patchLyrics = (patch: Partial<AppSettings["lyrics"]>) => void patchSettings({ lyrics: patch });
   const patchShaders = (patch: Partial<ShaderSettings>) => void patchSettings({ shaders: patch });
+  const patchMv = (patch: Partial<AppSettings["mvBackground"]>) => void patchSettings({ mvBackground: patch });
+  const currentTrackId = currentItem?.source.kind === "local" ? currentItem.source.trackId : null;
+  const currentTrack = currentTrackId === null ? null : tracksById.get(currentTrackId) ?? null;
+  const mvSourceKey = currentItem ? trackSourceKey(currentItem.source) : null;
+  const mvBinding = mvSourceKey ? settings.mvBackground.bindings[mvSourceKey] : undefined;
+  const mvStatus = mvBinding
+    ? "Manual override"
+    : currentTrack?.mvUrl
+      ? "Auto-detected sidecar"
+      : "No music video found";
   const formatDb = (value: number) => `${value > 0 ? "+" : ""}${value.toFixed(1)} dB`;
   // Patch a complete equalizer object: the settings store's optimistic merge is only shallow
   // below `playback`, so a partial nested object would briefly drop the other EQ fields
@@ -325,6 +339,76 @@ export function SettingsView() {
             <Toggle label="Dim bright artwork" checked={settings.shaders.autoDimBrightArtwork} onChange={value => patchShaders({ autoDimBrightArtwork: value })} />
             <Range label="Dim strength" value={settings.shaders.autoDimStrength} min={0} max={1} step={0.02} onChange={value => patchShaders({ autoDimStrength: value })} />
             <Toggle label="Animated artwork" hint="Plays a cover.mp4/cover.webm next to the track through the Kawarp video path." checked={settings.shaders.enableAnimatedArt} onChange={value => patchShaders({ enableAnimatedArt: value })} />
+
+            <h3>Music video background</h3>
+            <p className="muted">
+              A muted, full-bleed video behind the fullscreen lyrics. When it is on, the usual artwork
+              background is not rendered; audio still comes from the song.
+            </p>
+            <Toggle
+              label="Enable MV background"
+              hint="Same toggle as the clapperboard button in the fullscreen dock."
+              checked={settings.mvBackground.enabled}
+              onChange={value => patchMv({ enabled: value })}
+            />
+            <Range
+              label="Scrim opacity"
+              hint="Dark layer over the video; 0 keeps the original colours, 1 is fully black."
+              value={settings.mvBackground.scrimOpacity}
+              min={0}
+              max={1}
+              step={0.01}
+              onChange={value => patchMv({ scrimOpacity: value })}
+            />
+            <div className="setting-row">
+              <span>
+                <strong>MV for the current track</strong>
+                <em data-testid="settings-mv-status">{mvStatus}</em>
+              </span>
+              <span className="heading-actions">
+                <button
+                  type="button"
+                  className="icon-button"
+                  title="Choose MV file"
+                  aria-label="Choose MV file"
+                  data-testid="settings-choose-mv"
+                  disabled={currentTrackId === null}
+                  onClick={async () => {
+                    if (currentTrackId === null || !mvSourceKey) return;
+                    try {
+                      const picked = await window.cadence.app.chooseMvFile(currentTrackId);
+                      if (picked.canceled || !picked.url) return;
+                      await patchSettings({
+                        mvBackground: {
+                          bindings: { ...settings.mvBackground.bindings, [mvSourceKey]: picked.url },
+                        },
+                      });
+                      showToast("Music video set for this track");
+                    } catch (error) {
+                      showToast(`Could not choose MV file: ${describeError(error)}`);
+                    }
+                  }}
+                >
+                  <Clapperboard size={16} /> Choose file
+                </button>
+                {mvBinding ? (
+                  <button
+                    type="button"
+                    className="icon-button"
+                    title="Clear MV override"
+                    aria-label="Clear MV override"
+                    onClick={() => {
+                      if (!mvSourceKey) return;
+                      const bindings = { ...settings.mvBackground.bindings };
+                      delete bindings[mvSourceKey];
+                      patchMv({ bindings });
+                    }}
+                  >
+                    <Trash2 size={16} /> Clear
+                  </button>
+                ) : null}
+              </span>
+            </div>
           </div>
         </section>
       ) : null}

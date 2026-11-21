@@ -29,6 +29,7 @@ const AUDIO_EXTENSIONS: &[&str] = &[
     "flac", "mp3", "m4a", "aac", "wav", "ogg", "oga", "opus", "mp4", "m4b", "aiff", "aif", "webm",
 ];
 const LYRICS_EXTENSIONS: &[&str] = &["lrc", "ttml", "qrc", "srt", "txt"];
+const MV_EXTENSIONS: &[&str] = &["mp4", "webm", "mov", "m4v"];
 const SKIP_DIRECTORIES: &[&str] = &[
     "node_modules",
     ".git",
@@ -98,6 +99,7 @@ pub struct WalkedAudioFile {
     pub mtime_ms: f64,
     pub has_sidecar_lyrics: bool,
     pub animated_art_path: Option<String>,
+    pub mv_path: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -119,6 +121,12 @@ pub struct WalkResultPayload {
 pub struct PickedLyricsFile {
     pub path: String,
     pub text: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PickedMvFile {
+    pub path: String,
 }
 
 #[derive(Serialize)]
@@ -199,6 +207,21 @@ fn animated_art_candidate_names(audio_path: &Path) -> Vec<String> {
     ]
 }
 
+fn mv_candidate_names(audio_path: &Path) -> Vec<String> {
+    let stem = audio_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let mut out = Vec::with_capacity(MV_EXTENSIONS.len() * 2);
+    for ext in MV_EXTENSIONS {
+        out.push(format!("{stem}-mv.{ext}"));
+    }
+    for ext in MV_EXTENSIONS {
+        out.push(format!("{stem}.{ext}"));
+    }
+    out
+}
+
 fn build_audio_entry(
     audio_path: &Path,
     meta: &std::fs::Metadata,
@@ -238,12 +261,23 @@ fn build_audio_entry(
         }
     }
 
+    let mut mv_path = None;
+    for candidate_name in mv_candidate_names(audio_path) {
+        if let Some(found) = lookup_file(&candidate_name) {
+            if found != audio_path {
+                mv_path = Some(found.to_string_lossy().into_owned());
+                break;
+            }
+        }
+    }
+
     WalkedAudioFile {
         path: audio_path.to_string_lossy().into_owned(),
         size: meta.len(),
         mtime_ms: mtime_milliseconds(meta),
         has_sidecar_lyrics,
         animated_art_path,
+        mv_path,
     }
 }
 
@@ -285,20 +319,23 @@ fn walk_directory_recursive(
         }
     }
 
-    // Animated covers share audio extensions, but must not become independent library tracks.
-    let mut animated_art_paths = HashSet::new();
+    // Animated covers and music videos share audio extensions, but are sidecars, not tracks.
+    let mut sidecar_paths = HashSet::new();
     for audio_path in &files {
-        for candidate_name in animated_art_candidate_names(audio_path) {
+        for candidate_name in animated_art_candidate_names(audio_path)
+            .into_iter()
+            .chain(mv_candidate_names(audio_path))
+        {
             if let Some(found) = sibling_map.get(&candidate_name.to_lowercase()) {
                 if found != audio_path {
-                    animated_art_paths.insert(found.clone());
+                    sidecar_paths.insert(found.clone());
                 }
             }
         }
     }
     for audio_path in files
         .into_iter()
-        .filter(|path| !animated_art_paths.contains(path))
+        .filter(|path| !sidecar_paths.contains(path))
     {
         if let Ok(meta) = std::fs::metadata(&audio_path) {
             out.push(build_audio_entry(&audio_path, &meta, Some(&sibling_map)));
@@ -562,6 +599,39 @@ pub async fn cmd_pick_lyrics_file() -> Result<Option<PickedLyricsFile>, String> 
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn cmd_pick_mv_file(state: State<'_, AppState>) -> Result<Option<PickedMvFile>, String> {
+    let picked = tauri::async_runtime::spawn_blocking(|| -> Result<Option<PathBuf>, String> {
+        let picked = rfd::FileDialog::new()
+            .set_title("Choose a music video file")
+            .add_filter("Video", MV_EXTENSIONS)
+            .pick_file();
+        let Some(raw_path) = picked else {
+            return Ok(None);
+        };
+        let path = crate::allowlist::strip_verbatim_prefix(raw_path);
+        let extension = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if !MV_EXTENSIONS.contains(&extension.as_str()) {
+            return Err("Unsupported music video format".to_string());
+        }
+        Ok(Some(path))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    let Some(path) = picked else {
+        return Ok(None);
+    };
+    state.allowlist.add_file(&path);
+    Ok(Some(PickedMvFile {
+        path: path.to_string_lossy().into_owned(),
+    }))
 }
 
 #[tauri::command]

@@ -26,6 +26,9 @@ export const AUDIO_EXTENSIONS = [
 
 export const LYRICS_SIDECAR_EXTENSIONS = [".lrc", ".ttml", ".qrc", ".srt", ".txt"] as const;
 
+/** Video formats Chromium decodes natively; also used by the manual MV file picker. */
+export const MV_EXTENSIONS = [".mp4", ".webm", ".mov", ".m4v"] as const;
+
 const PLAYABLE_EXTENSIONS = new Set([".flac", ".mp3", ".m4a", ".aac", ".wav", ".ogg", ".oga", ".opus", ".webm"]);
 
 export interface ParsedTrack {
@@ -48,6 +51,7 @@ export interface ParsedTrack {
   mtimeMs: number;
   artworkFile: string | null;
   animatedArtPath: string | null;
+  mvPath: string | null;
   embeddedLyrics: { text: string; kind: string } | null;
   hasSidecarLyrics: boolean;
   playable: boolean;
@@ -106,6 +110,19 @@ export function animatedArtCandidates(audioPath: string): string[] {
     pathJoin(directory, `${base}.webm`),
     pathJoin(directory, `${base}-animated.mp4`),
   ].filter(candidate => candidate !== audioPath);
+}
+
+/**
+ * Runtime-agnostic mirror of `mvCandidates`. `-mv` wins over a plain `<base>.mp4`, which
+ * remains available to animated-art discovery.
+ */
+export function mvCandidates(audioPath: string): string[] {
+  const directory = pathDirname(audioPath);
+  const base = pathBasename(audioPath, pathExtname(audioPath));
+  const out: string[] = [];
+  for (const extension of MV_EXTENSIONS) out.push(pathJoin(directory, `${base}-mv${extension}`));
+  for (const extension of MV_EXTENSIONS) out.push(pathJoin(directory, `${base}${extension}`));
+  return out.filter(candidate => candidate !== audioPath);
 }
 
 export function sidecarLyricsCandidates(audioPath: string): string[] {
@@ -260,6 +277,14 @@ export async function readTrackMetadataCore(path: string, io: MetadataHostIo): P
     }
   }
 
+  let mvPath: string | null = null;
+  for (const candidate of mvCandidates(path)) {
+    if (await io.fileExists(candidate)) {
+      mvPath = candidate;
+      break;
+    }
+  }
+
   let hasSidecarLyrics = false;
   for (const candidate of sidecarLyricsCandidates(path)) {
     if (await io.fileExists(candidate)) {
@@ -303,6 +328,7 @@ export async function readTrackMetadataCore(path: string, io: MetadataHostIo): P
       mtimeMs: io.mtimeMs,
       artworkFile: null,
       animatedArtPath,
+      mvPath,
       embeddedLyrics: null,
       hasSidecarLyrics,
       playable: isPlayableExtension(path),
@@ -347,6 +373,7 @@ export async function readTrackMetadataCore(path: string, io: MetadataHostIo): P
     mtimeMs: io.mtimeMs,
     artworkFile,
     animatedArtPath,
+    mvPath,
     embeddedLyrics: lyricsFromTags(common),
     hasSidecarLyrics,
     playable: isPlayableExtension(path),
