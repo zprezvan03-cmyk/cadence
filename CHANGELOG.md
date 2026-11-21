@@ -1,7 +1,16 @@
 # Changelog
 
 Branch: `feat/ui` (dibuat dari `main` @ `1615d5b`)
-Tanggal: 2026-11-19 — 2026-11-20
+Tanggal: 2026-11-19 — 2026-11-21
+
+## `1f43597` — fix(ui): refine lyrics tools hover expansion and animation
+
+- Toolbar lyrics Now Playing sekarang **expand saat hover**, bukan klik: trigger tetap di posisinya dan kontrol muncul di dalam pill yang sama. Klik pada trigger tidak lagi dipakai untuk toggle.
+- Ada grace period `180ms` supaya pointer bisa menyeberang dari pill ke popover tanpa langsung collapse; popover yang terbuka dan fokus keyboard (`:focus-visible`) menahan pill tetap expanded, sedangkan klik mouse tidak.
+- Animasi expand/collapse memakai satu permukaan: grid `0fr → 1fr` selama `300ms` (`--dur-pill`) untuk dua arah. `width → max-content` ditinggalkan karena Chromium meloncat langsung, dan `translateX` slide dihapus.
+- Konten tetap **ter-clip** di tepi pill saat animasi (ada area invisible dekat tombol) sehingga tidak terlihat berantakan; `overflow: visible` hanya dinyalakan lewat class `has-popover` kalau ada popover dock yang terbuka.
+- Audit browser (`animation-audit.ts`, `now-playing-layout.ts`) kini membuka toolbar lewat `hover` alih-alih klik; assertion yang ada tidak dilemahkan.
+- Verifikasi: `npm run typecheck` dan `npm run build` lolos; `npm test` tidak berubah dari baseline (615 lolos, failure lama pada benchmark `smartShuffleBenchmark` dan lock `library.test.ts`). Sampling browser mengonfirmasi lebar pill naik `40 → 580px` dan turun lagi secara halus ~300ms, dengan popover tetap terlihat dan bisa diklik.
 
 ## `78cba44` — fix(ui): keep lyrics tools inside the inline bubble
 
