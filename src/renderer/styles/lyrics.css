@@ -266,13 +266,18 @@
   pointer-events: auto;
 }
 
+/* The top row uses the same glass as the footer and its popovers, so every floating surface in
+   fullscreen reads as one layer instead of a solid chip over a blurred one. */
 .fs-mode-tabs {
   display: flex;
   gap: 3px;
   padding: 3px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.17);
-  background: rgba(20, 20, 23, 0.8);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elevated) 58%, transparent);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  box-shadow: var(--shadow-lg);
 }
 
 .fs-mode-tabs button {
@@ -290,11 +295,17 @@
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.17);
-  background: rgba(20, 20, 23, 0.8);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elevated) 58%, transparent);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  box-shadow: var(--shadow-lg);
 }
-.fs-page-actions .fs-exit:hover { background: var(--surface-3); }
-.fs-mode-tabs button[aria-pressed="true"] { background: var(--surface-3); color: var(--text); }
+.fs-page-actions .fs-exit:hover { background: color-mix(in srgb, var(--bg-elevated) 78%, transparent); }
+.fs-mode-tabs button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--bg-elevated) 82%, transparent);
+  color: var(--text);
+}
 
 /* Lyrics tools: the button itself is the surface. Collapsed it is the 38px icon pill; expanding it
    widens that same pill to the left and reveals the controls inside it — no second bubble. */
@@ -308,9 +319,12 @@
   min-width: 0;
   height: 38px;
   max-width: calc(100vw - 240px);
-  border: 1px solid rgba(255, 255, 255, 0.17);
+  border: 1px solid var(--border);
   border-radius: 999px;
-  background: rgba(20, 20, 23, 0.8);
+  background: color-mix(in srgb, var(--bg-elevated) 58%, transparent);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 
@@ -322,7 +336,7 @@
 }
 
 .lyrics-tools:hover {
-  background: rgba(32, 32, 36, 0.92);
+  background: color-mix(in srgb, var(--bg-elevated) 78%, transparent);
 }
 
 .lyrics-tools-trigger {
