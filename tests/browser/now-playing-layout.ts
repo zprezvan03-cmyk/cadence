@@ -651,6 +651,16 @@ const profileProbe = () =>
   });
 
 const openProfileSwitcher = async () => {
+  // In fullscreen the dock is collapsed inside the top-right tools row; expand it first.
+  const trigger = '[data-testid="lyrics-tools-trigger"]';
+  const expanded = await page.$eval(trigger, node => node.getAttribute("aria-expanded")).catch(() => null);
+  if (expanded === "false") {
+    await page.hover(trigger);
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="lyrics-tools-trigger"]')?.getAttribute("aria-expanded") === "true"
+    );
+    await wait(200);
+  }
   const center = await page.$eval('[data-testid="now-playing-profile-button"]', node => {
     const rect = node.getBoundingClientRect();
     return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };

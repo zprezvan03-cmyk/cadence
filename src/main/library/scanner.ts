@@ -9,7 +9,7 @@
 import { promises as fs } from "node:fs";
 import { join, relative, sep } from "node:path";
 import type { LibraryScanResult, ScanProgress } from "../../shared/types";
-import { animatedArtCandidates, isAudioFile, findSidecarLyrics, readTrackMetadata } from "./metadata";
+import { animatedArtCandidates, isAudioFile, findSidecarLyrics, mvCandidates, readTrackMetadata } from "./metadata";
 import type { LibraryStore } from "./store";
 
 const SKIP_DIRECTORIES = new Set([
@@ -95,13 +95,14 @@ export async function scanLibrary(store: LibraryStore, options: ScanOptions): Pr
     }
   }
 
-  // Animated covers use media extensions too, but they are artwork sidecars, not library tracks.
+  // Animated covers and music videos use media extensions too, but they are sidecars, not tracks.
   // Exclude every sidecar referenced by another audio candidate while preserving standalone audio.
-  const animatedArtPaths = new Set<string>();
+  const sidecarPaths = new Set<string>();
   for (const file of files) {
-    for (const candidate of animatedArtCandidates(file)) animatedArtPaths.add(candidate.toLowerCase());
+    for (const candidate of animatedArtCandidates(file)) sidecarPaths.add(candidate.toLowerCase());
+    for (const candidate of mvCandidates(file)) sidecarPaths.add(candidate.toLowerCase());
   }
-  const audioFiles = files.filter(file => !animatedArtPaths.has(file.toLowerCase()));
+  const audioFiles = files.filter(file => !sidecarPaths.has(file.toLowerCase()));
   files.length = 0;
   files.push(...audioFiles);
   progress.filesSeen = files.length;
@@ -155,6 +156,7 @@ export async function scanLibrary(store: LibraryStore, options: ScanOptions): Pr
           artworkFile:
             parsed.artworkFile ?? existing?.metadataOverride?.original.artworkFile ?? existing?.artworkFile ?? null,
           animatedArtPath: parsed.animatedArtPath ?? existing?.animatedArtPath ?? null,
+          mvPath: parsed.mvPath ?? existing?.mvPath ?? null,
           accentColor: existing?.accentColor ?? null,
         });
         if (result.inserted) added += 1;

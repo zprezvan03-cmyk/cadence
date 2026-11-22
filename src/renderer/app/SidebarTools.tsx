@@ -6,7 +6,6 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, Loader2, Search, X } from "lucide-react";
 import { useLibrary } from "../state/libraryStore";
 import { useUi } from "../state/uiStore";
-import { FetchAllIndicator } from "../features/lyrics-fetch/FetchAllIndicator";
 
 export function SidebarTools({ showHistory = false }: { showHistory?: boolean }) {
   const navigate = useUi(state => state.navigate);
@@ -70,7 +69,6 @@ export function SidebarTools({ showHistory = false }: { showHistory?: boolean })
           </button>
         </div>
       ) : null}
-      <FetchAllIndicator />
       {scanning || scan?.running ? (
         <span className="scan-indicator" role="status" title={scan?.message ?? "Scanning library"}>
           <Loader2 size={15} className="spin" />

@@ -875,7 +875,13 @@ await page.evaluate(
   },
   CHOSEN_TTML
 );
-await page.click('.lyrics-dock button[title="Open a lyrics file"]');
+await page.click('.lyrics-dock button[title="Choose file"]');
+await page.waitForSelector(".dock-choose-popover .source-row");
+await page.evaluate(() => {
+  const row = [...document.querySelectorAll<HTMLElement>(".dock-choose-popover .source-row")]
+    .find(node => node.textContent?.includes("Lyrics file"));
+  row?.click();
+});
 await wait(900);
 const chosenLyrics = await lyricText("Chosen file line one");
 check("chosen-file-renders", chosenLyrics.includes("Chosen file line one"), JSON.stringify(chosenLyrics.slice(0, 120)));

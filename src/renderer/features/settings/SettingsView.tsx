@@ -4,12 +4,14 @@
  */
 
 import { useEffect, useState } from "react";
-import { AudioLines, ChevronDown, ChevronUp, Database, FolderMinus, FolderPlus, Info, Keyboard, Library, Mic2, Palette, RotateCcw, Stethoscope, Trash2 } from "lucide-react";
+import { AudioLines, ChevronDown, ChevronUp, Clapperboard, Database, FolderMinus, FolderPlus, Info, Keyboard, Library, Mic2, Palette, RefreshCw, RotateCcw, SlidersHorizontal, Stethoscope, Trash2 } from "lucide-react";
 import type { AppInfo, AppSettings, EqualizerSettings, ReplayGainMode, ShaderSettings } from "../../../shared/types";
+import { trackSourceKey } from "../../../shared/media";
 import { FONT_KINDS, FONT_OPTIONS, resolveFontOption } from "../../../shared/fonts";
 import { detectUnavailableFonts } from "../../app/fonts";
 import { MarqueeText } from "../../components/MarqueeText";
 import { useLibrary } from "../../state/libraryStore";
+import { currentMediaItem, usePlayer } from "../../state/playerStore";
 import { useSettings } from "../../state/settingsStore";
 import { useUi } from "../../state/uiStore";
 import {
@@ -30,9 +32,9 @@ import { invalidateLyricsResolution } from "../lyrics/useLyrics";
 import { LastFmSettings } from "./LastFmSettings";
 import { LyricsCachePanel } from "./LyricsCachePanel";
 import { ArtistImagesSettings } from "./ArtistImagesSettings";
-import { FetchAllSettings } from "../lyrics-fetch/FetchAllSettings";
 import { NowPlayingAppearance } from "./NowPlayingAppearance";
 import { useOnboarding } from "../../state/onboardingStore";
+import { createRefreshSeed, localDayKey } from "../library/homeSelection";
 import {
   EQ_BAND_LABELS,
   EQ_PRESETS,
@@ -125,6 +127,8 @@ export function SettingsView() {
   const patchSettings = useSettings(state => state.patch);
   const resetSettings = useSettings(state => state.reset);
   const snapshot = useLibrary(state => state.snapshot);
+  const tracksById = useLibrary(state => state.tracksById);
+  const currentItem = usePlayer(currentMediaItem);
   const addFolder = useLibrary(state => state.addFolder);
   const removeFolder = useLibrary(state => state.removeFolder);
   const rescan = useLibrary(state => state.rescan);
@@ -157,6 +161,16 @@ export function SettingsView() {
 
   const patchLyrics = (patch: Partial<AppSettings["lyrics"]>) => void patchSettings({ lyrics: patch });
   const patchShaders = (patch: Partial<ShaderSettings>) => void patchSettings({ shaders: patch });
+  const patchMv = (patch: Partial<AppSettings["mvBackground"]>) => void patchSettings({ mvBackground: patch });
+  const currentTrackId = currentItem?.source.kind === "local" ? currentItem.source.trackId : null;
+  const currentTrack = currentTrackId === null ? null : tracksById.get(currentTrackId) ?? null;
+  const mvSourceKey = currentItem ? trackSourceKey(currentItem.source) : null;
+  const mvBinding = mvSourceKey ? settings.mvBackground.bindings[mvSourceKey] : undefined;
+  const mvStatus = mvBinding
+    ? "Manual override"
+    : currentTrack?.mvUrl
+      ? "Auto-detected sidecar"
+      : "No music video found";
   const formatDb = (value: number) => `${value > 0 ? "+" : ""}${value.toFixed(1)} dB`;
   // Patch a complete equalizer object: the settings store's optimistic merge is only shallow
   // below `playback`, so a partial nested object would briefly drop the other EQ fields
@@ -203,6 +217,7 @@ export function SettingsView() {
 
       <nav className="settings-tabs" aria-label="Settings categories">
         {([
+          ["general", "General", SlidersHorizontal],
           ["appearance", "Appearance", Palette],
           ["lyrics", "Lyrics", Mic2],
           ["library", "Library", Library],
@@ -272,10 +287,11 @@ export function SettingsView() {
             <div className="setting-row">
               <span>
                 <strong>Replay Onboarding</strong>
-                <em>Run the first-launch setup again (library, ✨ Fetch All Lyrics ✨, preferences).</em>
+                <em>Run the first-launch setup again (library, preferences, ready).</em>
               </span>
               <button
                 type="button"
+                className="ghost-button setting-action"
                 data-testid="replay-onboarding"
                 onClick={() => useOnboarding.getState().replay()}
               >
@@ -323,7 +339,104 @@ export function SettingsView() {
             <Toggle label="Dim bright artwork" checked={settings.shaders.autoDimBrightArtwork} onChange={value => patchShaders({ autoDimBrightArtwork: value })} />
             <Range label="Dim strength" value={settings.shaders.autoDimStrength} min={0} max={1} step={0.02} onChange={value => patchShaders({ autoDimStrength: value })} />
             <Toggle label="Animated artwork" hint="Plays a cover.mp4/cover.webm next to the track through the Kawarp video path." checked={settings.shaders.enableAnimatedArt} onChange={value => patchShaders({ enableAnimatedArt: value })} />
+
+            <h3>Music video background</h3>
+            <p className="muted">
+              A muted, full-bleed video behind the fullscreen lyrics. When it is on, the usual artwork
+              background is not rendered; audio still comes from the song.
+            </p>
+            <Toggle
+              label="Enable MV background"
+              hint="Same toggle as the clapperboard button in the fullscreen dock."
+              checked={settings.mvBackground.enabled}
+              onChange={value => patchMv({ enabled: value })}
+            />
+            <Range
+              label="Scrim opacity"
+              hint="Dark layer over the video; 0 keeps the original colours, 1 is fully black."
+              value={settings.mvBackground.scrimOpacity}
+              min={0}
+              max={1}
+              step={0.01}
+              onChange={value => patchMv({ scrimOpacity: value })}
+            />
+            <div className="setting-row">
+              <span>
+                <strong>MV for the current track</strong>
+                <em data-testid="settings-mv-status">{mvStatus}</em>
+              </span>
+              <span className="heading-actions setting-action">
+                <button
+                  type="button"
+                  title="Choose MV file"
+                  aria-label="Choose MV file"
+                  data-testid="settings-choose-mv"
+                  disabled={currentTrackId === null}
+                  onClick={async () => {
+                    if (currentTrackId === null || !mvSourceKey) return;
+                    try {
+                      const picked = await window.cadence.app.chooseMvFile(currentTrackId);
+                      if (picked.canceled || !picked.url) return;
+                      await patchSettings({
+                        mvBackground: {
+                          bindings: { ...settings.mvBackground.bindings, [mvSourceKey]: picked.url },
+                        },
+                      });
+                      showToast("Music video set for this track");
+                    } catch (error) {
+                      showToast(`Could not choose MV file: ${describeError(error)}`);
+                    }
+                  }}
+                >
+                  <Clapperboard size={16} /> Choose file
+                </button>
+                {mvBinding ? (
+                  <button
+                    type="button"
+                    title="Clear MV override"
+                    aria-label="Clear MV override"
+                    onClick={() => {
+                      if (!mvSourceKey) return;
+                      const bindings = { ...settings.mvBackground.bindings };
+                      delete bindings[mvSourceKey];
+                      patchMv({ bindings });
+                    }}
+                  >
+                    <Trash2 size={16} /> Clear
+                  </button>
+                ) : null}
+              </span>
+            </div>
           </div>
+        </section>
+      ) : null}
+
+      {section === "general" ? (
+        <section className="settings-section" data-testid="settings-general">
+          <h2>General</h2>
+          <p className="muted">App-wide actions that do not belong to the library, playback or appearance.</p>
+          <div className="heading-actions">
+            <button
+              type="button"
+              data-testid="settings-refresh-featured"
+              onClick={async () => {
+                try {
+                  await patchSettings({
+                    home: { featuredSeed: createRefreshSeed(), featuredSeedDay: localDayKey() },
+                  });
+                  showToast("Featured albums refreshed");
+                } catch (error) {
+                  showToast(`Could not refresh featured albums: ${describeError(error)}`);
+                }
+              }}
+            >
+              <RefreshCw size={16} /> Refresh featured albums
+            </button>
+          </div>
+          <p className="muted">
+            Picks a new set of Featured albums and Explore your albums for today. The choice stays put until
+            the next day or until you refresh it again.
+          </p>
         </section>
       ) : null}
 
@@ -337,7 +450,6 @@ export function SettingsView() {
               checked={settings.lyrics.autoFetch}
               onChange={value => patchLyrics({ autoFetch: value })}
             />
-            <FetchAllSettings />
             <Range
               label="Not Found cooldown"
               hint="Days before a track no provider had lyrics for is searched again automatically. Manual retries in Now Playing always search immediately."
@@ -352,8 +464,8 @@ export function SettingsView() {
               <span>
                 <strong>Lyrics Fetch Concurrency</strong>
                 <em>
-                  One global limit for provider requests across Autofetch, Fetch All and manual
-                  search. Lower is gentler on slow connections and low-memory systems.
+                  One global limit for provider requests across Autofetch and manual search.
+                  Lower is gentler on slow connections and low-memory systems.
                 </em>
               </span>
               <select
@@ -820,37 +932,43 @@ export function SettingsView() {
             Better Lyrics and Better Lyrics Shaders are GPL-3.0; Cadence is distributed under the same license.
             Upstream commit hashes and the file mapping are recorded in <code>UPSTREAM.md</code>.
           </p>
-          <button
-            type="button"
-            className="danger"
-            disabled={clearingCache}
-            onClick={async () => {
-              if (
-                !confirm(
-                  "Clear the whole lyrics cache? Songs will be looked up again. Your audio files, lyrics files and library are not touched."
+          <div className="setting-row">
+            <span>
+              <strong>Clear lyrics cache</strong>
+              <em>Removes cached lyrics so songs are looked up again. Your audio files, lyrics files and library are not touched.</em>
+            </span>
+            <button
+              type="button"
+              className="ghost-button danger setting-action"
+              disabled={clearingCache}
+              onClick={async () => {
+                if (
+                  !confirm(
+                    "Clear the whole lyrics cache? Songs will be looked up again. Your audio files, lyrics files and library are not touched."
+                  )
                 )
-              )
-                return;
-              setClearingCache(true);
-              try {
-                // Resolves only once the emptied cache file has been written to disk; a
-                // filesystem error rejects here instead of being reported as a success.
-                const { removedEntries } = await window.cadence.lyrics.clearCache();
-                if (removedEntries > 0) invalidateLyricsResolution();
-                showToast(
-                  removedEntries > 0
-                    ? `Lyrics cache cleared (${removedEntries} cached ${removedEntries === 1 ? "song" : "songs"} removed)`
-                    : "Lyrics cache was already empty"
-                );
-              } catch (error) {
-                showToast(`Could not clear the lyrics cache: ${describeError(error)}`);
-              } finally {
-                setClearingCache(false);
-              }
-            }}
-          >
-            <Trash2 size={16} /> {clearingCache ? "Clearing lyrics cache…" : "Clear lyrics cache"}
-          </button>
+                  return;
+                setClearingCache(true);
+                try {
+                  // Resolves only once the emptied cache file has been written to disk; a
+                  // filesystem error rejects here instead of being reported as a success.
+                  const { removedEntries } = await window.cadence.lyrics.clearCache();
+                  if (removedEntries > 0) invalidateLyricsResolution();
+                  showToast(
+                    removedEntries > 0
+                      ? `Lyrics cache cleared (${removedEntries} cached ${removedEntries === 1 ? "song" : "songs"} removed)`
+                      : "Lyrics cache was already empty"
+                  );
+                } catch (error) {
+                  showToast(`Could not clear the lyrics cache: ${describeError(error)}`);
+                } finally {
+                  setClearingCache(false);
+                }
+              }}
+            >
+              <Trash2 size={16} /> {clearingCache ? "Clearing lyrics cache…" : "Clear lyrics cache"}
+            </button>
+          </div>
           <div className="setting-row">
             <span>
               <strong>Restore default settings</strong>

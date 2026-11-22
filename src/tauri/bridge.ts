@@ -19,7 +19,6 @@ import type {
   HistoryPayload,
   LibraryScanResult,
   LibrarySnapshot,
-  LyricsFetchJobSnapshot,
   MediaCommand,
   PlayerSnapshot,
   ScanProgress,
@@ -48,7 +47,6 @@ import {
 } from "../shared/artistImageProviders";
 import { createLocalLyricsReader } from "../main/lyrics/localLyricsCore";
 import { LyricsServiceCore } from "../main/lyrics/serviceCore";
-import { LyricsFetchAllCore, type FetchTrackInfo } from "../main/lyrics/fetchAllCore";
 import { FETCH_CONCURRENCY_PRESETS } from "../main/lyrics/http";
 import { runtimeFetch, setRuntimeFetch, type RuntimeFetch } from "../main/lyrics/http";
 import { fetchYouTubeMetadata } from "../main/lyrics/youtube";
@@ -89,7 +87,6 @@ export interface BootstrapPayload {
   settingsJson: string | null;
   lyricsCacheJson: string | null;
   lyricsAiCacheJson?: string | null;
-  lyricsFetchJobJson: string | null;
   artistImagesJson: string | null;
   dbSnapshot: DatabaseShape;
   startupFiles: string[];
@@ -492,7 +489,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
   initializeAiCache(bootstrap.lyricsAiCacheJson, json => invoke("cmd_write_user_json", { kind: "lyricsAiCache", content: json }));
 
   // Fetch-automation settings feed the shared service directly: the central provider limiter
-  // (Autofetch, Fetch All and manual search alike) and the cache's Not Found cooldown.
+  // (Autofetch and manual search alike) and the cache's Not Found cooldown.
   const applyLyricsFetchSettings = (): void => {
     const lyrics = settings.get().lyrics;
     lyricsService.setProviderConcurrency(
@@ -501,8 +498,6 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
     lyricsCache.setNegativeTtlMs(lyrics.notFoundCooldownDays * 24 * 60 * 60 * 1000);
   };
   applyLyricsFetchSettings();
-
-  const fetchAllListeners = new Set<(snapshot: LyricsFetchJobSnapshot) => void>();
 
   /**
    * Superseded resolve/search calls are routinely abandoned by the UI after a track switch.
@@ -513,76 +508,6 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
     promise.catch(() => undefined);
     return promise;
   };
-  const toFetchInfo = (track: StoredTrack): FetchTrackInfo => ({
-    id: track.id,
-    title: track.title,
-    artist: track.artist,
-    album: track.album,
-    duration: track.duration,
-    hasSidecarLyrics: track.hasSidecarLyrics,
-    hasEmbeddedLyrics: track.hasEmbeddedLyrics,
-    lastPlayedAt: track.lastPlayedAt,
-  });
-
-  // Persistent Fetch All job. It calls the service directly with its own per-track abort
-  // controllers — never the UI's track-scoped resolve controller — so bulk work and Now Playing
-  // lookups share in-flight provider requests instead of aborting each other.
-  const fetchAll = new LyricsFetchAllCore(
-    {
-      tracksPage: (offset, limit) => {
-        const tracks = store.getTracks();
-        return { tracks: tracks.slice(offset, offset + limit).map(toFetchInfo), total: tracks.length };
-      },
-      getTrack: trackId => {
-        const track = store.getTrack(trackId);
-        return track ? toFetchInfo(track) : null;
-      },
-      assess: track => lyricsService.assessTrack(track, settings.get().lyrics.providerOrder),
-      resolveTrack: async (track, { force, signal }) => {
-        await store.ensureLyrics(track.id);
-        try {
-          return await lyricsService.resolve(
-            {
-              trackId: track.id,
-              title: track.title,
-              artist: track.artist,
-              album: track.album,
-              duration: track.duration,
-              forceRefresh: force,
-            },
-            settings.get().lyrics.providerOrder,
-            signal
-          );
-        } finally {
-          store.releaseLyrics(track.id);
-          lyricsCache.flush();
-        }
-      },
-      shareResult: (fromTrackId, toTrack) => lyricsService.shareRecordingResult(fromTrackId, toTrack),
-      getPriority: async () => {
-        let historyTrackIds: number[] = [];
-        try {
-          const rows = await invoke<HistoryRow[]>("cmd_history_list");
-          historyTrackIds = (rows ?? [])
-            .map(row => row.trackId)
-            .filter((trackId): trackId is number => typeof trackId === "number");
-        } catch {
-          historyTrackIds = [];
-        }
-        return { currentTrackId: lastPlayerState?.trackId ?? null, historyTrackIds };
-      },
-      getParallelTracks: () =>
-        FETCH_CONCURRENCY_PRESETS[settings.get().lyrics.fetchConcurrency].parallelTracks,
-      onProgress: snapshot => {
-        for (const listener of fetchAllListeners) listener(snapshot);
-      },
-    },
-    {
-      initialJson: bootstrap.lyricsFetchJobJson,
-      persist: json => invoke("cmd_write_user_json", { kind: "lyricsFetchJob", content: json }),
-    }
-  );
-
   /** Saves cover bytes into the artwork cache under their content hash; returns the file name. */
   const saveArtworkBytes = async (data: Uint8Array, format: string): Promise<string> => {
     const hash = await sha1Hex(data);
@@ -613,6 +538,9 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
       saveArtwork: saveArtworkBytes,
       fileExists: candidate => {
         if (file.animatedArtPath && candidate.toLowerCase() === file.animatedArtPath.toLowerCase()) {
+          return true;
+        }
+        if (file.mvPath && candidate.toLowerCase() === file.mvPath.toLowerCase()) {
           return true;
         }
         if (file.hasSidecarLyrics) {
@@ -699,6 +627,7 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
           artworkFile:
             parsed.artworkFile ?? existing?.metadataOverride?.original.artworkFile ?? existing?.artworkFile ?? null,
           animatedArtPath: parsed.animatedArtPath ?? existing?.animatedArtPath ?? null,
+          mvPath: parsed.mvPath ?? existing?.mvPath ?? null,
           accentColor: existing?.accentColor ?? null,
         });
       }
@@ -767,13 +696,9 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
 
   const onPageHide = () => {
     lyricsService.flush();
-    void fetchAll.flush();
     void flushDbQueue();
   };
 
-  // A Fetch All job that was running when the app closed resumes automatically; paused,
-  // completed and canceled jobs are left exactly as the user left them.
-  fetchAll.restore();
   if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
     window.addEventListener("pagehide", onPageHide);
   }
@@ -1340,39 +1265,6 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         lyricsService.rememberSelection(request.trackId, request.candidate);
         lyricsCache.flush();
       },
-
-      fetchAll: {
-        async getState() {
-          return fetchAll.snapshot();
-        },
-        async start() {
-          return fetchAll.start();
-        },
-        async pause() {
-          return fetchAll.pause();
-        },
-        async resume() {
-          return fetchAll.resume();
-        },
-        async cancel() {
-          return fetchAll.cancel();
-        },
-        async retryFailed() {
-          return fetchAll.retryFailed();
-        },
-        async stats() {
-          return fetchAll.stats();
-        },
-        async promote(trackId: number) {
-          fetchAll.promote(trackId);
-        },
-        onProgress(listener: (snapshot: LyricsFetchJobSnapshot) => void): () => void {
-          fetchAllListeners.add(listener);
-          return () => {
-            fetchAllListeners.delete(listener);
-          };
-        },
-      },
     },
 
     player: {
@@ -1426,6 +1318,16 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         const picked = await invoke<{ path: string; text: string } | null>("cmd_pick_lyrics_file");
         if (!picked) return { canceled: true };
         return { canceled: false, path: picked.path, text: picked.text };
+      },
+
+      async chooseMvFile(_trackId: number) {
+        const picked = await invoke<{ path: string } | null>("cmd_pick_mv_file");
+        if (!picked) return { canceled: true };
+        return {
+          canceled: false,
+          path: picked.path,
+          url: toTauriMediaUrl(picked.path, "file", pathPlatform),
+        };
       },
 
       async window(action) {
@@ -1509,7 +1411,6 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
       youtubeController?.abort();
       translateController?.abort();
       romanizeController?.abort();
-      void fetchAll.flush();
       lyricsCache.flush();
       store.close();
     },

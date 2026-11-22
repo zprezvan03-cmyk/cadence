@@ -187,11 +187,11 @@ export function describeHttpError(error: unknown): {
 }
 
 /**
- * Central, process-wide concurrency limiter for provider work. Autofetch, Fetch All and manual
- * searches all run their provider modules through the single instance owned by
- * `LyricsServiceCore`, so the total number of provider requests in flight is bounded no matter
- * how many consumers ask at once. Queued work is FIFO; raising the limit immediately releases
- * queued runners, lowering it lets in-flight work finish.
+ * Central, process-wide concurrency limiter for provider work. Autofetch and manual searches run
+ * their provider modules through the single instance owned by `LyricsServiceCore`, so the total
+ * number of provider requests in flight is bounded no matter how many consumers ask at once.
+ * Queued work is FIFO; raising the limit immediately releases queued runners, lowering it lets
+ * in-flight work finish.
  */
 export class ConcurrencyLimiter {
   private active = 0;
@@ -274,9 +274,9 @@ export class ConcurrencyLimiter {
  * hundreds of simultaneous requests, and low-memory systems stay responsive.
  */
 export const FETCH_CONCURRENCY_PRESETS = {
-  low: { providerRequests: 2, parallelTracks: 1 },
-  balanced: { providerRequests: 4, parallelTracks: 2 },
-  high: { providerRequests: 8, parallelTracks: 4 },
+  low: { providerRequests: 2 },
+  balanced: { providerRequests: 4 },
+  high: { providerRequests: 8 },
 } as const;
 
 /** True when an error must abort the whole resolve rather than fall through to the next provider. */

@@ -291,6 +291,7 @@ pub fn run() {
             commands::cmd_write_user_json,
             commands::cmd_pick_folder,
             commands::cmd_pick_lyrics_file,
+            commands::cmd_pick_mv_file,
             commands::cmd_walk_folders,
             commands::cmd_stat_audio_files,
             commands::cmd_read_file_chunk,

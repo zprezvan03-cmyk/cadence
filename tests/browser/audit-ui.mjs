@@ -738,7 +738,8 @@ const closeQueue = async () => {
   await page.waitForSelector(queuePanel, { hidden: true });
 };
 const openLyricsSources = async () => {
-  await clickText(".dock-button", "Source", false);
+  // The trigger is icon-only now; target it by its stable label instead of rendered text.
+  await page.click('.lyrics-dock button[title="Lyrics source"]');
   await page.waitForSelector('.dock-sources[data-presence="entered"]', { timeout: 4000 });
 };
 const openManualLyricsSearch = async () => {
@@ -793,50 +794,6 @@ await runSection("sidebar-disclosures-complete", async () => {
   check("playlist-deep-link-expands-section-and-is-reachable-by-scroll", visibleTarget, target.name);
   await page.setViewport({ width: 1440, height: 900 });
   await nav("Home");
-});
-
-await runSection("sidebar-fetch-all-completes", async () => {
-  await page.evaluate(() => {
-    const build = state => ({ jobId: "sidebar-audit", state, total: 10, processed: 5, found: 3, notFound: 1, failed: 1, skipped: 0,
-      currentTrack: { id: 3, title: "Fixture MP3", artist: "Harness Artist" }, startedAt: Date.now(), finishedAt: null });
-    window.cadence.lyrics.fetchAll = {
-      stats: async () => ({ totalTracks: 10, withLyrics: 3, needsSearch: 7, fullyProcessed: 5 }),
-      // Autofetch calls this during playback, including when provider priority changes.
-      promote: async () => undefined,
-    };
-    for (const [action, state] of Object.entries({ start: "running", pause: "paused", resume: "running", retryFailed: "running", cancel: "canceled" })) {
-      window.cadence.lyrics.fetchAll[action] = async () => {
-        window.__audit.state.calls.push([`fetch-${action}`]);
-        return build(state);
-      };
-    }
-  });
-  await page.setViewport({ width: 1040, height: 680 });
-  await nav("Settings"); await settingsTab("Lyrics");
-  await page.click('[data-testid="fetch-all-start"]');
-  await page.waitForSelector('.sidebar-tools [data-testid="fetch-all-indicator"][data-state="running"]');
-  await nav("Home");
-  await page.click('[data-testid="fetch-all-indicator"]');
-  await page.waitForSelector('.fetch-panel:not([inert])'); await wait(210);
-  const bounds = await page.$eval(".fetch-panel", node => {
-    const { left, right, top, bottom } = node.getBoundingClientRect();
-    return { left, right, top, bottom, room: left >= 0 && right <= innerWidth && top >= 0 && bottom < innerHeight };
-  });
-  check("sidebar-fetch-all-popover-not-clipped", bounds.room && Boolean(await page.$('[data-testid="fetch-count-found"]')), JSON.stringify(bounds));
-  await page.keyboard.press("Escape");
-  await page.waitForSelector('[data-testid="fetch-all-panel"]', { hidden: true });
-  check("sidebar-fetch-all-keyboard-focus-returns", await page.evaluate(() => document.activeElement?.matches('[data-testid="fetch-all-indicator"]')));
-  await page.keyboard.press("Enter");
-  await page.waitForSelector('.fetch-panel:not([inert])');
-  await clickText(".fetch-panel button", "Pause");
-  await clickText(".fetch-panel button", "Resume");
-  await clickText(".fetch-panel button", "Pause");
-  await page.click('[data-testid="fetch-retry-failed"]');
-  await page.click('[data-testid="fetch-cancel"]');
-  await page.waitForSelector('[data-testid="fetch-all-panel"]', { hidden: true });
-  const actions = await page.evaluate(() => window.__audit.state.calls.filter(call => call[0].startsWith("fetch-")).map(call => call[0]));
-  check("sidebar-fetch-all-commands", actions.join(",") === "fetch-start,fetch-pause,fetch-resume,fetch-pause,fetch-retryFailed,fetch-cancel", actions.join(","));
-  await page.setViewport({ width: 1480, height: 900 });
 });
 
 await runSection("sidebar-new-playlist-completes", async () => {
@@ -1031,10 +988,10 @@ await runSection("expanded-navigation-completes", async () => {
   check("titlebar-back", Boolean(await page.$('[data-testid="library-view-albums"]')), await page.evaluate(() => location.hash));
   await page.click('.title-bar-nav button[aria-label="Forward"]'); await wait(150);
   check("titlebar-forward", Boolean(await page.$('[data-testid="library-view-artists"]')), await page.evaluate(() => location.hash));
-  const brand = await page.$(".brand"); await brand.focus(); await page.keyboard.press("Enter"); await wait(120);
-  check("brand-enter-home", Boolean(await page.$('[data-testid="home-view"]')), "Enter");
-  await nav("Songs"); await brand.focus(); await page.keyboard.press("Space"); await wait(120);
-  check("brand-space-home", Boolean(await page.$('[data-testid="home-view"]')), "Space");
+  const homeNav = await page.$('.sidebar .nav-item[aria-label="Home"]'); await homeNav.focus(); await page.keyboard.press("Enter"); await wait(120);
+  check("home-nav-enter", Boolean(await page.$('[data-testid="home-view"]')), "Enter");
+  await nav("Songs"); await homeNav.focus(); await page.keyboard.press("Space"); await wait(120);
+  check("home-nav-space", Boolean(await page.$('[data-testid="home-view"]')), "Space");
   await nav("Home");
   check("home-no-shortcut-row-or-recently-added", !(await page.$(".quick-row")) &&
     !(await page.$$eval(".home-view h2", headings => headings.some(node => node.textContent?.toLowerCase().includes("recently added")))));
@@ -1342,10 +1299,14 @@ await runSection("expanded-lyrics-completes", async () => {
   await clickText(".dock-save-popover .source-row", "LRC", false);
   check("lyrics-save-sidecar", await page.evaluate(() => window.__audit.state.calls.some(call => call[0] === "save-sidecar" && String(call[2]).includes("Alternate"))), "selected text saved");
   await page.evaluate(() => { window.__audit.state.chooseLyricsResult = { canceled: true }; });
-  await page.click('button[title="Open a lyrics file"]'); await wait(100);
+  await page.click('button[title="Choose file"]');
+  await page.waitForSelector(".dock-choose-popover .source-row");
+  await clickText(".dock-choose-popover .source-row", "Lyrics file", false); await wait(100);
   check("lyrics-file-cancel", (await page.$eval(".lyrics-body", node => node.textContent)).includes("Alternate first line"), "cancel leaves lyrics unchanged");
   await page.evaluate(() => { window.__audit.state.chooseLyricsResult = { canceled: false, path: "/chosen.lrc", text: "[au:Audit Writer]\n[00:00.30]Chosen file line\n[00:01.60]Chosen second line" }; });
-  await page.click('button[title="Open a lyrics file"]'); await wait(180);
+  await page.click('button[title="Choose file"]');
+  await page.waitForSelector(".dock-choose-popover .source-row");
+  await clickText(".dock-choose-popover .source-row", "Lyrics file", false); await wait(180);
   check("lyrics-file-open", (await page.$eval(".lyrics-body", node => node.textContent)).includes("Chosen file line"), "chosen file rendered");
 
   // The dock Style popover was removed; its sliders/toggles are audited via Settings below.

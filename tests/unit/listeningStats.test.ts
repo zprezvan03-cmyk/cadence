@@ -35,6 +35,7 @@ function makeTrack(overrides: Partial<Track> = {}): Track {
     mtimeMs: 0,
     artworkUrl: null,
     animatedArtUrl: null,
+    mvUrl: null,
     accentColor: null,
     hasEmbeddedLyrics: false,
     favorite: false,

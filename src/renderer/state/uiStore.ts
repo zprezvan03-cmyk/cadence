@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 export type LibraryTab = "recently-added" | "songs" | "albums" | "artists" | "playlists" | "favorites";
 
-export type SettingsSection = "appearance" | "lyrics" | "library" | "playback" | "cache" | "about";
+export type SettingsSection = "appearance" | "general" | "lyrics" | "library" | "playback" | "cache" | "about";
 
 export type Route =
   | { name: "home" }
@@ -124,7 +124,7 @@ let nativeEntryCancelled = false;
 
 export const useUi = create<UiState>()((set, get) => ({
   route: typeof location !== "undefined" ? hashToRoute(location.hash) : { name: "home" },
-  settingsSection: "appearance",
+  settingsSection: "general",
   queueOpen: false,
   nowPlayingOpen: false,
   searchFocused: false,

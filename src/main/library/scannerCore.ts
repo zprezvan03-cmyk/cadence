@@ -27,6 +27,7 @@ export interface WalkedAudioFile {
   mtimeMs: number;
   hasSidecarLyrics: boolean;
   animatedArtPath: string | null;
+  mvPath: string | null;
 }
 
 export interface WalkResult {
@@ -117,6 +118,7 @@ export async function scanLibraryCore(
           artworkFile:
             parsed.artworkFile ?? existing?.metadataOverride?.original.artworkFile ?? existing?.artworkFile ?? null,
           animatedArtPath: parsed.animatedArtPath ?? existing?.animatedArtPath ?? null,
+          mvPath: parsed.mvPath ?? existing?.mvPath ?? null,
           accentColor: existing?.accentColor ?? null,
         });
         if (result.inserted) added += 1;

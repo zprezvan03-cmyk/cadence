@@ -19,7 +19,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { LyricsCache } from "../../src/main/lyrics/cache";
 import { LyricsService } from "../../src/main/lyrics/service";
@@ -30,7 +30,8 @@ import {
   readAllSidecarLyrics,
 } from "../../src/main/lyrics/localLyrics";
 import { createLocalLyricsReader } from "../../src/main/lyrics/localLyricsCore";
-import { findSidecarLyricsFiles } from "../../src/main/library/metadata";
+import { animatedArtCandidates, findMv, findSidecarLyricsFiles, mvCandidates } from "../../src/main/library/metadata";
+import { mvCandidates as mvCandidatesCore } from "../../src/main/library/metadataCore";
 import { scanLibrary } from "../../src/main/library/scanner";
 import { installTauriBridge } from "../../src/tauri/bridge";
 import { setRuntimeFetch } from "../../src/main/lyrics/http";
@@ -474,6 +475,7 @@ describe("Tauri bridge sidecar IPC path", () => {
       mtimeMs: 1,
       artworkFile: null,
       animatedArtPath: null,
+      mvPath: null,
       accentColor: null,
       hasEmbeddedLyrics: false,
       hasSidecarLyrics: true,
@@ -554,5 +556,47 @@ describe("Tauri bridge sidecar IPC path", () => {
     } finally {
       session.dispose();
     }
+  });
+});
+
+describe("music-video sidecar discovery", () => {
+  function makeMvFixture(files: string[]): { dir: string; audioPath: string } {
+    const dir = mkdtempSync(join(tmpdir(), "cadence-mv-sidecars-"));
+    dirs.push(dir);
+    const audioPath = join(dir, "Song.flac");
+    copyFileSync(FIXTURE_FLAC, audioPath);
+    for (const name of files) writeFileSync(join(dir, name), "video", "utf8");
+    return { dir, audioPath };
+  }
+
+  it("prefers -mv files and falls back to a plain same-name video", () => {
+    const { audioPath } = makeMvFixture(["Song.mp4"]);
+    expect(mvCandidates(audioPath).map(path => basename(path)).slice(0, 4)).toEqual([
+      "Song-mv.mp4",
+      "Song-mv.webm",
+      "Song-mv.mov",
+      "Song-mv.m4v",
+    ]);
+    expect(findMv(audioPath)).toBe(join(dirname(audioPath), "Song.mp4"));
+    expect(mvCandidatesCore(audioPath)).toEqual(mvCandidates(audioPath));
+  });
+
+  it("keeps -mv distinct from animated artwork and detects the -mv file first", () => {
+    const { audioPath } = makeMvFixture(["Song.mp4", "Song-mv.webm"]);
+    expect(animatedArtCandidates(audioPath)).toContain(join(dirname(audioPath), "Song.mp4"));
+    expect(findMv(audioPath)).toBe(join(dirname(audioPath), "Song-mv.webm"));
+  });
+
+  it("scans sidecar videos without indexing them as tracks", async () => {
+    const { dir, audioPath } = makeMvFixture(["Song-mv.mp4"]);
+    expect(existsSync(join(dirname(audioPath), "Song-mv.mp4"))).toBe(true);
+    const store = new LibraryStore(join(dir, "library.db"), join(dir, "artwork"), path => `media://${path}`, {
+      disableSqlite: true,
+    });
+    const result = await scanLibrary(store, { folders: [dir] });
+    expect(result.added).toBe(1);
+    const tracks = store.getTracks();
+    expect(tracks).toHaveLength(1);
+    expect(tracks[0].mvPath).toBe(join(dirname(audioPath), "Song-mv.mp4"));
   });
 });

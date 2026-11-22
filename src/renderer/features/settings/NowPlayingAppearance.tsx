@@ -37,6 +37,7 @@ export function NowPlayingAppearance() {
         </span>
         <button
           type="button"
+          className="ghost-button setting-action"
           ref={launcher}
           data-testid="customize-now-playing"
           aria-label="Customize Now Playing"

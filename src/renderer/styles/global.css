@@ -66,9 +66,10 @@
 }
 
 /* Enabled after first paint by useBootstrap, so a restored compact sidebar does not animate on
-   launch. The root value itself flips instantly; each consumer interpolates it locally in
-   parallel (shell track, sidebar, title-bar segment) — transitioning the root property instead
-   made consumers chase its animated output and doubled the toggle duration. */
+   launch. The root value itself flips instantly; the shell track and sidebar interpolate it
+   locally in parallel — transitioning the root property instead made consumers chase its
+   animated output and doubled the toggle duration. The title bar brand is independent of the
+   sidebar and does not follow this value. */
 :root[data-motion-ready="true"] .app-shell:not(.is-immersive) {
   transition: grid-template-columns var(--dur-4) var(--ease-in-out);
 }
@@ -78,13 +79,6 @@
     --sidebar-width var(--dur-4) var(--ease-in-out),
     padding-inline var(--dur-4) var(--ease-in-out),
     box-shadow var(--dur-2) var(--ease-out);
-}
-
-:root[data-motion-ready="true"] .title-bar-brand {
-  transition:
-    --sidebar-width var(--dur-4) var(--ease-in-out),
-    gap var(--dur-3) var(--ease-in-out),
-    padding-inline var(--dur-3) var(--ease-in-out);
 }
 
 * {
@@ -397,50 +391,6 @@ a {
   animation: chrome-in var(--dur-2) var(--ease-out);
 }
 
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 0 8px 7px;
-  text-align: left;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition:
-    gap var(--dur-3) var(--ease-in-out),
-    padding-inline var(--dur-3) var(--ease-in-out);
-}
-
-.brand-mark {
-  width: 34px;
-  height: 34px;
-  flex: none;
-  display: grid;
-  place-items: center;
-  border-radius: 8px;
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-}
-
-.brand-text {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.2;
-  min-width: 0;
-  max-width: 180px;
-  overflow: hidden;
-  white-space: nowrap;
-  transition:
-    max-width var(--dur-3) var(--ease-in-out),
-    opacity var(--dur-2) var(--ease-out),
-    transform var(--dur-2) var(--ease-out),
-    visibility var(--dur-2) var(--ease-out);
-}
-
-.brand-text strong {
-  font-size: 19px;
-  letter-spacing: -0.04em;
-}
-
 .sidebar-scroll {
   flex: 1;
   min-height: 0;
@@ -456,21 +406,6 @@ a {
   flex-direction: column;
   gap: 2px;
   flex: none;
-}
-
-.nav-group {
-  color: var(--text-faint);
-  font-size: 10.5px;
-  font-weight: 650;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-}
-
-.nav-group {
-  height: 25px;
-  padding: 5px 12px 0;
-  white-space: nowrap;
-  transition: opacity var(--dur-2) var(--ease-out);
 }
 
 /* The active pill is one element that slides between items instead of each item fading its own
@@ -603,37 +538,17 @@ a {
   --sidebar-width: var(--sidebar-compact-width);
 }
 
-[data-compact-sidebar="true"] .nav-group { opacity: 0; }
-[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .nav-group { opacity: 1; }
-
 [data-compact-sidebar="true"] .sidebar {
   padding-inline: 10px;
 }
 
-[data-compact-sidebar="true"] .brand,
-[data-compact-sidebar="true"] .nav-item,
-[data-compact-sidebar="true"] .title-bar-brand {
-  justify-content: center;
-}
-
-[data-compact-sidebar="true"] .brand {
-  gap: 0;
-  padding-inline: 0;
-}
-
 [data-compact-sidebar="true"] .nav-item {
+  justify-content: center;
   gap: 0;
   padding-inline: 0;
 }
 
-[data-compact-sidebar="true"] .title-bar-brand {
-  gap: 0;
-  padding-inline: 0;
-}
-
-[data-compact-sidebar="true"] .brand-text,
-[data-compact-sidebar="true"] .nav-item span,
-[data-compact-sidebar="true"] .title-bar-text {
+[data-compact-sidebar="true"] .nav-item span {
   max-width: 0;
   opacity: 0;
   transform: translateX(-4px);
@@ -658,13 +573,6 @@ a {
   transition-delay: var(--dur-0);
 }
 
-[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .brand {
-  justify-content: flex-start;
-  gap: 11px;
-  padding-inline: 8px;
-  transition-delay: var(--dur-0);
-}
-
 [data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .nav-item {
   justify-content: flex-start;
   gap: 12px;
@@ -672,7 +580,6 @@ a {
   transition-delay: 0s, 0s, var(--dur-0), var(--dur-0);
 }
 
-[data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .brand-text,
 [data-compact-sidebar="true"] .sidebar:is(.is-compact-peek, :has(.global-search:focus-within), [data-compact-sidebar-hover-expand="true"] .sidebar:is(:hover, :has(:focus-visible))) .nav-item span {
   max-width: 180px;
   opacity: 1;
@@ -690,10 +597,8 @@ a {
 
 @media (max-height: 720px) {
   .sidebar { gap: 6px; padding-block: 12px 8px; }
-  .brand { padding-bottom: 1px; }
   .nav { gap: 1px; }
-  .nav-group { height: 19px; padding-top: 2px; }
-  .nav-item { min-height: 29px; padding-block: 5px; }
+  .nav-item { min-height: 31px; padding-block: 6px; }
   .sidebar-footer { padding-top: 4px; }
   .sidebar-stats { display: none; }
 }
@@ -714,21 +619,20 @@ a {
   z-index: 30;
 }
 
-/* Mirrors the sidebar column (surface + divider) so the two read as one continuous panel. */
+/* The title bar keeps its own fixed brand area: it never shrinks or hides the app name when the
+   sidebar becomes compact or peeks open. */
 .title-bar-brand {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: var(--sidebar-width);
+  flex: 0 0 auto;
+  width: 256px;
   height: 100%;
   padding: 0 22px;
   border-right: 1px solid var(--border);
   background: var(--bg-elevated);
   color: var(--text-faint);
   overflow: hidden;
-  transition:
-    gap var(--dur-3) var(--ease-in-out),
-    padding-inline var(--dur-3) var(--ease-in-out);
 }
 
 .title-bar-mark {
@@ -750,11 +654,6 @@ a {
   min-width: 0;
   max-width: 140px;
   overflow: hidden;
-  transition:
-    max-width var(--dur-3) var(--ease-in-out),
-    opacity var(--dur-2) var(--ease-out),
-    transform var(--dur-2) var(--ease-out),
-    visibility var(--dur-2) var(--ease-out);
 }
 
 .title-bar-drag {
@@ -763,7 +662,7 @@ a {
   min-width: 0;
 }
 
-/* Page history sits against the content edge, just right of the sidebar-brand segment. */
+/* Page history sits just right of the fixed title-bar brand segment. */
 .title-bar-nav {
   display: flex;
   align-items: center;
@@ -908,7 +807,7 @@ a {
       grid-template-rows var(--dur-2) var(--ease-out),
       visibility 0s linear var(--dur-2);
   }
-  :is(.search-shortcut, .global-search .icon-button, .scan-indicator span, .nav-chevron, .fetch-indicator-count, .fetch-indicator-bar) { display: none; }
+  :is(.search-shortcut, .global-search .icon-button, .scan-indicator span, .nav-chevron) { display: none; }
   .sidebar-tools .history-buttons .icon-button { width: 50%; }
 }
 

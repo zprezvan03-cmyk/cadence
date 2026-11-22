@@ -29,6 +29,9 @@ export const AUDIO_EXTENSIONS = [
 
 export const LYRICS_SIDECAR_EXTENSIONS = [".lrc", ".ttml", ".qrc", ".srt", ".txt"] as const;
 
+/** Video formats Chromium decodes natively; also used by the manual MV file picker. */
+export const MV_EXTENSIONS = [".mp4", ".webm", ".mov", ".m4v"] as const;
+
 /** Chromium decodes all of these natively, which is why no native audio decoder is required. */
 const PLAYABLE_EXTENSIONS = new Set([".flac", ".mp3", ".m4a", ".aac", ".wav", ".ogg", ".oga", ".opus", ".webm"]);
 
@@ -59,6 +62,26 @@ export function findAnimatedArt(audioPath: string): string | null {
   return null;
 }
 
+/**
+ * Music videos are sidecars named after the audio file. `-mv` is checked first so a plain
+ * `<base>.mp4` remains available to the animated-art discovery without a collision.
+ */
+export function mvCandidates(audioPath: string): string[] {
+  const directory = dirname(audioPath);
+  const base = basename(audioPath, extname(audioPath));
+  const out: string[] = [];
+  for (const extension of MV_EXTENSIONS) out.push(join(directory, `${base}-mv${extension}`));
+  for (const extension of MV_EXTENSIONS) out.push(join(directory, `${base}${extension}`));
+  return out.filter(candidate => candidate !== audioPath);
+}
+
+export function findMv(audioPath: string): string | null {
+  for (const candidate of mvCandidates(audioPath)) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 export interface ParsedTrack {
   path: string;
   title: string;
@@ -79,6 +102,7 @@ export interface ParsedTrack {
   mtimeMs: number;
   artworkFile: string | null;
   animatedArtPath: string | null;
+  mvPath: string | null;
   embeddedLyrics: { text: string; kind: string } | null;
   hasSidecarLyrics: boolean;
   playable: boolean;
@@ -213,6 +237,7 @@ export async function readTrackMetadata(path: string, artworkDir: string): Promi
       mtimeMs: stat.mtimeMs,
       artworkFile: null,
       animatedArtPath: findAnimatedArt(path),
+      mvPath: findMv(path),
       embeddedLyrics: null,
       hasSidecarLyrics: findSidecarLyrics(path) !== null,
       playable: isPlayableExtension(path),
@@ -258,6 +283,7 @@ export async function readTrackMetadata(path: string, artworkDir: string): Promi
     mtimeMs: stat.mtimeMs,
     artworkFile,
     animatedArtPath: findAnimatedArt(path),
+    mvPath: findMv(path),
     embeddedLyrics: lyricsFromTags(common),
     hasSidecarLyrics: findSidecarLyrics(path) !== null,
     playable: isPlayableExtension(path),

@@ -113,6 +113,8 @@ interface HarnessLyricsOptions {
   track: HarnessTrackSpec;
   candidates?: LyricsCandidate[];
   settings?: Partial<LyricsSettings>;
+  playing?: boolean;
+  fullscreen?: boolean;
 }
 
 function makeHarnessTrack(spec: HarnessTrackSpec): Track {
@@ -135,6 +137,7 @@ function makeHarnessTrack(spec: HarnessTrackSpec): Track {
     mtimeMs: 0,
     artworkUrl: null,
     animatedArtUrl: null,
+    mvUrl: null,
     accentColor: null,
     hasEmbeddedLyrics: false,
     favorite: false,
@@ -198,6 +201,7 @@ function harnessAppSettings(lyrics?: Partial<LyricsSettings>): AppSettings {
     },
     appearance: { accent: "#ff3d71", reduceMotion: false, compactSidebar: false, compactSidebarHoverExpand: true, blurArtwork: true, fontFamily: "inter" },
     lyrics: { ...defaultLyricsSettings, ...lyrics },
+    mvBackground: { enabled: false, scrimOpacity: 0.45, bindings: {} },
     nowPlayingProfiles: createDefaultNowPlayingProfilesSettings(),
     shaders: { ...shaderSettings, enabled: false },
     artistImages: {
@@ -206,6 +210,7 @@ function harnessAppSettings(lyrics?: Partial<LyricsSettings>): AppSettings {
       providerOrder: ["lastfm", "wikidata", "deezer"],
       refreshAfterDays: 30,
     },
+    home: { featuredSeed: null, featuredSeedDay: null },
     advanced: { showLogs: false },
     general: { onboardingCompleted: true, onboardingStep: 0 },
     scrobbling: { enabled: false, apiKey: "", apiSecret: "", sessionKey: "", username: "" },
@@ -240,6 +245,7 @@ const lyricsHarness = {
 
 let lyricsViewRoot: ReturnType<typeof createRoot> | null = null;
 let lyricsViewTrack: Track | null = null;
+let harnessMvFile: { path: string; url: string } | null = null;
 
 function installLyricsHarnessBridge(): void {
   const existing = (globalThis.window?.cadence ?? {}) as unknown as Record<string, unknown>;
@@ -303,29 +309,6 @@ function installLyricsHarnessBridge(): void {
       }),
       cacheChosenFile: async () => undefined,
       rememberSelection: async () => undefined,
-      fetchAll: {
-        getState: async () => ({
-          jobId: null,
-          state: "idle",
-          total: 0,
-          processed: 0,
-          found: 0,
-          notFound: 0,
-          failed: 0,
-          skipped: 0,
-          currentTrack: null,
-          startedAt: null,
-          finishedAt: null,
-        }),
-        start: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
-        pause: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
-        resume: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
-        cancel: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
-        retryFailed: async () => ({ jobId: null, state: "idle", total: 0, processed: 0, found: 0, notFound: 0, failed: 0, skipped: 0, currentTrack: null, startedAt: null, finishedAt: null }),
-        stats: async () => ({ totalTracks: 0, withLyrics: 0, needsSearch: 0, fullyProcessed: 0 }),
-        promote: async () => undefined,
-        onProgress: () => () => undefined,
-      },
     },
     app: {
       ...(existing.app as object | undefined),
@@ -334,6 +317,8 @@ function installLyricsHarnessBridge(): void {
         lyricsHarness.chosenFile = null;
         return text ? { canceled: false, text, path: "/harness/chosen.ttml" } : { canceled: true };
       },
+      chooseMvFile: async () =>
+        harnessMvFile ? { canceled: false, ...harnessMvFile } : { canceled: true },
     },
     history: {
       add: async () => undefined,
@@ -448,8 +433,8 @@ const harness = {
       createElement(LyricsView, {
         track,
         item: mediaItemFromLocalTrack(track),
-        playing: false,
-        fullscreen: false,
+        playing: options.playing ?? false,
+        fullscreen: options.fullscreen ?? false,
       })
     );
     return { trackId: track.id };
@@ -502,10 +487,22 @@ const harness = {
     return this.lyricsState();
   },
 
+  /** Feeds a synthetic MV URL through the harness file picker. */
+  setMvFile(url: string | null) {
+    harnessMvFile = url ? { path: "/harness/mv.mp4", url } : null;
+    return harnessMvFile;
+  },
+
   /** Changes lyrics settings through the production settings store, as the Settings page does. */
   async patchLyricsSettings(patch: Partial<LyricsSettings>) {
     await useSettings.getState().patch({ lyrics: patch });
     return structuredClone(useSettings.getState().settings?.lyrics ?? lyricsHarness.settings.lyrics);
+  },
+
+  /** Changes MV background settings through the same production store. */
+  async patchMvSettings(patch: Partial<AppSettings["mvBackground"]>) {
+    await useSettings.getState().patch({ mvBackground: patch });
+    return structuredClone(useSettings.getState().settings?.mvBackground ?? lyricsHarness.settings.mvBackground);
   },
 
   /** The store and provider call counters, for assertions about what the pipeline actually did. */

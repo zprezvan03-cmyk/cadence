@@ -38,6 +38,7 @@ export interface StoredTrack {
   mtimeMs: number;
   artworkFile: string | null;
   animatedArtPath: string | null;
+  mvPath: string | null;
   accentColor: string | null;
   hasEmbeddedLyrics: boolean;
   hasSidecarLyrics: boolean;
@@ -703,6 +704,7 @@ export class LibraryStoreCore {
       mtimeMs: track.mtimeMs,
       artworkUrl: track.artworkFile ? this.mediaUrl(pathJoin(this.artworkDirectory, track.artworkFile), true) : null,
       animatedArtUrl: track.animatedArtPath ? this.mediaUrl(track.animatedArtPath, false) : null,
+      mvUrl: track.mvPath ? this.mediaUrl(track.mvPath, false) : null,
       accentColor: track.accentColor,
       hasEmbeddedLyrics: track.hasEmbeddedLyrics,
       favorite: track.favorite,

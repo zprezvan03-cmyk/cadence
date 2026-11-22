@@ -161,6 +161,9 @@
   height: 100vh;
   height: 100cqh;
   z-index: 55;
+  /* The background slides up from the bottom; keep the uncovered area dark instead of
+     showing the app behind it while the layer travels. */
+  background: #05050a;
   /* The shared-player handoff cancels this fallback entry fade when parts can move. */
   animation: fs-in var(--dur-3) var(--ease-out);
   /* Artwork in the left column, lyrics in the right. The artwork's size follows the window height and
@@ -263,13 +266,18 @@
   pointer-events: auto;
 }
 
+/* The top row uses the same glass as the footer and its popovers, so every floating surface in
+   fullscreen reads as one layer instead of a solid chip over a blurred one. */
 .fs-mode-tabs {
   display: flex;
   gap: 3px;
   padding: 3px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.17);
-  background: rgba(20, 20, 23, 0.8);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elevated) 58%, transparent);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  box-shadow: var(--shadow-lg);
 }
 
 .fs-mode-tabs button {
@@ -287,17 +295,137 @@
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.17);
-  background: rgba(20, 20, 23, 0.8);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elevated) 58%, transparent);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  box-shadow: var(--shadow-lg);
 }
-.fs-page-actions .fs-exit:hover { background: var(--surface-3); }
-.fs-mode-tabs button[aria-pressed="true"] { background: var(--surface-3); color: var(--text); }
+.fs-page-actions .fs-exit:hover { background: color-mix(in srgb, var(--bg-elevated) 78%, transparent); }
+.fs-mode-tabs button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--bg-elevated) 82%, transparent);
+  color: var(--text);
+}
+
+/* Lyrics tools: the button itself is the surface. Collapsed it is the 38px icon pill; expanding it
+   widens that same pill to the left and reveals the controls inside it — no second bubble. */
+.lyrics-tools {
+  --dur-pill: 300ms;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  flex: none;
+  width: max-content;
+  min-width: 0;
+  height: 38px;
+  max-width: calc(100vw - 240px);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-elevated) 58%, transparent);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+/* Keep clipping on while the pill grows/shrinks: content is revealed from behind the trigger
+   instead of sliding across it. Only an open popover needs the surface to let content escape. */
+.lyrics-tools.has-popover,
+.lyrics-tools.has-popover .lyrics-tools-dock-inner {
+  overflow: visible;
+}
+
+.lyrics-tools:hover {
+  background: color-mix(in srgb, var(--bg-elevated) 78%, transparent);
+}
+
+.lyrics-tools-trigger {
+  flex: none;
+  width: 38px;
+  height: 36px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.78);
+  display: grid;
+  place-items: center;
+}
+
+.lyrics-tools-trigger:hover,
+.lyrics-tools-trigger.active {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+/* A 0fr → 1fr grid track is the only CSS length that interpolates all the way to an intrinsic
+   max-content width. Animating `width` to `max-content` just snaps in Chromium, which made the pill
+   appear instantly despite the transition. */
+.lyrics-tools-dock {
+  flex: none;
+  display: grid;
+  grid-template-columns: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    grid-template-columns var(--dur-pill) var(--ease-out),
+    opacity var(--dur-pill) var(--ease-out),
+    visibility var(--dur-pill) var(--ease-out);
+}
+
+.lyrics-tools.is-open .lyrics-tools-dock {
+  grid-template-columns: 1fr;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.lyrics-tools-dock-inner {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.lyrics-tools.is-open .lyrics-tools-dock-inner {
+  margin-right: 8px;
+}
+
+/* The dock is now just the controls inside the expanded button, with no surface of its own. */
+.lyrics-view.is-fullscreen .lyrics-tools-dock .lyrics-dock {
+  width: max-content;
+  height: 36px;
+  max-width: none;
+  flex-wrap: nowrap;
+  margin: 0;
+  padding: 0;
+  gap: 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.lyrics-view.is-fullscreen .lyrics-tools-dock .lyrics-dock .dock-group {
+  gap: 4px;
+  padding-left: 4px;
+}
+
+/* Extra breathing room on the left end only, right before the status label. */
+.lyrics-view.is-fullscreen .lyrics-tools-dock .lyrics-dock .dock-status {
+  padding-left: 20px;
+}
+
+/* Its popovers rise above a bottom bar; from the top row they must fall below it. */
+.lyrics-tools-dock .dock-popover {
+  top: calc(100% + 10px);
+  bottom: auto;
+}
 
 .lyrics-view.is-fullscreen .lyrics-header {
   z-index: 3;
   pointer-events: none;
 }
-.lyrics-view.is-fullscreen .lyrics-header:has(.fs-page-actions) { padding-inline-end: calc(var(--np-gutter) + 230px); }
+.lyrics-view.is-fullscreen .lyrics-header:has(.fs-page-actions) { padding-inline-end: calc(var(--np-gutter) + 280px); }
 
 /* Narrow app-content areas: the lyrics take the full width and the artwork is left out, but the title stays
    at the top. The heading block takes the first row, so it does not overlap the lyrics. This is keyed to
@@ -320,7 +448,7 @@
     transform: none;
     width: auto;
     margin: 0;
-    padding: 18px 230px 4px 20px;
+    padding: 18px 280px 4px 20px;
   }
   .fs-side .lyrics-heading {
     margin-top: 0;
@@ -495,6 +623,9 @@
   flex-direction: column;
 }
 
+/* In fullscreen the transport and the lyrics tools share ONE glass surface spanning the whole
+   viewport (the footer is already edge-to-edge); the two bars keep their size and sit inside it.
+   `is-concealed` follows the same hover timer as the bars so the surface fades with its content. */
 .lyrics-view.is-fullscreen .lyrics-footer {
   position: absolute;
   left: 0;
@@ -502,6 +633,39 @@
   bottom: 0;
   z-index: 3;
   pointer-events: none;
+  background: color-mix(in srgb, var(--bg-elevated) 58%, transparent);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  transition:
+    background-color var(--dur-3) var(--ease-out),
+    backdrop-filter var(--dur-3) var(--ease-out),
+    border-color var(--dur-3) var(--ease-out);
+}
+
+.lyrics-view.is-fullscreen .lyrics-footer.is-concealed {
+  background-color: transparent;
+  backdrop-filter: blur(0px) saturate(1);
+  -webkit-backdrop-filter: blur(0px) saturate(1);
+}
+
+/* Remove the individual pill fills — the glass now belongs to the full-width footer. */
+.lyrics-view.is-fullscreen .fs-controls,
+.lyrics-view.is-fullscreen .lyrics-dock {
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 0;
+  border-radius: 0;
+}
+
+/* Static dock in fullscreen makes the footer the popovers' containing block, so they rise above
+   the whole strip instead of stopping between the two bars. */
+.lyrics-view.is-fullscreen .lyrics-dock {
+  position: static;
+}
+
+.lyrics-view.is-fullscreen .dock-popover {
+  z-index: 5;
 }
 
 .lyrics-footer > * {
@@ -801,20 +965,21 @@ braccato-lyrics[data-upgrading="true"] {
 /* ------------------------------------------------------------- lyrics dock */
 
 .lyrics-dock {
+  /* Compact toolbar under the fullscreen player: about a third shorter than the transport. */
+  --dock-control-size: clamp(26px, 2.9cqh, 38px);
   position: relative;
   z-index: 3;
   display: flex;
   align-items: center;
   gap: clamp(8px, 1cqi, 14px);
   flex-wrap: wrap;
-  padding: clamp(8px, 1.4cqh, 14px) clamp(16px, 2cqi, 30px);
+  padding: clamp(5px, 0.9cqh, 9px) clamp(16px, 2cqi, 30px);
   margin: 0 auto clamp(12px, 2.4cqh, 24px);
   width: fit-content;
   max-width: calc(100% - (2 * var(--np-gutter)));
   border-radius: var(--radius);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-
 }
 
 /* Fullscreen transport and lyrics tools remain readable independently of the background. */
@@ -832,6 +997,15 @@ braccato-lyrics[data-upgrading="true"] {
   border: 1px solid var(--border);
 }
 
+/* Both footer bars float over the live Now Playing background. Keep them translucent glass so the
+   shader/artwork reads through; the opaque fill made them look like flat chrome. */
+.lyrics-dock,
+.fs-controls {
+  background: color-mix(in srgb, var(--bg-elevated) 58%, transparent);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+}
+
 .fs-controls .seek-row {
   gap: clamp(8px, 1.2cqi, 16px);
 }
@@ -841,11 +1015,13 @@ braccato-lyrics[data-upgrading="true"] {
   font-size: clamp(11px, calc(0.4cqi + 0.55cqh), 16px);
 }
 
+/* The fullscreen bar uses the home playbar's three zones: track identity, transport + seek,
+   then volume and view tools. Only the living background behind it is different. */
 .fs-controls-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) clamp(248px, 30vw, 400px) minmax(0, 1fr);
   align-items: center;
-  gap: clamp(10px, 1.4cqi, 20px);
+  gap: clamp(14px, 1.6vw, 24px);
 }
 
 .fs-group {
@@ -857,6 +1033,51 @@ braccato-lyrics[data-upgrading="true"] {
 
 .fs-group-end {
   justify-content: flex-end;
+}
+
+.fs-player-track {
+  width: min(100%, 274px);
+}
+
+.fs-player-track > .playback-cover {
+  width: clamp(44px, 4.6cqh, 56px);
+  height: clamp(44px, 4.6cqh, 56px);
+}
+
+.fs-player-meta .playback-text > div {
+  min-width: 0;
+}
+
+.fs-player-center {
+  width: 100%;
+}
+
+.fs-player-center .transport {
+  gap: 8px;
+}
+
+.fs-player-center .play-button {
+  box-shadow: none;
+}
+
+.fs-player-center .seek-row {
+  gap: 6px;
+}
+
+.fs-player-center .time {
+  width: 34px;
+}
+
+.fs-player-right {
+  justify-content: flex-end;
+}
+
+.fs-player-right .volume-group {
+  width: clamp(84px, 8vw, 124px);
+}
+
+.fs-player-right .volume-group input[type="range"].volume {
+  min-width: 36px;
 }
 
 .fs-controls .icon-button {
@@ -881,11 +1102,12 @@ braccato-lyrics[data-upgrading="true"] {
 }
 
 .fs-controls .volume-group {
-  width: clamp(120px, 12cqi, 190px);
+  width: clamp(84px, 8vw, 124px);
 }
 
 .fs-controls .volume-group input[type="range"].volume {
-  width: clamp(80px, 8cqi, 140px);
+  width: clamp(60px, 6vw, 100px);
+  min-width: 36px;
 }
 
 /* Fullscreen hover visibility: opacity only. The hidden state also removes the controls from hit-testing and
@@ -942,6 +1164,19 @@ braccato-lyrics[data-upgrading="true"] {
   color: rgba(255, 255, 255, 0.82);
 }
 
+.lyrics-dock .dock-button {
+  min-height: var(--dock-control-size);
+  padding-block: 0;
+}
+
+/* Icon-only dock triggers: compact, square-ish hit targets that line up with the dock-icon group. */
+.lyrics-dock .dock-button--icon {
+  min-width: var(--dock-control-size);
+  justify-content: center;
+  gap: 3px;
+  padding-inline: clamp(5px, 0.7cqi, 9px);
+}
+
 .dock-button:hover {
   background: rgba(255, 255, 255, 0.08);
   color: #fff;
@@ -961,6 +1196,11 @@ braccato-lyrics[data-upgrading="true"] {
   color: rgba(255, 255, 255, 0.75);
 }
 
+.lyrics-dock .dock-icon {
+  width: var(--dock-control-size);
+  height: var(--dock-control-size);
+}
+
 .dock-icon:hover {
   background: rgba(255, 255, 255, 0.09);
   color: #fff;
@@ -974,6 +1214,8 @@ braccato-lyrics[data-upgrading="true"] {
   color: rgba(255, 255, 255, 0.75);
 }
 
+/* Popovers are direct children of the dock; LyricsDock pins left/right to the trigger that
+   opened each one so they rise above the correct button instead of stacking at one edge. */
 .dock-popover {
   position: absolute;
   bottom: calc(100% + 10px);
@@ -983,13 +1225,31 @@ braccato-lyrics[data-upgrading="true"] {
   overflow-y: auto;
   padding: 12px;
   border-radius: var(--radius);
-  background: var(--surface-2);
-  border: 1px solid var(--border-strong);
+  /* Same glass as the full-width footer strip so popovers read as part of one floating surface. */
+  background: color-mix(in srgb, var(--bg-elevated) 58%, transparent);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  border: 1px solid var(--border);
   box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
   gap: 4px;
   animation: pop-in var(--dur-2) var(--ease-out);
+}
+
+/* Keep the trigger + popover wrappers shrink-wrapped to their buttons now that the popover is
+   anchored to the dock/footer rather than to the wrapper itself. */
+.dock-save-wrap,
+.dock-regenerate-wrap,
+.dock-choose-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+
+.dock-choose-popover .source-row strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* Presence exit (see `app/usePresence.ts`): same fast pop-out as the context menu. */
@@ -1349,11 +1609,6 @@ braccato-lyrics[data-upgrading="true"] {
 
 .dock-profiles {
   width: min(360px, calc(100cqi - 32px));
-  /* This five-row popover extends across the fullscreen controls when it opens upward.
-     Unlike the shorter glass dock panels, it uses an opaque menu fill so seek/volume
-     lines cannot cross the last profile rows or the note beneath them. */
-  background: #0b0b14;
-  backdrop-filter: none;
   z-index: 4;
 }
 
@@ -1503,6 +1758,12 @@ braccato-lyrics[data-upgrading="true"] {
     grid-template-columns: minmax(0, 1fr);
     justify-items: center;
   }
+  .fs-player-track,
+  .fs-player-center,
+  .fs-player-right {
+    width: 100%;
+  }
+  .fs-player-right,
   .fs-group,
   .fs-group-end {
     justify-content: center;
@@ -1542,6 +1803,29 @@ braccato-lyrics[data-upgrading="true"] {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+/* Music-video background: full-bleed, original colours, no blur. */
+.np-mv-bg {
+  background: #000;
+}
+
+.np-mv-video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  filter: none;
+}
+
+.np-mv-scrim {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  pointer-events: none;
 }
 
 .lyrics-view[data-profile-dock="hidden"] .lyrics-dock {

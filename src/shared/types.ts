@@ -38,6 +38,8 @@ export interface Track {
   artworkUrl: string | null;
   /** Local animated cover (`cover.mp4`/`cover.webm` beside the track), when one exists. */
   animatedArtUrl: string | null;
+  /** Local music-video sidecar (`<name>-mv.mp4` etc. beside the track), when one exists. */
+  mvUrl: string | null;
   /** Dominant colour of the artwork as `#rrggbb`, computed while scanning. */
   accentColor: string | null;
   hasEmbeddedLyrics: boolean;
@@ -408,38 +410,6 @@ export interface LyricsResolveResult {
   definitive?: boolean;
 }
 
-/** Lifecycle of the persistent Fetch All Lyrics background job. */
-export type LyricsFetchJobState = "idle" | "running" | "paused" | "completed" | "canceled";
-
-/** Renderer-facing snapshot of the Fetch All job; the bridge owns the authoritative state. */
-export interface LyricsFetchJobSnapshot {
-  jobId: string | null;
-  state: LyricsFetchJobState;
-  total: number;
-  /** Entries in a terminal state (found + notFound + failed + skipped). */
-  processed: number;
-  found: number;
-  notFound: number;
-  /** Temporary failures plus rate-limited tracks awaiting a manual retry. */
-  failed: number;
-  skipped: number;
-  /** A track being processed right now, when any. */
-  currentTrack: { trackId: number; title: string; artist: string } | null;
-  startedAt: number | null;
-  finishedAt: number | null;
-}
-
-/** Library-wide lyrics coverage, for the onboarding Fetch All page and Settings. */
-export interface LyricsFetchStats {
-  totalTracks: number;
-  /** Tracks that already have some usable lyrics (local, embedded, manual or cached remote). */
-  withLyrics: number;
-  /** Tracks a Fetch All run would still query providers for. */
-  needsSearch: number;
-  /** Tracks whose every eligible provider result is already cached and fresh. */
-  fullyProcessed: number;
-}
-
 export interface TranslationRequest {
   lines: string[];
   /** Bypass only this transformation's derived result cache on explicit user regeneration. */
@@ -470,7 +440,7 @@ export interface RomanizationResult {
   words?: (string[] | null)[];
 }
 
-/** Bounded provider-request parallelism for Autofetch / Fetch All (see the central limiter). */
+/** Bounded provider-request parallelism for Autofetch (see the central limiter). */
 export type LyricsFetchConcurrency = "low" | "balanced" | "high";
 
 export type LyricsAiProtocol = "ollama-native" | "openai-compatible";
@@ -502,7 +472,7 @@ export interface LyricsSettings {
    * immediately. Manual retries always bypass it.
    */
   notFoundCooldownDays: number;
-  /** Global provider-request concurrency preset shared by Autofetch, Fetch All and manual search. */
+  /** Global provider-request concurrency preset shared by Autofetch and manual search. */
   fetchConcurrency: LyricsFetchConcurrency;
   /** Offset in milliseconds applied to the playback clock before matching. */
   offsetMs: number;
@@ -711,14 +681,25 @@ export interface NowPlayingProfilesSettings {
   };
 }
 
+/** Per-track manual MV bindings are keyed by `trackSourceKey` (e.g. `local:12`). */
+export interface MvBackgroundSettings {
+  enabled: boolean;
+  /** Dark layer over the video, 0 (none) to 1 (fully black). */
+  scrimOpacity: number;
+  bindings: Record<string, string>;
+}
+
 export interface AppSettings {
   version: number;
   playback: PlaybackSettings;
   appearance: AppearanceSettings;
   lyrics: LyricsSettings;
+  /** Muted music-video background for fullscreen Now Playing. */
+  mvBackground: MvBackgroundSettings;
   nowPlayingProfiles: NowPlayingProfilesSettings;
   shaders: ShaderSettings;
   artistImages: ArtistImageSettings;
+  home: HomeSettings;
   advanced: { showLogs: boolean };
   general: {
     /** True once the first-launch onboarding has been finished or skipped. */
@@ -727,6 +708,14 @@ export interface AppSettings {
     onboardingStep: number;
   };
   scrobbling: LastFmSettings;
+}
+
+/** Rotation seed for the Home album shelves. A stale day key rolls over to a date-derived seed. */
+export interface HomeSettings {
+  /** Seed from the manual "Refresh featured albums" action; null until the first refresh. */
+  featuredSeed: number | null;
+  /** Local day key (`YYYY-MM-DD`) the seed was generated for. */
+  featuredSeedDay: string | null;
 }
 
 /**
@@ -1055,26 +1044,6 @@ export interface CadenceApi {
     cacheChosenFile(request: { trackId: number; path: string; text: string }): Promise<void>;
     /** Stores a manual-search result the user chose, replacing any earlier choice for the track. */
     rememberSelection(request: { trackId: number; candidate: LyricsCandidate }): Promise<void>;
-    /**
-     * The persistent Fetch All Lyrics background job. It runs beside the lyrics service (never
-     * through the track-scoped `resolve` above), shares the same provider/cache/request
-     * coordination, and survives navigation and app restarts.
-     */
-    fetchAll: {
-      getState(): Promise<LyricsFetchJobSnapshot>;
-      /** Builds the queue and starts; a compatible running job is returned instead of duplicated. */
-      start(): Promise<LyricsFetchJobSnapshot>;
-      pause(): Promise<LyricsFetchJobSnapshot>;
-      resume(): Promise<LyricsFetchJobSnapshot>;
-      /** Stops active requests and drops pending work; already-cached lyrics are kept. */
-      cancel(): Promise<LyricsFetchJobSnapshot>;
-      /** Re-queues temporary failures / rate-limited tracks. Nothing retries automatically. */
-      retryFailed(): Promise<LyricsFetchJobSnapshot>;
-      stats(): Promise<LyricsFetchStats>;
-      /** Moves a pending track to the front of the queue (e.g. it just started playing). */
-      promote(trackId: number): Promise<void>;
-      onProgress(listener: (snapshot: LyricsFetchJobSnapshot) => void): () => void;
-    };
   };
   player: {
     /** Decode an ALAC source to a seekable lossless PCM WAV cache and return its media URL. */
@@ -1098,6 +1067,8 @@ export interface CadenceApi {
     openExternal(url: string): Promise<void>;
     openPath(path: string): Promise<void>;
     chooseLyricsFile(trackId: number): Promise<{ canceled: boolean; path?: string; text?: string }>;
+    /** Picks a local video file and returns a playable media URL for it. */
+    chooseMvFile(trackId: number): Promise<{ canceled: boolean; path?: string; url?: string }>;
     window(action: WindowAction): Promise<void>;
     /** Resize the OS window into (or out of) the compact always-on-top mini-player. */
     setMiniPlayer(enabled: boolean): Promise<void>;

@@ -13,6 +13,7 @@ const parts = ["artwork", "metadata", "transport"] as const;
 type Part = typeof parts[number];
 type Box = { node: HTMLElement; rect: DOMRect; anchor: DOMRect };
 type Scene = Partial<Record<Part, Box>>;
+type BackgroundBox = { node: HTMLElement; rect: DOMRect };
 
 function measure(root: HTMLElement, layout: PlayerLayout, arriving = false): Scene {
   // Windowed Now Playing has no header artwork. Its existing player bar is the destination,
@@ -50,13 +51,22 @@ function displacement(part: Part, from: Box, to: Box) {
  * title and controls animate; no snapshot layers, computed-style copies, or per-frame JS. */
 export class PlayerLayoutMotion extends Component<Props> {
   private cancelFlight?: () => void;
+  private exitingBackground?: BackgroundBox;
 
   getSnapshotBeforeUpdate({ layout: previous }: Props): Scene | null {
     const { layout, reducedMotion } = this.props;
+    this.exitingBackground = undefined;
     if (previous === layout || reducedMotion || !canAnimateLayout()) return null;
     if (![previous, layout].some(value => value === "mini" || value === "fullscreen")) return null;
     const root = document.getElementById("root");
-    return root ? measure(root, previous) : null;
+    if (!root) return null;
+    // Keep the real layer (and its live shader canvas) for the exit slide. The rect is read
+    // before React commits, so it still describes the background as it was on screen.
+    if (previous === "fullscreen") {
+      const node = root.querySelector<HTMLElement>(".lyrics-view.is-fullscreen :is(.kawarp-bg, .np-bg)");
+      if (node) this.exitingBackground = { node, rect: node.getBoundingClientRect() };
+    }
+    return measure(root, previous);
   }
 
   componentDidUpdate(previous: Props, _state: unknown, from: Scene | null) {
@@ -98,7 +108,52 @@ export class PlayerLayoutMotion extends Component<Props> {
         easing: miniHandoff ? MOTION_EASING.out : MOTION_EASING.settle, fill: "both",
       }));
     }
-    if (!animations.length) return;
+    // The background has no slot in `measure()`; drive it from the fullscreen surface itself so
+    // entry and exit share one WAAPI path, synced with the artwork/title handoff above.
+    const backgroundOptions: KeyframeAnimationOptions = {
+      id: "player-background-handoff", duration,
+      easing: MOTION_EASING.settle, fill: "both",
+    };
+    let restoreBackground: (() => void) | undefined;
+    const exiting = this.exitingBackground;
+    this.exitingBackground = undefined;
+    if (this.props.layout === "fullscreen") {
+      const arriving = root.querySelector<HTMLElement>(".lyrics-view.is-fullscreen :is(.kawarp-bg, .np-bg)");
+      if (arriving) animations.push(arriving.animate([
+        { transform: "translateY(100%)" },
+        { transform: "translateY(0)" },
+      ], backgroundOptions));
+    } else if (exiting) {
+      const { node, rect } = exiting;
+      // LyricsView can unmount with the layout, so adopt the original node rather than a clone:
+      // the shader keeps running for the whole exit slide.
+      const movedToBody = !node.isConnected;
+      if (movedToBody) document.body.append(node);
+      const previousStyle = {
+        position: node.style.position, margin: node.style.margin,
+        left: node.style.left, top: node.style.top,
+        width: node.style.width, height: node.style.height,
+        zIndex: node.style.zIndex,
+      };
+      Object.assign(node.style, {
+        position: "fixed", margin: "0",
+        left: `${rect.left}px`, top: `${rect.top}px`,
+        width: `${rect.width}px`, height: `${rect.height}px`,
+        zIndex: "34",
+      });
+      animations.push(node.animate([
+        { transform: "translateY(0)" },
+        { transform: "translateY(100%)" },
+      ], backgroundOptions));
+      restoreBackground = () => {
+        if (movedToBody) node.remove();
+        else Object.assign(node.style, previousStyle);
+      };
+    }
+    if (!animations.length) {
+      restoreBackground?.();
+      return;
+    }
 
     // Settle the small compact title strip with the handoff. On expansion leave the large
     // masked lyrics surface and its filtered backdrop still; only the shared player moves.
@@ -112,6 +167,7 @@ export class PlayerLayoutMotion extends Component<Props> {
     const movingSurface = bar ?? (this.props.layout === "fullscreen" ? lyrics as HTMLElement | null : null);
     if (movingSurface) movingSurface.dataset.playerMoving = "true";
     this.cancelFlight = finishMotion(animations, () => {
+      restoreBackground?.();
       if (movingSurface) delete movingSurface.dataset.playerMoving;
       this.cancelFlight = undefined;
     });

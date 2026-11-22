@@ -83,6 +83,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     fullscreenOnOpen: false,
     showLyricsInFullscreen: true,
   },
+  mvBackground: { enabled: false, scrimOpacity: 0.45, bindings: {} },
   nowPlayingProfiles: createDefaultNowPlayingProfilesSettings(),
   shaders: {
     ...DEFAULT_GRADIENT_SETTINGS,
@@ -93,6 +94,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
     autoFetch: true,
     providerOrder: [...DEFAULT_ARTIST_IMAGE_PROVIDER_ORDER],
     refreshAfterDays: 30,
+  },
+  home: {
+    featuredSeed: null,
+    featuredSeedDay: null,
   },
   advanced: {
     showLogs: false,
@@ -205,10 +210,24 @@ function normalizeSettings(settings: AppSettings, rawProfiles: unknown = setting
   if (!["low", "balanced", "high"].includes(settings.lyrics.fetchConcurrency)) {
     settings.lyrics.fetchConcurrency = DEFAULT_SETTINGS.lyrics.fetchConcurrency;
   }
+  const mvSource: AnyRecord = isPlainObject(settings.mvBackground) ? settings.mvBackground : {};
+  const mvBindings: Record<string, string> = {};
+  const rawBindings: AnyRecord = isPlainObject(mvSource.bindings) ? mvSource.bindings : {};
+  for (const [key, value] of Object.entries(rawBindings)) {
+    if (key && key.length <= 128 && typeof value === "string" && value.trim()) {
+      mvBindings[key] = value.slice(0, 4096);
+    }
+  }
+  settings.mvBackground = {
+    enabled:
+      typeof mvSource.enabled === "boolean" ? mvSource.enabled : DEFAULT_SETTINGS.mvBackground.enabled,
+    scrimOpacity: clampNumber(mvSource.scrimOpacity, DEFAULT_SETTINGS.mvBackground.scrimOpacity, 0, 1),
+    bindings: mvBindings,
+  };
   const step = Number(settings.general?.onboardingStep);
   settings.general = {
     onboardingCompleted: Boolean(settings.general?.onboardingCompleted),
-    onboardingStep: Number.isFinite(step) ? Math.min(4, Math.max(0, Math.round(step))) : 0,
+    onboardingStep: Number.isFinite(step) ? Math.min(3, Math.max(0, Math.round(step))) : 0,
   };
   settings.nowPlayingProfiles = normalizeNowPlayingProfilesSettings(rawProfiles);
   const artistImageSource: AnyRecord = isPlainObject(settings.artistImages) ? settings.artistImages : {};
@@ -229,6 +248,20 @@ function normalizeSettings(settings: AppSettings, rawProfiles: unknown = setting
     refreshAfterDays: Math.round(
       clampNumber(artistImageSource.refreshAfterDays, DEFAULT_SETTINGS.artistImages.refreshAfterDays, 0, 365)
     ),
+  };
+  const homeSource: AnyRecord = isPlainObject(settings.home) ? settings.home : {};
+  const featuredSeed = Number(homeSource.featuredSeed);
+  settings.home = {
+    featuredSeed:
+      homeSource.featuredSeed === null ||
+      homeSource.featuredSeed === undefined ||
+      !Number.isFinite(featuredSeed)
+        ? null
+        : Math.abs(Math.trunc(featuredSeed)) % 0x100000000,
+    featuredSeedDay:
+      typeof homeSource.featuredSeedDay === "string" && /^\d{4}-\d{2}-\d{2}$/.test(homeSource.featuredSeedDay)
+        ? homeSource.featuredSeedDay
+        : null,
   };
   const scrobblingSource: AnyRecord = isPlainObject(settings.scrobbling) ? settings.scrobbling : {};
   const credential = (value: unknown): string =>
