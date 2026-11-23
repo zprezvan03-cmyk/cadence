@@ -991,7 +991,9 @@ const controlsVisible = await page.evaluate(() => {
 await page.mouse.move(720, 120);
 await wait(120);
 await page.mouse.move(722, 118);
-await wait(700);
+// The chrome now follows Better Lyrics' fullscreen idle rule (3 s of stillness), not a pointer-leave
+// timer, so a brief stay is not enough to hide it.
+await wait(3400);
 const controlsHidden = await page.evaluate(() => {
   const controls = document.querySelector(".fs-controls");
   if (!controls) return null;
@@ -1015,9 +1017,11 @@ const controlsBack = await page
 check("fs-controls-return", controlsBack === "1", `opacity ${controlsBack}`);
 
 // Dock popovers share the presence language: pop-in on open, fast pop-out on close.
-// The dock is collapsed in the top-right tools row, so expand it before driving its trigger.
-await page.hover('[data-testid="lyrics-tools-trigger"]');
-await page.waitForSelector('button[title="Lyrics source"]');
+// The dock floats over the lyrics column in fullscreen, so wake the chrome with a pointer move
+// before driving its trigger.
+await page.mouse.move(720, 400);
+await page.mouse.move(724, 402);
+await page.waitForSelector('button[title="Lyrics source"]', { visible: true, timeout: 5000 });
 await page.evaluate(() => document.querySelector<HTMLButtonElement>('button[title="Lyrics source"]')?.click());
 await page.waitForSelector(".dock-popover.dock-sources", { timeout: 5000 });
 const dockIn = await animationsFor(".dock-popover.dock-sources");

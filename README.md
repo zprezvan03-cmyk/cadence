@@ -53,7 +53,9 @@ npm run build:desktop  # Full Tauri production build (frontend + Rust host + pla
    Player's artwork opens Now Playing; its Restore button returns to the previous view.
    **Settings → Appearance → Now Playing** opens the Customization Studio, where you can preview and
    save each layout independently. See [Desktop UI restructuring](docs/desktop-restructuring.md) for
-   layout and profile compatibility details. Lyrics providers run in priority order: local `.ttml`/`.qrc` →
+   layout and profile compatibility details, and [Now Playing parity](docs/now-playing-parity.md) for
+   the fullscreen layout, controls, idle-hiding chrome and floating lyrics dock that follow Better
+   Lyrics' own player page. Lyrics providers run in priority order: local `.ttml`/`.qrc` →
    Better Lyrics API / Unison / Binimum rich-synced → Better Lyrics word-synced → local `.lrc` →
    Unison / Better Lyrics / LRCLIB line-synced → LRCLIB plain →
    embedded tag (USLT/SYLT/`©lyr`/Vorbis `LYRICS`). Use the dock or Lyrics Selector to change source, run a

@@ -1255,13 +1255,16 @@ const fsParts = await page.evaluate(() => {
       has(".fs-player-center > .seek-row input.seek") &&
       !root.querySelector(".fs-controls-row > .transport") &&
       !root.querySelector(".fs-track"),
-    rightTools: has(".fs-controls-row > .player-right.fs-player-right > .volume-group") &&
+    // The volume and the favourite live in the song-info row now (Better Lyrics' layout), so the
+    // bar's right zone holds the two view tools and the row's actions hold the rest.
+    volume: Boolean(document.querySelector('[data-testid="fullscreen-volume"]')) &&
+      Boolean(document.querySelector('.fs-info-row [data-testid="fullscreen-info-actions"] .fs-volume')),
+    favourite: Boolean(document.querySelector('.fs-info-row [data-testid="fullscreen-favourite"]')),
+    rightTools: has(".fs-controls-row > .player-right.fs-player-right > .player-tools") &&
       has(".fs-player-right button[aria-label='Queue']") &&
       has(".fs-player-right button[aria-label='Mini player']") &&
       !root.querySelector('[data-testid="open-now-playing"]'),
     seek: has(".seek-row input.seek"),
-    volume: has(".volume-group input.volume"),
-    favourite: has('button[aria-label="Add to favourites"], button[aria-label="Remove from favourites"]'),
     lyricsToggle: Boolean(document.querySelector('.fs-mode-tabs [data-testid="lyrics-mode-off"]')),
     queue: has('button[aria-label="Queue"]'),
     lyricsDock: Boolean(document.querySelector('[data-testid="lyrics-dock"]')),
@@ -1271,7 +1274,8 @@ const fsParts = await page.evaluate(() => {
 check(
   "fullscreen-audio-and-lyrics-controls",
   fsParts.present && fsParts.transport && fsParts.trackLeft && fsParts.transportCentre && fsParts.rightTools &&
-  fsParts.seek && fsParts.volume && fsParts.lyricsToggle && fsParts.queue && fsParts.lyricsDock && fsParts.playerBarHidden,
+  fsParts.seek && fsParts.volume && fsParts.favourite && fsParts.lyricsToggle && fsParts.queue &&
+  fsParts.lyricsDock && fsParts.playerBarHidden,
   JSON.stringify(fsParts)
 );
 const playCentre = await page.$eval('[data-testid="fullscreen-controls"] .play-button', node => {
@@ -1334,6 +1338,10 @@ const motionOf = async box => {
 const lyricsVisibility = () =>
   page.evaluate(() => ({
     bodyHidden: document.querySelector(".lyrics-body")?.classList.contains("is-hidden") ?? null,
+    hostVisibility: (() => {
+      const host = document.querySelector("braccato-lyrics");
+      return host ? getComputedStyle(host).visibility : null;
+    })(),
     visibility: document.querySelector("braccato-lyrics") ? getComputedStyle(document.querySelector("braccato-lyrics")).visibility : null,
     opacity: getComputedStyle(document.querySelector(".lyrics-body")).opacity,
     pressed: document.querySelector('[data-testid="lyrics-mode-on"]')?.getAttribute("aria-pressed") ?? null,
@@ -1351,7 +1359,7 @@ const hiddenState = await lyricsVisibility();
 const afterHide = await audioState();
 check(
   "lyrics-toggle-hides",
-  hiddenState.bodyHidden === true && hiddenState.visibility === "hidden" && hiddenState.opacity === "0" && hiddenState.pressed === "false" && hiddenState.stored === false,
+  hiddenState.bodyHidden === true && hiddenState.hostVisibility === "hidden" && hiddenState.opacity === "0" && hiddenState.pressed === "false" && hiddenState.stored === false,
   JSON.stringify(hiddenState)
 );
 check(
@@ -1483,7 +1491,7 @@ const controlState = () =>
       opacity: style ? Number(style.opacity) : null,
       visibility: style?.visibility ?? null,
       pointerEvents: style?.pointerEvents ?? null,
-      toolsOpen: document.querySelector('[data-testid="lyrics-tools-trigger"]')?.getAttribute("aria-expanded") ?? null,
+      chromeDock: document.querySelector(".fs-dock")?.classList.contains("is-concealed") === false,
     };
   });
 // True when the play button's centre is hit-tested onto the control bar (i.e. the controls take input).
@@ -1501,7 +1509,8 @@ const settleOpacity = async target => {
   const settled = state =>
     Math.abs((state.opacity ?? -1) - target) <= 0.02 && (target > 0.5 ? state.visibility === "visible" : state.visibility === "hidden");
   let state = await controlState();
-  for (let waited = 0; waited < 2000 && !settled(state); waited += 100) {
+  // The chrome hides on Better Lyrics' 3 s idle rule, so the fade only starts after that window.
+  for (let waited = 0; waited < 6000 && !settled(state); waited += 100) {
     await wait(100);
     state = await controlState();
   }
@@ -1517,15 +1526,25 @@ const pointerAway = async () => {
   await page.mouse.move(100, 200);
 };
 
-// Pointer over the lyrics only: the controls stay hidden and take no input.
+// Pointer over the lyrics: the chrome shows at once (Better Lyrics reveals it on any pointer
+// movement) and, after three still seconds, hides again and stops taking input.
 await pointerAway();
+const movingState = await settleOpacity(1);
+check(
+  "chrome-shows-on-pointer-move",
+  movingState.concealed === false && movingState.opacity > 0.95,
+  JSON.stringify(movingState)
+);
 const awayState = await settleOpacity(0);
 const awayHit = await hitsControls();
 check(
-  "hover-lyrics-keeps-controls-hidden",
-  awayState.concealed === true && awayState.opacity < 0.02 && awayState.visibility === "hidden" && awayState.pointerEvents === "none" && !awayHit,
+  "idle-hides-controls-and-cursor",
+  awayState.concealed === true && awayState.opacity < 0.02 && awayState.visibility === "hidden" &&
+    awayState.pointerEvents === "none" && !awayHit,
   JSON.stringify({ ...awayState, hitsControls: awayHit })
 );
+const idleCursor = await page.evaluate(() => getComputedStyle(document.querySelector(".lyrics-view.is-fullscreen")).cursor);
+check("idle-hides-cursor", idleCursor === "none", `cursor ${idleCursor}`);
 
 // Playback continues while the controls are hidden.
 const hiddenStart = await audioState();
@@ -1539,21 +1558,23 @@ check(
   `advanced ${hiddenAdvance.toFixed(2)}s over 2 s, paused=${hiddenEnd.paused}`
 );
 
-// Roaming over the lyrics, including the point just above the controls' top edge, does not reveal them.
-// Derive that edge from the rendered footer: its height is intentionally fluid now, so a fixed
-// y-coordinate from the old laptop-sized control stack can land inside the controls themselves.
+// Roaming over the lyrics keeps the chrome up (any pointer movement counts, as in Better Lyrics),
+// and leaving it alone for the idle window hides it again. The roam ends over the lyrics, not over
+// the chrome, so nothing is holding it open.
 const roamControlsTop = await page.$eval('[data-testid="fullscreen-controls"]', node =>
   node.getBoundingClientRect().top
 );
-for (const [x, y] of [[300, 250], [640, 420], [900, 600], [640, Math.max(0, roamControlsTop - 8)]]) {
+for (const [x, y] of [[300, 250], [640, 420], [900, 600], [640, Math.max(0, roamControlsTop - 40)]]) {
   await page.mouse.move(x, y);
   await wait(40);
 }
-const roamState = await controlState();
+const roamShown = await settleOpacity(1);
+const roamState = await settleOpacity(0);
 check(
-  "hover-lyrics-roam-stays-hidden",
-  roamState.concealed === true && roamState.opacity < 0.02 && roamState.pointerEvents === "none",
-  JSON.stringify(roamState)
+  "hover-lyrics-roam-reveals-then-idles-away",
+  roamShown.concealed === false && roamState.concealed === true && roamState.opacity < 0.02 &&
+    roamState.pointerEvents === "none",
+  JSON.stringify({ roamShown, roamState })
 );
 
 // The shader keeps moving behind the hidden controls: the bottom-left corner is clear of lyrics and controls.
@@ -1614,7 +1635,8 @@ await pointerAway();
 const leftState = await settleOpacity(0);
 check(
   "hover-leave-hides-controls",
-  leftState.concealed === true && leftState.opacity < 0.02 && leftState.visibility === "hidden" && leftState.toolsOpen === "false",
+  leftState.concealed === true && leftState.opacity < 0.02 && leftState.visibility === "hidden" &&
+    leftState.chromeDock === false,
   JSON.stringify(leftState)
 );
 
@@ -1630,23 +1652,22 @@ check(
   JSON.stringify(fade)
 );
 
-// An open dock popover keeps the controls visible while the pointer is elsewhere; closing it lets them go.
-// The dock now lives in the top-right inline row, so expand it before driving the source button.
-const toolsTrigger = '[data-testid="lyrics-tools-trigger"]';
-await wakeClick(toolsTrigger);
-await page.waitForSelector('button[title="Lyrics source"]');
-await wakeClick('button[title="Lyrics source"]');
+// An open dock popover pins the chrome: it stays up while the pointer rests elsewhere, and goes
+// once the popover closes and the pointer has been still for the idle window.
+await page.mouse.move(100, 200);
+await settleOpacity(1);
+await page.click('[data-testid="lyrics-dock"] button[title="Lyrics source"]');
+await page.waitForSelector(".dock-sources");
 await pointerAway();
-await wait(400);
+await wait(3600);
 const pinnedState = await controlState();
 const sourcesOpen = Boolean(await page.$(".dock-sources"));
 check(
   "hover-popover-pins-controls",
-  sourcesOpen && pinnedState.concealed === false && pinnedState.opacity > 0.95 && pinnedState.toolsOpen === "true",
-  `popover open=${sourcesOpen}; concealed=${pinnedState.concealed}, tools open=${pinnedState.toolsOpen}`
+  sourcesOpen && pinnedState.concealed === false && pinnedState.opacity > 0.95 && pinnedState.chromeDock === true,
+  `popover open=${sourcesOpen}; concealed=${pinnedState.concealed}, dock shown=${pinnedState.chromeDock}`
 );
-await wakeClick('button[title="Lyrics source"]');
-await wakeClick(toolsTrigger);
+await page.click('[data-testid="lyrics-dock"] button[title="Lyrics source"]');
 await pointerAway();
 const closedState = await settleOpacity(0);
 check(

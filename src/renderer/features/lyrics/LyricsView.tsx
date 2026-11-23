@@ -4,7 +4,7 @@
  */
 
 import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Minimize2, Music4, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
+import { Disc3, Minimize2, Music4, RefreshCw, Search } from "lucide-react";
 import { trackSourceKey } from "../../../shared/media";
 import type { AppSettings, MediaItem, NowPlayingLayoutMode, NowPlayingProfile, Track } from "../../../shared/types";
 import { DEFAULT_PROVIDER_ORDER } from "../../../shared/upstream/better-lyrics/constants";
@@ -22,10 +22,16 @@ import { MarqueeText } from "../../components/MarqueeText";
 import { BraccatoLyrics } from "./BraccatoLyrics";
 import { LyricsDock } from "./LyricsDock";
 import { LyricsModeMotion } from "./LyricsModeMotion";
-import { FullscreenControls } from "./FullscreenControls";
+import {
+  FullscreenBarTransport,
+  FullscreenColumnControls,
+  FullscreenControls,
+  FullscreenInfoActions,
+} from "./FullscreenControls";
+import { ProgressBar } from "../player/ProgressBar";
 import { PlaybackArtwork, PlaybackText } from "../player/PlaybackVisuals";
 import { usePlaybackPresentation } from "../player/usePlaybackPresentation";
-import { useControlsHover } from "./useControlsHover";
+import { useFullscreenChrome } from "./useFullscreenChrome";
 import { NowPlayingBackground } from "./NowPlayingBackground";
 import { useLyrics } from "./useLyrics";
 import { buildThemeCss } from "../../upstream/better-lyrics/themes";
@@ -59,11 +65,6 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
   const [slowLoading, setSlowLoading] = useState(false);
   const [syncLabel, setSyncLabel] = useState("No lyrics");
   const [dockPopoverOpen, setDockPopoverOpen] = useState(false);
-  // The lyrics tools live in one expandable row at the top-right in fullscreen; the trigger stays put.
-  // Hover expands it; an open dock popover keeps it expanded while the pointer is elsewhere.
-  const [dockExpanded, setDockExpanded] = useState(false);
-  const [toolsFocused, setToolsFocused] = useState(false);
-  const collapseTimer = useRef<number | null>(null);
   const queueOpen = useUi(state => state.queueOpen);
   const isRemote = Boolean(item && item.source.kind !== "local");
   const itemIdentity = item ? trackSourceKey(item.source) : null;
@@ -80,41 +81,10 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
   const showLyricsSetting = preview ? preview.mode !== "lyricsOff" : settings?.lyrics?.showLyricsInFullscreen ?? true;
   const footerPresent = fullscreen && showLyricsSetting;
   const panelMode = fullscreen && !showLyricsSetting;
-  const controlsVisible = useControlsHover(footerPresent, dockPopoverOpen || queueOpen || Boolean(preview), footerRef);
-  const toolsInHeader = fullscreen && !preview && !panelMode && Boolean(item && track);
-  const toolsOpen = dockExpanded || dockPopoverOpen || toolsFocused;
-
-  // A short grace period lets the pointer cross the gap between the pill and a dock popover — both are
-  // descendants of the tools surface, so entering the popover cancels the pending collapse.
-  const cancelToolsCollapse = () => {
-    if (collapseTimer.current !== null) {
-      window.clearTimeout(collapseTimer.current);
-      collapseTimer.current = null;
-    }
-  };
-  const expandTools = () => {
-    cancelToolsCollapse();
-    setDockExpanded(true);
-  };
-  const collapseTools = () => {
-    cancelToolsCollapse();
-    collapseTimer.current = window.setTimeout(() => {
-      collapseTimer.current = null;
-      setDockExpanded(false);
-    }, 180);
-  };
-
-  useEffect(() => {
-    if (!toolsInHeader) {
-      cancelToolsCollapse();
-      setDockExpanded(false);
-      setToolsFocused(false);
-    }
-  }, [toolsInHeader]);
-
-  useEffect(() => () => {
-    if (collapseTimer.current !== null) window.clearTimeout(collapseTimer.current);
-  }, []);
+  // The chrome (song-info actions, column transport, player bar, dock, page actions) follows Better
+  // Lyrics' fullscreen idle rule: shown by pointer activity, hidden again after three still seconds.
+  const chromePinned = dockPopoverOpen || queueOpen || Boolean(preview);
+  const controlsVisible = useFullscreenChrome(fullscreen, chromePinned, footerRef);
 
   // Fullscreen only: the controls overlay the bottom of the lyrics body instead of taking space from it.
   // The footer's measured height is published to the view as --fs-footer-height, so the body keeps its
@@ -376,16 +346,25 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
       lyrics.status === "empty" ||
       lyrics.status === "error");
 
+  // Better Lyrics' fullscreen column (its `#blyrics-fs-column`): the artwork, then the song-info row
+  // with its favourite/volume/queue/mini-player actions, then the progress bar and transport — all
+  // exactly as wide as the artwork. Profiles can drop the artwork, the metadata or the controls, and
+  // the column contracts accordingly; without the controls the bar keeps the transport, as in the style
+  // profiles that predate this layout.
   const headingInSide =
     fullscreen && showLyricsSetting && profileConfig.metadataSlot === "artwork" && profileConfig.metadataVisible;
-  const showSide =
-    fullscreen && showLyricsSetting && (profileConfig.artworkVisible || headingInSide);
+  const columnControls = fullscreen && showLyricsSetting && profileConfig.controlsVisible && !preview;
+  const headingInColumn = headingInSide && columnControls;
+  const showSide = fullscreen && showLyricsSetting && (profileConfig.artworkVisible || headingInColumn || columnControls);
+  // With no lyrics to show the artwork column stays put and the lyrics column carries the
+  // reference's compact "Lyrics not found" message (see the `.np-message` rules in lyrics.css).
+  const noLyrics = fullscreen && !panelMode && lyrics.status === "empty";
   const headingInHeader = profileConfig.metadataVisible && (!fullscreen || profileConfig.metadataSlot === "top");
   const panelDetailsVisible = (profileConfig.metadataVisible && !headingInHeader) || profileConfig.controlsVisible;
 
-  // One instance of the dock, mounted either in the top-right inline row (fullscreen) or in the footer
-  // (windowed / studio preview). In fullscreen it does not follow the footer hover timer — the row's
-  // own collapsed state controls visibility, while the play button still uses hover.
+  // One instance of the dock: a floating pill at the bottom-right of the lyrics column in fullscreen
+  // (Better Lyrics' dock position), in the footer on the windowed route and in the Studio preview.
+  // It follows the fullscreen idle rule together with the rest of the chrome.
   const lyricsDock = item && track ? (
     <LyricsDock
       settings={lyricsSettings ?? fallbackLyricsSettings}
@@ -416,7 +395,7 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
       onSelectSearchResult={lyrics.selectSearchResult}
       syncLabel={syncLabel}
       busy={lyrics.status === "loading" || lyrics.translating || lyrics.romanizing}
-      concealed={!toolsInHeader && !controlsVisible}
+      concealed={fullscreen && !controlsVisible}
       onPopoverChange={setDockPopoverOpen}
     />
   ) : null;
@@ -440,6 +419,9 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
       data-now-playing-profile={activeNowPlayingProfile.id}
       data-profile-mode={panelMode ? "lyricsOff" : fullscreen ? "fullscreen" : "windowed"}
       data-lyrics-mode={panelMode ? "off" : "on"}
+      data-no-lyrics={noLyrics ? "true" : "false"}
+      data-chrome={controlsVisible ? "shown" : "hidden"}
+      data-loading={item !== null && !isRemote && lyrics.status === "loading" && !lyrics.hasLyrics ? "true" : "false"}
       data-profile-artwork={profileConfig.artworkVisible ? "visible" : "hidden"}
       data-profile-metadata={profileConfig.metadataVisible ? "visible" : "hidden"}
       data-profile-background={profileConfig.backgroundMode}
@@ -476,49 +458,25 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
 
       {showSide ? (
         <div className="fs-side">
-          <div className="fs-artwork">{artwork}</div>
-          {headingInSide ? heading : null}
+          {profileConfig.artworkVisible ? <div className="fs-artwork">{artwork}</div> : null}
+          {columnControls ? (
+            <div className="fs-col">
+              <div className="fs-info-row">
+                {headingInColumn ? heading : null}
+                <FullscreenInfoActions track={track} concealed={!controlsVisible} />
+              </div>
+              <FullscreenColumnControls concealed={!controlsVisible} />
+            </div>
+          ) : headingInSide ? (
+            <div className="fs-col fs-col-info-only">{heading}</div>
+          ) : null}
         </div>
       ) : null}
 
       <div className="lyrics-header">
         {headingInHeader ? heading : null}
         {fullscreen && !preview ? (
-          <div className="fs-page-actions">
-            {toolsInHeader ? (
-              <div
-                className={`lyrics-tools ${toolsOpen ? "is-open" : ""} ${dockPopoverOpen ? "has-popover" : ""}`}
-                onPointerEnter={expandTools}
-                onPointerLeave={collapseTools}
-                onFocusCapture={event => {
-                  // Mouse clicks inside the pill must not pin it open after the pointer leaves; only
-                  // keyboard focus (Tab) should keep the controls reachable without a hover.
-                  setToolsFocused(event.target instanceof Element && event.target.matches(":focus-visible"));
-                  expandTools();
-                }}
-                onBlurCapture={event => {
-                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                    setToolsFocused(false);
-                    collapseTools();
-                  }
-                }}
-              >
-                <div id="lyrics-tools-dock" className="lyrics-tools-dock" inert={!toolsOpen}>
-                  <div className="lyrics-tools-dock-inner">{lyricsDock}</div>
-                </div>
-                <button
-                  type="button"
-                  className={`icon-button lyrics-tools-trigger ${toolsOpen ? "active" : ""}`}
-                  aria-label="Lyrics tools"
-                  aria-expanded={toolsOpen}
-                  aria-controls="lyrics-tools-dock"
-                  title="Lyrics tools"
-                  data-testid="lyrics-tools-trigger"
-                >
-                  <SlidersHorizontal size={18} />
-                </button>
-              </div>
-            ) : null}
+          <div className={`fs-page-actions fs-chrome ${controlsVisible ? "" : "is-concealed"}`}>
             <div className="fs-mode-tabs" role="group" aria-label="Lyrics display">
               <button type="button" data-testid="lyrics-mode-on" aria-pressed={showLyricsSetting} onClick={() => !showLyricsSetting && patchLyrics({ showLyricsInFullscreen: true })}>
                 Lyrics On
@@ -540,7 +498,14 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
           {panelDetailsVisible ? (
             <div className="fs-panel">
               {profileConfig.metadataVisible && !headingInHeader ? heading : null}
-              {profileConfig.controlsVisible ? <FullscreenControls variant="panel" track={track} cover={cover} text={text} /> : null}
+              {profileConfig.controlsVisible ? (
+                <div className="fs-panel-bar" data-testid="fullscreen-controls">
+                  <ProgressBar />
+                  <div className="fs-panel-transport">
+                    <FullscreenBarTransport />
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -588,18 +553,19 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
         )}
 
         {item && !isRemote && lyrics.status === "loading" && slowLoading && !lyrics.hasLyrics ? (
-          <div className="lyrics-empty-panel loading" role="status" data-testid="lyrics-loading-panel">
-            <div className="lyrics-empty-icon" aria-hidden="true">
-              <RefreshCw size={20} className="spin" />
-            </div>
-            <h2>Finding lyrics…</h2>
-            <p>Checking local files, embedded tags and your enabled providers.</p>
+          // Better Lyrics' loader: a spinning mark beside a shimmering status line, centred in the
+          // panel while the lines slide up into place behind it when they arrive.
+          <div className="np-loader" role="status" data-testid="lyrics-loading-panel">
+            <span className="np-loader__mark" aria-hidden="true">
+              <Disc3 size={28} />
+            </span>
+            <span className="np-loader__text">Fetching lyrics…</span>
           </div>
         ) : null}
 
         {item && !isRemote && lyrics.status === "empty" ? (
           <div className="lyrics-empty-panel lyrics-unavailable" data-testid="lyrics-empty-panel">
-            <p role="status">Lyrics aren’t available for this track.</p>
+            <p role="status" className="np-message">Lyrics not found</p>
             <div className="empty-actions">
               <button type="button" onClick={() => void lyrics.chooseFile()}>
                 <Search size={16} /> Choose a lyrics file
@@ -618,11 +584,8 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
 
         {item && !isRemote && lyrics.status === "error" ? (
           <div className="lyrics-empty-panel error" data-testid="lyrics-error-panel">
-            <div className="lyrics-empty-icon" aria-hidden="true">
-              <RefreshCw size={20} />
-            </div>
-            <h2>Lyrics could not be loaded</h2>
-            <p>{lyrics.error}</p>
+            <p role="status" className="np-message np-message--error">Lyrics could not be loaded</p>
+            <p className="np-error-detail">{lyrics.error}</p>
             <div className="empty-actions">
               <button type="button" onClick={lyrics.reload}>
                 <RefreshCw size={16} /> Retry
@@ -632,13 +595,20 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
         ) : null}
       </div>
 
+      {!panelMode && fullscreen && lyricsDock ? (
+        <div className={`fs-dock fs-chrome ${controlsVisible ? "" : "is-concealed"}`}>{lyricsDock}</div>
+      ) : null}
+
       {!panelMode ? (
-        <div ref={footerRef} className={`lyrics-footer ${controlsVisible ? "" : "is-concealed"}`}>
+        <div
+          ref={footerRef}
+          className={`lyrics-footer fs-chrome ${fullscreen ? "is-fullscreen-bar" : ""} ${controlsVisible ? "" : "is-concealed"}`}
+        >
           {fullscreen ? (
             <FullscreenControls track={track} cover={cover} text={text} concealed={!controlsVisible} />
           ) : null}
 
-          {!toolsInHeader ? lyricsDock : null}
+          {!fullscreen ? lyricsDock : null}
         </div>
       ) : null}
 

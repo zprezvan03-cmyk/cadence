@@ -9,6 +9,7 @@ import { useShallow } from "zustand/react/shallow";
 import { Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from "lucide-react";
 import { formatTime } from "../../player/queue";
 import { usePlayer } from "../../state/playerStore";
+import { useSettings } from "../../state/settingsStore";
 
 /** `trailing` is placed after the repeat button, in the same row (used by the fullscreen panel). */
 export function TransportButtons({ trailing }: { trailing?: ReactNode } = {}) {
@@ -66,6 +67,9 @@ export function SeekRow() {
   const { position, duration, buffered, seek } = usePlayer(useShallow(state => ({
     position: state.position, duration: state.duration, buffered: state.buffered, seek: state.seek,
   })));
+  // The right-hand time flips between the total and the remaining time, as Better Lyrics' bar does.
+  const showRemaining = useSettings(state => state.settings?.playback.showRemainingTime ?? false);
+  const patchSettings = useSettings(state => state.patch);
 
   return (
     <div className="seek-row">
@@ -91,7 +95,16 @@ export function SeekRow() {
           style={{ ["--progress" as string]: `${duration ? (position / duration) * 100 : 0}%` }}
         />
       </div>
-      <span className="time">{formatTime(duration)}</span>
+      <button
+        type="button"
+        className="time time-end"
+        data-mode={showRemaining ? "remaining" : "total"}
+        title={showRemaining ? "Show total time" : "Show remaining time"}
+        aria-label={showRemaining ? "Show total time" : "Show remaining time"}
+        onClick={() => void patchSettings({ playback: { showRemainingTime: !showRemaining } })}
+      >
+        {showRemaining && duration > 0 ? `-${formatTime(Math.max(0, duration - position))}` : formatTime(duration)}
+      </button>
     </div>
   );
 }

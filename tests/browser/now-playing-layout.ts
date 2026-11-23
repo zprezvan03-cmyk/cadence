@@ -514,7 +514,7 @@ const geometry = () =>
       viewport: { width: window.innerWidth, height: window.innerHeight },
       view: rect(".lyrics-view"),
       body: rect(".lyrics-body"),
-      panel: rect(".lyrics-empty-panel"),
+      panel: rect(".lyrics-empty-panel") ?? rect('[data-testid="lyrics-loading-panel"]'),
       footer: rect(".lyrics-footer"),
       player: rect('[data-testid="player-bar"]'),
       heading: rect(".lyrics-heading"),
@@ -651,23 +651,32 @@ const profileProbe = () =>
   });
 
 const openProfileSwitcher = async () => {
-  // In fullscreen the dock is collapsed inside the top-right tools row; expand it first.
-  const trigger = '[data-testid="lyrics-tools-trigger"]';
-  const expanded = await page.$eval(trigger, node => node.getAttribute("aria-expanded")).catch(() => null);
-  if (expanded === "false") {
-    await page.hover(trigger);
-    await page.waitForFunction(
-      () => document.querySelector('[data-testid="lyrics-tools-trigger"]')?.getAttribute("aria-expanded") === "true"
-    );
-    await wait(200);
+  // The dock floats over the lyrics column and follows Better Lyrics' three-second fullscreen idle
+  // rule, so wake the chrome (real pointer moves) until it is up. The click itself is dispatched on
+  // the element: this probe is about the switcher's contents and the profile switch, while the
+  // pointer-driven path is covered by the app run.
+  const profileButton = '.fs-dock [data-testid="now-playing-profile-button"]';
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await page.mouse.move(600 + attempt, 300 + attempt);
+    const awake = await page
+      .waitForFunction(
+        (selector: string) => {
+          const dock = document.querySelector(".fs-dock");
+          const button = document.querySelector<HTMLElement>(selector);
+          return Boolean(dock && button && !dock.classList.contains("is-concealed") &&
+            getComputedStyle(button).visibility !== "hidden");
+        },
+        { timeout: 400 },
+        profileButton
+      )
+      .then(() => true)
+      .catch(() => false);
+    if (awake) break;
+    await wait(150);
   }
-  const center = await page.$eval('[data-testid="now-playing-profile-button"]', node => {
-    const rect = node.getBoundingClientRect();
-    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-  });
-  await page.mouse.move(center.x, center.y);
-  await wait(550);
-  await page.mouse.click(center.x, center.y);
+  await page.evaluate((selector: string) => {
+    document.querySelector<HTMLButtonElement>(selector)?.click();
+  }, profileButton);
   await page.waitForSelector('[data-testid="now-playing-profile-switcher"]', {
     timeout: 10_000,
   });
@@ -734,15 +743,25 @@ async function auditImmersiveNowPlaying() {
   const surface = '.lyrics-view.is-fullscreen:not(.is-preview)';
   const entry = '[data-testid="open-now-playing"]';
   const exit = 'button.fs-exit';
+  // The fullscreen chrome (mode tabs, exit, the dock) follows the three-second idle rule, so every
+  // interaction behind it starts with a real pointer move that wakes it.
+  const wake = async () => {
+    await page.mouse.move(600, 300);
+    await page.mouse.move(604, 302);
+    await wait(60);
+  };
   const chooseMode = async (mode: "on" | "off") => {
+    await wake();
     await page.click(`[data-testid="lyrics-mode-${mode}"]`);
     await page.waitForSelector(`${surface}[data-lyrics-mode="${mode}"]`);
   };
   const enter = async () => {
+    await wake();
     await page.click(entry);
     await page.waitForSelector(surface);
   };
   const close = async () => {
+    await wake();
     await page.click(exit);
     await page.waitForSelector(entry);
     await page.waitForSelector(surface, { hidden: true });
@@ -791,7 +810,9 @@ async function auditImmersiveNowPlaying() {
     controls: Boolean(document.querySelector('.fs-panel [data-testid="play-toggle"]')),
     noDock: !document.querySelector('.lyrics-dock'),
     clock: document.querySelector('audio')?.currentTime ?? 0,
-    visibility: getComputedStyle(document.querySelector('.lyrics-body')!).visibility,
+    // Lyrics Off hides the paint, not the box: the body itself stays visible so its status cards
+    // can show, while the lyric renderer inside inherits `visibility: hidden`.
+    visibility: getComputedStyle(document.querySelector('braccato-lyrics')!).visibility,
   }));
   check("lyrics-off-has-art-track-details-and-transport-not-lyrics", panel.art && Boolean(panel.text) && panel.controls && panel.noDock && panel.visibility === "hidden", JSON.stringify(panel));
   await wait(380);
@@ -969,7 +990,7 @@ async function auditImmersiveNowPlaying() {
   await page.waitForSelector('[data-testid="lyrics-empty-panel"]', { timeout: 7000 });
   const empty = await page.$eval('[data-testid="lyrics-empty-panel"]', node => ({
     quiet: getComputedStyle(node).boxShadow === "none" && getComputedStyle(node).backgroundColor === "rgba(0, 0, 0, 0)",
-    actions: node.querySelectorAll('button').length, count: document.querySelectorAll("braccato-lyrics .blyrics--line").length,
+    actions: node.querySelectorAll(".empty-actions button").length, count: document.querySelectorAll("braccato-lyrics .blyrics--line").length,
   }));
   check("empty-lyrics-is-quiet-but-still-actionable", empty.quiet && empty.actions >= 2 && empty.count === 0, JSON.stringify(empty));
   await shot("immersive-empty-lyrics");

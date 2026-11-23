@@ -39,6 +39,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     shuffleMode: "smart",
     autoPlay: true,
     smartShufflePopularity: true,
+    showRemainingTime: false,
   },
   appearance: {
     accent: "#ff3d71",
@@ -179,6 +180,8 @@ function normalizeSettings(settings: AppSettings, rawProfiles: unknown = setting
     typeof playback.smartShufflePopularity === "boolean"
       ? playback.smartShufflePopularity
       : (DEFAULT_SETTINGS.playback.smartShufflePopularity ?? true);
+  playback.showRemainingTime =
+    typeof playback.showRemainingTime === "boolean" ? playback.showRemainingTime : false;
   settings.playback = playback as AppSettings["playback"];
 
   // Font ids are family names read from the platform font store, plus the two built-in presets.

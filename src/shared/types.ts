@@ -534,6 +534,8 @@ export interface PlaybackSettings {
   autoPlay?: boolean;
   /** Enrich Smart Shuffle & AutoPlay with online popularity/genre signals (cached locally). */
   smartShufflePopularity?: boolean;
+  /** The progress bar's right-hand time shows the remaining time instead of the total (Better Lyrics' toggle). */
+  showRemainingTime?: boolean;
 }
 
 export interface AppearanceSettings {
