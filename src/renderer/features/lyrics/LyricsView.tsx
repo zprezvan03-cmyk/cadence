@@ -237,12 +237,12 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
           : cfg.activeWordScale,
     };
     if (cfg.lyricsWeight > 0) style["--np-lyrics-weight"] = cfg.lyricsWeight;
-    if (cfg.fontId) style["--blyrics-font-family"] = fontStack(cfg.fontId);
+    if (cfg.fontId) style["--blyrics-font-family"] = fontStack(cfg.fontId, "lyrics");
     if (cfg.translationFontId) {
-      style["--blyrics-translated-font-family"] = fontStack(cfg.translationFontId);
+      style["--blyrics-translated-font-family"] = fontStack(cfg.translationFontId, "lyrics");
     }
     if (cfg.romanizationFontId) {
-      style["--np-romanization-font"] = fontStack(cfg.romanizationFontId);
+      style["--np-romanization-font"] = fontStack(cfg.romanizationFontId, "lyrics");
     }
     if (cfg.activeColor) style["--np-active-color"] = cfg.activeColor;
     if (cfg.inactiveColor) style["--np-inactive-color"] = cfg.inactiveColor;

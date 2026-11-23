@@ -4,7 +4,7 @@
  */
 
 import type { AppSettings, DeepPartial } from "../shared/types";
-import { DEFAULT_FONT_ID } from "../shared/fonts";
+import { DEFAULT_FONT_ID, normalizeFontId } from "../shared/fonts";
 import { DEFAULT_PROVIDER_ORDER, migrateProviderOrder } from "../shared/upstream/better-lyrics/constants";
 import { DEFAULT_GRADIENT_SETTINGS } from "../shared/upstream/shaders/gradientSettings";
 import {
@@ -180,6 +180,15 @@ function normalizeSettings(settings: AppSettings, rawProfiles: unknown = setting
       ? playback.smartShufflePopularity
       : (DEFAULT_SETTINGS.playback.smartShufflePopularity ?? true);
   settings.playback = playback as AppSettings["playback"];
+
+  // Font ids are family names read from the platform font store, plus the two built-in presets.
+  // Normalize on every load/patch so a legacy id, a corrupt value or a font that was uninstalled
+  // resolves to a usable stack instead of leaving the document unstyled.
+  const appearance = isPlainObject(settings.appearance)
+    ? { ...settings.appearance }
+    : { ...DEFAULT_SETTINGS.appearance };
+  appearance.fontFamily = normalizeFontId(appearance.fontFamily);
+  settings.appearance = appearance as AppSettings["appearance"];
 
   const normalizeAi = (candidate: unknown, fallback: AppSettings["lyrics"]["aiTranslation"]): AppSettings["lyrics"]["aiTranslation"] => {
     const source = isPlainObject(candidate) ? candidate : {};

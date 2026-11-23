@@ -16,7 +16,7 @@ import type {
   NowPlayingProfileConfig,
   NowPlayingProfilesSettings,
 } from "./types";
-import { FONT_OPTIONS } from "./fonts";
+import { normalizeFontId } from "./fonts";
 
 export const NOW_PLAYING_PROFILES_VERSION = 1;
 export const DEFAULT_NOW_PLAYING_PROFILE_ID = "balanced";
@@ -289,11 +289,15 @@ function cleanBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
-const FONT_IDS = new Set(FONT_OPTIONS.map(option => option.id));
-
-/** "" inherits the app font; unknown ids (newer builds, hand edits) degrade to inherit. */
+/**
+ * "" inherits the app font; anything else is a system family discovered by the host. A corrupt
+ * value falls back to inherit rather than leaving the lyrics without a font.
+ */
 function cleanFontId(value: unknown): string {
-  return typeof value === "string" && FONT_IDS.has(value) ? value : "";
+  if (typeof value !== "string" || !value.trim()) return "";
+  if (value === "system") return "";
+  const normalized = normalizeFontId(value);
+  return normalized === "system" ? "" : normalized;
 }
 
 /** Only plain #rrggbb colors are ever persisted; anything else inherits the theme. */

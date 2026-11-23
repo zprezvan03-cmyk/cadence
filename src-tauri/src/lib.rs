@@ -8,6 +8,7 @@ pub mod allowlist;
 pub mod alac;
 pub mod commands;
 pub mod db;
+pub mod fonts;
 pub mod protocol;
 
 use std::collections::HashMap;
@@ -312,6 +313,7 @@ pub fn run() {
             commands::cmd_set_mini_player,
             commands::cmd_window_is_fullscreen,
             commands::cmd_window_chrome_state,
+            commands::cmd_list_system_fonts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Cadence Tauri application");

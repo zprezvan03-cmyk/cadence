@@ -1,0 +1,17 @@
+/* Bundled web fonts. Written for Cadence.
+ *
+ * Satoshi Variable is the face Better Lyrics sets for its lyrics and fullscreen player. It is
+ * registered here so the lyrics default stack (`--blyrics-default-font-family`, shared/fonts.ts)
+ * resolves to the same type the reference renders with, in every browser harness and in the
+ * packaged app. Licence and provenance live next to the file in assets/fonts/NOTICE.txt.
+ *
+ * The app shell does not use it: "System default" keeps the platform UI font for chrome and this
+ * face for lyrics, which is also how Better Lyrics behaves inside YouTube Music.
+ */
+@font-face {
+  font-family: "Satoshi";
+  src: url("../assets/fonts/Satoshi-Variable.woff2") format("woff2");
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: swap;
+}

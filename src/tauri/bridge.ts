@@ -9,6 +9,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, TauriEvent, type UnlistenFn } from "@tauri-apps/api/event";
+import { normalizeSystemFontFamilies, type SystemFontFamily } from "../shared/fonts";
 import type {
   AppInfo,
   ArtistImageInfo,
@@ -1032,6 +1033,13 @@ export async function installTauriBridge(): Promise<InstalledTauriBridge> {
         const next = await settings.resetAndPersist();
         applyLyricsFetchSettings();
         return next;
+      },
+    },
+
+    fonts: {
+      async list(): Promise<SystemFontFamily[]> {
+        const families = await invoke<SystemFontFamily[]>("cmd_list_system_fonts");
+        return normalizeSystemFontFamilies(families);
       },
     },
 

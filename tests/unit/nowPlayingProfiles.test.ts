@@ -153,9 +153,9 @@ describe("Now Playing profile normalization", () => {
       artworkSlot: "right",
       metadataSlot: "artwork",
       lyricsAlignment: "center",
-      fontId: "georgia",
-      translationFontId: "",
-      romanizationFontId: "noto-sans",
+      fontId: "Georgia",
+      translationFontId: "Comic Sans MS",
+      romanizationFontId: "Noto Sans",
       lyricsWeight: 900,
       activeColor: "#ff8800",
       inactiveColor: "",
@@ -369,7 +369,7 @@ describe("profile import / export", () => {
       lyricsOff: { lyricsWeight: 0, artworkScale: 99, activeColor: "" },
     }] });
     expect(settings.customProfiles[0].lyricsOff).toMatchObject({
-      fontId: "georgia", lyricsWeight: 0, artworkScale: 1.25, activeColor: "",
+      fontId: "Georgia", lyricsWeight: 0, artworkScale: 1.25, activeColor: "",
     });
   });
 

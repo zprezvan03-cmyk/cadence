@@ -59,6 +59,15 @@ Japanese punctuation no longer disables glyph motion, and a line's existing reve
 in effect through its native highlight fade. The patch does not change lyric timestamps, the
 playback clock, or scroll selection. Recheck it with `npm run test:lyrics-ui` on upgrades.
 
+## Bundled font (from Better Lyrics)
+
+| Cadence file | Upstream original | Changes |
+| --- | --- | --- |
+| `src/renderer/assets/fonts/Satoshi-Variable.woff2` | `public/fonts/Satoshi-Variable.woff2` | Byte-identical copy. Copyright Indian Type Foundry, ITF Free Font License 1.0 (redistribution inside a software product permitted; the font may not be sold on its own). Provenance and licence reference are repeated in `src/renderer/assets/fonts/NOTICE.txt`; the face is registered by `src/renderer/styles/fonts.css` |
+
+It is the first family in the lyrics default stack (`--blyrics-default-font-family`), so the Now
+Playing view renders with the same type Better Lyrics uses. The app shell keeps the platform UI font.
+
 ## Online lyrics providers (new code, not ports)
 
 Cadence's network clients are independent implementations written against the providers' documented

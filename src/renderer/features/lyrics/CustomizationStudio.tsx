@@ -10,7 +10,7 @@
  * optional per-context profile activation. Written for Cadence.
  */
 
-import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
   Check,
   Copy,
@@ -43,7 +43,8 @@ import {
   parseNowPlayingProfileJson,
   serializeNowPlayingProfile,
 } from "../../../shared/nowPlayingProfiles";
-import { FONT_OPTIONS } from "../../../shared/fonts";
+import { fontStack, normalizeFontId } from "../../../shared/fonts";
+import { useSystemFonts } from "../../state/fontsStore";
 
 interface CustomizationStudioProps {
   profilesSettings: NowPlayingProfilesSettings;
@@ -833,13 +834,38 @@ function FontRow({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const families = useSystemFonts(state => state.families);
+  const loadFonts = useSystemFonts(state => state.load);
+  useEffect(() => {
+    void loadFonts();
+  }, [loadFonts]);
+  const normalized = normalizeFontId(value);
+  const missing =
+    normalized !== "system" &&
+    normalized !== "monospace" &&
+    !families.some(family => family.family.toLowerCase() === normalized.toLowerCase());
+  const options: [string, string][] = [
+    ["", "App font"],
+    ["system", "System default"],
+    ["monospace", "Monospace"],
+    ...(missing ? [[normalized, `${normalized} (not installed)`] as [string, string]] : []),
+    ...families.map(family => [family.family, family.family] as [string, string]),
+  ];
   return (
-    <SelectRow
-      label={label}
-      value={value}
-      options={[["", "App font"], ...FONT_OPTIONS.map(option => [option.id, option.label] as [string, string])]}
-      onChange={onChange}
-    />
+    <label className="studio-row">
+      <span className="studio-row-label">{label}</span>
+      <select value={value} onChange={event => onChange(event.target.value)} aria-label={label}>
+        {options.map(([optionValue, optionLabel]) => (
+          <option
+            key={optionValue}
+            value={optionValue}
+            style={optionValue ? { fontFamily: fontStack(optionValue) } : undefined}
+          >
+            {optionLabel}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 

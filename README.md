@@ -65,8 +65,14 @@ npm run build:desktop  # Full Tauri production build (frontend + Rust host + pla
    transition duration, saturation, dithering, auto-dim, audio reactivity, and pause when idle.
    Performance mode `off` uses the static artwork fallback.
 5. **Settings → Appearance → General Appearance** picks the **font** used by the app and the lyrics
-   view. Choices apply immediately, persist across restarts, and fall back to similar system fonts
-   when the selected family is not installed.
+   view. The list is read live from the fonts installed on your machine (Windows: the system and
+   per-user font folders; macOS: the system, library and user font folders; Linux: fontconfig's
+   database), so anything you install is selectable — use the search box for long lists and
+   **Refresh** after installing a font. **System default** keeps the platform's UI face for the app
+   and Better Lyrics' own Satoshi/Noto stack for lyrics. Choices apply immediately, persist across
+   restarts, and a saved font that is no longer installed stays selected, is labelled as such and
+   falls back to the system stack until it is available again. See
+   [docs/system-fonts.md](docs/system-fonts.md).
 6. **Settings → Library** shows folders, rescan, the SQLite engine in use and scan errors;
    **About** lists versions and runtime information and has a confirmed **Reset all** action at the bottom.
 7. **Decode Tester** (Settings → Library) health-checks your library by really decoding

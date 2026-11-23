@@ -1280,6 +1280,42 @@
   overflow-wrap: anywhere;
 }
 
+/* Search + rescan row under the font select. The installed list can run to hundreds of
+   families, so the select stays native and accessible while this narrows it. */
+.font-picker-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 10px;
+  flex-wrap: wrap;
+}
+
+.font-picker-tools input[type="search"] {
+  flex: 1 1 180px;
+  min-width: 0;
+  max-width: 300px;
+}
+
+.font-picker-tools .ghost-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.font-picker-status {
+  color: var(--text-faint);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.field-hint {
+  margin: 0 0 10px;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .range-row .range-control {
   display: flex;
   align-items: center;

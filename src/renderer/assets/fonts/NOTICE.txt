@@ -1,0 +1,16 @@
+Fonts bundled with Cadence
+===========================
+
+Satoshi Variable
+  File:     Satoshi-Variable.woff2
+  Variable weight axis 300..900 (one file covers every lyric weight).
+  Source:   https://www.fontshare.com/fonts/satoshi
+            (same woff2 the Better Lyrics extension ships in public/fonts/)
+  Copyright Indian Type Foundry
+  Licence:  ITF Free Font License 1.0, https://www.fontshare.com/licenses/itf-ffl
+            Redistribution as part of a software product is permitted; the
+            font may not be sold on its own.
+
+Registered by src/renderer/styles/fonts.css. It is the first family in the
+lyrics default stack (Satoshi, Noto Sans, …) so the Now Playing view matches
+Better Lyrics' typography; the app shell keeps the platform UI font.

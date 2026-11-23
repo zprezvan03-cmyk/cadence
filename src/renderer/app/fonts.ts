@@ -3,46 +3,36 @@
  *
  * The app's UI text and the lyrics renderer read different variables — `--font` for the shell and
  * `--blyrics-font-family` for the upstream renderer — so both are written from one place, and a
- * theme that sets the lyrics family on the container itself still wins.
+ * Now Playing profile that sets a font on the lyrics container itself still wins (it is set on a
+ * descendant). The two surfaces only disagree for the `system` preset: the shell keeps the
+ * platform's UI face while lyrics use the Better Lyrics default (Satoshi → Noto Sans → platform).
+ * The family otherwise comes from the host's system-font scan, so a font installed after the build
+ * is applied the same way.
  */
 
-import {
-  FONT_OPTIONS,
-  FONT_PROBE_TEXT,
-  resolveFontOption,
-  unavailableFontFamilies,
-  type FontMeasurer,
-  type FontOption,
-} from "../../shared/fonts";
+import { fontStack, normalizeFontId, type FontOption } from "../../shared/fonts";
 
 /** The document-level variables that carry the selected font. */
 export const FONT_VARIABLES = ["--font", "--blyrics-font-family"] as const;
 
 /**
- * Publishes `fontId` as the document's font. Unknown ids fall back to the default, so a settings
- * file naming a font this build no longer ships still renders rather than leaving the UI unstyled.
+ * Publishes `fontId` as the document's font. Unknown, empty or corrupt ids fall back to the system
+ * default, so a settings file naming a font this machine no longer has still renders rather than
+ * leaving the UI unstyled (the stack ends in generic families either way).
  */
-export function applyFontFamily(fontId: string | null | undefined, root: HTMLElement = document.documentElement): FontOption {
-  const option = resolveFontOption(fontId);
-  for (const property of FONT_VARIABLES) root.style.setProperty(property, option.stack);
-  return option;
+export function applyFontFamily(
+  fontId: string | null | undefined,
+  root: HTMLElement = document.documentElement
+): FontOption {
+  const normalized = normalizeFontId(fontId);
+  const stack = fontStack(normalized);
+  root.style.setProperty("--font", stack);
+  root.style.setProperty("--blyrics-font-family", fontStack(normalized, "lyrics"));
+  root.dataset.fontFamily = normalized;
+  return { id: normalized, label: normalized, stack, preset: normalized === "system" || normalized === "monospace" };
 }
 
-/** Canvas-backed measurer; null in a document without a 2D context, which reads as "unknown". */
-function createCanvasMeasurer(): FontMeasurer {
-  if (typeof document === "undefined") return () => null;
-  const context = document.createElement("canvas").getContext("2d");
-  if (!context) return () => null;
-  return cssFont => {
-    context.font = cssFont;
-    return context.measureText(FONT_PROBE_TEXT).width;
-  };
-}
-
-/**
- * The fonts this machine does not have, for the picker to label. Every option still applies: its
- * stack names fallbacks, so the browser renders the closest family it has.
- */
-export function detectUnavailableFonts(options: readonly FontOption[] = FONT_OPTIONS): Set<string> {
-  return new Set(unavailableFontFamilies(options, createCanvasMeasurer()));
+/** The CSS stack a family resolves to, for a single element's preview. */
+export function previewFontStack(fontId: string | null | undefined): string {
+  return fontStack(fontId);
 }

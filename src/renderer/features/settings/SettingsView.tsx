@@ -7,8 +7,8 @@ import { useEffect, useState } from "react";
 import { AudioLines, ChevronDown, ChevronUp, Clapperboard, Database, FolderMinus, FolderPlus, Info, Keyboard, Library, Mic2, Palette, RefreshCw, RotateCcw, SlidersHorizontal, Stethoscope, Trash2 } from "lucide-react";
 import type { AppInfo, AppSettings, EqualizerSettings, ReplayGainMode, ShaderSettings } from "../../../shared/types";
 import { trackSourceKey } from "../../../shared/media";
-import { FONT_KINDS, FONT_OPTIONS, resolveFontOption } from "../../../shared/fonts";
-import { detectUnavailableFonts } from "../../app/fonts";
+import { fontOption, fontStack, normalizeFontId } from "../../../shared/fonts";
+import { useSystemFonts } from "../../state/fontsStore";
 import { MarqueeText } from "../../components/MarqueeText";
 import { useLibrary } from "../../state/libraryStore";
 import { currentMediaItem, usePlayer } from "../../state/playerStore";
@@ -137,9 +137,14 @@ export function SettingsView() {
   // Remember the category while browsing and allow the lyrics recovery action to select it.
   const section = useUi(state => state.settingsSection);
   const setSection = useUi(state => state.setSettingsSection);
-  const [unavailableFonts, setUnavailableFonts] = useState<ReadonlySet<string>>(() => new Set());
   const [clearingCache, setClearingCache] = useState(false);
   const [resettingSettings, setResettingSettings] = useState(false);
+  const [fontQuery, setFontQuery] = useState("");
+  const fontFamilies = useSystemFonts(state => state.families);
+  const fontsLoaded = useSystemFonts(state => state.loaded);
+  const fontsLoading = useSystemFonts(state => state.loading);
+  const fontsError = useSystemFonts(state => state.error);
+  const loadFonts = useSystemFonts(state => state.load);
   const showToast = useUi(state => state.showToast);
   const setShortcutsHelpOpen = useUi(state => state.setShortcutsHelpOpen);
   const navigate = useUi(state => state.navigate);
@@ -148,14 +153,38 @@ export function SettingsView() {
     void window.cadence.info().then(setInfo).catch(() => undefined);
   }, []);
 
-  // Probe once the document's faces are settled, so the picker can mark fonts this machine lacks.
+  // Enumerate the platform's installed fonts. The list is refreshed whenever the window regains
+  // focus, so a font installed while Cadence is running can be selected without a restart.
   useEffect(() => {
-    const probe = () => setUnavailableFonts(detectUnavailableFonts());
-    probe();
-    void document.fonts?.ready.then(probe).catch(() => undefined);
-  }, []);
+    void loadFonts();
+  }, [loadFonts]);
 
-  const fontOption = resolveFontOption(settings?.appearance.fontFamily);
+  useEffect(() => {
+    // Focus fires on every alt-tab; a scan reads hundreds of files, so reuse a recent one.
+    const refresh = () => void loadFonts({ force: true, maxAgeMs: 30_000 });
+    const onVisibility = () => {
+      if (!document.hidden) refresh();
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [loadFonts]);
+
+  const selectedFontId = normalizeFontId(settings?.appearance.fontFamily);
+  const selectedFont = fontOption(selectedFontId, fontFamilies);
+  const fontQueryText = fontQuery.trim().toLowerCase();
+  const visibleFontFamilies = fontQueryText
+    ? fontFamilies.filter(family => family.family.toLowerCase().includes(fontQueryText))
+    : fontFamilies;
+  // A saved family that is not installed on this machine stays selectable (and keeps its fallback
+  // stack) instead of silently snapping the setting to another font.
+  const selectedFontMissing =
+    fontsLoaded &&
+    !selectedFont.preset &&
+    !fontFamilies.some(family => family.family.toLowerCase() === selectedFontId.toLowerCase());
 
   if (!settings) return <div className="view-loading">Loading settings…</div>;
 
@@ -255,28 +284,72 @@ export function SettingsView() {
               <span>
                 <strong>Font</strong>
                 <em>
-                  Used by the app and the lyrics view. Every choice falls back to a similar system font when it
-                  is not installed.
+                  Installed fonts are read from this device and can be used by the app and the lyrics
+                  view. A font that is removed keeps a system fallback.
                 </em>
               </span>
               <select
-                value={fontOption.id}
+                value={selectedFontId}
                 data-testid="font-select"
+                aria-label="Font"
                 onChange={event => void patchSettings({ appearance: { fontFamily: event.target.value } })}
               >
-                {FONT_KINDS.map(kind => (
-                  <optgroup key={kind} label={kind}>
-                    {FONT_OPTIONS.filter(option => option.kind === kind).map(option => (
-                      <option key={option.id} value={option.id}>
-                        {option.label}
-                        {option.probe && unavailableFonts.has(option.probe) ? " (not installed)" : ""}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
+                <option value="system">System default</option>
+                <option value="monospace">Monospace</option>
+                {selectedFontMissing ? (
+                  <option value={selectedFontId}>{selectedFontId} (not installed)</option>
+                ) : null}
+                <optgroup label="Installed fonts">
+                  {visibleFontFamilies.map(family => (
+                    <option
+                      key={family.family}
+                      value={family.family}
+                      style={{ fontFamily: fontStack(family.family) }}
+                    >
+                      {family.family}
+                    </option>
+                  ))}
+                </optgroup>
               </select>
             </div>
-            <p className="font-preview" style={{ fontFamily: fontOption.stack }} data-testid="font-preview">
+            <div className="font-picker-tools">
+              <input
+                type="search"
+                value={fontQuery}
+                onChange={event => setFontQuery(event.target.value)}
+                placeholder="Search installed fonts…"
+                aria-label="Search installed fonts"
+                data-testid="font-search"
+              />
+              <button
+                type="button"
+                className="ghost-button setting-action"
+                data-testid="font-refresh"
+                onClick={() => void loadFonts({ force: true })}
+                disabled={fontsLoading}
+                title="Rescan the system for newly installed fonts"
+              >
+                <RefreshCw size={14} className={fontsLoading ? "spin" : undefined} /> Refresh
+              </button>
+              <span className="font-picker-status" data-testid="font-count">
+                {fontsLoading
+                  ? "Reading fonts…"
+                  : fontsLoaded
+                    ? `${fontFamilies.length} installed font${fontFamilies.length === 1 ? "" : "s"}`
+                    : ""}
+              </span>
+            </div>
+            {fontsError ? (
+              <p className="field-hint" data-testid="font-error">
+                Could not read system fonts ({fontsError}); using the built-in fallbacks.
+              </p>
+            ) : null}
+            {selectedFontMissing ? (
+              <p className="field-hint" data-testid="font-missing">
+                “{selectedFontId}” is not installed on this device. Cadence falls back to the system font.
+              </p>
+            ) : null}
+            <p className="font-preview" style={{ fontFamily: selectedFont.stack }} data-testid="font-preview">
               The quick brown fox jumps over the lazy dog · 1, 2, 3
             </p>
             <Toggle label="Reduce motion" checked={settings.appearance.reduceMotion} onChange={value => void patchSettings({ appearance: { reduceMotion: value } })} />

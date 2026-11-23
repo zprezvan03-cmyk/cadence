@@ -1470,7 +1470,7 @@ await wait(300);
 
 // Typography: serif font, weight 900, letter spacing, line spacing (all windowed).
 const mxTypeBefore = await mxStyle();
-await mxSetControl("Typography", "Lyrics font", "georgia");
+await mxSetControl("Typography", "Lyrics font", "Georgia");
 await mxSetControl("Typography", "Lyrics weight", "900");
 await mxSetControl("Typography", "Letter spacing", "0.05");
 await mxSetControl("Typography", "Line spacing", "1.25");
@@ -2136,12 +2136,12 @@ const qaLetterWide = await qaProbe();
 await mxSetControl("Typography", "Letter spacing", "-0.02");
 const qaLetterTight = await qaProbe();
 // Fonts: main, translation, romanization independently.
-await mxSetControl("Typography", "Lyrics font", "georgia");
+await mxSetControl("Typography", "Lyrics font", "Georgia");
 const qaFontGeorgia = await qaProbe();
 await mxSetControl("Typography", "Lyrics font", "");
 const qaFontBack = await qaProbe();
-await mxSetControl("Typography", "Translation font", "tahoma");
-await mxSetControl("Typography", "Romanization font", "arial");
+await mxSetControl("Typography", "Translation font", "Tahoma");
+await mxSetControl("Typography", "Romanization font", "Arial");
 const qaSecondaryFonts = await qaProbe();
 // Weight.
 await mxSetControl("Typography", "Lyrics weight", "900");
@@ -3167,7 +3167,7 @@ check(
   Boolean(
     mxSavedMatrix &&
       mxSavedMatrix.name === "Matrix Test" &&
-      mxSavedMatrix.windowed.fontId === "georgia" &&
+      mxSavedMatrix.windowed.fontId === "Georgia" &&
       mxSavedMatrix.windowed.activeColor === "#ff8800" &&
       mxSavedMatrix.windowed.backgroundMode === "particles" &&
       mxSavedSettings.activeProfileId === mxMatrixId
@@ -3220,7 +3220,7 @@ check(
   Boolean(
     mxDiscardPrompt.includes("unsaved changes") &&
       mxMatrixAfterDiscard &&
-      mxMatrixAfterDiscard.windowed.fontId === "georgia" &&
+      mxMatrixAfterDiscard.windowed.fontId === "Georgia" &&
       Math.abs(Number(mxMatrixAfterDiscard.windowed.lyricsScale) - 0.8) < 0.001
   ),
   `prompt ${JSON.stringify(mxDiscardPrompt)} saved ${JSON.stringify(mxMatrixAfterDiscard?.windowed ?? null)}`

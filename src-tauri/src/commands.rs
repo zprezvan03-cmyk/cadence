@@ -1224,3 +1224,15 @@ pub fn cmd_window_is_fullscreen(window: WebviewWindow) -> Result<bool, String> {
 pub fn cmd_window_chrome_state(window: WebviewWindow) -> Result<WindowChromeState, String> {
     Ok(read_window_chrome(&window))
 }
+
+/// Fonts installed on this machine, for Settings → Appearance.
+///
+/// Enumerating the platform font store reads the `name` table of a few hundred files, so it runs on
+/// the blocking pool and never stalls the webview. A platform that cannot be scanned answers with
+/// an empty list; the renderer keeps its system-default and generic presets either way.
+#[tauri::command]
+pub async fn cmd_list_system_fonts() -> Result<Vec<crate::fonts::SystemFontFamily>, String> {
+    tauri::async_runtime::spawn_blocking(crate::fonts::list_system_font_families)
+        .await
+        .map_err(|error| error.to_string())
+}

@@ -5,6 +5,7 @@
  */
 
 import type { GradientSettings } from "./upstream/shaders/gradientSettings";
+import type { SystemFontFamily } from "./fonts";
 import type { TrackIntelligenceRecord } from "./smartShuffle";
 
 export type { TrackIntelligenceRecord };
@@ -1014,6 +1015,13 @@ export interface CadenceApi {
     get(): Promise<AppSettings>;
     patch(patch: DeepPartial<AppSettings>): Promise<AppSettings>;
     reset(): Promise<AppSettings>;
+  };
+  /**
+   * Fonts installed on the operating system. The host reads the platform font store at runtime, so
+   * a font installed after the build is selectable without a code change.
+   */
+  fonts: {
+    list(): Promise<SystemFontFamily[]>;
   };
   lyrics: {
     resolve(request: LyricsResolveRequest): Promise<LyricsResolveResult>;

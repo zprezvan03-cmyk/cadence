@@ -377,6 +377,19 @@ await page.evaluateOnNewDocument(
         libraryEngine: "sqlite",
         codecs: {},
       }),
+      // The host's system-font scan (src-tauri/src/fonts.rs), stubbed: duplicates, mixed case and a
+      // stray preset name exercise the renderer-side merge, and the fallback families stay usable.
+      fonts: {
+        list: async () => [
+          { family: "Georgia", styles: ["Bold", "Regular"] },
+          { family: "georgia", styles: ["Italic"] },
+          { family: "Segoe UI", styles: ["Regular", "Semibold"] },
+          { family: "Noto Sans CJK JP", styles: ["Regular"] },
+          { family: "system", styles: ["Regular"] },
+          ...["Arial", "Helvetica Neue", "Verdana", "Tahoma", "Trebuchet MS", "Roboto", "Noto Sans", "Palatino Linotype", "Times New Roman"]
+            .map(family => ({ family, styles: ["Regular"] })),
+        ],
+      },
       library: {
         snapshot: async () => structuredClone(snapshot),
         addFolder: async () => ({ canceled: true }),

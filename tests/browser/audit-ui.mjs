@@ -344,6 +344,19 @@ await page.evaluateOnNewDocument(
         libraryEngine: "sqlite",
         codecs: {},
       }),
+      // The host's system-font scan (src-tauri/src/fonts.rs), stubbed: duplicates, mixed case and a
+      // stray preset name exercise the renderer-side merge, and the fallback families stay usable.
+      fonts: {
+        list: async () => [
+          { family: "Georgia", styles: ["Bold", "Regular"] },
+          { family: "georgia", styles: ["Italic"] },
+          { family: "Segoe UI", styles: ["Regular", "Semibold"] },
+          { family: "Noto Sans CJK JP", styles: ["Regular"] },
+          { family: "system", styles: ["Regular"] },
+          ...["Arial", "Helvetica Neue", "Verdana", "Tahoma", "Trebuchet MS", "Roboto", "Noto Sans", "Palatino Linotype", "Times New Roman"]
+            .map(family => ({ family, styles: ["Regular"] })),
+        ],
+      },
       library: {
         snapshot: async () => structuredClone(snapshot),
         addFolder: async () => ({ canceled: true }),
@@ -1796,6 +1809,33 @@ await runSection("expanded-appearance-controls-completes", async () => {
     await selectSetting("Font", value);
     check(`appearance-font-option-${value}`, (await storedSettings()).appearance?.fontFamily === value, value);
   }
+  await selectSetting("Font", "system");
+  // "System default" is two stacks: the platform UI face for the shell, Better Lyrics' Satoshi-led
+  // stack for the lyrics renderer, and the bundled Satoshi face must actually be loadable.
+  const presetStacks = await page.$eval("html", node => ({
+    ui: node.style.getPropertyValue("--font"),
+    lyrics: node.style.getPropertyValue("--blyrics-font-family"),
+  }));
+  check("appearance-font-system-preset-stacks", /system-ui/.test(presetStacks.ui) && /^"?Satoshi"?/.test(presetStacks.lyrics.trim()), JSON.stringify(presetStacks));
+  const satoshiReady = await page.evaluate(async () => {
+    await document.fonts.load("700 16px Satoshi");
+    return document.fonts.check("700 16px Satoshi");
+  });
+  check("appearance-font-satoshi-bundled", satoshiReady === true, `document.fonts.check → ${satoshiReady}`);
+  // A family that is saved but not installed stays selected and labelled instead of snapping.
+  const beforeMissing = await storedSettings();
+  await page.evaluate(saved => {
+    localStorage.setItem("cadence.harness.settings.v1", JSON.stringify({ ...saved, appearance: { ...saved.appearance, fontFamily: "Zeta Sans" } }));
+  }, beforeMissing);
+  await page.reload({ waitUntil: "domcontentloaded" }); await page.waitForSelector('[data-testid="settings-view"]'); await wait(500);
+  await nav("Settings"); await settingsTab("Appearance");
+  const missingState = await page.evaluate(() => ({
+    value: document.querySelector('[data-testid="font-select"]').value,
+    hint: document.querySelector('[data-testid="font-missing"]')?.textContent ?? "",
+    option: [...document.querySelectorAll('[data-testid="font-select"] option')].find(node => node.value === "Zeta Sans")?.textContent ?? "",
+    ui: document.documentElement.style.getPropertyValue("--font"),
+  }));
+  check("appearance-font-missing-stays-selected", missingState.value === "Zeta Sans" && /not installed/.test(missingState.hint) && /not installed/.test(missingState.option) && /Zeta Sans/.test(missingState.ui) && /sans-serif/.test(missingState.ui), JSON.stringify(missingState));
   await selectSetting("Font", "system");
   await toggleSetting("Blur artwork behind the player");
   check("appearance-blur-toggle-live", (await page.$eval("html", node => node.dataset.blurArtwork)) === "false", "artwork layer disabled");

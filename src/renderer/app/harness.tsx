@@ -26,6 +26,7 @@ import { useSettings } from "../state/settingsStore";
 import { useLyricsStore } from "../state/lyricsStore";
 import { mediaItemFromLocalTrack } from "../../shared/media";
 import { DEFAULT_PROVIDER_ORDER } from "../../shared/upstream/better-lyrics/constants";
+import { FALLBACK_FONT_FAMILIES } from "../../shared/fonts";
 import { createDefaultNowPlayingProfilesSettings } from "../../shared/nowPlayingProfiles";
 import type {
   AppSettings,
@@ -261,6 +262,11 @@ function installLyricsHarnessBridge(): void {
         lyricsHarness.settings = harnessAppSettings();
         return structuredClone(lyricsHarness.settings);
       },
+    },
+    // The browser harness has no Tauri host to scan; it exposes the same shape with the
+    // well-known families the renderer's fallback picker uses, so font selection stays testable.
+    fonts: {
+      list: async () => structuredClone(FALLBACK_FONT_FAMILIES) as { family: string; styles: string[] }[],
     },
     lyrics: {
       resolve: async () => {
