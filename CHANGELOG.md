@@ -3,6 +3,16 @@
 Branch: `arena/f3cb8f17-cadence` (dibuat dari `main` @ `cc35df7`)
 Tanggal: 2026-11-22 — 2026-11-23
 
+## `c3f42f9` — feat(now-playing): chrome fullscreen hanya muncul saat hover
+
+- Bar bawah, dock lirik, dan aksi kanan-atas (tab mode + tombol exit) kini **hanya muncul saat pointer berada di atasnya**. Tidak ada lagi sinyal global: menggerakkan pointer di atas artwork atau lirik tidak memunculkan apa pun, jadi tampilan istirahat fullscreen bersih.
+- Setiap permukaan chrome ditandai `.fs-chrome` dan rect-nya dipakai sebagai zona hover dengan kelonggaran 8px, sehingga bar terbit saat pointer mendekat di tepi bawah dan tab mode/exit terbit di sudut kanan-atas. Chrome yang tersembunyi tetap punya box, jadi areanya tetap bisa ditemukan walau `pointer-events: none`.
+- Waktu tunggu dipendekkan dari 3 detik ke **2 detik** (`CHROME_IDLE_MS = 2000`): chrome memudar 2 detik setelah pointer meninggalkannya. Popover/queue yang terbuka, tombol mouse yang ditekan, fokus keyboard, dan sembarang keypress tetap menahannya. Masuk fullscreen memunculkan chrome sekali lalu istirahat sendiri.
+- Kursor tidak lagi disembunyikan (`cursor: none` dibuang): di chrome yang hover-only, kursor adalah cara menemukan bar lagi.
+- Perbaikan bug dari refactor sebelumnya: `.fs-page-actions.is-concealed` hilang bersama kontrol kolom, sehingga tab mode dan tombol exit tidak pernah ikut memudar. Aturan fade-nya dikembalikan bersama `.fs-controls`/`.lyrics-dock`.
+- Harness disesuaikan ke perilaku baru: `run-app.mjs` kini menguji `chrome-hidden-over-lyrics`, `hover-lyrics-roam-keeps-chrome-hidden`, `cursor-stays-visible-over-lyrics`, hover tepi kiri/kanan bar, dan fade 2 detik; klik di fullscreen lebih dulu memindahkan pointer ke band bar (atau ke tombol exit) karena wake global sudah tidak ada. `audit-ui.mjs`, `now-playing-layout.ts`, dan `animation-audit.ts` memakai helper yang sama (hover ke sasaran, bukan sekadar menggerakkan pointer).
+- Verifikasi: `npm run typecheck` lolos; `npm test -- --exclude tests/unit/_matasaburo_full.test.ts` **628/628**; `npm run build:web` lolos; `tests/browser/run-app.mjs` **153/153**; `tests/browser/audit-ui.mjs` **296 pass, 0 fail** (4 blocked, 3 not tested); `now-playing-layout.ts` 37 cek lolos lalu berhenti di probe `openProfileSwitcher` (gagal juga di base); `animation-audit.ts` 117 cek dengan 4 kegagalan yang identik di base (`lyric-follow-…`, `mini-expansion-…`, `mini-handoff-…`, `layout-stable`), sementara `fs-controls-hide-on-leave` kini lolos.
+
 ## `1defecf` — feat(now-playing): satu playbar, kontrol kolom dibuang
 
 - Kontrol di bawah artwork dihapus. `FullscreenColumnControls`, `FullscreenColumnTransport`, dan `FullscreenInfoActions` hilang dari `FullscreenControls.tsx`; kolom `.fs-side` kini hanya memuat cover plus heading info lagu, jadi tidak ada lagi progress bar dan transport kedua di sisi lirik.
