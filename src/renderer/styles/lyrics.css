@@ -1106,7 +1106,8 @@ braccato-lyrics[data-upgrading="true"] {
    controls and shift that measurement, so nothing but opacity and visibility animates.
    Reduced motion is handled by the global rule. */
 .fs-controls,
-.lyrics-dock {
+.lyrics-dock,
+.fs-page-actions {
   transition:
     opacity var(--dur-3) var(--ease-out),
     visibility var(--dur-3) var(--ease-out);
@@ -1114,6 +1115,13 @@ braccato-lyrics[data-upgrading="true"] {
 
 .fs-controls.is-concealed,
 .lyrics-dock.is-concealed {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* The top-right page actions hide with the bar: same fade, same exit from hit-testing. */
+.fs-page-actions.is-concealed {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -2796,16 +2804,9 @@ braccato-lyrics[data-lyrics-reduced="true"] .blyrics-container {
 
 /* Better Lyrics hides the cursor together with the chrome (`cursor-hidden` on YouTube Music's
    layout), so an idle fullscreen page is artwork, song info and lyrics only. */
-.lyrics-view.is-fullscreen[data-chrome="hidden"] {
-  cursor: none;
-}
-
-/* A visible pointer over a hidden chrome still reveals it, so keep the cursor alive on the
-   surfaces that always take input. */
-.lyrics-view.is-fullscreen[data-chrome="hidden"] .fs-mode-tabs,
-.lyrics-view.is-fullscreen[data-chrome="hidden"] .fs-exit {
-  cursor: pointer;
-}
+/* The chrome is hover-only, so the pointer stays visible everywhere: the cursor is how the bar is
+   found again after it fades. (Better Lyrics hides the cursor after an idle period in fullscreen; with
+   a hover-only chrome there is no idle period to hide it for.) */
 
 /* -- Loader (`#blyrics-loader`): a spinning mark beside a shimmering status line -- */
 /* The reference's loader: a 3.5rem mark spinning once every 1.5 s beside 2.2rem bold status text

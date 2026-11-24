@@ -650,18 +650,23 @@ const clickText = async (selector, wanted, exact = true) => {
   }
   throw new Error(`No ${selector} with text ${JSON.stringify(wanted)}; saw ${JSON.stringify(await page.$$eval(selector, nodes => nodes.map(node => node.textContent?.replace(/\s+/g, " ").trim())))}`);
 };
+// The fullscreen chrome is hover-only: the exit button lives in the top-right actions, which stay
+// hidden until the pointer is on them. Travel to the button and wait for the reveal before clicking.
+const wakeExit = async () => {
+  const exit = await page.$("button.fs-exit");
+  if (!exit) return;
+  const box = await exit.evaluate(node => node.getBoundingClientRect().toJSON());
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.waitForFunction(() => {
+    const node = document.querySelector("button.fs-exit");
+    if (!node) return true;
+    return getComputedStyle(node).visibility !== "hidden";
+  }, { timeout: 3000 }).catch(() => {});
+  await wait(120);
+};
 const leaveImmersive = async () => {
   if (await page.$('button.fs-exit')) {
-    // Better Lyrics' fullscreen chrome hides itself after three still seconds, and the exit button
-    // hides with it; a real pointer move wakes it before clicking.
-    await page.mouse.move(600, 300);
-    await page.mouse.move(606, 302);
-    await page.waitForFunction(() => {
-      const exit = document.querySelector("button.fs-exit");
-      if (!exit) return true;
-      return getComputedStyle(exit).visibility !== "hidden";
-    }, { timeout: 3000 }).catch(() => {});
-    await wait(80);
+    await wakeExit();
     await page.click('button.fs-exit');
     await page.waitForSelector('.sidebar');
     await page.waitForSelector('[data-player-moving]', { hidden: true, timeout: 3000 });
@@ -1760,8 +1765,8 @@ await runSection("expanded-player-controls-completes", async () => {
   await closeQueue();
   await page.click('[data-testid="open-now-playing"]'); await wait(150);
   check("player-fullscreen-open", Boolean(await page.$(".lyrics-view.is-fullscreen")), "fullscreen button");
-  // The exit button obeys the fullscreen idle rule: wake the chrome with a pointer move first.
-  await page.mouse.move(600, 300); await page.mouse.move(606, 302); await wait(120);
+  // The exit button lives in the hover-only top-right actions: travel to it before clicking.
+  await wakeExit();
   await page.click('button[aria-label="Exit Now Playing"]'); await wait(120);
   check("player-fullscreen-close", !(await page.$(".lyrics-view.is-fullscreen")), "exit button");
   await pausePlayback();

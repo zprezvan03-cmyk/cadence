@@ -56,21 +56,25 @@ survives a restart and applies to both the fullscreen column and the windowed/bo
 
 ## Chrome visibility and the cursor
 
-`useFullscreenChrome` replaces `useControlsHover`, which revealed the controls only while the pointer
-was over the footer.
+`useFullscreenChrome` (rewritten) makes the chrome **hover-only**, which is stricter than Better
+Lyrics: only the chrome's own surfaces reveal it.
 
-- The chrome (player bar, song-info actions, column controls, mode tabs, exit button, floating dock)
-  is shown by any pointer move, pointer press, keyboard use or focus arrival, and hides after
-  **3000ms** without them — Better Lyrics' `PLAYER_BAR_HIDE_DELAY` behaviour, driven by YouTube
-  Music's `show-fullscreen-controls` attribute.
-- The chrome stays up while the pointer rests on it, while a popover or the queue is open
-  (`chromePinned`), while a pointer press is in flight, and while focus is inside it from the
-  keyboard. A mouse click does not pin it: the reference hides the chrome after any pointer idle.
-- A hidden chrome hides the cursor too (`.lyrics-view[data-chrome="hidden"] { cursor: none }`), as
-  `cursor-hidden` does on YouTube Music's layout.
+- The chrome is the bottom playbar, the floating dock and the top-right page actions (mode tabs and
+  exit). Each one is a hover target (`.fs-chrome`); the pointer is tested against their rects with 8px
+  of slack, so approaching the bar along the bottom edge reveals it before it is reached.
+- A pointer anywhere else — artwork, lyrics, the empty page — leaves the chrome hidden; it does not
+  wake it. That is the rest state the reference's player page shows.
+- Once the pointer leaves the chrome, **2000ms** without returning hides it again. A popover or the
+  queue (`chromePinned`), a pointer press in flight, keyboard focus inside the chrome and any keypress
+  keep it up.
+- Entering fullscreen reveals the chrome once, then it rests away if the pointer does not find it;
+  leaving fullscreen and the Studio preview show it unconditionally.
+- The cursor stays visible. Better Lyrics hides it after its 3s idle period, but with a hover-only
+  chrome the cursor is how the bar is found again.
 - Visibility fades over `--dur-3` (240ms) with `visibility` trailing it so hidden chrome leaves the
-  hit-testing and focus order. The floating dock additionally scales to 0.85 and blurs to 8px, the
-  reference's `.blyrics-dock--hidden` transform.
+  hit-testing and focus order (the bar, the dock and the top-right actions alike). Hidden chrome keeps
+  its box, which is what the hover test reads. The floating dock additionally scales to 0.85 and blurs
+  to 8px, the reference's `.blyrics-dock--hidden` transform.
 
 ## Dock
 
@@ -96,12 +100,11 @@ equivalent here.
 - `npm run typecheck` — clean.
 - `npm test -- --exclude tests/unit/_matasaburo_full.test.ts` — **628/628**.
 - `npm run build:web` — clean.
-- `tests/browser/run-app.mjs` — **153/153**, including checks for pointer-wake, the 3s idle hide,
-  the hidden cursor, the pinned popover, the matte full-width bar, and that the column carries no
-  controls (`noColumnControls`).
-- `tests/browser/audit-ui.mjs` — **295 passed, 1 failed** (4 blocked, 3 not tested): the same
-  `instrumental-setting-completes` failure occurs on the base commit, and the section passes when
-  run alone.
+- `tests/browser/run-app.mjs` — **153/153**, including checks that the chrome stays hidden over the
+  lyrics, appears on hovering the bar and its far edges, fades 2s after the pointer leaves, stays up
+  while a popover is pinned, keeps the cursor visible, keeps the matte full-width bar, and that the
+  column carries no controls (`noColumnControls`).
+- `tests/browser/audit-ui.mjs` — **296 passed, 0 failed** (4 blocked, 3 not tested, as on the base).
 - `tests/browser/animation-audit.ts` — 61 checks pass, then the pre-existing `InvalidStateError`
   while finishing an infinite shimmer animation, which also occurs on the base commit.
 - `tests/browser/now-playing-layout.ts` — 37 checks pass; its `openProfileSwitcher` probe fails on

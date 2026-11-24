@@ -76,10 +76,11 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
   const showLyricsSetting = preview ? preview.mode !== "lyricsOff" : settings?.lyrics?.showLyricsInFullscreen ?? true;
   const footerPresent = fullscreen && showLyricsSetting;
   const panelMode = fullscreen && !showLyricsSetting;
-  // The chrome (song-info actions, column transport, player bar, dock, page actions) follows Better
-  // Lyrics' fullscreen idle rule: shown by pointer activity, hidden again after three still seconds.
+  // The chrome (the bottom playbar, the floating dock, the mode tabs and the exit button) is
+  // hover-only: it appears while the pointer is over one of those surfaces and fades two seconds after
+  // it leaves. A popover, the queue or the Studio preview pins it, and so does keyboard focus.
   const chromePinned = dockPopoverOpen || queueOpen || Boolean(preview);
-  const controlsVisible = useFullscreenChrome(fullscreen, chromePinned, footerRef);
+  const controlsVisible = useFullscreenChrome(fullscreen, chromePinned, viewRef);
 
   // Fullscreen only: the controls overlay the bottom of the lyrics body instead of taking space from it.
   // The footer's measured height is published to the view as --fs-footer-height, so the body keeps its

@@ -1203,10 +1203,21 @@ await page.waitForFunction(() => document.querySelectorAll("braccato-lyrics .bly
 /* ------------------------------------------------------- unified fullscreen */
 
 // Force a real pointer move after a layout change; moving to the same point does not wake
-// the hover-only controls. Click only after the target can actually receive input.
+// the hover-only controls. In fullscreen the chrome only answers a pointer that is on (or just
+// beside) the surface itself, so the wake lands on the bar's band — far from the top-right tabs —
+// before travelling to the target. Click only after the target can actually receive input.
 const wakeClick = async selector => {
   await page.waitForSelector(selector, { timeout: 9000 });
-  if (await page.$('.lyrics-view.is-fullscreen') && !selector.startsWith('.queue-panel')) await page.mouse.move(100, 180);
+  if (await page.$('.lyrics-view.is-fullscreen') && !selector.startsWith('.queue-panel')) {
+    const band = await page.evaluate(() => {
+      const bar = document.querySelector('.lyrics-view.is-fullscreen .lyrics-footer');
+      if (!bar) return null;
+      const rect = bar.getBoundingClientRect();
+      return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+    });
+    if (band) await page.mouse.move(band.x, band.y);
+    else await page.mouse.move(100, 180);
+  }
   const point = await page.$eval(selector, node => {
     const rect = node.getBoundingClientRect();
     return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
@@ -1408,12 +1419,23 @@ check(
 
 // The exit button is the top element at its centre, and a click leaves fullscreen. Fullscreen is entered
 // again afterwards, still with lyrics off, so the checks below run as before.
-const exitTarget = await page.evaluate(() => {
-  const node = document.querySelector(".lyrics-view .fs-exit");
-  const box = node.getBoundingClientRect();
-  const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
-  return { x: box.left + box.width / 2, y: box.top + box.height / 2, hit: Boolean(hit && (hit === node || node.contains(hit))) };
+// The top-right actions are hidden until the pointer finds them, so travel to the exit first and read
+// the hit-test once the actions are up.
+const exitBox = await page.evaluate(() => {
+  const box = document.querySelector(".lyrics-view .fs-exit").getBoundingClientRect();
+  return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
 });
+await page.mouse.move(exitBox.x, exitBox.y);
+await page.waitForFunction(() => {
+  const actions = document.querySelector(".fs-page-actions");
+  return Boolean(actions) && !actions.classList.contains("is-concealed");
+}, { timeout: 3000 }).catch(() => {});
+await wait(260);
+const exitTarget = await page.evaluate(point => {
+  const node = document.querySelector(".lyrics-view .fs-exit");
+  const hit = document.elementFromPoint(point.x, point.y);
+  return { ...point, hit: Boolean(hit && (hit === node || node.contains(hit))) };
+}, exitBox);
 await page.mouse.move(exitTarget.x, exitTarget.y);
 await wait(300);
 await page.mouse.click(exitTarget.x, exitTarget.y);
@@ -1526,16 +1548,15 @@ const pointerAway = async () => {
   await page.mouse.move(100, 200);
 };
 
-// Pointer over the lyrics: the chrome shows at once (Better Lyrics reveals it on any pointer
-// movement) and, after three still seconds, hides again and stops taking input.
+// The chrome is hover-only: a pointer over the lyrics leaves it hidden and takes no input.
 await pointerAway();
-const movingState = await settleOpacity(1);
+const movingState = await settleOpacity(0);
 check(
-  "chrome-shows-on-pointer-move",
-  movingState.concealed === false && movingState.opacity > 0.95,
+  "chrome-hidden-over-lyrics",
+  movingState.concealed === true && movingState.opacity < 0.02 && movingState.pointerEvents === "none",
   JSON.stringify(movingState)
 );
-const awayState = await settleOpacity(0);
+const awayState = movingState;
 const awayHit = await hitsControls();
 check(
   "idle-hides-controls-and-cursor",
@@ -1543,8 +1564,9 @@ check(
     awayState.pointerEvents === "none" && !awayHit,
   JSON.stringify({ ...awayState, hitsControls: awayHit })
 );
+// The cursor stays visible while the chrome is hidden: it is how the bar is found again.
 const idleCursor = await page.evaluate(() => getComputedStyle(document.querySelector(".lyrics-view.is-fullscreen")).cursor);
-check("idle-hides-cursor", idleCursor === "none", `cursor ${idleCursor}`);
+check("cursor-stays-visible-over-lyrics", idleCursor !== "none", `cursor ${idleCursor}`);
 
 // Playback continues while the controls are hidden.
 const hiddenStart = await audioState();
@@ -1558,21 +1580,17 @@ check(
   `advanced ${hiddenAdvance.toFixed(2)}s over 2 s, paused=${hiddenEnd.paused}`
 );
 
-// Roaming over the lyrics keeps the chrome up (any pointer movement counts, as in Better Lyrics),
-// and leaving it alone for the idle window hides it again. The roam ends over the lyrics, not over
-// the chrome, so nothing is holding it open.
-const roamControlsTop = await page.$eval('[data-testid="fullscreen-controls"]', node =>
-  node.getBoundingClientRect().top
-);
-for (const [x, y] of [[300, 250], [640, 420], [900, 600], [640, Math.max(0, roamControlsTop - 40)]]) {
+// Roaming over the artwork and the lyrics never reveals the chrome: only the chrome's own surfaces
+// do. The roam ends over the lyrics, well clear of the bar and the corner tabs.
+for (const [x, y] of [[300, 250], [640, 420], [900, 600]]) {
   await page.mouse.move(x, y);
   await wait(40);
 }
-const roamShown = await settleOpacity(1);
+const roamShown = await controlState();
 const roamState = await settleOpacity(0);
 check(
-  "hover-lyrics-roam-reveals-then-idles-away",
-  roamShown.concealed === false && roamState.concealed === true && roamState.opacity < 0.02 &&
+  "hover-lyrics-roam-keeps-chrome-hidden",
+  roamShown.concealed === true && roamState.concealed === true && roamState.opacity < 0.02 &&
     roamState.pointerEvents === "none",
   JSON.stringify({ roamShown, roamState })
 );
@@ -1582,7 +1600,7 @@ const hiddenShader = await motionOf({ x: 0, y: 760, width: 260, height: 140 });
 check("hover-hidden-shader-keeps-rendering", hiddenShader.avgDiff > 0.5, `avg frame change ${hiddenShader.avgDiff.toFixed(2)} over the hidden control area`);
 await page.screenshot({ path: join(shotDir, "05c-fullscreen-controls-hidden.png") });
 
-// Hovering the controls shows them; the fade completes within 250 ms.
+// Hovering the bar shows it; the fade completes within 250 ms.
 const playPoint = await centreOf('[data-testid="fullscreen-controls"] .play-button');
 await page.mouse.move(playPoint.x, playPoint.y);
 const revealedState = await settleOpacity(1);
@@ -1630,7 +1648,7 @@ check(
   JSON.stringify({ left: leftEdgeRevealed, right: rightEdgeRevealed })
 );
 
-// Leaving the area fades the controls out again.
+// Leaving the area fades the controls out again after the two-second hover window.
 await pointerAway();
 const leftState = await settleOpacity(0);
 check(
@@ -1653,13 +1671,15 @@ check(
 );
 
 // An open dock popover pins the chrome: it stays up while the pointer rests elsewhere, and goes
-// once the popover closes and the pointer has been still for the idle window.
+// once the popover closes and the pointer has been off the chrome for the hide delay.
 await page.mouse.move(100, 200);
+const dockOpenPoint = await centreOf('[data-testid="lyrics-dock"] button[title="Lyrics source"]');
+await page.mouse.move(dockOpenPoint.x, dockOpenPoint.y);
 await settleOpacity(1);
 await page.click('[data-testid="lyrics-dock"] button[title="Lyrics source"]');
 await page.waitForSelector(".dock-sources");
 await pointerAway();
-await wait(3600);
+await wait(2600);
 const pinnedState = await controlState();
 const sourcesOpen = Boolean(await page.$(".dock-sources"));
 check(
@@ -1667,13 +1687,17 @@ check(
   sourcesOpen && pinnedState.concealed === false && pinnedState.opacity > 0.95 && pinnedState.chromeDock === true,
   `popover open=${sourcesOpen}; concealed=${pinnedState.concealed}, dock shown=${pinnedState.chromeDock}`
 );
+// The trigger hides with the chrome, so hover it again before clicking it closed.
+await page.mouse.move(dockOpenPoint.x, dockOpenPoint.y);
+await wait(140);
 await page.click('[data-testid="lyrics-dock"] button[title="Lyrics source"]');
 await pointerAway();
 const closedState = await settleOpacity(0);
+const sourcesClosed = !(await page.$(".dock-sources"));
 check(
   "hover-popover-closed-hides-controls",
-  !(await page.$(".dock-sources")) && closedState.concealed === true,
-  `concealed=${closedState.concealed}, opacity ${closedState.opacity}`
+  sourcesClosed && closedState.concealed === true && closedState.opacity < 0.02,
+  `popover closed=${sourcesClosed}; concealed=${closedState.concealed}, opacity ${closedState.opacity}`
 );
 
 // Exit fullscreen with the controls hidden. The normal page keeps its dock visible, before and after 4 s.
@@ -1781,6 +1805,23 @@ const layoutAtSize = async (width, height) => {
   // Left column: the artwork and the title form one block, centred between the header and the controls
   // (wide windows); at 900 px and below the artwork is hidden and the title stays at the top. The lyrics
   // column keeps the title out of the header. The active line's left edge is recorded for the record.
+  // The top-right actions are hover-only, so travel to the exit button before reading its hit-test.
+  const exitPoint = await page.evaluate(() => {
+    const box = document.querySelector(".lyrics-view .fs-exit")?.getBoundingClientRect();
+    return box ? { x: box.left + box.width / 2, y: box.top + box.height / 2 } : null;
+  });
+  if (exitPoint) {
+    // Two moves: the first wakes the hover-only actions, the second confirms the pointer is on them.
+    await page.mouse.move(exitPoint.x - 60, exitPoint.y + 60);
+    await page.mouse.move(exitPoint.x, exitPoint.y);
+    await page
+      .waitForFunction(() => {
+        const exit = document.querySelector(".lyrics-view .fs-exit");
+        return !exit || getComputedStyle(exit).visibility !== "hidden";
+      }, { timeout: 3000 })
+      .catch(() => {});
+    await wait(120);
+  }
   const art = await page.evaluate(() => {
     const side = document.querySelector(".fs-side");
     if (!side) return { present: false };
@@ -1826,6 +1867,10 @@ const layoutAtSize = async (width, height) => {
       exitRight: exitBox ? exitBox.right : null,
       exitTop: exitBox ? exitBox.top : null,
       exitHit,
+      exitHitTag: (() => {
+        const hit = exitBox ? document.elementFromPoint(exitBox.left + exitBox.width / 2, exitBox.top + exitBox.height / 2) : null;
+        return hit ? `${hit.tagName.toLowerCase()}.${String(hit.className).slice(0, 60)}` : null;
+      })(),
       inactiveLeft: inactiveLine ? inactiveLine.left : null,
       bodyPaddingRight: parseFloat(getComputedStyle(document.querySelector(".lyrics-body")).paddingRight),
       activeLeft: activeLine ? activeLine.left : null,
@@ -1866,7 +1911,7 @@ const layoutAtSize = async (width, height) => {
   }
   // The exit button is in the top-right corner of the window, with lyrics on or off.
   const exitOk = art.exitRight !== null && art.viewportWidth - art.exitRight <= 60 && art.exitTop < 40 && art.exitHit;
-  check(`exit-top-right-${width}x${height}`, exitOk, `exit right ${art.exitRight?.toFixed(0)} of ${art.viewportWidth}, top ${art.exitTop?.toFixed(0)}`);
+  check(`exit-top-right-${width}x${height}`, exitOk, `exit right ${art.exitRight?.toFixed(0)} of ${art.viewportWidth}, top ${art.exitTop?.toFixed(0)}, hit ${art.exitHit}, over ${art.exitHitTag}`);
 };
 await layoutAtSize(1280, 720);
 await layoutAtSize(800, 600);

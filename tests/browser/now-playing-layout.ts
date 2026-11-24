@@ -465,8 +465,24 @@ const nav = async (label: string) => {
   if (expected) await page.waitForSelector(expected, { timeout: 5000 });
   await wait(280);
 };
+// The fullscreen chrome is hover-only, and the exit button sits in the top-right actions: travel to
+// it (a real pointer move wakes the actions) before clicking.
+const hoverExit = async () => {
+  const box = await page.$eval(".app-shell.is-immersive button.fs-exit", node => node.getBoundingClientRect().toJSON());
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page
+    .waitForFunction(() => {
+      const exit = document.querySelector(".app-shell.is-immersive button.fs-exit");
+      return !exit || getComputedStyle(exit).visibility !== "hidden";
+    }, { timeout: 3000 })
+    .catch(() => {});
+  await wait(140);
+};
 const openLegacyLyrics = async () => {
-  if (await page.$('.app-shell.is-immersive button.fs-exit')) await page.click('button.fs-exit');
+  if (await page.$('.app-shell.is-immersive button.fs-exit')) {
+    await hoverExit();
+    await page.click('button.fs-exit');
+  }
   await page.evaluate(() => { location.hash = "#/lyrics"; });
   await page.waitForSelector('.app-shell:not(.is-immersive) .lyrics-view:not(.is-fullscreen)', { timeout: 15000 }).catch(async error => {
     console.error("Legacy lyrics did not mount:", await page.evaluate(() => ({
@@ -651,13 +667,18 @@ const profileProbe = () =>
   });
 
 const openProfileSwitcher = async () => {
-  // The dock floats over the lyrics column and follows Better Lyrics' three-second fullscreen idle
-  // rule, so wake the chrome (real pointer moves) until it is up. The click itself is dispatched on
-  // the element: this probe is about the switcher's contents and the profile switch, while the
+  // The dock floats over the lyrics column and follows the hover-only chrome rule, so wake it by
+  // moving onto the dock itself (a real pointer move) until it is up. The click itself is dispatched
+  // on the element: this probe is about the switcher's contents and the profile switch, while the
   // pointer-driven path is covered by the app run.
   const profileButton = '.fs-dock [data-testid="now-playing-profile-button"]';
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    await page.mouse.move(600 + attempt, 300 + attempt);
+    const dockBox = await page.$eval(".fs-dock", node => node.getBoundingClientRect().toJSON()).catch(() => null);
+    if (dockBox) {
+      await page.mouse.move(dockBox.x + dockBox.width / 2 + (attempt % 4), dockBox.y + dockBox.height / 2 + (attempt % 3));
+    } else {
+      await page.mouse.move(600 + attempt, 300 + attempt);
+    }
     const awake = await page
       .waitForFunction(
         (selector: string) => {
@@ -707,6 +728,7 @@ const enterFullscreen = async () => {
 };
 const exitFullscreen = async () => {
   if (!(await page.$(".lyrics-view.is-fullscreen"))) return;
+  await hoverExit();
   await page.click("button.fs-exit");
   await page.waitForSelector(".lyrics-view:not(.is-fullscreen)", { timeout: 10_000 });
   await wait(600);
@@ -743,12 +765,14 @@ async function auditImmersiveNowPlaying() {
   const surface = '.lyrics-view.is-fullscreen:not(.is-preview)';
   const entry = '[data-testid="open-now-playing"]';
   const exit = 'button.fs-exit';
-  // The fullscreen chrome (mode tabs, exit, the dock) follows the three-second idle rule, so every
-  // interaction behind it starts with a real pointer move that wakes it.
-  const wake = async () => {
-    await page.mouse.move(600, 300);
-    await page.mouse.move(604, 302);
-    await wait(60);
+  // The fullscreen chrome (mode tabs, exit, the dock) is hover-only, so every interaction with it
+  // starts with a real pointer move onto the surface it needs.
+  const wake = async (selector = ".fs-page-actions") => {
+    const node = await page.$(selector);
+    if (!node) return;
+    const box = await node.evaluate(element => element.getBoundingClientRect().toJSON());
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await wait(120);
   };
   const chooseMode = async (mode: "on" | "off") => {
     await wake();
@@ -761,7 +785,7 @@ async function auditImmersiveNowPlaying() {
     await page.waitForSelector(surface);
   };
   const close = async () => {
-    await wake();
+    await wake(exit);
     await page.click(exit);
     await page.waitForSelector(entry);
     await page.waitForSelector(surface, { hidden: true });
@@ -1110,6 +1134,7 @@ await wait(900);
 await shot("06-fullscreen-no-lyrics");
 const fullscreen = await geometry();
 // Leave fullscreen again so the harness never depends on the previous scenario's mode.
+await hoverExit();
 await page.click("button.fs-exit");
 await wait(600);
 
