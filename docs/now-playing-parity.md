@@ -13,27 +13,31 @@ DOM, Cadence drives its own player store.
 
 | Reference | Cadence | Notes |
 | --- | --- | --- |
-| `#blyrics-fs-column` — artwork, 2rem gap, song-info row, 1.5rem gap, progress + transport; the column is exactly as wide as the artwork | `.fs-col` inside `.fs-side` (`FullscreenColumnControls`, `FullscreenInfoActions`) | Same order, same gaps (`clamp(14px, 2.2cqh, 32px)` and `1.5rem`). |
+| `#blyrics-fs-column` — artwork, then the song info under it | `.fs-side` (`.fs-artwork` + `.fs-col`) | Only the cover and the song info live here. |
 | Artwork column centred vertically in the main panel | `.fs-side` keeps its `translateY()` centring | Unchanged from Cadence's layout. |
 | Lyrics column scrolled independently | `.lyrics-body` in grid column 2 | Unchanged. |
-| Player bar stays visible in fullscreen (YouTube Music's bar) | `.fs-controls` stays visible, edge-to-edge, matte `#1b1b1d`, white progress | The bar keeps Cadence's three zones (identity / transport+seek / tools) and gains the reference's full-width footprint. |
+| Player bar stays visible in fullscreen (YouTube Music's bar) | **`.fs-controls`, the only playback controls**: edge-to-edge, matte `#1b1b1d`, white progress | Cadence keeps one playbar, at the bottom, with its three zones (identity / transport + seek / tools). |
 | `#blyrics-song-info`: title 700 weight, artist at 0.5 opacity, `artist · album` | `.fs-col .lyrics-heading` | Sizes derive from the profile's `--np-title-size`, so profile scaling still applies. |
 
+**One playbar.** The reference draws its own progress bar and transport in the column *and* keeps
+YouTube Music's bar; Cadence keeps only the bottom bar, so playback controls exist once. The column
+under the artwork therefore holds the cover and the song info only — no duplicated transport, seek
+row, volume or action cluster.
+
 Profiles still decide what exists: `metadataSlot`/`metadataVisible` move the heading between the
-column and the header, `artworkVisible` drops the cover, and `controlsVisible: false` falls back to
-the pre-parity presentation (controls only in the bottom bar). `artwork-right` mirrors the column.
+column and the header, `artworkVisible` drops the cover, and `artwork-right` mirrors the column.
+`controlsVisible: false` hides the bar entirely for profiles that want playback chrome elsewhere.
 
 ## Controls
 
-- Round discs `.fs-disc` (52px, 56% glyph) with the reference's hover (`rgb(255 255 255 / 24%)`,
-  `scale(1.06)`, 140ms), 28px song-info actions with 18px glyphs, and the solid white 68px play
-  button (`46%` glyph).
+- Round discs `.fs-disc` with the reference's hover (`rgb(255 255 255 / 24%)`, `scale(1.06)`,
+  140ms) and the solid white play button, all in the bottom bar.
 - Click feedback matches the reference's three motions: a 280ms pop, a 300ms ±22% icon nudge on the
   skip buttons, and a 480ms ripple (`scale(2.6)`) that spawns at the pointer.
 - Favourite runs the 640ms pop, the 900ms iris reveal of the filled heart, and a 460/480ms ray and
   dot burst.
-- Shuffle/repeat take the reference's like/dislike positions: Cadence's transport owns those
-  settings, and an active one gets the reference's 3px underline dot.
+- Shuffle/repeat sit at the outer ends of the bar's transport, where the reference puts
+  like/dislike: Cadence's transport owns those settings.
 - Progress bar (`features/player/ProgressBar.tsx`): 4px track at `rgb(255 255 255 / 22%)`, 10px
   knob, `transform`-driven fill with a 260ms glide on seeks, scrub previews, click-to-seek, keyboard
   steps (5s, 30s with Shift, Home/End). The right-hand time flips between total and remaining
@@ -92,10 +96,12 @@ equivalent here.
 - `npm run typecheck` — clean.
 - `npm test -- --exclude tests/unit/_matasaburo_full.test.ts` — **628/628**.
 - `npm run build:web` — clean.
-- `tests/browser/run-app.mjs` — **153/153**, including new checks for pointer-wake, the 3s idle
-  hide, the hidden cursor, the pinned popover, the matte full-width bar, and the column's
-  volume/favourite/transport.
-- `tests/browser/audit-ui.mjs` — **296 passed, 0 failed** (4 blocked, 3 not tested, as on the base).
+- `tests/browser/run-app.mjs` — **153/153**, including checks for pointer-wake, the 3s idle hide,
+  the hidden cursor, the pinned popover, the matte full-width bar, and that the column carries no
+  controls (`noColumnControls`).
+- `tests/browser/audit-ui.mjs` — **295 passed, 1 failed** (4 blocked, 3 not tested): the same
+  `instrumental-setting-completes` failure occurs on the base commit, and the section passes when
+  run alone.
 - `tests/browser/animation-audit.ts` — 61 checks pass, then the pre-existing `InvalidStateError`
   while finishing an infinite shimmer animation, which also occurs on the base commit.
 - `tests/browser/now-playing-layout.ts` — 37 checks pass; its `openProfileSwitcher` probe fails on
@@ -104,8 +110,8 @@ equivalent here.
 
 ## Known limitations
 
-- The transport is duplicated by design: the reference shows both its own column and YouTube Music's
-  bar, and Cadence keeps its full-width player bar while the column carries the same transport.
+- The reference draws two transports (its column plus YouTube Music's bar); Cadence deliberately
+  keeps one, the bottom bar, so nothing is duplicated.
 - Better Lyrics' like/dislike voting writes to its own backend; Cadence has no voting model, so the
   heart is the library favourite and shuffle/repeat occupy the outermost slots.
 - The artist and album are not links (Cadence's `MarqueeText` heading), unlike the reference's

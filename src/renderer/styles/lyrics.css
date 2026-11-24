@@ -2307,31 +2307,8 @@ braccato-lyrics[data-lyrics-reduced="true"] .blyrics-container {
 }
 /* ------------------------------------------------- Better Lyrics fullscreen parity */
 
-/* The reference's fullscreen column (components.css `#blyrics-fs-column`): artwork, then a 2rem
-   gap, then the song-info row with its actions, then a 1.5rem gap, then the progress bar and
-   transport. Everything is exactly as wide as the artwork, so the column reads as one block. */
-.fs-col {
-  display: flex;
-  flex-direction: column;
-  gap: clamp(14px, 2.2cqh, 32px);
-  width: 100%;
-  min-width: 0;
-}
-
-.fs-info-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  min-width: 0;
-}
-
-.fs-info-row > .lyrics-heading {
-  flex: 1;
-  min-width: 0;
-  margin-top: 0;
-  text-align: start;
-}
-
+/* Better Lyrics keeps its song info under the cover (`#blyrics-song-info`) and nothing else: the
+   progress bar and transport stay in the single player bar at the bottom of the window. */
 /* Artwork and column are the same block: the info row sits under the cover, as in the reference. */
 .fs-side {
   gap: 0;
@@ -2393,45 +2370,6 @@ braccato-lyrics[data-lyrics-reduced="true"] .blyrics-container {
 
 .fs-disc.is-active {
   color: #fff;
-}
-
-/* The song-info actions are 28px discs with 18px glyphs (`.blyrics-fs-info-actions`). */
-.fs-info-actions {
-  --fs-action-size: 28px;
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 4px;
-  opacity: 1;
-  pointer-events: auto;
-  transition: opacity var(--dur-4) var(--ease-out);
-}
-
-.fs-info-actions.is-concealed,
-.fs-col-controls.is-concealed,
-.fs-page-actions.is-concealed {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.fs-info-disc {
-  width: var(--fs-action-size);
-  height: var(--fs-action-size);
-  color: rgb(255 255 255 / 82%);
-}
-
-.fs-info-disc:hover {
-  background: rgb(255 255 255 / 24%);
-  color: #fff;
-}
-
-.fs-info-disc svg {
-  width: 18px;
-  height: 18px;
-}
-
-.fs-info-disc.is-active {
-  color: var(--accent-strong);
 }
 
 /* -- Favourite: outline heart, a filled copy revealed by an iris, then a ray burst -- */
@@ -2587,78 +2525,6 @@ braccato-lyrics[data-lyrics-reduced="true"] .blyrics-container {
 
 @keyframes np-control-ripple {
   to { transform: scale(2.6); opacity: 0; }
-}
-
-/* -- The column's transport row -- */
-.fs-col-transport {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-}
-
-.fs-col-transport-mid {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 1rem;
-}
-
-.fs-col-controls {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-  width: 100%;
-  opacity: 1;
-  pointer-events: auto;
-  transition: opacity var(--dur-4) var(--ease-out);
-}
-
-.fs-col-shuffle,
-.fs-col-repeat {
-  color: rgb(255 255 255 / 55%);
-}
-
-.fs-col-shuffle.is-active,
-.fs-col-repeat.is-active {
-  color: var(--accent-strong);
-}
-
-.fs-col-shuffle.is-active::after,
-.fs-col-repeat.is-active::after {
-  content: "";
-  position: absolute;
-  bottom: 0.55rem;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.fs-disc-play,
-.fs-col-transport .fs-disc-play {
-  width: 4.25rem;
-  height: 4.25rem;
-  background: #fff;
-  color: #111;
-}
-
-.fs-disc-play:hover {
-  background: #fff;
-  color: #111;
-}
-
-/* The glyph sits in a keyed wrapper (`.play-icon`), so the disc's own `svg` percentage rule would
-   resolve against the wrapper's content box and collapse; size the wrapper instead. */
-.fs-disc-play .play-icon {
-  width: 46%;
-  height: 46%;
-}
-
-.fs-disc-play .play-icon svg,
-.fs-bar-play .play-icon svg {
-  width: 100%;
-  height: 100%;
 }
 
 /* -- Progress bar (`blyrics-progress`) -- */
@@ -3027,8 +2893,7 @@ braccato-lyrics[data-lyrics-reduced="true"] .blyrics-container {
 
 @media (prefers-reduced-motion: reduce) {
   .fs-volume__track,
-  .fs-info-actions,
-  .fs-col-controls {
+  .fs-page-actions {
     transition-duration: 0.001ms;
   }
   .np-loader__mark,
@@ -3115,18 +2980,8 @@ braccato-lyrics[data-lyrics-reduced="true"] .blyrics-container {
   margin-top: clamp(6px, 1cqh, 12px);
 }
 
-.fs-panel-bar .fs-disc {
-  width: 2.75rem;
-  height: 2.75rem;
-}
-
-.fs-panel-bar .fs-disc-play {
-  width: 3.5rem;
-  height: 3.5rem;
-}
-
-/* Lyrics Off keeps the panel's transport row inside the artwork card, so its discs are the
-   column's sizes but the panel's own spacing. */
+/* Lyrics Off keeps its progress bar and transport inside the artwork card, so the discs tighten to
+   the panel's own spacing. */
 .fs-panel-bar .fs-panel-transport {
   display: flex;
   justify-content: center;

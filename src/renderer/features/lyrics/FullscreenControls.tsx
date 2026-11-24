@@ -1,19 +1,14 @@
 /**
- * Audio controls for the fullscreen Now Playing view, laid out the way Better Lyrics' fullscreen
- * player page is (see `fullscreenControls.ts`, `volumeControl.ts` and `ratingButton.ts` upstream):
+ * The fullscreen player bar, the one set of playback controls in Now Playing.
  *
- * - a column under the artwork (`FullscreenColumnControls`): the progress bar with its times, then
- *   a transport row of 52px discs around a solid white 68px play button — shuffle and repeat sit
- *   where the reference puts like/dislike, since Cadence's transport owns those;
- * - the actions at the end of the song-info row (`FullscreenInfoActions`): favourite, the
- *   hover-expanding volume slider, queue and the mini player, all 28px discs with 18px glyphs;
- * - the bottom bar (`FullscreenControls`), which stands in for YouTube Music's own player bar that
- *   Better Lyrics keeps in fullscreen: track identity on the left, transport above the seek row in
- *   the middle, volume and view tools on the right.
+ * A single bar across the bottom of the window, standing in for YouTube Music's own player bar the
+ * way Better Lyrics keeps it in fullscreen: track identity and the favourite on the left, the
+ * transport above the seek row in the middle, and the volume with the view tools on the right.
  *
- * Every control carries the reference's click feedback: a pop on the disc, an icon nudge and a
- * ripple on the skip buttons, and the layered iris fill + ray burst on a newly-liked song.
- * Written for Cadence.
+ * The bar carries the reference's interaction language — 28px discs, the solid white play button, a
+ * 4px progress track whose right-hand time flips between total and remaining, the hover-expanding
+ * volume slider, and each control's click feedback (a pop, an icon nudge and a ripple on the skip
+ * buttons, a pop + iris + ray burst on a newly-liked song). Written for Cadence.
  */
 
 import { useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type WheelEvent } from "react";
@@ -156,72 +151,12 @@ function TransportDisc({
   );
 }
 
-/** The row of shuffle · previous / play / next · repeat, as wide as the artwork column. */
-export function FullscreenColumnTransport() {
-  const { isPlaying, shuffle, repeat, toggle, next, previous, toggleShuffle, cycleRepeat } = useTransportState();
-  return (
-    <div className="fs-col-transport">
-      <TransportDisc
-        kind="previous"
-        label="Shuffle"
-        className="fs-col-shuffle"
-        active={shuffle}
-        pressed={shuffle}
-        onClick={() => toggleShuffle()}
-      >
-        <Shuffle size={18} />
-      </TransportDisc>
-      <div className="fs-col-transport-mid">
-        <TransportDisc kind="previous" label="Previous track" onClick={previous}>
-          <SkipBack size={22} fill="currentColor" />
-        </TransportDisc>
-        <TransportDisc
-          kind="play-pause"
-          label={isPlaying ? "Pause" : "Play"}
-          className="fs-disc-play"
-          testId="column-play-toggle"
-          onClick={() => void toggle()}
-        >
-          <span className="play-icon" key={isPlaying ? "pause" : "play"} aria-hidden="true">
-            {isPlaying ? <Pause size={26} fill="currentColor" /> : <Play size={26} fill="currentColor" />}
-          </span>
-        </TransportDisc>
-        <TransportDisc kind="next" label="Next track" onClick={() => void next(false)}>
-          <SkipForward size={22} fill="currentColor" />
-        </TransportDisc>
-      </div>
-      <TransportDisc
-        kind="previous"
-        label={`Repeat: ${repeat}`}
-        className="fs-col-repeat"
-        active={repeat !== "off"}
-        pressed={repeat !== "off"}
-        onClick={() => cycleRepeat()}
-      >
-        {repeat === "one" ? <Repeat1 size={18} /> : <Repeat size={18} />}
-      </TransportDisc>
-    </div>
-  );
-}
-
-/** Progress bar + transport, the column that sits under the song-info row. */
-export function FullscreenColumnControls({ concealed = false }: { concealed?: boolean }) {
-  return (
-    <div
-      className={`fs-col-controls ${concealed ? "is-concealed" : ""}`}
-      data-testid="fullscreen-column-controls"
-    >
-      <ProgressBar />
-      <FullscreenColumnTransport />
-    </div>
-  );
-}
-
 /**
- * The favourite button: an outline heart with a filled copy clipped away; liking runs the
- * reference's pop + iris reveal, and a one-shot burst of rays and dots leaves the centre.
+ * The favourite control: an outline heart with a filled copy clipped away. Liking runs the 640ms
+ * pop, the 900ms iris reveal of the filled copy and a one-shot burst of rays and dots. Sized as a
+ * 28px song-info disc or the bottom bar's icon button, whichever the caller asks for.
  */
-function FavouriteButton({ track }: { track: Track }) {
+function FavouriteControl({ track, disc = false }: { track: Track; disc?: boolean }) {
   const setFavorite = useLibrary(state => state.setFavorite);
   const [burstKey, setBurstKey] = useState(0);
   const favorite = track.favorite;
@@ -237,11 +172,13 @@ function FavouriteButton({ track }: { track: Track }) {
   return (
     <button
       type="button"
-      className={`fs-disc fs-info-disc fs-like ${favorite ? "is-active" : ""}`}
+      className={disc
+        ? `fs-disc fs-info-disc fs-like ${favorite ? "is-active" : ""}`
+        : `icon-button heart ${favorite ? "active" : ""}`}
       aria-label={favorite ? "Remove from favourites" : "Add to favourites"}
       title={favorite ? "Remove from favourites" : "Add to favourites"}
       aria-pressed={favorite}
-      data-testid="fullscreen-favourite"
+      data-testid={disc ? "fullscreen-favourite" : undefined}
       onClick={() => {
         const next = !favorite;
         if (next) setBurstKey(key => key + 1);
@@ -250,10 +187,10 @@ function FavouriteButton({ track }: { track: Track }) {
     >
       <span className={`fs-rate-icon ${burstKey ? "fs-rate-fire" : ""}`} key={burstKey}>
         <span className="fs-rate-layer">
-          <Heart size={18} />
+          <Heart size={disc ? 18 : 17} />
         </span>
         <span className="fs-rate-layer fs-rate-layer-fill">
-          <Heart size={18} fill="currentColor" />
+          <Heart size={disc ? 18 : 17} fill="currentColor" />
         </span>
         {burstKey ? (
           <span className="fs-rate-burst" aria-hidden="true">
@@ -271,40 +208,6 @@ function FavouriteButton({ track }: { track: Track }) {
         ) : null}
       </span>
     </button>
-  );
-}
-
-/** The actions at the end of the song-info row: favourite, volume, queue, mini player. */
-export function FullscreenInfoActions({ track, concealed = false }: { track: Track | null; concealed?: boolean }) {
-  const queueOpen = useUi(state => state.queueOpen);
-  const toggleQueue = useUi(state => state.toggleQueue);
-  const setMiniPlayer = useUi(state => state.setMiniPlayer);
-  return (
-    <div className={`fs-info-actions ${concealed ? "is-concealed" : ""}`} data-testid="fullscreen-info-actions">
-      {track ? <FavouriteButton track={track} /> : null}
-      <FullscreenVolume />
-      <button
-        type="button"
-        className={`fs-disc fs-info-disc ${queueOpen ? "is-active" : ""}`}
-        aria-label="Queue"
-        aria-expanded={queueOpen}
-        aria-controls={queueOpen ? "playback-queue" : undefined}
-        title="Queue (Q)"
-        onClick={() => toggleQueue()}
-      >
-        <ListMusic size={18} />
-      </button>
-      <button
-        type="button"
-        className="fs-disc fs-info-disc"
-        aria-label="Mini player"
-        title="Mini player (Ctrl+Shift+P)"
-        data-testid="open-mini-player"
-        onClick={() => setMiniPlayer(true)}
-      >
-        <PictureInPicture2 size={17} />
-      </button>
-    </div>
   );
 }
 
@@ -470,23 +373,11 @@ export function FullscreenControls({
   text,
   concealed = false,
 }: FullscreenControlsProps) {
-  const setFavorite = useLibrary(state => state.setFavorite);
   const queueOpen = useUi(state => state.queueOpen);
   const toggleQueue = useUi(state => state.toggleQueue);
   const setMiniPlayer = useUi(state => state.setMiniPlayer);
 
-  const favourite = track ? (
-    <button
-      type="button"
-      className={`icon-button heart ${track.favorite ? "active" : ""}`}
-      aria-label={track.favorite ? "Remove from favourites" : "Add to favourites"}
-      title={track.favorite ? "Remove from favourites" : "Add to favourites"}
-      aria-pressed={track.favorite}
-      onClick={() => void setFavorite(track.id, !track.favorite)}
-    >
-      <Heart size={17} fill={track.favorite ? "currentColor" : "none"} />
-    </button>
-  ) : null;
+  const favourite = track ? <FavouriteControl track={track} /> : null;
 
   const queue = (
     <button

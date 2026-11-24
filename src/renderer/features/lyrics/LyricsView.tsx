@@ -22,12 +22,7 @@ import { MarqueeText } from "../../components/MarqueeText";
 import { BraccatoLyrics } from "./BraccatoLyrics";
 import { LyricsDock } from "./LyricsDock";
 import { LyricsModeMotion } from "./LyricsModeMotion";
-import {
-  FullscreenBarTransport,
-  FullscreenColumnControls,
-  FullscreenControls,
-  FullscreenInfoActions,
-} from "./FullscreenControls";
+import { FullscreenBarTransport, FullscreenControls } from "./FullscreenControls";
 import { ProgressBar } from "../player/ProgressBar";
 import { PlaybackArtwork, PlaybackText } from "../player/PlaybackVisuals";
 import { usePlaybackPresentation } from "../player/usePlaybackPresentation";
@@ -346,16 +341,12 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
       lyrics.status === "empty" ||
       lyrics.status === "error");
 
-  // Better Lyrics' fullscreen column (its `#blyrics-fs-column`): the artwork, then the song-info row
-  // with its favourite/volume/queue/mini-player actions, then the progress bar and transport — all
-  // exactly as wide as the artwork. Profiles can drop the artwork, the metadata or the controls, and
-  // the column contracts accordingly; without the controls the bar keeps the transport, as in the style
-  // profiles that predate this layout.
+  // Better Lyrics' fullscreen column keeps its artwork and its song info under the cover; playback
+  // stays in ONE place, the player bar across the bottom of the window (see `FullscreenControls`),
+  // so the column no longer repeats the progress bar and transport.
   const headingInSide =
     fullscreen && showLyricsSetting && profileConfig.metadataSlot === "artwork" && profileConfig.metadataVisible;
-  const columnControls = fullscreen && showLyricsSetting && profileConfig.controlsVisible && !preview;
-  const headingInColumn = headingInSide && columnControls;
-  const showSide = fullscreen && showLyricsSetting && (profileConfig.artworkVisible || headingInColumn || columnControls);
+  const showSide = fullscreen && showLyricsSetting && (profileConfig.artworkVisible || headingInSide);
   // With no lyrics to show the artwork column stays put and the lyrics column carries the
   // reference's compact "Lyrics not found" message (see the `.np-message` rules in lyrics.css).
   const noLyrics = fullscreen && !panelMode && lyrics.status === "empty";
@@ -459,17 +450,7 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
       {showSide ? (
         <div className="fs-side">
           {profileConfig.artworkVisible ? <div className="fs-artwork">{artwork}</div> : null}
-          {columnControls ? (
-            <div className="fs-col">
-              <div className="fs-info-row">
-                {headingInColumn ? heading : null}
-                <FullscreenInfoActions track={track} concealed={!controlsVisible} />
-              </div>
-              <FullscreenColumnControls concealed={!controlsVisible} />
-            </div>
-          ) : headingInSide ? (
-            <div className="fs-col fs-col-info-only">{heading}</div>
-          ) : null}
+          {headingInSide ? <div className="fs-col fs-col-info-only">{heading}</div> : null}
         </div>
       ) : null}
 

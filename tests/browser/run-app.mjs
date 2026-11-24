@@ -1255,11 +1255,11 @@ const fsParts = await page.evaluate(() => {
       has(".fs-player-center > .seek-row input.seek") &&
       !root.querySelector(".fs-controls-row > .transport") &&
       !root.querySelector(".fs-track"),
-    // The volume and the favourite live in the song-info row now (Better Lyrics' layout), so the
-    // bar's right zone holds the two view tools and the row's actions hold the rest.
-    volume: Boolean(document.querySelector('[data-testid="fullscreen-volume"]')) &&
-      Boolean(document.querySelector('.fs-info-row [data-testid="fullscreen-info-actions"] .fs-volume')),
-    favourite: Boolean(document.querySelector('.fs-info-row [data-testid="fullscreen-favourite"]')),
+    // One playbar only: the bottom bar carries identity, transport, seek, volume, tools and the
+    // favourite. The old column under the artwork must not come back.
+    volume: has('[data-testid="fullscreen-volume"]') && has(".fs-player-right .volume-group [data-testid=\"fullscreen-volume\"]"),
+    favourite: has(".fs-player-track button.heart"),
+    noColumnControls: !document.querySelector('[data-testid="fullscreen-column-controls"], .fs-info-row'),
     rightTools: has(".fs-controls-row > .player-right.fs-player-right > .player-tools") &&
       has(".fs-player-right button[aria-label='Queue']") &&
       has(".fs-player-right button[aria-label='Mini player']") &&
@@ -1274,8 +1274,8 @@ const fsParts = await page.evaluate(() => {
 check(
   "fullscreen-audio-and-lyrics-controls",
   fsParts.present && fsParts.transport && fsParts.trackLeft && fsParts.transportCentre && fsParts.rightTools &&
-  fsParts.seek && fsParts.volume && fsParts.favourite && fsParts.lyricsToggle && fsParts.queue &&
-  fsParts.lyricsDock && fsParts.playerBarHidden,
+  fsParts.seek && fsParts.volume && fsParts.favourite && fsParts.noColumnControls &&
+  fsParts.lyricsToggle && fsParts.queue && fsParts.lyricsDock && fsParts.playerBarHidden,
   JSON.stringify(fsParts)
 );
 const playCentre = await page.$eval('[data-testid="fullscreen-controls"] .play-button', node => {
