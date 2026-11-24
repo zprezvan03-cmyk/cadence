@@ -3,6 +3,15 @@
 Branch: `arena/f3cb8f17-cadence` (dibuat dari `main` @ `cc35df7`)
 Tanggal: 2026-11-22 — 2026-11-23
 
+## `1defecf` — feat(now-playing): satu playbar, kontrol kolom dibuang
+
+- Kontrol di bawah artwork dihapus. `FullscreenColumnControls`, `FullscreenColumnTransport`, dan `FullscreenInfoActions` hilang dari `FullscreenControls.tsx`; kolom `.fs-side` kini hanya memuat cover plus heading info lagu, jadi tidak ada lagi progress bar dan transport kedua di sisi lirik.
+- Transport tinggal di bar bawah: baris identity (`judul` + `artist · album`) dengan heart di kanan, baris transport di atas seek row, lalu volume dan tool tampilan. Favourite pindah ke bar sebagai `.icon-button.heart` tanpa kehilangan feedback-nya (pop 640ms, iris reveal 900ms, burst ray/dot 460–480ms).
+- CSS kolom ikut dibersihkan: `.fs-info-row*`, `.fs-info-actions*`, `.fs-col-transport*`, `.fs-col-controls`, `.fs-col-shuffle/.fs-col-repeat`, dan `.fs-disc` varian panel lirik dihapus; `.fs-page-actions.is-concealed` kini berdiri sendiri dan daftar reduced-motion dipangkas.
+- Pengaman di `tests/browser/run-app.mjs`: `fsParts.noColumnControls` memastikan tidak ada `[data-testid="fullscreen-column-controls"]` maupun `.fs-info-row` di fullscreen, dan heart diperiksa lewat `.fs-player-track button.heart`.
+- Verifikasi: `npm run typecheck` lolos; `npm test -- --exclude tests/unit/_matasaburo_full.test.ts` **628/628**; `npm run build:web` lolos; `tests/browser/run-app.mjs` **153/153**; `tests/browser/audit-ui.mjs` **295 pass, 1 fail** (4 blocked, 3 not tested) — `instrumental-setting-completes` gagal juga di base dan lolos saat dijalankan sendiri, jadi itu flake lama, bukan regresi.
+- Dokumentasi: `docs/now-playing-parity.md` diperbarui ke layout satu bar — catatan "transport sengaja diduplikasi" diganti penjelasan bahwa Cadence hanya memakai bar bawah.
+
 ## `d5fda88` — feat(now-playing): Better Lyrics fullscreen parity
 
 - Layout fullscreen mengikuti halaman player Better Lyrics (`#blyrics-fs-column`): artwork → baris info lagu → progress bar 4px → baris transport. Baris info memuat judul (weight 700) dan `artist · album` (opacity 0.5) plus aksi 28px: favourite, volume, queue, dan mini player. Baris transport berisi disc 52px mengapit tombol play putih 68px, dengan shuffle dan repeat di slot terluar.
@@ -16,7 +25,7 @@ Tanggal: 2026-11-22 — 2026-11-23
 - Loader mengikuti `#blyrics-loader`: mark 3.5rem berputar 1.5s dengan teks 2.2rem bold bergradien shimmer 3s, masuk dengan `cubic-bezier(.22,1,.36,1)`. "Lyrics not found" jadi pesan inline tenang (tanpa kartu berbingkai) dengan aksi pemulihan yang sudah ada; Lyrics Off tanpa lirik tetap menampilkan progress bar dan transport di kartu artwork.
 - Profile tetap menentukan segalanya: `metadataSlot`/`metadataVisible` memindahkan heading, `artworkVisible` menyembunyikan cover, `controlsVisible: false` kembali ke presentasi lama (kontrol hanya di bar bawah), dan `artwork-right` memirror kolom.
 - Verifikasi: `npm run typecheck` lolos; `npm test -- --exclude tests/unit/_matasaburo_full.test.ts` **628/628**; `npm run build:web` lolos; `tests/browser/run-app.mjs` **153/153** (termasuk cek baru untuk wake pointer, idle 3 detik, kursor tersembunyi, popover yang mem-pin, bar matte full-width, dan kontrol kolom); `tests/browser/audit-ui.mjs` **296 pass, 0 fail** (4 blocked, 3 not tested, sama seperti base). `tests/browser/animation-audit.ts` lolos 61 cek lalu berhenti pada `InvalidStateError` saat menyelesaikan animasi shimmer infinite — kegagalan yang sama terjadi di base. `tests/browser/now-playing-layout.ts` lolos 37 cek; probe `openProfileSwitcher` gagal juga di base, sementara tiga assertion yang disesuaikan di sini lolos.
-- Dokumentasi: `docs/now-playing-parity.md` memetakan tiap elemen referensi ke implementasi Cadence, mencatat verifikasi, dan menyebut selisih yang disengaja — transport memang duplikat karena referensinya juga begitu, like/dislike voting tidak punya padanan (heart = favourite library, shuffle/repeat menempati slot terluar), dan artist/album bukan anchor link.
+- Dokumentasi: `docs/now-playing-parity.md` memetakan tiap elemen referensi ke implementasi Cadence, mencatat verifikasi, dan menyebut selisih yang disengaja — duplikasi transport saat itu sengaja mengikuti referensi (lalu disederhanakan ke satu bar di entri di atas), like/dislike voting tidak punya padanan (heart = favourite library, shuffle/repeat menempati slot terluar), dan artist/album bukan anchor link.
 
 ## `e2342c6` — feat(settings): enumerasi font sistem untuk font selector global
 
