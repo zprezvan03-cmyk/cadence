@@ -1,5 +1,34 @@
 # Changelog
 
+Branch: `arena/f3cb8f17-cadence` (dibuat dari `main` @ `cc35df7`)
+Tanggal: 2026-11-22 — 2026-11-23
+
+## `d5fda88` — feat(now-playing): Better Lyrics fullscreen parity
+
+- Layout fullscreen mengikuti halaman player Better Lyrics (`#blyrics-fs-column`): artwork → baris info lagu → progress bar 4px → baris transport. Baris info memuat judul (weight 700) dan `artist · album` (opacity 0.5) plus aksi 28px: favourite, volume, queue, dan mini player. Baris transport berisi disc 52px mengapit tombol play putih 68px, dengan shuffle dan repeat di slot terluar.
+- Feedback klik disamakan dengan referensi: pop 280ms, nudge ikon ±22% 300ms pada tombol skip, ripple 480ms (`scale(2.6)`) yang muncul dari titik klik, serta favourite dengan pop 640ms, iris reveal 900ms, dan burst ray/dot 460–480ms.
+- `ProgressBar` baru (`features/player/ProgressBar.tsx`): track 4px, knob 10px, fill digerakkan `transform` dengan glide 260ms saat seek, scrub mem-preview posisi sebelum release, klik-untuk-seek, dan step keyboard (5 detik, 30 detik dengan Shift, Home/End). Waktu kanan bisa dibalik antara total dan sisa (`-0:04`) lewat klik, dengan animasi 420ms `cubic-bezier(.22,1,.36,1)`.
+- Setting baru `playback.showRemainingTime` (default `false`) dipakai bersama oleh kolom fullscreen dan bar bawah, tersimpan lewat settings store sehingga bertahan setelah restart.
+- Volume memakai slider hover-expand referensi: bar 4px yang meluncur keluar sampai `clamp(72px, 7vw, 104px)` saat hover/focus, menutup 350ms setelah pointer pergi, wheel 4% per notch, panah 5%, Home/End ekstrem, dan Escape menutup. Glyph berganti sesuai level (muted/low/high).
+- Bar player fullscreen kini edge-to-edge dengan permukaan matte `#1b1b1d` dan progress putih (menggantikan accent), meniru bar YouTube Music yang tetap hidup di fullscreen versi Better Lyrics. Zona kiri/tengah/kanan tetap dipertahankan.
+- `useFullscreenChrome` menggantikan `useControlsHover`: chrome (bar, aksi info lagu, kontrol kolom, tab mode, tombol exit, dock) muncul saat ada gerakan pointer, keyboard, atau fokus, lalu sembunyi setelah **3 detik** diam (aturan idle Better Lyrics). Pointer yang berhenti di atas chrome, popover/queue yang terbuka, dan fokus keyboard menahannya; klik mouse tidak. Saat chrome sembunyi, kursor ikut disembunyikan (`cursor: none`), dan fade memakai `--dur-3` dengan `visibility` mengikuti di akhir agar kontrol keluar dari hit-testing dan urutan fokus.
+- Dock lirik pindah dari baris inline kanan-atas ke pill mengambang di kanan-bawah kolom lirik seperti `.blyrics-dock__inner`: padding 8px, gap 4px, radius 14px, `hsla(0,0%,100%,0.06)`, `blur(12px)`, hairline inset, plus state hidden `scale(0.85)` + `blur(8px)`.
+- Loader mengikuti `#blyrics-loader`: mark 3.5rem berputar 1.5s dengan teks 2.2rem bold bergradien shimmer 3s, masuk dengan `cubic-bezier(.22,1,.36,1)`. "Lyrics not found" jadi pesan inline tenang (tanpa kartu berbingkai) dengan aksi pemulihan yang sudah ada; Lyrics Off tanpa lirik tetap menampilkan progress bar dan transport di kartu artwork.
+- Profile tetap menentukan segalanya: `metadataSlot`/`metadataVisible` memindahkan heading, `artworkVisible` menyembunyikan cover, `controlsVisible: false` kembali ke presentasi lama (kontrol hanya di bar bawah), dan `artwork-right` memirror kolom.
+- Verifikasi: `npm run typecheck` lolos; `npm test -- --exclude tests/unit/_matasaburo_full.test.ts` **628/628**; `npm run build:web` lolos; `tests/browser/run-app.mjs` **153/153** (termasuk cek baru untuk wake pointer, idle 3 detik, kursor tersembunyi, popover yang mem-pin, bar matte full-width, dan kontrol kolom); `tests/browser/audit-ui.mjs` **296 pass, 0 fail** (4 blocked, 3 not tested, sama seperti base). `tests/browser/animation-audit.ts` lolos 61 cek lalu berhenti pada `InvalidStateError` saat menyelesaikan animasi shimmer infinite — kegagalan yang sama terjadi di base. `tests/browser/now-playing-layout.ts` lolos 37 cek; probe `openProfileSwitcher` gagal juga di base, sementara tiga assertion yang disesuaikan di sini lolos.
+- Dokumentasi: `docs/now-playing-parity.md` memetakan tiap elemen referensi ke implementasi Cadence, mencatat verifikasi, dan menyebut selisih yang disengaja — transport memang duplikat karena referensinya juga begitu, like/dislike voting tidak punya padanan (heart = favourite library, shuffle/repeat menempati slot terluar), dan artist/album bukan anchor link.
+
+## `e2342c6` — feat(settings): enumerasi font sistem untuk font selector global
+
+- Daftar font hard-coded diganti pemindaian langsung font yang terpasang. Host Tauri (`src-tauri/src/fonts.rs`, baru) membaca name table sfnt setiap font di direktori font platform — `%WINDIR%\Fonts` + `%LOCALAPPDATA%\Microsoft\Windows\Fonts` di Windows, empat direktori di macOS, dan `fc-list` dengan fallback pemindaian direktori di Linux — lewat `spawn_blocking` sehingga UI thread tidak terblokir. Format ttf/otf/ttc/otc, ID tipografis 16/17 didahulukan, nama Inggris diutamakan lewat `name_rank`, dengan batas ukuran/kedalaman file.
+- ID font: `"system"`, `"monospace"`, atau nama family persis dari mesin. ID lama dimigrasi lewat `LEGACY_FONT_PRESETS`, dan `fontStack(id, target)` menghasilkan dua stack: `SYSTEM_FONT_STACK` untuk shell UI dan `LYRICS_DEFAULT_FONT_STACK` (Satoshi-led) untuk lirik. `applyFontFamily` menulis `--font`, `--blyrics-font-family`, dan `data-font-family`.
+- `fontsStore` (baru) menyimpan hasil scan dengan `maxAgeMs`, mendukung pencarian, dan refresh saat window kembali fokus atau lewat tombol Refresh (dibatasi 30 detik). Settings → Appearance dan Studio Now Playing menampilkan seluruh family yang terpasang tanpa perubahan kode.
+- Family yang tidak tersedia atau sudah dihapus tetap terpilih, dengan hint "“X” is not installed on this device. Cadence falls back to the system font." dan fallback stack yang aman; pilihan bertahan setelah restart karena tersimpan di settings store.
+- Satoshi Variable (ITF Free Font License) dibundel beserta `NOTICE.txt` dan atribusi di `UPSTREAM.md`, supaya tipografi default lirik sama dengan Better Lyrics; shell tetap memakai font UI platform untuk `"system"`.
+- Verifikasi: `npm run typecheck` lolos; `npm test -- --exclude tests/unit/_matasaburo_full.test.ts` **628/628**; `npm run build:web` lolos; audit UI lolos 86/86 lalu 38/38 termasuk `appearance-font-system-preset-stacks`, `appearance-font-satoshi-bundled`, dan `appearance-font-missing-stays-selected`. **Keterbatasan**: toolchain Rust tidak tersedia di environment ini sehingga `fonts.rs` hanya di-review dan belum pernah dikompilasi — dicatat di `docs/system-fonts.md`.
+
+---
+
 Branch: `feat/ui` (dibuat dari `main` @ `1615d5b`)
 Tanggal: 2026-11-19 — 2026-11-21
 
