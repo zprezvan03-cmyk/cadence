@@ -12,6 +12,48 @@ import { useSettings } from "../../state/settingsStore";
 
 const STEP_TITLES = ["Welcome", "Music Library Setup", "Preferences", "Ready"] as const;
 
+/** An explicit two-state choice for an optional preference. */
+function OptIn({
+  label,
+  hint,
+  checked,
+  onChange,
+  testId,
+}: {
+  label: string;
+  hint: string;
+  checked: boolean;
+  onChange: (value: boolean) => void;
+  testId: string;
+}) {
+  return (
+    <div className="setting-row onboarding-opt-in" data-testid={testId} data-value={checked ? "on" : "off"}>
+      <span>
+        <strong>{label}</strong>
+        <em>{hint}</em>
+      </span>
+      <span className="segmented" role="group" aria-label={label}>
+        <button
+          type="button"
+          data-testid={`${testId}-off`}
+          aria-pressed={!checked}
+          onClick={() => onChange(false)}
+        >
+          Off
+        </button>
+        <button
+          type="button"
+          data-testid={`${testId}-on`}
+          aria-pressed={checked}
+          onClick={() => onChange(true)}
+        >
+          On
+        </button>
+      </span>
+    </div>
+  );
+}
+
 export function Onboarding() {
   const visible = useOnboarding(state => state.visible);
   const step = useOnboarding(state => state.step);
@@ -42,6 +84,9 @@ export function Onboarding() {
   const trackCount = snapshot?.counts.tracks ?? 0;
   const folderCount = snapshot?.folders.length ?? 0;
   const lyrics = settings?.lyrics;
+  // The shader preference is optional: leaving it alone keeps the shipped default (off) and the
+  // Next button never depends on it.
+  const shaderBackground = settings?.shaders.globalBackground ?? false;
 
   return (
     <div className="onboarding-overlay" data-testid="onboarding" role="dialog" aria-label="Cadence setup">
@@ -142,6 +187,15 @@ export function Onboarding() {
                   </span>
                 </label>
               </>
+            ) : null}
+            {settings ? (
+              <OptIn
+                label="Shader background"
+                hint="A slow, audio-reactive colour wash behind the whole app. Off by default — you can change it any time in Settings."
+                checked={shaderBackground}
+                onChange={value => void patchSettings({ shaders: { globalBackground: value } })}
+                testId="onboarding-shader-background"
+              />
             ) : null}
           </section>
         ) : null}

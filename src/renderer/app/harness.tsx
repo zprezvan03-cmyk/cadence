@@ -81,6 +81,8 @@ const shaderSettings: ShaderSettings = {
   showOnBrowsePages: false,
   enableAnimatedArt: false,
   performanceMode: "balanced",
+  // The harness mounts the shader module directly; the app-wide wallpaper stays off, as it ships.
+  globalBackground: false,
 };
 let lyricsRoot: ReturnType<typeof createRoot> | null = null;
 let shaderRoot: ReturnType<typeof createRoot> | null = null;

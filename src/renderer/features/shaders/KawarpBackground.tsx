@@ -59,6 +59,14 @@ export interface KawarpBackgroundProps {
   /** Emits renderer-side diagnostics for the verbose shader setting. */
   verbose?: boolean;
   onError?: (message: string) => void;
+  /**
+   * Keep the warp drifting while playback is stopped. The player page leaves this off, so a paused
+   * track pauses the effect exactly as upstream does; an app-wide wallpaper turns it on, because a
+   * frozen backdrop reads as a broken one.
+   */
+  animateWhenPaused?: boolean;
+  /** Hold a single frame — reduced motion. The artwork is still shown, nothing moves. */
+  still?: boolean;
 }
 
 export function KawarpBackground({
@@ -69,6 +77,8 @@ export function KawarpBackground({
   className,
   verbose = false,
   onError,
+  animateWhenPaused = false,
+  still = false,
 }: KawarpBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -397,9 +407,10 @@ export function KawarpBackground({
     if (!instance) return;
 
     const shouldPause = () => {
+      if (still) return true;
       if (settingsRef.current.performanceMode === "off") return true;
       if (document.hidden) return true;
-      return settingsRef.current.pauseOnInactive && !playing;
+      return !animateWhenPaused && settingsRef.current.pauseOnInactive && !playing;
     };
 
     const syncVideo = () => {
@@ -425,7 +436,7 @@ export function KawarpBackground({
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playing, settings.pauseOnInactive, settings.enabled, settings.performanceMode, animatedArtUrl, settings.enableAnimatedArt]);
+  }, [playing, settings.pauseOnInactive, settings.enabled, settings.performanceMode, animatedArtUrl, settings.enableAnimatedArt, animateWhenPaused, still]);
 
   const disabled = !settings.enabled || settings.performanceMode === "off";
   // Kept mounted (and simply faded out) once the shader owns the artwork: a hard unmount on the same

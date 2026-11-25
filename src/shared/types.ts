@@ -555,6 +555,13 @@ export interface ShaderSettings extends GradientSettings {
    * visual language of the effect.
    */
   performanceMode: "high" | "balanced" | "low" | "off";
+  /**
+   * The global shader background: when on, the Kawarp shader runs behind the whole application
+   * instead of only behind the Now Playing stage. Off by default, and off means nothing is
+   * initialised — no canvas, no GL context, no render loop. `enabled` still gates the shader
+   * everywhere; the global surface needs both.
+   */
+  globalBackground: boolean;
 }
 
 /** The two Now Playing surfaces a profile can describe independently. */

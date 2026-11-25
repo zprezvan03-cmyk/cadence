@@ -380,6 +380,12 @@ export function SettingsView() {
               background that reacts to the audio analyser.
             </p>
             <Toggle label="Enable shader background" checked={settings.shaders.enabled} onChange={value => patchShaders({ enabled: value })} />
+            <Toggle
+              label="Shader background across the whole app"
+              hint="Runs the same engine behind the library, settings and Now Playing instead of only the player. Off by default; turning it off stops the shader entirely."
+              checked={settings.shaders.globalBackground}
+              onChange={value => patchShaders({ globalBackground: value })}
+            />
             <div className="setting-row">
               <span>
                 <strong>Performance mode</strong>

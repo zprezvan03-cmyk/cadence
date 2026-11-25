@@ -2778,6 +2778,41 @@
   color: #fff;
 }
 
+/* An optional two-state choice in onboarding: same row rhythm as Settings, with an explicit
+   ON/OFF pair so neither state is implied by a missing check. */
+.onboarding-opt-in {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.segmented {
+  display: flex;
+  flex-shrink: 0;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.segmented button {
+  padding: 6px 16px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+
+.segmented button:hover {
+  color: var(--text);
+}
+
+.segmented button[aria-pressed="true"] {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
 .onboarding-page {
   display: flex;
   flex-direction: column;

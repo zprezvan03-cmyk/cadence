@@ -259,6 +259,8 @@ await page.evaluateOnNewDocument(
         showOnBrowsePages: false,
         enableAnimatedArt: false,
         performanceMode: "balanced",
+        // Ships off: the global wallpaper is opt-in.
+        globalBackground: false,
       },
       advanced: { showLogs: false },
       general: { onboardingCompleted: true, onboardingStep: 3 },
@@ -2015,6 +2017,292 @@ check("settings-appearance-subsections", await page.evaluate(() =>
   !document.querySelector('[data-testid="settings-lyrics"], [data-testid="settings-reset-all"]')
 ), "Shader and Studio controls stay in Appearance; Lyrics and Reset all do not");
 await page.screenshot({ path: join(shotDir, "07-settings.png") });
+
+/* ------------------------------------------------------- onboarding opt-in */
+// The preference step offers the shader wallpaper as an explicit ON/OFF pair, defaulting to OFF, and
+// the flow finishes whether or not it is touched. Replay is the supported way back into the flow
+// (Appearance → Replay Onboarding), so the stored library and the rest of this run stay as they are.
+await page.evaluate(() => document.querySelector('[data-testid="replay-onboarding"]')?.scrollIntoView({ block: "center" }));
+await wait(200);
+await page.click('[data-testid="replay-onboarding"]');
+await page.waitForSelector('[data-testid="onboarding"]', { timeout: 10_000 });
+const shaderOptInState = () =>
+  page.evaluate(() => {
+    const row = document.querySelector('[data-testid="onboarding-shader-background"]');
+    const shell = document.querySelector(".app-shell");
+    return {
+      present: Boolean(row),
+      value: row?.getAttribute("data-value") ?? null,
+      onPressed: row?.querySelector('[data-testid="onboarding-shader-background-on"]')?.getAttribute("aria-pressed") ?? null,
+      offPressed: row?.querySelector('[data-testid="onboarding-shader-background-off"]')?.getAttribute("aria-pressed") ?? null,
+      layer: Boolean(document.querySelector('[data-testid="global-shader-background"]')),
+      flag: shell?.getAttribute("data-shader-background") ?? null,
+    };
+  });
+// Step 3 (Preferences) carries the choice; walk to it without deciding anything.
+for (let step = 0; step < 2; step += 1) {
+  await page.click('[data-testid="onboarding-next"]');
+  await wait(260);
+}
+await page.waitForSelector('[data-testid="onboarding-preferences"]');
+const optInDefault = await shaderOptInState();
+check(
+  "onboarding-shader-choice-defaults-off",
+  optInDefault.present &&
+    optInDefault.value === "off" &&
+    optInDefault.offPressed === "true" &&
+    optInDefault.onPressed === "false" &&
+    optInDefault.layer === false &&
+    optInDefault.flag === "off",
+  JSON.stringify(optInDefault)
+);
+// The ON choice applies immediately, from inside onboarding.
+await page.click('[data-testid="onboarding-shader-background-on"]');
+await wait(600);
+const optInOn = await shaderOptInState();
+check(
+  "onboarding-shader-choice-applies-immediately",
+  optInOn.value === "on" && optInOn.onPressed === "true" && optInOn.layer === true && optInOn.flag === "on",
+  JSON.stringify(optInOn)
+);
+// Choosing OFF again needs no confirmation, and the flow still completes with it off.
+await page.click('[data-testid="onboarding-shader-background-off"]');
+await wait(400);
+const optInOffAgain = await shaderOptInState();
+check("onboarding-shader-choice-can-be-cleared", optInOffAgain.value === "off" && optInOffAgain.layer === false, JSON.stringify(optInOffAgain));
+await page.evaluate(() => {
+  const skip = document.querySelector('[data-testid="onboarding-skip-all"]');
+  skip?.click();
+});
+await wait(500);
+const onboardingFinished = await page.evaluate(key => {
+  const raw = localStorage.getItem(key);
+  const settings = raw ? JSON.parse(raw) : null;
+  return {
+    closed: !document.querySelector('[data-testid="onboarding"]'),
+    shader: settings?.shaders?.globalBackground ?? null,
+    completed: Boolean(settings?.general?.onboardingCompleted),
+  };
+}, "cadence.harness.settings.v1");
+// Back to Appearance for the wallpaper checks below.
+await selectSettingsTab("Appearance", "settings-appearance");
+await wait(300);
+check(
+  "onboarding-completes-with-the-choice-untouched",
+  onboardingFinished.closed && onboardingFinished.shader === false && onboardingFinished.completed,
+  JSON.stringify(onboardingFinished)
+);
+
+/* -------------------------------------------------- global shader background */
+// Opt-in and off by default: with the switch off there is no wallpaper layer and no canvas at all,
+// so nothing is rendered and no GL context is created for it.
+const globalShaderState = () =>
+  page.evaluate(() => {
+    const shell = document.querySelector(".app-shell");
+    const layer = document.querySelector('[data-testid="global-shader-background"]');
+    return {
+      flag: shell?.getAttribute("data-shader-background") ?? null,
+      layer: Boolean(layer),
+      canvas: Boolean(document.querySelector(".global-shader-bg canvas")),
+      shellBackground: shell ? getComputedStyle(shell).backgroundColor : null,
+      isolation: shell ? getComputedStyle(shell).isolation : null,
+      stored: null,
+    };
+  });
+const shaderToggleRow = async () =>
+  page.evaluate(() => {
+    const rows = [...document.querySelectorAll(".setting-row")];
+    const row = rows.find(node => /whole app/i.test(node.querySelector("strong")?.textContent ?? ""));
+    if (!row) return null;
+    const input = row.querySelector('input[type="checkbox"]');
+    return { checked: Boolean(input?.checked), label: row.querySelector("strong")?.textContent?.trim() ?? "" };
+  });
+const clickShaderToggle = async () => {
+  await page.evaluate(() => {
+    const rows = [...document.querySelectorAll(".setting-row")];
+    const row = rows.find(node => /whole app/i.test(node.querySelector("strong")?.textContent ?? ""));
+    row?.querySelector('input[type="checkbox"]')?.click();
+  });
+  await wait(600);
+};
+
+await selectSettingsTab("Appearance", "settings-appearance");
+await wait(400);
+const shaderOffByDefault = await shaderToggleRow();
+const shaderDefaultDom = await globalShaderState();
+check(
+  "global-shader-off-by-default",
+  shaderOffByDefault?.checked === false &&
+    shaderDefaultDom.flag === "off" &&
+    shaderDefaultDom.layer === false &&
+    shaderDefaultDom.canvas === false &&
+    // Nothing about the base shell changes while the feature is off: same opaque canvas, same
+    // stacking (no isolated context invented for a layer that does not exist).
+    shaderDefaultDom.shellBackground === "rgb(30, 30, 32)" &&
+    shaderDefaultDom.isolation === "auto",
+  JSON.stringify({ toggle: shaderOffByDefault, dom: shaderDefaultDom })
+);
+
+// Enabled: the wallpaper mounts above the routes, covers the window, and takes no pointer input.
+await clickShaderToggle();
+const shaderOn = await globalShaderState();
+const shaderLayerStyle = await page.evaluate(() => {
+  const layer = document.querySelector('[data-testid="global-shader-background"]');
+  if (!layer) return null;
+  const style = getComputedStyle(layer);
+  const rect = layer.getBoundingClientRect();
+  const hit = document.elementFromPoint(Math.round(rect.width / 2), Math.round(rect.height / 2));
+  const shell = document.querySelector(".app-shell");
+  return {
+    position: style.position,
+    pointerEvents: style.pointerEvents,
+    zIndex: style.zIndex,
+    coversWindow: rect.width === window.innerWidth && rect.height === window.innerHeight,
+    hitIsLayer: hit === layer || layer.contains(hit),
+    shellAlpha: getComputedStyle(shell).backgroundColor,
+    shellIsolated: getComputedStyle(shell).isolation === "isolate",
+    // The rail keeps contrast over a moving wallpaper: it stays near-opaque (>= 0.9 alpha), while
+    // the library canvas above it is what the shader actually shows through.
+    sidebarAlpha: (() => {
+      const value = getComputedStyle(document.querySelector(".sidebar")).backgroundColor;
+      const alpha = /rgba\([^)]*?,\s*([\d.]+)\)/.exec(value)?.[1] ?? /\/\s*([\d.]+)\)/.exec(value)?.[1];
+      return alpha === undefined ? 1 : Number(alpha);
+    })(),
+    contentTransparent: (() => {
+      const value = getComputedStyle(document.querySelector(".content-scroll")).backgroundColor;
+      return value === "rgba(0, 0, 0, 0)";
+    })(),
+  };
+});
+check(
+  "global-shader-enables-live",
+  shaderOn.flag === "on" && shaderOn.layer === true && shaderOn.canvas === true,
+  JSON.stringify(shaderOn)
+);
+check(
+  "global-shader-layer-behind-the-ui",
+  shaderLayerStyle?.position === "fixed" &&
+    shaderLayerStyle.pointerEvents === "none" &&
+    shaderLayerStyle.zIndex === "0" &&
+    shaderLayerStyle.coversWindow &&
+    shaderLayerStyle.shellAlpha === "rgba(0, 0, 0, 0)" &&
+    shaderLayerStyle.contentTransparent === true &&
+    shaderLayerStyle.sidebarAlpha >= 0.9 &&
+    shaderLayerStyle.shellIsolated === true,
+  JSON.stringify(shaderLayerStyle)
+);
+check("global-shader-does-not-capture-input", shaderLayerStyle?.hitIsLayer === false, "pointer events none");
+
+// Artifact: the wallpaper behind a library route, with the rails translucent over it.
+const songsLink = await page.$('aside.sidebar .nav-item[title="Songs"]');
+if (songsLink) await songsLink.click();
+await page.waitForSelector('[data-testid="library-view-songs"]', { timeout: 5000 }).catch(() => null);
+await page.mouse.move(600, 400);
+await wait(900);
+await page.screenshot({ path: join(shotDir, "07b-global-shader.png") });
+await page.click('aside.sidebar button[title="Settings"]');
+await page.waitForSelector('[data-testid="settings-view"]');
+await selectSettingsTab("Appearance", "settings-appearance");
+await wait(300);
+
+// Artifacts: the wallpaper behind Settings and behind the immersive stage.
+await page.screenshot({ path: join(shotDir, "07c-global-shader-settings.png") });
+// Back to a library route so the player's fullscreen entry is on screen, then enter the stage.
+await page.click('aside.sidebar .nav-item[title="Songs"]');
+await page.waitForSelector('[data-testid="library-view-songs"]', { timeout: 5000 }).catch(() => null);
+await wakeClick('[data-testid="open-now-playing"]');
+await page.waitForSelector(".lyrics-view.is-fullscreen", { timeout: 8000 }).catch(() => null);
+await page.mouse.move(700, 400);
+await wait(1100);
+const fullscreenWallpaper = await page.evaluate(() => {
+  const stage = document.querySelector(".lyrics-view.is-fullscreen");
+  const stageBg = stage ? getComputedStyle(stage).backgroundColor : null;
+  return {
+    stage: Boolean(stage),
+    stageBackground: stageBg,
+    // No second shader for the stage: the app-wide layer is the one behind it.
+    stageCanvas: Boolean(document.querySelector(".lyrics-view.is-fullscreen .kawarp-canvas")),
+    globalLayer: Boolean(document.querySelector('[data-testid="global-shader-background"] .kawarp-canvas')),
+  };
+});
+await page.screenshot({ path: join(shotDir, "07d-global-shader-fullscreen.png") });
+check(
+  "global-shader-covers-the-immersive-stage",
+  fullscreenWallpaper.stageBackground === "rgba(0, 0, 0, 0)" &&
+    fullscreenWallpaper.stageCanvas === false &&
+    fullscreenWallpaper.globalLayer === true,
+  JSON.stringify(fullscreenWallpaper)
+);
+await page.keyboard.press("Escape");
+await wait(600);
+
+// The setting is the persisted one, so a reload comes back with the wallpaper already on.
+await page.reload({ waitUntil: "networkidle0" });
+await page.waitForSelector(".app-shell");
+await wait(700);
+const shaderAfterReload = await globalShaderState();
+check(
+  "global-shader-survives-reload",
+  shaderAfterReload.flag === "on" && shaderAfterReload.layer === true,
+  JSON.stringify(shaderAfterReload)
+);
+
+// Off again: the layer and its canvas are gone, and the shell is opaque as before.
+await page.click('aside.sidebar button[title="Settings"]');
+await page.waitForSelector('[data-testid="settings-view"]');
+await selectSettingsTab("Appearance", "settings-appearance");
+await wait(400);
+await clickShaderToggle();
+const shaderOffAgain = await globalShaderState();
+check(
+  "global-shader-disables-live",
+  shaderOffAgain.flag === "off" &&
+    shaderOffAgain.layer === false &&
+    shaderOffAgain.canvas === false &&
+    shaderOffAgain.shellBackground !== "rgba(0, 0, 0, 0)",
+  JSON.stringify(shaderOffAgain)
+);
+
+// A shader that cannot start must not leave a hole or break the app: the wallpaper layer keeps its
+// own opaque backing fill, nothing throws, and the UI stays usable. (The engine's own catch also
+// swaps in its blurred-artwork layer; this pin is about the surface the UI sits on.)
+const pageErrors = [];
+page.on("pageerror", error => pageErrors.push(error.message));
+await page.evaluate(() => {
+  const original = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function (type, ...rest) {
+    if (/webgl/i.test(String(type))) return null;
+    return original.call(this, type, ...rest);
+  };
+});
+await clickShaderToggle();
+await wait(1000);
+const shaderFallback = await page.evaluate(() => {
+  const layer = document.querySelector('[data-testid="global-shader-background"]');
+  const shell = document.querySelector(".app-shell");
+  return {
+    layer: Boolean(layer),
+    layerBackground: layer ? getComputedStyle(layer).backgroundColor : null,
+    // Still translucent above it, so what the UI sits on is the layer, not the app canvas.
+    shellTransparent: shell ? getComputedStyle(shell).backgroundColor === "rgba(0, 0, 0, 0)" : null,
+  };
+});
+check(
+  "global-shader-falls-back-when-engine-fails",
+  shaderFallback.layer === true &&
+    shaderFallback.layerBackground === "rgb(5, 5, 10)" &&
+    shaderFallback.shellTransparent === true &&
+    pageErrors.length === 0,
+  JSON.stringify({ ...shaderFallback, pageErrors })
+);
+// The app is still usable with the engine unavailable: settings → a library route still renders.
+await page.click('aside.sidebar button[title="Settings"]');
+await page.waitForSelector('[data-testid="settings-view"]', { timeout: 5000 });
+check("global-shader-failure-keeps-app-usable", Boolean(await page.$('[data-testid="settings-view"]')), "settings still reachable");
+await page.evaluate(() => {
+  window.__shaderEngineBlocked = false;
+});
+await wait(300);
 
 await page.evaluate(() => {
   const playbackTab = [...document.querySelectorAll(".settings-tabs button")].find(node => /playback/i.test(node.textContent ?? ""));

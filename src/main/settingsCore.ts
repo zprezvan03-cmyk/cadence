@@ -89,6 +89,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   shaders: {
     ...DEFAULT_GRADIENT_SETTINGS,
     performanceMode: "balanced",
+    // Opt-in: a new install renders the plain background until the user asks for the shader.
+    globalBackground: false,
   },
   artistImages: {
     enabled: true,
@@ -192,6 +194,20 @@ function normalizeSettings(settings: AppSettings, rawProfiles: unknown = setting
     : { ...DEFAULT_SETTINGS.appearance };
   appearance.fontFamily = normalizeFontId(appearance.fontFamily);
   settings.appearance = appearance as AppSettings["appearance"];
+
+  // Shader booleans stay booleans whatever the file said; the global background in particular
+  // must never be switched on by a missing or malformed value, because it decides whether a GL
+  // context is created at all.
+  const shaderSource: AnyRecord = isPlainObject(settings.shaders) ? settings.shaders : {};
+  settings.shaders = {
+    ...DEFAULT_SETTINGS.shaders,
+    ...shaderSource,
+    enabled: typeof shaderSource.enabled === "boolean" ? shaderSource.enabled : DEFAULT_SETTINGS.shaders.enabled,
+    globalBackground:
+      typeof shaderSource.globalBackground === "boolean"
+        ? shaderSource.globalBackground
+        : DEFAULT_SETTINGS.shaders.globalBackground,
+  } as AppSettings["shaders"];
 
   const normalizeAi = (candidate: unknown, fallback: AppSettings["lyrics"]["aiTranslation"]): AppSettings["lyrics"]["aiTranslation"] => {
     const source = isPlainObject(candidate) ? candidate : {};

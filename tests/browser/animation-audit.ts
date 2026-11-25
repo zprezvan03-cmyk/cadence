@@ -991,9 +991,9 @@ const controlsVisible = await page.evaluate(() => {
 await page.mouse.move(720, 120);
 await wait(120);
 await page.mouse.move(722, 118);
-// The chrome is hover-only: leaving it starts a 2 s hide timer, so a brief stay keeps it up. The
-// wait clears the timer plus the 240 ms fade, so the sampled state is the settled hidden one.
-await wait(2900);
+// The chrome is hover-only: leaving it starts a 2 s hide timer, then the 240 ms fade. The wait
+// includes headroom for a slow frame (the shader runs underneath), so the sample is settled.
+await wait(3200);
 const controlsHidden = await page.evaluate(() => {
   const controls = document.querySelector(".fs-controls");
   if (!controls) return null;

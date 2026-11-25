@@ -424,3 +424,55 @@ describe("music-video background settings", () => {
     });
   });
 });
+
+describe("global shader background setting", () => {
+  it("ships off, so a new install never initialises a shader", () => {
+    expect(DEFAULT_SETTINGS.shaders.globalBackground).toBe(false);
+    expect(DEFAULT_SETTINGS.shaders.enabled).toBe(true);
+  });
+
+  it("migrates a settings file written before the switch existed to off", () => {
+    const file = join(workDir, "legacy-shaders.json");
+    writeFileSync(
+      file,
+      JSON.stringify({ shaders: { enabled: true, kawarpOpacity: 0.4, performanceMode: "low" } }),
+      "utf8"
+    );
+    const settings = new SettingsStore(file).get();
+    // The user's shader tuning survives; only the new opt-in starts off.
+    expect(settings.shaders.kawarpOpacity).toBe(0.4);
+    expect(settings.shaders.performanceMode).toBe("low");
+    expect(settings.shaders.globalBackground).toBe(false);
+  });
+
+  it("never turns the switch on from a malformed or missing value", () => {
+    for (const value of [undefined, null, "yes", 1, {}, []]) {
+      const file = join(workDir, `bad-shaders-${Math.random().toString(36).slice(2)}.json`);
+      writeFileSync(file, JSON.stringify({ shaders: { globalBackground: value } }), "utf8");
+      expect(new SettingsStore(file).get().shaders.globalBackground).toBe(false);
+    }
+  });
+
+  it("persists the switch across a restart and back off again", () => {
+    const file = join(workDir, "shaders-persist.json");
+    const first = new SettingsStore(file);
+    first.patch({ shaders: { globalBackground: true } });
+    expect(JSON.parse(readFileSync(file, "utf8")).shaders.globalBackground).toBe(true);
+    expect(new SettingsStore(file).get().shaders.globalBackground).toBe(true);
+
+    const reopened = new SettingsStore(file);
+    reopened.patch({ shaders: { globalBackground: false } });
+    expect(new SettingsStore(file).get().shaders.globalBackground).toBe(false);
+  });
+
+  it("keeps the other shader settings untouched when the switch is patched", () => {
+    const file = join(workDir, "shaders-untouched.json");
+    const store = new SettingsStore(file);
+    const before = store.get().shaders;
+    store.patch({ shaders: { globalBackground: true } });
+    const after = store.get().shaders;
+    expect(after.kawarpOpacity).toBe(before.kawarpOpacity);
+    expect(after.performanceMode).toBe(before.performanceMode);
+    expect(after.enabled).toBe(before.enabled);
+  });
+});

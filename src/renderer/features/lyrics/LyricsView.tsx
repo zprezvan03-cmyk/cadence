@@ -28,6 +28,7 @@ import { PlaybackArtwork, PlaybackText } from "../player/PlaybackVisuals";
 import { usePlaybackPresentation } from "../player/usePlaybackPresentation";
 import { useFullscreenChrome } from "./useFullscreenChrome";
 import { NowPlayingBackground } from "./NowPlayingBackground";
+import { globalShaderEnabled } from "../shaders/GlobalShaderBackground";
 import { useLyrics } from "./useLyrics";
 import { buildThemeCss } from "../../upstream/better-lyrics/themes";
 import { useLastNonNull, usePresence } from "../../app/usePresence";
@@ -69,6 +70,7 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
       ? (itemIdentity && mvSettings.bindings[itemIdentity]) || (track?.mvUrl ?? null)
       : null;
   const mvErrorUrls = useRef(new Set<string>());
+  const mvActiveOnStage = Boolean(mvSettings?.enabled && mvUrl && !mvErrorUrls.current.has(mvUrl));
   const viewRef = useRef<HTMLDivElement | null>(null);
   const footerRef = useRef<HTMLDivElement | null>(null);
   // Lyrics On keeps the hover-only footer over the lyrics unless a popover or queue is open.
@@ -102,6 +104,10 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
 
   const lyricsSettings = settings?.lyrics;
   const shaderSettings = settings?.shaders;
+  // With the app-wide shader behind the whole window, the stage does not paint a second one: the
+  // wallpaper already covers this surface, and a second Kawarp mount would mean a second GL context
+  // for the same pixels. A music video is still an explicit per-track choice, so it keeps its layer.
+  const globalShader = globalShaderEnabled(settings);
   const nowPlayingProfilesSettings = settings?.nowPlayingProfiles;
   const lyricsOnProfile = useMemo(
     () => getEffectiveNowPlayingProfile(nowPlayingProfilesSettings, fullscreen),
@@ -423,6 +429,7 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
       data-profile-active-color={rendererConfig.activeColor ? "custom" : "theme"}
       data-profile-inactive-color={rendererConfig.inactiveColor ? "custom" : "theme"}
     >
+      {globalShader && !mvActiveOnStage ? null : (
       <NowPlayingBackground
         mode={profileConfig.backgroundMode}
         artworkUrl={item?.artworkUrl ?? null}
@@ -447,6 +454,7 @@ export function LyricsView({ track, item, playing, fullscreen, onExit, onOpenLyr
           flash("Music video unavailable — showing the regular background.");
         }}
       />
+      )}
 
       {showSide ? (
         <div className="fs-side">

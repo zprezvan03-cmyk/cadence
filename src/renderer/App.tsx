@@ -24,6 +24,7 @@ import { HomeView } from "./features/library/HomeView";
 import { LibraryView } from "./features/library/LibraryView";
 import { HistoryView } from "./features/history/HistoryView";
 import { LyricsView } from "./features/lyrics/LyricsView";
+import { GlobalShaderBackground, globalShaderEnabled } from "./features/shaders/GlobalShaderBackground";
 import { MiniPlayer } from "./features/player/MiniPlayer";
 import { PlayerBar } from "./features/player/PlayerBar";
 import { PlayerLayoutMotion, type PlayerLayout } from "./features/player/PlayerLayoutMotion";
@@ -172,6 +173,7 @@ export function App() {
     if (top || settingsSection) contentRef.current?.scrollTo({ top: top ?? 0, behavior: "instant" });
   }, [scrollKey, settingsSection, miniPlayer]);
 
+  const shaderBackground = useSettings(state => globalShaderEnabled(state.settings));
   const layout: PlayerLayout = miniPlayer ? "mini" : immersive ? "fullscreen" : route.name === "lyrics" ? "now-playing" : "library";
   return (
     <PlayerLayoutMotion layout={layout} reducedMotion={reducedMotion}>
@@ -181,7 +183,14 @@ export function App() {
           <AppToast />
         </div>
       ) : (
-        <div className={`app-shell ${immersive ? "is-immersive" : ""} ${titleBar ? "has-title-bar" : ""}`} data-route={route.name}>
+        <div
+          className={`app-shell ${immersive ? "is-immersive" : ""} ${titleBar ? "has-title-bar" : ""}`}
+          data-route={route.name}
+          data-shader-background={shaderBackground ? "on" : "off"}
+        >
+          {/* One app-wide wallpaper, behind every route and every overlay. It is a sibling of the
+              shell, so it survives navigation and is never remounted by it. */}
+          {shaderBackground ? <GlobalShaderBackground /> : null}
           {titleBar ? <WindowTitleBar chrome={chrome} /> : null}
           {!immersive ? <Sidebar showHistory={!titleBar} /> : null}
           <main

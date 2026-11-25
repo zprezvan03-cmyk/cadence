@@ -278,6 +278,76 @@ a {
   background: var(--bg);
 }
 
+/* -- Global shader background (opt-in) -------------------------------------------------------- */
+/* One fixed, full-window surface under the whole application: behind the sidebar, every route, the
+   player bar and the overlays, and behind the immersive Now Playing stage too. It takes no input and
+   is hidden from assistive tech; `KawarpBackground` inside it owns the GL context and its artwork. */
+.global-shader-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: #05050a;
+  /* The engine's first frame is preceded by its own blurred-artwork fallback; the app fades the
+     whole layer in so a slow GPU start never flashes the wallpaper. */
+  animation: global-shader-in var(--dur-4) var(--ease-out);
+}
+
+@keyframes global-shader-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .global-shader-bg { animation: none; }
+}
+
+/* With the wallpaper on, the shell's own canvas steps aside and the rails go translucent so the
+   shader shows through: the same layout, type and contrast, over moving colour instead of a flat
+   fill. Everything here is scoped to the opt-in attribute, so the default shell is byte-for-byte
+   what it was. */
+.app-shell[data-shader-background="on"] {
+  background: transparent;
+  /* One stacking context for the shell, so the wallpaper layer and the rails above it are ordered
+     inside the app and cannot interleave with page-level stacking. */
+  isolation: isolate;
+}
+
+.app-shell[data-shader-background="on"] > .player-bar,
+.app-shell[data-shader-background="on"] > .window-title-bar {
+  background: color-mix(in srgb, var(--chrome-surface) 78%, transparent);
+  backdrop-filter: blur(24px) saturate(1.2);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
+}
+
+/* The navigation rail is the one surface where legibility wins over the effect: it keeps a nearly
+   solid fill, and only its edge against the wallpaper softens. The views inside it, which are what
+   people read in the library, sit on the shader itself. */
+.app-shell[data-shader-background="on"] > .sidebar {
+  background: color-mix(in srgb, var(--bg-elevated) 94%, transparent);
+}
+
+/* Route content sits on the wallpaper directly: the library canvas is the one surface that was a
+   solid `--bg` fill, and the views inside it already bring their own cards and rows. */
+.app-shell[data-shader-background="on"] .content-scroll {
+  background: transparent;
+}
+
+.app-shell[data-shader-background="on"] .lyrics-view:not(.is-fullscreen) {
+  background: transparent;
+}
+
+/* The immersive stage normally paints its own dark backdrop and slides a per-track background over
+   it. On the wallpaper it is transparent instead, so the app-wide shader is what the lyrics sit on —
+   one shader for the window, whether or not the stage is open. */
+.app-shell[data-shader-background="on"] .lyrics-view.is-fullscreen {
+  background: transparent;
+}
+
+/* Everything above the wallpaper keeps a readable floor: overlays that were opaque `--bg` fills stay
+   opaque, because the wallpaper is decoration and must never compromise a dialog. */
+
 /* Windows keeps a separate native drag / caption strip; the player spans the rails below it. */
 .app-shell.has-title-bar {
   --window-chrome-top: var(--titlebar-height);
