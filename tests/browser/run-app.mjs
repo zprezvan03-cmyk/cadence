@@ -2183,7 +2183,10 @@ check(
   "global-shader-layer-behind-the-ui",
   shaderLayerStyle?.position === "fixed" &&
     shaderLayerStyle.pointerEvents === "none" &&
-    shaderLayerStyle.zIndex === "0" &&
+    // The layer must sit *below* every in-flow box in the shell: negative z inside the shell's
+    // isolated stacking context. `0` would paint it above non-positioned content and hide that
+    // content — the defect this assertion exists to prevent.
+    shaderLayerStyle.zIndex === "-1" &&
     shaderLayerStyle.coversWindow &&
     shaderLayerStyle.shellAlpha === "rgba(0, 0, 0, 0)" &&
     shaderLayerStyle.contentTransparent === true &&
@@ -2192,6 +2195,67 @@ check(
   JSON.stringify(shaderLayerStyle)
 );
 check("global-shader-does-not-capture-input", shaderLayerStyle?.hitIsLayer === false, "pointer events none");
+
+// The regression this feature shipped with: a wallpaper layer at `z-index: 0` paints above every
+// non-positioned in-flow box in the shell, so headings, row titles and labels vanish. Prove that
+// text which sets no positioning of its own is still above the layer, on a library route.
+// A library route has the rows this probe needs; the settings panel above does not.
+await page.evaluate(() => {
+  const link = [...document.querySelectorAll(".sidebar .nav-item")].find(node => node.textContent?.trim() === "Songs");
+  link?.click();
+});
+await page.waitForSelector('[data-testid="track-row"]', { timeout: 6000 }).catch(() => null);
+await wait(500);
+const plainTextAboveShader = await page.evaluate(() => {
+  const layer = document.querySelector('[data-testid="global-shader-background"]');
+  if (!layer) return { layer: false };
+  const targets = [
+    [".view-heading h1", "page heading"],
+    ["[data-testid='track-row'] .title-text", "track title"],
+  ];
+  const measured = targets.map(([selector, name]) => {
+    const node = document.querySelector(selector);
+    if (!node) return { name, present: false };
+    const rect = node.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) return { name, present: false };
+    const x = Math.round(rect.left + Math.min(24, rect.width / 2));
+    const y = Math.round(rect.top + rect.height / 2);
+    const hit = document.elementFromPoint(x, y);
+    return {
+      name,
+      present: true,
+      // The layer never wins the hit-test for text, and the text is not rendered at zero alpha.
+      layerOnTop: Boolean(hit && (hit === layer || layer.contains(hit))),
+      opacity: Number(getComputedStyle(node).opacity),
+      color: getComputedStyle(node).color,
+    };
+  });
+  return { layer: true, measured };
+});
+check(
+  "global-shader-never-covers-text",
+  plainTextAboveShader.layer === true &&
+    plainTextAboveShader.measured.some(entry => entry.present) &&
+    plainTextAboveShader.measured.every(entry => !entry.present || (!entry.layerOnTop && entry.opacity > 0.5)),
+  JSON.stringify(plainTextAboveShader.measured)
+);
+
+// Exactly one shader surface for the window: no per-route or per-panel instances.
+const shaderInstances = await page.evaluate(() => ({
+  layers: document.querySelectorAll('[data-testid="global-shader-background"]').length,
+  canvases: document.querySelectorAll(".global-shader-bg .kawarp-canvas").length,
+  bubbles: document.querySelectorAll(".global-shader-bubbles .glass-bubble").length,
+}));
+check(
+  "global-shader-is-one-surface",
+  shaderInstances.layers === 1 && shaderInstances.canvases === 1 && shaderInstances.bubbles > 0,
+  JSON.stringify(shaderInstances)
+);
+// Back to Settings → Appearance for the toggle checks below.
+await page.click('aside.sidebar button[title="Settings"]');
+await page.waitForSelector('[data-testid="settings-view"]');
+await selectSettingsTab("Appearance", "settings-appearance");
+await wait(400);
 
 // Artifact: the wallpaper behind a library route, with the rails translucent over it.
 const songsLink = await page.$('aside.sidebar .nav-item[title="Songs"]');

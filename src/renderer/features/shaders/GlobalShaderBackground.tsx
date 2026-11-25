@@ -27,6 +27,8 @@ import { useReducedMotion } from "../../app/useMotionPreference";
 import { useSettings } from "../../state/settingsStore";
 import { usePlayer } from "../../state/playerStore";
 import { KawarpBackground } from "../shaders/KawarpBackground";
+import { ShaderBubbles } from "./ShaderBubbles";
+import { generatedShaderSource } from "./shaderSource";
 
 /** The global surface only exists when both switches are on. */
 export function globalShaderEnabled(settings: { shaders?: Partial<ShaderSettings> } | null | undefined): boolean {
@@ -51,7 +53,10 @@ export function GlobalShaderBackground() {
   // The user's own shader settings, not a Now Playing profile's: the wallpaper is app-level, so it
   // follows the settings panel exactly and keeps updating while the panel is open.
   const shaderSettings = useMemo(() => shaders, [shaders]);
-  const artworkUrl = item?.artworkUrl ?? null;
+  // With nothing playing there is no cover to warp, and a shader over an empty source is a black
+  // field. Fall back to a generated accent gradient so the wallpaper always has colour to bend.
+  const accent = settings?.appearance.accent ?? "#ff3d71";
+  const artworkUrl = item?.artworkUrl ?? useMemo(() => generatedShaderSource(accent), [accent]);
   const animatedArtUrl = track?.animatedArtUrl ?? null;
 
   if (!active || !shaderSettings) return null;
@@ -73,6 +78,8 @@ export function GlobalShaderBackground() {
           setFailed(true);
         }}
       />
+      {/* Frosted glass spheres over the shader, still inside the wallpaper layer — never above UI. */}
+      <ShaderBubbles />
     </div>
   );
 }

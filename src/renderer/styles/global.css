@@ -279,13 +279,25 @@ a {
 }
 
 /* -- Global shader background (opt-in) -------------------------------------------------------- */
-/* One fixed, full-window surface under the whole application: behind the sidebar, every route, the
-   player bar and the overlays, and behind the immersive Now Playing stage too. It takes no input and
-   is hidden from assistive tech; `KawarpBackground` inside it owns the GL context and its artwork. */
+/* One fixed, full-window surface under the whole application.
+ *
+ * LAYERING — the one rule this feature depends on:
+ *   The shell is an isolated stacking context and this layer sits at `z-index: -1` inside it. A
+ *   negative-z-index child of an isolated context paints above that context's own background but
+ *   below *all* of its in-flow content and below every positioned descendant, whatever their
+ *   z-index. That is what "strictly behind the UI" has to mean: text, icons, rows and covers that
+ *   set no positioning are still painted over the shader.
+ *   A `z-index: 0` layer here would paint above every non-positioned in-flow box in the shell and
+ *   hide that content outright — which is exactly the defect this rule fixes. Do not "fix" stacking
+ *   by raising the UI; keep this layer negative and the UI untouched.
+ *
+ * The layer never takes input, is hidden from assistive tech, and only exists while the feature is
+ * on, so "off" leaves the shell byte-for-byte as it was (opaque, not isolated, no canvas).
+ */
 .global-shader-bg {
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: -1;
   overflow: hidden;
   pointer-events: none;
   background: #05050a;
@@ -299,14 +311,119 @@ a {
   to { opacity: 1; }
 }
 
+/* The wallpaper is the app's own surface, so it carries a light scrim of its own instead of the
+   heavy Now Playing one: enough to keep the mid-tones readable under the UI, not so much that the
+   shader disappears. */
+.global-shader-bg .kawarp-scrim {
+  background:
+    radial-gradient(130% 100% at 50% 0%, rgba(5, 5, 10, 0.1) 34%, rgba(5, 5, 10, 0.42) 100%),
+    linear-gradient(180deg, rgba(5, 5, 10, 0.34) 0%, rgba(5, 5, 10, 0.12) 34%, rgba(5, 5, 10, 0.44) 100%);
+}
+
+/* Text sits on the content column, not on the whole window, so the column gets its own shade: a
+   soft, wide scrim that darkens the reading area towards the edges and keeps body copy at the same
+   contrast it has over the flat canvas. It is part of the wallpaper layer (below every element) and
+   costs one gradient — no extra compositing of the UI itself. */
+.app-shell[data-shader-background="on"] .content-scroll::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(8, 8, 12, 0.5) 0%, rgba(8, 8, 12, 0.24) 26%, rgba(8, 8, 12, 0.2) 70%, rgba(8, 8, 12, 0.42) 100%),
+    linear-gradient(180deg, rgba(8, 8, 12, 0.3) 0%, rgba(8, 8, 12, 0.16) 40%, rgba(8, 8, 12, 0.34) 100%);
+}
+
+/* -- Glassmorphism bubbles ------------------------------------------------------------------- */
+/* Floating frosted spheres inside the wallpaper layer: below all UI, decorative, pointer-transparent.
+   Each is a translucent disc with a backdrop blur, an inner highlight, a rim light and a soft cast
+   shadow, and drifts on a slow CSS-only transform while its silhouette morphs — no JS per frame. */
+.global-shader-bubbles {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.glass-bubble {
+  position: absolute;
+  top: var(--bubble-top);
+  left: var(--bubble-left);
+  width: var(--bubble-size);
+  height: var(--bubble-size);
+  border-radius: 50%;
+  opacity: var(--bubble-opacity);
+  /* The glass itself: a translucent surface that blurs whatever is behind it, with a light-catching
+     rim. `backdrop-filter` is what makes it frosted rather than flat. */
+  background:
+    radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0.1) 26%, rgba(255, 255, 255, 0.02) 52%, rgba(255, 255, 255, 0) 70%),
+    radial-gradient(circle at 72% 78%, var(--bubble-tint) 0%, rgba(255, 255, 255, 0) 62%),
+    rgba(255, 255, 255, 0.045);
+  backdrop-filter: blur(var(--bubble-blur)) saturate(1.35) brightness(1.06);
+  -webkit-backdrop-filter: blur(var(--bubble-blur)) saturate(1.35) brightness(1.06);
+  box-shadow:
+    /* rim light: bright at the top-left, falling away along the edge */
+    inset 0 1px 1px rgba(255, 255, 255, 0.5),
+    inset 0 -18px 34px rgba(255, 255, 255, 0.06),
+    inset 0 0 40px rgba(255, 255, 255, 0.05),
+    /* a soft body shadow, so the sphere sits in front of the shader rather than in it */
+    0 24px 60px rgba(4, 4, 10, 0.28);
+  will-change: transform;
+  animation:
+    bubble-drift var(--bubble-duration) ease-in-out var(--bubble-delay) infinite alternate,
+    bubble-morph calc(var(--bubble-duration) * 1.6) ease-in-out var(--bubble-delay) infinite alternate;
+}
+
+/* The specular highlight: a small, bright, blurred dot near the top-left of each sphere, the cue that
+   reads as polished glass rather than a gradient disc. */
+.glass-bubble::before {
+  content: "";
+  position: absolute;
+  top: 12%;
+  left: 16%;
+  width: 26%;
+  height: 18%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 255, 255, 0.75), rgba(255, 255, 255, 0));
+  filter: blur(2px);
+  transform: rotate(-24deg);
+}
+
+/* The caustic at the bottom edge: light that has passed through the glass and pooled there. */
+.glass-bubble::after {
+  content: "";
+  position: absolute;
+  right: 14%;
+  bottom: 8%;
+  width: 40%;
+  height: 22%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0));
+  filter: blur(6px);
+}
+
+@keyframes bubble-drift {
+  from { transform: translate3d(0, 0, 0) rotate(0deg); }
+  to { transform: translate3d(2.5vmax, -3.5vmax, 0) rotate(6deg); }
+}
+
+@keyframes bubble-morph {
+  from { border-radius: 50% 50% 50% 50%; }
+  to { border-radius: calc(50% - var(--bubble-morph)) calc(50% + var(--bubble-morph)) calc(50% - var(--bubble-morph)) calc(50% + var(--bubble-morph)); }
+}
+
+/* Reduced motion holds the composition still: the glass stays, nothing drifts. */
 @media (prefers-reduced-motion: reduce) {
-  .global-shader-bg { animation: none; }
+  .global-shader-bg,
+  .glass-bubble {
+    animation: none;
+  }
 }
 
 /* With the wallpaper on, the shell's own canvas steps aside and the rails go translucent so the
    shader shows through: the same layout, type and contrast, over moving colour instead of a flat
-   fill. Everything here is scoped to the opt-in attribute, so the default shell is byte-for-byte
-   what it was. */
+   fill. Everything here is scoped to the opt-in attribute, so the default shell is unchanged. */
 .app-shell[data-shader-background="on"] {
   background: transparent;
   /* One stacking context for the shell, so the wallpaper layer and the rails above it are ordered
