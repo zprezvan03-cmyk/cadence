@@ -29,6 +29,7 @@ import { MiniPlayer } from "./features/player/MiniPlayer";
 import { PlayerBar } from "./features/player/PlayerBar";
 import { PlayerLayoutMotion, type PlayerLayout } from "./features/player/PlayerLayoutMotion";
 import { useMiniWindow } from "./features/player/useMiniWindow";
+import { ShaderBoundary } from "./app/ShaderBoundary";
 import { QueuePanel } from "./features/player/QueuePanel";
 import { SettingsView } from "./features/settings/SettingsView";
 import { StatsView } from "./features/stats/StatsView";
@@ -189,8 +190,14 @@ export function App() {
           data-shader-background={shaderBackground ? "on" : "off"}
         >
           {/* One app-wide wallpaper, behind every route and every overlay. It is a sibling of the
-              shell, so it survives navigation and is never remounted by it. */}
-          {shaderBackground ? <GlobalShaderBackground /> : null}
+              shell, so it survives navigation and is never remounted by it. The boundary matters:
+              a throw in here used to unmount the root and leave the window blank, with the toggle
+              that would fix it inside the UI that had just vanished. */}
+          {shaderBackground ? (
+            <ShaderBoundary label="Global shader">
+              <GlobalShaderBackground />
+            </ShaderBoundary>
+          ) : null}
           {titleBar ? <WindowTitleBar chrome={chrome} /> : null}
           {!immersive ? <Sidebar showHistory={!titleBar} /> : null}
           <main

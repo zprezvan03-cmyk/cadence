@@ -2368,6 +2368,73 @@ await page.evaluate(() => {
 });
 await wait(300);
 
+// THE GREY SCREEN. Reported from a real build: turning the wallpaper on and then starting a track
+// left the window completely blank. `GlobalShaderBackground` read `item?.artworkUrl ?? useMemo(...)`,
+// so the fallback hook was skipped on the first render where a track existed. React answers a
+// changed hook count by throwing, and with no boundary above it the root unmounted: `#root` empty,
+// no text, the Settings toggle that would have fixed it gone with the UI.
+//
+// The shader is still on at this point (the failure case above left it enabled), so play a track
+// that really decodes and assert the window is still a window. The engine is unblocked first so
+// this crosses the transition with a live canvas, which is the exact path that used to throw.
+const blankGuardErrors = [];
+const onBlankGuardError = error => blankGuardErrors.push(error.message);
+page.on("pageerror", onBlankGuardError);
+await page.click('aside.sidebar button[title="Songs"]');
+await page.waitForSelector('[data-testid="track-row"]', { timeout: 10_000 });
+const shaderPlayTarget = await page.evaluate(() => {
+  const rows = [...document.querySelectorAll('[data-testid="track-row"]')];
+  // broken.flac never produces a media item, so it would skip the transition under test.
+  const row = rows.find(node => node.textContent.includes("Fixture FLAC")) ?? rows[0];
+  row?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, view: window }));
+  return row?.dataset.trackId ?? null;
+});
+await wait(2500);
+const afterShaderPlayback = await page.evaluate(() => {
+  const root = document.querySelector("#root");
+  const layer = document.querySelector('[data-testid="global-shader-background"]');
+  const title = document.querySelector(".player-title");
+  const rect = title?.getBoundingClientRect();
+  const hit = rect && rect.width > 0 ? document.elementFromPoint(rect.x + 4, rect.y + rect.height / 2) : null;
+  return {
+    rootChildren: root ? root.children.length : 0,
+    rootBytes: root ? root.innerHTML.length : 0,
+    bodyText: (document.body.innerText ?? "").trim().length,
+    heading: Boolean(document.querySelector(".view-heading h1")),
+    playerTitle: title?.textContent?.trim() ?? null,
+    layer: Boolean(layer),
+    canvas: Boolean(layer?.querySelector("canvas")),
+    zIndex: layer ? getComputedStyle(layer).zIndex : null,
+    textHitIsLayer: Boolean(layer && hit && layer.contains(hit)),
+  };
+});
+page.off("pageerror", onBlankGuardError);
+check(
+  "global-shader-playback-never-blanks-the-app",
+  afterShaderPlayback.rootChildren > 0 &&
+    afterShaderPlayback.rootBytes > 1000 &&
+    afterShaderPlayback.bodyText > 40 &&
+    afterShaderPlayback.heading === true &&
+    afterShaderPlayback.playerTitle === "Fixture FLAC" &&
+    afterShaderPlayback.layer === true &&
+    afterShaderPlayback.canvas === true &&
+    afterShaderPlayback.zIndex === "-1" &&
+    afterShaderPlayback.textHitIsLayer === false &&
+    blankGuardErrors.length === 0,
+  JSON.stringify({ ...afterShaderPlayback, trackId: shaderPlayTarget, pageErrors: blankGuardErrors.slice(0, 2) })
+);
+await page.screenshot({ path: join(shotDir, "07e-global-shader-playing.png") });
+
+// Hand the app back the way the rest of the suite expects it: quiet player, Settings open, and the
+// shader turned off again so the decode probes below are not run against a moving wallpaper.
+await page.evaluate(() => document.querySelector('button[aria-label="Pause"]')?.click());
+await page.click('aside.sidebar button[title="Settings"]');
+await page.waitForSelector('[data-testid="settings-view"]', { timeout: 10_000 });
+await selectSettingsTab("Appearance", "settings-appearance");
+await wait(300);
+if ((await shaderToggleRow())?.checked) await clickShaderToggle();
+await wait(400);
+
 await page.evaluate(() => {
   const playbackTab = [...document.querySelectorAll(".settings-tabs button")].find(node => /playback/i.test(node.textContent ?? ""));
   playbackTab?.click();

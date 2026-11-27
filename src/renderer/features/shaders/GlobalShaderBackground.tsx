@@ -56,7 +56,13 @@ export function GlobalShaderBackground() {
   // With nothing playing there is no cover to warp, and a shader over an empty source is a black
   // field. Fall back to a generated accent gradient so the wallpaper always has colour to bend.
   const accent = settings?.appearance.accent ?? "#ff3d71";
-  const artworkUrl = item?.artworkUrl ?? useMemo(() => generatedShaderSource(accent), [accent]);
+  // Hooks must run unconditionally: this used to read
+  // `item?.artworkUrl ?? useMemo(...)`, so the `useMemo` was skipped on the first render after a
+  // track started playing. React counts that as "rendered more hooks than during the previous
+  // render" and throws, and because nothing upstream caught it the whole root unmounted — the
+  // blank window. Compute the fallback gradient every render and pick between the two.
+  const generated = useMemo(() => generatedShaderSource(accent), [accent]);
+  const artworkUrl = item?.artworkUrl ?? generated;
   const animatedArtUrl = track?.animatedArtUrl ?? null;
 
   if (!active || !shaderSettings) return null;

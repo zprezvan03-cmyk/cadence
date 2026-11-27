@@ -56,6 +56,65 @@ descendant. Text, icons, rows and covers need no z-index of their own, and none 
 foreground UI is untouched. This is a root-cause fix, not a stacking patch — and the rule is written
 into the stylesheet comment so it is not "corrected" back later.
 
+## The grey screen — a hook that only ran when music was playing
+
+This one shipped and blanked the window in a real build, and it is worth writing down because no
+automated check caught it and the cause was a single character.
+
+`GlobalShaderBackground` picked its artwork like this:
+
+```tsx
+const artworkUrl = item?.artworkUrl ?? useMemo(() => generatedShaderSource(accent), [accent]);
+```
+
+`useMemo` here is a **conditionally called hook**. On the first render after a track starts,
+`item` is non-null, `??` short-circuits, and the `useMemo` is skipped. React compares the hook
+sequence against the previous render, sees a different count, and throws ("Rendered more hooks than
+during the previous render" — React error #300). Nothing in the tree caught the throw, so React
+unmounted the root: `#root` was left with **zero children**, the body had no text, and what
+remained on screen was the window's own background — the grey/blank screen. The Settings toggle
+that would have turned the shader back off lives inside the UI that had just disappeared, so the
+user could not recover from inside the app.
+
+Two changes, at both levels:
+
+1. **The bug itself.** The fallback gradient is now computed unconditionally and the two candidates
+   are chosen afterwards:
+
+   ```tsx
+   const generated = useMemo(() => generatedShaderSource(accent), [accent]);
+   const artworkUrl = item?.artworkUrl ?? generated;
+   ```
+
+2. **The containment**, because a wallpaper must never be able to take the application down.
+   `ShaderBoundary` (`src/renderer/app/ShaderBoundary.tsx`) wraps the shader subtree in `App.tsx`.
+   A render error unmounts only the wallpaper, logs once, and leaves the rest of the app running on
+   the plain canvas — so Settings is reachable and the user can switch the shader off. This is a
+   class component because that is still the only way to catch render errors in React 19.
+
+Why the harness missed it: `visual-inspect.mjs` and `run-app.mjs` both walked pages and toggled the
+shader, but the row they played first in an earlier probe (`broken.flac`) is the deliberate
+undecodable fixture — playback fails, no media item ever exists, `item` stays `null`, and the hook
+count never changes. The guard now plays a track that really decodes.
+
+**Regression guard:** `run-app.mjs` → `global-shader-playback-never-blanks-the-app`. With the
+wallpaper on it plays "Fixture FLAC", then asserts `#root` still has children and more than 1 KB of
+markup, the body still has text, the heading and player title are present, the layer is still a live
+canvas at `z-index: -1`, the text is not hit-tested to the layer, and **no page error** was raised.
+Verified in this environment to fail (empty root, React #300) on the pre-fix code and pass after.
+
+## If the app is already stuck blank
+
+The setting lives in the app's data directory, outside the window, so it can be edited by hand:
+
+- Windows: `%APPDATA%\app.cadence.player\settings.json`
+- macOS: `~/Library/Application Support/app.cadence.player/settings.json`
+- Linux: `~/.local/share/app.cadence.player/settings.json`
+
+Quit Cadence, then set `shaders.globalBackground` (and `shaders.enabled`) to `false` in that file and
+start it again. The app opens on its normal opaque background. This is only needed for builds made
+before the fix above; from then on a shader failure cannot blank the window at all.
+
 ## The glass bubbles
 
 Six large frosted spheres inside the wallpaper layer, each a translucent disc with a backdrop blur,
